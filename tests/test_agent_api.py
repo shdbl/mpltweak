@@ -149,6 +149,38 @@ def main():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
 
+    print('§7 figsize_in 不受 dpi 影响')
+    dpi_script = os.path.join(ROOT, 'tests', '.tmp_dpi.py')
+    try:
+        with open(dpi_script, 'w', encoding='utf-8') as f:
+            f.write(textwrap.dedent('''
+                import matplotlib
+                matplotlib.use('Agg')
+                import matplotlib as mpl
+                mpl.rcParams['figure.dpi'] = 200     # 非默认 dpi
+                import matplotlib.pyplot as plt
+                fig = plt.figure(figsize=(8, 4))
+                _ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+                _ax.plot([1, 2, 3])
+                fig.savefig('dpi.png')
+            '''))
+        rc, out, err = run('describe', dpi_script)
+        d = json.loads(out)
+        check(d['figsize_px'] == [1600, 800], 'figsize_px 是 200dpi 的真实像素',
+              d.get('figsize_px'))
+        check(d['figsize_in'] == [8, 4],
+              'figsize_in 仍是 8x4 英寸（没被 dpi 带偏）', d.get('figsize_in'))
+    except Exception as e:                                        # noqa: BLE001
+        check(False, '§7 执行', e)
+    finally:
+        for _p in (dpi_script, os.path.join(ROOT, 'tests', '.tweak_params',
+                                            '.tmp_dpi.json'),
+                   os.path.join(ROOT, 'tests', 'dpi.png')):
+            try:
+                os.remove(_p)
+            except OSError:
+                pass
+
     print()
     if _fails:
         print('FAILED: %d 项 -> %s' % (len(_fails), _fails))

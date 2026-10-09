@@ -28,6 +28,10 @@ need all that editing — that is what mpltweak does.**
 | **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
 | **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
 
+**Core feature: deterministic source rewriting.** AST-based precise targeting — it only touches the numbers already in your code, never inserts adjustment blocks, never adds imports, leaves no trace of the tool. Built-in three-layer verification (runs / rewrote correctly / retry with fallback anchor), auto-rollback on any failure — **it will never leave a broken script behind**.
+
+Tools like Tavotto take a non-destructive route (your script is never modified). mpltweak takes the opposite stance: **precisely because we do modify source, we must be deterministic** — this is the project's core differentiator.
+
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
 
@@ -38,13 +42,9 @@ the figure.
 
 mpltweak turns that guesswork into a file write:
 
-- the params file (`.tweak_params/*.json`) is a **public format** — fixed fields, defaults,
-  validatable;
-- so an agent can generate or edit it directly, without "seeing" the figure;
-- `mpltweak apply --write` commits it to your source **deterministically**: AST lookup, three-layer
-  verification, rollback on failure — a bad guess can't corrupt your script.
+**The params file is public JSON format (with JSON Schema).** AI can generate or edit it directly, without "seeing" the figure. `mpltweak apply --write` commits it to your source **deterministically**: AST lookup + three-layer verification + rollback on failure — **a bad guess can't corrupt your script**.
 
-**Let the AI own the content; let mpltweak own the layout.**
+**Core idea: let the AI own the content; let mpltweak own the layout.**
 
 ```jsonc
 // the agent produces this → mpltweak apply fig1.py --write → it lands in your source
@@ -56,19 +56,38 @@ mpltweak turns that guesswork into a file write:
 ] }
 ```
 
-Three commands make it a full loop — an agent can **read → edit → write**, not just write:
+**Full read → edit → write → check loop:**
 
 | Command | What it does |
 |---|---|
 | `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
 | `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
 | `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
+| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap |
 
 ```bash
 mpltweak describe fig1.py -o layout.json    # read: the layout as it is now
 # ...the agent edits a few numbers in layout.json...
 mpltweak apply fig1.py --write --json       # write: back into source, self-checked
+mpltweak check fig1.py --json               # check: layout health report in JSON
 ```
+
+**Why "read" is needed**: for explicit `add_axes([...])` you can just read the source. But a
+`plt.subplots()` grid, the effective default when no `fontsize=` is written, the positions after
+`tight_layout()`, and the true sizes of colorbars and aspect-locked (cartopy) axes — **those numbers
+do not exist in the source**; you have to run it once.
+
+## Splitting the work: human + agent
+
+| Division | How |
+|---|---|
+| **Human drags → agent commits** | You finish dragging, say the word, the agent runs `apply --write` |
+| **Agent drafts → human fine-tunes** | The agent lays it out by rule first → you keep tweaking in the window (params resume) → commit |
+| **Agent self-check** | After plotting, the agent runs `check`: uneven/unaligned/mismatched/overflow/overlap, without seeing the figure |
+| **One figure as a template** | `describe` the good one → change its `script` field → `apply` it to the others, for a consistent paper |
+| **Human drags → agent summarises** | The agent reads the params JSON and explains the change in plain words (good for commit messages or captions) |
+
+The rule of thumb: **taste belongs to you, precision belongs to the agent.**
 
 ## Demos
 
@@ -83,9 +102,13 @@ mpltweak apply fig1.py --write --json       # write: back into source, self-chec
 <td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
 <b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
 <td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
+<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — dragging stops stuttering</sub></td>
 </tr>
 </table>
+
+**Full PPT-style gesture set:** Drag panels, Ctrl multi-select, align/distribute (Ctrl+Shift+L/R/T/B/C/M, H/V), edge snapping (with guides), Ctrl+F fit canvas to trim margins, space for wireframe mode, hover to resize text, legend snapping to 8 standard spots, colorbar length/thickness adjustment.
+
+**Deep research-scenario support:** cartopy maps, colorbar (position/clim/cmap), multi-mappable precise pairing (by receiver variable name / explicit parent axis in `fig.colorbar(cs, ax=ax1)`), `matplotlib.use('Agg')` scripts work as-is. The write-back engine has been audited (AST level) against **3,055 real research plotting scripts**, with a 99.7% rewrite rate.
 
 ## What it actually changes
 
@@ -111,6 +134,8 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 **Only those numbers move.** No new lines, no `import`, no inserted scaffolding, no trace of the
 tool. Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters
 that were **already in your code**.
+
+This is the biggest difference from competing tools: Tavotto and others keep the result in their own sidecar (the script is never modified). mpltweak uses AST-based precise targeting + three-layer verification to achieve deterministic rewriting — **making layout results truly land in your code, not just live inside a tool**.
 
 ## Install
 
@@ -266,7 +291,7 @@ for it in step three.
 3. **Retry with another anchor** — the `savefig` matching that figure index → main anchor → end of
    script; only when all of them fail does it roll back.
 
-The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
+**This is the safety net for deterministic rewriting.** The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
 and a slow script that times out is not treated as a failure — you are simply told to confirm.
 
 ## Params file (`.tweak_params/*.json`)

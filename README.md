@@ -26,20 +26,21 @@
 | **传统方式** | 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改 |
 | **mpltweak** | 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里 |
 
+**核心特性：确定性写回原源码。** AST 精确定位，只改你代码里原有的那几个数字，不插入调整块、不加 import、不留任何工具痕迹。自带三层验证（能跑通 / 真的改对了 / 换锚点重试），全失败自动回滚，**绝不会留下改坏的脚本**。
+
+Tavotto 等工具走的是非破坏性路线（脚本永不修改）；mpltweak 的立场不同：**正因为要动源码，才必须做到确定性** —— 这是本项目的核心差异。
+
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
 ## 给 AI / agent 的排版接口
 
 大模型能写出正确的绘图代码，但**排版数字基本靠猜** —— 它看不到那张图。
 
-mpltweak 把这部分从"猜"变成"写"：
+mpltweak 把这部分从"猜"变成"写文件"：
 
-- 参数文件（`.tweak_params/*.json`）是**公开格式**：字段固定、有默认值、可校验；
-- 所以 agent 可以直接**生成或修改**它，不需要"看懂"图；
-- `mpltweak apply --write` 负责把 JSON **确定性地**落进源码 —— AST 定位、三层验证、失败回滚，
-  写错了也不会把你的脚本改坏。
+**参数文件是公开 JSON 格式（带 JSON Schema）**，AI 可以直接生成或修改它，不需要"看懂"图。`mpltweak apply --write` 负责确定性落实：AST 定位 + 三层验证 + 失败回滚，**写错了也不会把你的脚本改坏**。
 
-**让 AI 管内容，让 mpltweak 管排版。**
+**核心理念：让 AI 管内容，让 mpltweak 管排版。**
 
 ```jsonc
 // agent 产出这个 → mpltweak apply fig1.py --write → 落进你的源码
@@ -51,19 +52,37 @@ mpltweak 把这部分从"猜"变成"写"：
 ] }
 ```
 
-三个命令构成完整回路 —— agent 不只是"能写"，而是能**读 → 改 → 写**：
+**完整的读 → 改 → 写 → 查回路：**
 
 | 命令 | 作用 |
 |---|---|
 | `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"） |
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr） |
+| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠 |
 
 ```bash
 mpltweak describe fig1.py -o layout.json    # 读：拿到现在的排版
 # ...agent 改 layout.json 里的几个数字...
 mpltweak apply fig1.py --write --json       # 写：落回源码并自检
+mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 ```
+
+**为什么需要"读"**：`add_axes([...])` 这种明写的位置，读源码就够了；但 `plt.subplots()` 的网格、
+没写 `fontsize=` 时实际生效的默认值、`tight_layout()` 之后的位置、colorbar 与 cartopy 锁定后的
+真实尺寸 —— 这些**源码里没有数字**，得跑一遍才知道。
+
+## 人 + agent 怎么分工
+
+| 分工 | 怎么做 |
+|---|---|
+| **人拖 → agent 落盘** | 你开窗拖完，说一句"落盘"，AI 跑 `apply --write` |
+| **agent 起草 → 人微调** | 让 AI 按规则先排一版 → 你开窗接着调（参数会续上）→ 确认落盘 |
+| **agent 自检** | AI 画完图跑 `check`：不看图也能发现不齐 / 不等大 / 间距不均 / 字号不一 / 越界 / 重叠 |
+| **一张图当模板** | `describe` 排好的那张 → 改 `script` 字段 → `apply` 到其它脚本，统一整篇论文的排版 |
+| **人拖完，agent 总结** | AI 读参数 JSON，用大白话说明改了什么（可当 commit message 或图注） |
+
+原则很简单：**"好不好看"归你，"精确落实"归它。**
 
 ## 演示
 
@@ -72,15 +91,19 @@ mpltweak apply fig1.py --write --json       # 写：落回源码并自检
 <td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
 <b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
 <td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
-<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</sub></td>
+<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分</sub></td>
 </tr>
 <tr>
 <td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
 <b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
 <td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
-<b>重图切线框（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，排版时不再卡</sub></td>
+<b>线框模式提速（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，拖动不再卡顿</sub></td>
 </tr>
 </table>
+
+**完整的 PPT 式操作手势：** 拖动面板、Ctrl 多选、对齐 / 均分（Ctrl+Shift+L/R/T/B/C/M、H/V）、边缘吸附（带参考线）、Ctrl+F 适配画布裁白边、空格切线框模式、悬停改字号、图例吸附 8 个标准位、colorbar 调长度 / 厚度。
+
+**深度支持科研场景：** cartopy 地图、colorbar（位置 / clim / cmap）、多 mappable 精确配对（按接收者变量名 / `fig.colorbar(cs, ax=ax1)` 的显式父轴）、`matplotlib.use('Agg')` 脚本不用改。写回引擎对 **3055 个真实科研绘图脚本**做过 AST 级审计，可写回率 99.7%。
 
 ## 它到底改了什么
 
@@ -103,8 +126,10 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 +ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
 ```
 
-**只动了这些数字**：没有新增一行、没有 `import`、没有插入调整块、没有留下它的痕迹。
+**只动了这些数字。** 没有新增一行、没有 `import`、没有插入调整块、没有留下它的痕迹。
 字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
+
+这是与竞品工具的最大区别：Tavotto 等工具把调整结果留在自己的 sidecar 里（脚本永不修改），mpltweak 用 AST 精确定位 + 三层验证做到了确定性写回 —— **让排版结果真正落进你的代码里，而不是只存在于工具中**。
 
 ## 安装
 
@@ -254,7 +279,7 @@ flowchart TD
    逐项比对；"跑通了但布局没落到目标图"会被判失败；
 3. **换锚点重试** —— 图号对应的 `savefig` → 主锚点 → 脚本尾，全部失败才回滚。
 
-备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录）；
+**这是确定性写回的保障机制。** 备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录）；
 慢脚本超时不会被误判为失败，只提示手动确认。
 
 ## 参数文件（`.tweak_params/*.json`）

@@ -28,11 +28,13 @@ def _to_params(state, script):
         'version': params.SCHEMA_VERSION,
         'script': os.path.basename(script),
         'figsize_px': state.get('figsize_px'),
-        'figsize_in': None,
+        'figsize_in': state.get('figsize_in'),
     }
-    px = state.get('figsize_px')
-    if px:
-        out['figsize_in'] = [round(px[0] / 100.0, 4), round(px[1] / 100.0, 4)]
+    if out['figsize_in'] is None:
+        # 兜底：采集侧没给英寸数时按 100dpi 逻辑口径换算（高 DPI 下可能偏）
+        px = state.get('figsize_px')
+        if px:
+            out['figsize_in'] = [round(px[0] / 100.0, 4), round(px[1] / 100.0, 4)]
     if isinstance(state.get('fig_index'), int):
         out['fig_index'] = state['fig_index']
         out['n_figs'] = state.get('n_figs')
@@ -45,7 +47,7 @@ def _to_params(state, script):
             'title_fontsize': it.get('title_fontsize'),
             'label_fontsize': it.get('label_fontsize'),
             'tick_fontsize': it.get('tick_fontsize'),
-            'is_colorbar': False,
+            'is_colorbar': bool(it.get('is_colorbar')),
             'clim': it.get('clim'),
             'xscale': it.get('xscale', 'linear'),
             'yscale': it.get('yscale', 'linear'),
@@ -80,6 +82,7 @@ def main(argv=None) -> int:
 
     script = os.path.abspath(args.script)
     if not os.path.exists(script):
+        sys.stdout = _real_stdout           # 早退也要把 stdout 还回去
         sys.stderr.write('[describe] 找不到脚本: %s\n' % script)
         return 1
 

@@ -49,6 +49,12 @@ def main(argv=None):
     if cmd == 'schema':
         from .params import schema_main
         return schema_main(argv[1:])
+    if cmd == 'check':
+        from .check import main as check_main
+        return check_main(argv[1:])
+    if cmd == 'mcp':
+        from .mcp_server import main as mcp_main
+        return mcp_main(argv[1:])
     if cmd == 'doctor':
         from .launch import doctor
         return doctor()

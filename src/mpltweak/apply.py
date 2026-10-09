@@ -180,7 +180,7 @@ def _emit_json(script, results, stdout_ref):
                                           'preview')],
         'files': [
             {'params': os.path.basename(p),
-             'reason': r['reason'],
+             'reason': r.get('reason', 'unknown'),
              'style': r.get('style'),
              'changes': r.get('changes') or [],
              'backup': r.get('backup'),

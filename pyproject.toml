@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.4"
+version = "0.1.5"
 description = "像在 PPT 里调多图排版一样调 matplotlib：拖拽排版 + AST 确定性写回脚本（调试零侵入）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -19,6 +19,10 @@ keywords = [
     "visualization",
     "interactive",
     "gui",
+    "ai-agent",
+    "llm",
+    "mcp",
+    "scientific-computing",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -35,6 +39,10 @@ dependencies = [
     "matplotlib>=3.5",
     "PyQt5>=5.15",
 ]
+
+[project.optional-dependencies]
+# 只在用 `mpltweak mcp`（把排版能力暴露给 AI 客户端）时需要
+mcp = ["mcp>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/shdbl/mpltweak"

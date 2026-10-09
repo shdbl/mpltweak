@@ -54,6 +54,11 @@ def _state(fig) -> Dict[str, Any]:
         if tls:
             item['tick_fontsize'] = tls[0].get_fontsize()
         try:
+            from .toolbox import _is_colorbar_ax
+            item['is_colorbar'] = bool(_is_colorbar_ax(ax))
+        except Exception:                         # noqa: BLE001
+            item['is_colorbar'] = False
+        try:
             item['aspect'] = ax.get_aspect()      # 'auto' / 'equal' / 数值
         except Exception:                         # noqa: BLE001
             item['aspect'] = None
@@ -65,7 +70,13 @@ def _state(fig) -> Dict[str, Any]:
         px = list(fig.canvas.get_width_height())
     except Exception:                            # noqa: BLE001
         px = None
-    return {'figsize_px': px, 'axes': axes}
+    # 英寸数直接问 figure：`px / 100` 只在 dpi == 100 时才成立，
+    # 脚本一旦 set_dpi / 改 rcParams['figure.dpi'] 就会差整数倍。
+    try:
+        inch = [round(float(v), 4) for v in fig.get_size_inches()]
+    except Exception:                            # noqa: BLE001
+        inch = None
+    return {'figsize_px': px, 'figsize_in': inch, 'axes': axes}
 
 
 def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
@@ -85,6 +96,10 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     plt.close = lambda *a, **k: None
     matplotlib.use = lambda *a, **k: None
     plt.switch_backend = lambda *a, **k: None
+    # 脚本自己的 print 绝不能污染调用方的 stdout —— MCP server 正是用 stdout 传
+    # JSON-RPC，混进一行 "savefig done" 就会让客户端解析失败。一律改道 stderr。
+    _real_stdout = sys.stdout
+    sys.stdout = sys.stderr
     d = os.path.dirname(os.path.abspath(script))
     old = os.getcwd()
     os.chdir(d)
@@ -107,9 +122,10 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     finally:
         plt.show, plt.close, matplotlib.use, plt.switch_backend = real
         try:
-            plt.close('all')
+            plt.close('all')            # 先做可能打印的清理，再恢复 stdout
         except Exception:                        # noqa: BLE001
             pass
+        sys.stdout = _real_stdout
         os.chdir(old)
 
 
@@ -129,6 +145,10 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
     plt.close = lambda *a, **k: None
     matplotlib.use = lambda *a, **k: None
     plt.switch_backend = lambda *a, **k: None
+    # 脚本自己的 print 绝不能污染调用方的 stdout —— MCP server 正是用 stdout 传
+    # JSON-RPC，混进一行 "savefig done" 就会让客户端解析失败。一律改道 stderr。
+    _real_stdout = sys.stdout
+    sys.stdout = sys.stderr
     d = os.path.dirname(os.path.abspath(script))
     old = os.getcwd()
     os.chdir(d)
@@ -149,9 +169,10 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
     finally:
         plt.show, plt.close, matplotlib.use, plt.switch_backend = real
         try:
-            plt.close('all')
+            plt.close('all')            # 先做可能打印的清理，再恢复 stdout
         except Exception:                        # noqa: BLE001
             pass
+        sys.stdout = _real_stdout
         os.chdir(old)
 
 
