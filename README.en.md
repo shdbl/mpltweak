@@ -20,8 +20,8 @@ The layout parameters of a multi-panel figure pull against each other: nudge one
 axis label next to it gets covered; enlarge the fonts and the legend lands on a curve. And every
 change costs another re-run and another look at the output.
 
-> If placing those panels were as direct as arranging pictures on a slide, the numbers would not
-> need all that editing — **that is what mpltweak does.**
+**If placing those panels were as direct as arranging pictures on a slide, the numbers would not
+need all that editing — that is what mpltweak does.**
 
 | Way | Process |
 |---|---|
