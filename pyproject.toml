@@ -1,20 +1,47 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
 version = "0.1.0"
-description = "交互式 matplotlib 调图：脚本零侵入，拖图 → 参数 JSON → 纯 matplotlib 代码写回"
+description = "像在 PPT 里调多图排版一样调 matplotlib：拖拽排版 + AST 确定性写回脚本（调试零侵入）"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "shdbl" }]
+keywords = [
+    "matplotlib",
+    "figure",
+    "layout",
+    "plot",
+    "visualization",
+    "interactive",
+    "gui",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 dependencies = [
     "matplotlib>=3.5",
 ]
 
 [project.optional-dependencies]
 qt = ["PyQt5>=5.15"]          # 交互窗口后端（纯 Agg 无窗口）
+
+[project.urls]
+Homepage = "https://github.com/shdbl/mpltweak"
+Repository = "https://github.com/shdbl/mpltweak"
+Issues = "https://github.com/shdbl/mpltweak/issues"
 
 [project.scripts]
 mpltweak = "mpltweak.cli:main"
