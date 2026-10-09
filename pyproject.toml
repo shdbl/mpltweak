@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.0"
+version = "0.1.1"
 description = "像在 PPT 里调多图排版一样调 matplotlib：拖拽排版 + AST 确定性写回脚本（调试零侵入）"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,10 +33,8 @@ classifiers = [
 ]
 dependencies = [
     "matplotlib>=3.5",
+    "PyQt5>=5.15",
 ]
-
-[project.optional-dependencies]
-qt = ["PyQt5>=5.15"]          # 交互窗口后端（纯 Agg 无窗口）
 
 [project.urls]
 Homepage = "https://github.com/shdbl/mpltweak"

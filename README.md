@@ -53,22 +53,26 @@ mpltweak 把这段循环变成**肉眼 + 鼠标**：
 
 ```mermaid
 flowchart TD
-    A["fig1.py · 纯 matplotlib，一行都不用改"]
-    B["交互窗口 · 拖 · 对齐 · 吸附 · 调字号"]
-    C[".tweak_params/fig1.json · 参数静默落盘"]
-    D["AST 定位 → 原位改写 · 只改已有的那几个数字"]
-    E["三层验证 · 能跑通 · 改对了 · 换锚点重试"]
+    A["fig1.py<br/>纯 matplotlib，一行都不用改"]:::script
+    B(["交互窗口<br/>拖 · 对齐 · 吸附 · 调字号"]):::win
+    C[".tweak_params/fig1.json<br/>参数静默落盘，代码没动"]:::script
+    D["AST 定位 → 原位改写<br/>只改已有的那几个数字"]:::script
+    E{"三层验证"}:::check
+    F(["提交改动 + 留备份"]):::ok
+    G(["自动回滚，绝不留下改坏的脚本"]):::bad
 
     A -->|mpltweak fig1.py| B
     B -->|关窗| C
     C -->|mpltweak apply --write| D
-    D --> E
-    E -->|通过| F["提交改动 + 留备份"]
-    E -->|失败| G["自动回滚，绝不留下改坏的脚本"]
+    D -->|自动比对| E
+    E -->|通过| F
+    E -->|失败| G
 
-    style B stroke:#2F6FEB,stroke-width:2px
-    style F stroke:#2E9E5B
-    style G stroke:#D97706
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
 ```
 
 关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
@@ -76,20 +80,22 @@ flowchart TD
 ## 安装
 
 ```bash
-pip install mpltweak            # 内核
-pip install "mpltweak[qt]"      # 内核 + PyQt5
+pip install mpltweak
 ```
 
-两者唯一的区别是**要不要顺带装 PyQt5**：
+装上就能弹窗 —— **交互窗口后端（PyQt5）是默认依赖**，不需要方括号选项：
 
-| | `mpltweak` | `mpltweak[qt]` |
-|---|---|---|
-| `mpltweak apply` / `mpltweak doctor` | ✅ | ✅ |
-| 弹出交互窗口 | 需要环境里**已有** Qt（如 Anaconda 自带的 PyQt5/PySide） | ✅ 一定可以（装上 PyQt5） |
-
-所以：**不确定就装 `[qt]`**（多约 60MB，但省心）；环境里已经有 Qt 的话装内核就够。
+| 装了什么 | 说明 |
+|---|---|
+| matplotlib | 绘图内核 |
+| PyQt5 | 交互窗口后端 |
+| CLI | `mpltweak` · `mpltweak apply` · `mpltweak doctor` |
 
 装完先自检：`mpltweak doctor`（Python / matplotlib 版本、可用后端、字体）
+
+> 纯服务器 / CI 上只想要写回功能，可以 `pip install mpltweak --no-deps` 只装代码
+> （再单独 `pip install matplotlib`），省掉 Qt 的体积；
+> 装了别的 Qt 绑定（PySide6 / PyQt6）也能用，`mpltweak doctor` 会告诉你它选了哪个。
 
 > 脚本里写了 `matplotlib.use('Agg')`（科研脚本批量出图的常见写法）**不需要改** ——
 > 启动器会临时接管后端，`savefig` 的结果与原来完全一致。

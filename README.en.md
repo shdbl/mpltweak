@@ -55,22 +55,26 @@ exactly what your code says.
 
 ```mermaid
 flowchart TD
-    A["fig1.py · plain matplotlib, not a line to change"]
-    B["Live window · drag · align · snap · font size"]
-    C[".tweak_params/fig1.json · params saved silently"]
-    D["AST lookup → rewrite · only the numbers already there"]
-    E["Three-layer verification · runs · is right · retry anchor"]
+    A["fig1.py<br/>plain matplotlib, not a line to change"]:::script
+    B(["Live window<br/>drag · align · snap · font size"]):::win
+    C[".tweak_params/fig1.json<br/>params saved silently"]:::script
+    D["AST lookup → rewrite<br/>only the numbers already there"]:::script
+    E{"Three-layer verification"}:::check
+    F(["commit + keep a backup"]):::ok
+    G(["auto rollback, never leaves a broken script"]):::bad
 
     A -->|mpltweak fig1.py| B
     B -->|close window| C
     C -->|mpltweak apply --write| D
-    D --> E
-    E -->|passed| F["commit + keep a backup"]
-    E -->|failed| G["auto rollback, never leaves a broken script"]
+    D -->|compare| E
+    E -->|passed| F
+    E -->|failed| G
 
-    style B stroke:#2F6FEB,stroke-width:2px
-    style F stroke:#2E9E5B
-    style G stroke:#D97706
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
 ```
 
 Until you close the window, not a single character of your script changes — and the write-back
@@ -79,21 +83,22 @@ only happens when you explicitly ask for it in step three.
 ## Install
 
 ```bash
-pip install mpltweak            # core
-pip install "mpltweak[qt]"      # core + PyQt5
+pip install mpltweak
 ```
 
-The only difference is **whether PyQt5 comes along**:
+That's it — **the window backend (PyQt5) is a default dependency**, no extra bracket needed:
 
-| | `mpltweak` | `mpltweak[qt]` |
-|---|---|---|
-| `mpltweak apply` / `mpltweak doctor` | ✅ | ✅ |
-| Interactive window | needs Qt already in your environment (e.g. the PyQt5/PySide that Anaconda ships) | ✅ always (PyQt5 gets installed) |
-
-So: **if unsure, install `[qt]`** (about 60MB extra, but it always works); if your environment
-already has Qt, the core package is enough.
+| What you get | Why |
+|---|---|
+| matplotlib | the plotting core |
+| PyQt5 | the interactive window backend |
+| CLI | `mpltweak` · `mpltweak apply` · `mpltweak doctor` |
 
 Check your setup afterwards with `mpltweak doctor` (Python / matplotlib version, backends, fonts).
+
+> On a headless server / CI where you only want the write-back, `pip install mpltweak --no-deps`
+> installs just the code (add `pip install matplotlib` yourself) and skips Qt entirely.
+> Other Qt bindings (PySide6 / PyQt6) work too — `mpltweak doctor` tells you which one it picked.
 
 > `matplotlib.use('Agg')` in your script (common in batch plotting) **does not need changing** —
 > the launcher takes over the backend temporarily and `savefig` output stays identical.
