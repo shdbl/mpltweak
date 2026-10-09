@@ -32,6 +32,23 @@ mpltweak 把这段循环变成**肉眼 + 鼠标**：
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
+## 演示
+
+<table>
+<tr>
+<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
+<b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
+<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
+<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</sub></td>
+</tr>
+<tr>
+<td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
+<b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
+<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
+<b>重图切线框（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，排版时不再卡</sub></td>
+</tr>
+</table>
+
 ## 工作流
 
 ```mermaid
@@ -56,13 +73,28 @@ flowchart TD
 
 关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
 
-## 快速开始
-
-### 0 · 装
+## 安装
 
 ```bash
-pip install "mpltweak[qt]"      # 带上交互窗口
+pip install mpltweak            # 内核
+pip install "mpltweak[qt]"      # 内核 + PyQt5
 ```
+
+两者唯一的区别是**要不要顺带装 PyQt5**：
+
+| | `mpltweak` | `mpltweak[qt]` |
+|---|---|---|
+| `mpltweak apply` / `mpltweak doctor` | ✅ | ✅ |
+| 弹出交互窗口 | 需要环境里**已有** Qt（如 Anaconda 自带的 PyQt5/PySide） | ✅ 一定可以（装上 PyQt5） |
+
+所以：**不确定就装 `[qt]`**（多约 60MB，但省心）；环境里已经有 Qt 的话装内核就够。
+
+装完先自检：`mpltweak doctor`（Python / matplotlib 版本、可用后端、字体）
+
+> 脚本里写了 `matplotlib.use('Agg')`（科研脚本批量出图的常见写法）**不需要改** ——
+> 启动器会临时接管后端，`savefig` 的结果与原来完全一致。
+
+## 快速开始
 
 ### 1 · 你原来的脚本，一行都不用改
 
@@ -139,41 +171,6 @@ python fig1.py
 | 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
 | 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
 | 脚本要读数据 / 跑很久 | `--write --no-verify` 跳过重跑验证，或 `--timeout 600` 放宽 |
-
-## 演示
-
-<table>
-<tr>
-<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
-<b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
-<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
-<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</sub></td>
-</tr>
-<tr>
-<td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
-<b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
-<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
-<b>重图切线框（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，排版时不再卡</sub></td>
-</tr>
-</table>
-
-## 写回闭环
-
-调完之后，一条命令把它落回源码 —— 下面是**真实运行输出 + 真实 diff**：
-
-<img src="docs/gifs/05_writeback.gif" width="620" alt="写回闭环：apply --write 的真实输出与代码 diff">
-
-## 安装
-
-```bash
-pip install mpltweak            # 内核（可做写回 / 自检，无需窗口）
-pip install "mpltweak[qt]"      # 带 PyQt5 交互窗口（Windows / Linux 推荐）
-```
-
-环境自检：`mpltweak doctor`（Python / matplotlib 版本、可用后端、字体）
-
-> 脚本里写了 `matplotlib.use('Agg')`（科研脚本批量出图的常见写法）**不需要改** ——
-> 启动器会临时接管后端，`savefig` 的结果与原来完全一致。
 
 ## 键位速查
 

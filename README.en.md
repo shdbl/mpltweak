@@ -34,6 +34,23 @@ mpltweak turns that loop into **eyes and a mouse**:
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
 
+## Demos
+
+<table>
+<tr>
+<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
+<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
+<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
+<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
+</tr>
+<tr>
+<td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
+<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
+<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
+<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
+</tr>
+</table>
+
 ## Workflow
 
 ```mermaid
@@ -59,13 +76,29 @@ flowchart TD
 Until you close the window, not a single character of your script changes — and the write-back
 only happens when you explicitly ask for it in step three.
 
-## Quick start
-
-### 0 · Install
+## Install
 
 ```bash
-pip install "mpltweak[qt]"      # with the interactive window
+pip install mpltweak            # core
+pip install "mpltweak[qt]"      # core + PyQt5
 ```
+
+The only difference is **whether PyQt5 comes along**:
+
+| | `mpltweak` | `mpltweak[qt]` |
+|---|---|---|
+| `mpltweak apply` / `mpltweak doctor` | ✅ | ✅ |
+| Interactive window | needs Qt already in your environment (e.g. the PyQt5/PySide that Anaconda ships) | ✅ always (PyQt5 gets installed) |
+
+So: **if unsure, install `[qt]`** (about 60MB extra, but it always works); if your environment
+already has Qt, the core package is enough.
+
+Check your setup afterwards with `mpltweak doctor` (Python / matplotlib version, backends, fonts).
+
+> `matplotlib.use('Agg')` in your script (common in batch plotting) **does not need changing** —
+> the launcher takes over the backend temporarily and `savefig` output stays identical.
+
+## Quick start
 
 ### 1 · Your existing script, not a line to change
 
@@ -145,41 +178,6 @@ python fig1.py
 | Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
 | Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
 | Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
-
-## Demos
-
-<table>
-<tr>
-<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
-<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
-<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
-<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
-</tr>
-<tr>
-<td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
-<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
-<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
-</tr>
-</table>
-
-## The write-back loop
-
-One command puts it back into the source — below is **real output and a real diff**:
-
-<img src="docs/gifs/05_writeback.gif" width="620" alt="Write-back loop: real apply --write output and code diff">
-
-## Install
-
-```bash
-pip install mpltweak            # core (write-back / doctor, no window needed)
-pip install "mpltweak[qt]"      # with the PyQt5 window (recommended on Windows / Linux)
-```
-
-Check your environment with `mpltweak doctor` (Python / matplotlib version, backends, fonts).
-
-> `matplotlib.use('Agg')` in your script (common in batch plotting) **does not need changing** —
-> the launcher takes over the backend temporarily and `savefig` output stays identical.
 
 ## Keys
 
