@@ -1,0 +1,47 @@
+name: Publish to PyPI
+
+# Trusted Publishing（无需 API token）：
+#   GitHub 通过 OIDC 给 PyPI 一张"临时身份证"，因此本文件必须在 GitHub Actions 里跑。
+# 触发方式：在 GitHub 上发布一个 Release，或手动 workflow_dispatch。
+#
+# 首次发布前需要在 PyPI 配置 Pending Publisher（项目尚不存在时也叫这个）：
+#   https://pypi.org/manage/account/publishing/
+#     PyPI Project Name : mpltweak
+#     Owner             : shdbl
+#     Repository name   : mpltweak
+#     Workflow name     : publish.yml
+#     Environment name  : pypi          ← 与本文件 environment 保持一致
+#
+# 若不想用 Environment，把下面的 environment 整段删掉，并把 PyPI 配置里的
+# Environment name 留空即可。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # Trusted Publishing 必需
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Check the distribution
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,55 +1,66 @@
 <div align="center">
 
-<img src="docs/banner.png" width="780" alt="mpltweak —— matplotlib layout, the PPT way">
+<img src="docs/banner.png" width="820" alt="mpltweak — 像在 PPT 里调多图排版一样调 matplotlib">
 
 # mpltweak
 
-**像在 PPT 里调多图排版一样调 matplotlib。**
-
-拖面板、多选对齐 / 均分、边缘吸附、悬停改字号、cartopy 重图切线框、一键裁白边。
-**你调图的时候，脚本一个字都不动**；等你点头，它才把那几个数字**精确写回原文件**。
+**像在 PPT 里调多图排版一样调 matplotlib，然后把结果写回你的代码。**
 
 [![PyPI](https://img.shields.io/badge/pypi-mpltweak-blue)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)]()
 
-`pip install mpltweak` · 只依赖 matplotlib（交互窗口另需 PyQt5 或 TkAgg）
+`pip install mpltweak` · 只依赖 matplotlib（交互窗口另需 PyQt5 或 Tk）
+
+[English](README.en.md) · **中文**
 
 </div>
 
 ---
 
-## 它解决什么问题
+## 布局是看出来的，不是猜出来的
 
-科研绘图脚本里，最耗时的从来不是数据，是**排版**：子图挡住轴标签、间距不匀、
-左边缘差 0.02、图例压住曲线、字号在论文里太小……而这一切只能靠
-「改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 再改」的循环。
+拖、对齐、吸附 —— 在真实的图上把位置摆对。关掉窗口，参数落在 `.tweak_params/`。
 
-mpltweak 把这段循环变成**肉眼 + 鼠标**：
+一条 `mpltweak apply --write`，它按 AST 找到那几个数字，**原位改写**，不插一行杂物；
+备份、重跑、语义比对，任何一步不过就自动回滚 —— **不留改坏的脚本**。
+
+不 import、不注入、不留钩子。你的源码里，没有它来过的痕迹。
 
 ```
-  改代码 → 重跑 → 看图 → 再改 ...              ← 传统方式
-  ──────────────────────────────────────
-  mpltweak fig1.py  →  拖  →  mpltweak apply --write    ← 三步
+              ┌────────────────────────┐
+              │        fig1.py         │   纯 matplotlib
+              │  fig.add_axes([...])   │   零改动
+              └───────────┬────────────┘
+                          │  mpltweak fig1.py
+                          ▼
+              ┌────────────────────────┐
+              │        交互窗口         │   拖 · 对齐 · 吸附 · 调字号
+              │                        │   只在内存里改
+              └───────────┬────────────┘
+                          │  关窗
+                          ▼
+              ┌────────────────────────┐
+              │  .tweak_params/        │   参数静默落盘（公开 JSON 规范）
+              │      fig1.json         │   代码一个字符都没动
+              └───────────┬────────────┘
+                          │  mpltweak apply fig1.py --write
+                          ▼
+              ┌────────────────────────┐
+              │  AST 定位 → 原位改写    │   只改代码里已有的那几个数字
+              └───────────┬────────────┘
+                          │  三层验证
+              ┌───────────┴────────────┐
+              ▼                        ▼
+     ┌──────────────────┐     ┌──────────────────┐
+     │       通过        │     │       失败        │
+     │  提交改动 + 备份  │     │     自动回滚      │
+     └──────────────────┘     └──────────────────┘
 ```
-
-**它只管样式和位置，不发明内容**——文字、数据、图形仍完全由你的代码决定。
-
----
-
-## 30 秒看懂
-
-| 步骤 | 命令 | 发生了什么 |
-|---|---|---|
-| ① 开窗调图 | `mpltweak fig1.py` | 脚本照常执行（写了 `matplotlib.use('Agg')` 也不用改），弹出交互窗口 |
-| ② 拖、对齐、改字号 | 鼠标 + 几个键 | 只在内存里生效，**代码零改动** |
-| ③ 关窗 | 关闭窗口 | 只写 `<脚本目录>/.tweak_params/fig1.json`，**代码依然没动** |
-| ④ 预览 | `mpltweak apply fig1.py` | 打印改动清单（只读，不落盘） |
-| ⑤ 写回 | `mpltweak apply fig1.py --write` | **原位改那几个数字** + 备份 + 重跑验证，失败自动回滚 |
 
 第 ⑤ 步长这样（真实运行输出 + 真实 diff）：
 
-<img src="docs/gifs/05_writeback.gif" width="720" alt="写回闭环：apply --write 的真实输出与代码 diff">
+<img src="docs/gifs/05_writeback.gif" width="760" alt="写回闭环：apply --write 的真实输出与代码 diff">
 
 ---
 
@@ -58,7 +69,7 @@ mpltweak 把这段循环变成**肉眼 + 鼠标**：
 <table>
 <tr>
 <td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
-<b>拖动 + 边缘吸附</b><br>拖动时显示 ghost 预览与对齐参考线，靠近对齐位置自动贴合</td>
+<b>拖动 + 边缘吸附</b><br>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</td>
 <td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
 <b>多选对齐 / 均分</b><br>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</td>
 </tr>
@@ -85,7 +96,7 @@ pip install "mpltweak[qt]"      # 带 PyQt5 交互窗口（Windows / Linux 推�
 mpltweak doctor     # Python / matplotlib 版本、可用后端、字体等
 ```
 
-> 脚本里写了 `matplotlib.use('Agg')`（科研脚本批量出图的常见写法）**不需要改**——
+> 脚本里写了 `matplotlib.use('Agg')`（科研脚本批量出图的常见写法）**不需要改** ——
 > 启动器会临时接管后端，`savefig` 的结果与原来完全一致。
 
 ---
@@ -109,32 +120,9 @@ mpltweak doctor     # Python / matplotlib 版本、可用后端、字体等
 | `n` · `e` · `?` | 吸附开关 / 手动导出 / 帮助 |
 | 拖窗口边缘 | 改画布尺寸（写回 `figsize`） |
 
-> ⚠️ **开窗前请切到英文输入法**：中文输入法打开时，`c`/`s`/`g`/`x`/`y` 等字母快捷键会被输入法吞掉。
-
 ---
 
-## 为什么不一样
-
-同赛道已经有做得不错的工具（例如 [Tavotto](https://www.tavotto.com/)，AGPL-3.0）。
-差别不在"能不能拖"，在**改完的东西去哪**：
-
-| | mpltweak | Tavotto |
-|---|---|---|
-| 形态 | pip 包 + CLI（`mpltweak` / `mpltweak apply`） | 桌面安装包（自带 Python）+ Codex 插件 |
-| 排版手感 | **PPT 式**：多选、对齐、均分、吸附、裁白边、线条模式 | 图内对象编辑 + 毫米级拼版 |
-| 改动去向 | **AST 确定性写回原脚本**（可 diff、可 review、有备份、有验证） | sidecar override，**脚本永不修改** |
-| 参数格式 | **公开 JSON 规范（version 3）**，agent 可直接读写 | 私有 layout / override 文件 |
-| 期刊预检 | 暂无 | **有**（栏宽、字号下限、DPI 的 profile 校验） |
-| 矢量导出 | 由你的脚本自己 `savefig` | PDF / PNG / TIFF 同源导出 |
-| 依赖 | matplotlib（窗口另需 PyQt5 / Tk） | 自带 pinned runtime |
-
-**"零侵入"我们照写，但含义更严格**：调图全程不改代码、不加 `import`、不生成副文件——
-参数静默落在 `.tweak_params/*.json`。**写回是你显式点头后的动作**，而且只改代码里
-**原有的那些数字**（`add_axes([...])` 就改那 4 个数），不插一长串调整块。
-
----
-
-## 可靠性：三层验证
+## 三层验证
 
 `--write` 不是"盲改"，每一步都可回滚：
 
@@ -143,8 +131,8 @@ mpltweak doctor     # Python / matplotlib 版本、可用后端、字体等
    逐项比对；"跑通了但布局没落到目标图"会被判失败；
 3. **换锚点重试** —— 图号对应的 `savefig` → 主锚点 → 脚本尾，全部失败才回滚。
 
-备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录），**绝不留下改坏的脚本**；
-慢脚本超时不会被误判为失败（只提示手动确认）。
+备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录）；
+慢脚本超时不会被误判为失败，只提示手动确认。
 
 ---
 
@@ -182,19 +170,6 @@ mpltweak doctor     # Python / matplotlib 版本、可用后端、字体等
 
 ---
 
-## 局限（先看这里再决定用不用）
-
-- **AST 写回不是万能的**：动态构造的布局（位置来自变量或循环计算）无法原位替换，
-  会退化为块方式（`--style block`）或需要手动落实；
-- **原位写回只改代码里已有的项**：参数里有 `grid=True` 但代码里没有 `grid(...)` 时，
-  它会明确告诉你"保持原样"，不会擅自插入新语句；
-- **没有期刊预检**（栏宽 / 字号下限 / DPI profile），也没有矢量导出——这两件事留给你的
-  `savefig` 与投稿流程；
-- **图例只吸 8 个标准位**，不支持自由坐标；
-- 需要交互后端（Qt 或 Tk）；纯服务器环境只能跑 `apply` 与 `doctor`。
-
----
-
 ## 开发
 
 ```bash
@@ -219,7 +194,7 @@ src/mpltweak/
 ```
 
 `toolbox.py` 也可作**嵌入 API**（`from mpltweak.toolbox import gaitu`），
-但主推 CLI——用户脚本里不该出现本工具的任何痕迹。
+但主推 CLI —— 用户脚本里不该出现本工具的任何痕迹。
 
 ## License
 
