@@ -20,19 +20,40 @@
 
 In a plotting script, the data is rarely what eats your time — **the layout is**: a panel
 covering an axis label, uneven gutters, a left edge that is off by 0.02, a legend sitting on a
-curve, text too small for print. And the only way to fix any of it is the loop
-"edit a number → re-run → look at the PNG → edit again".
+curve, text too small for print. And the only way to fix any of it is trial and error.
 
-mpltweak turns that loop into **eyes and a mouse**:
-
-```text
-  edit → re-run → look → edit again ...                    ← the old way
-  ──────────────────────────────────────────────────
-  mpltweak fig1.py  →  drag  →  mpltweak apply --write     ← three steps
-```
+| | |
+|---|---|
+| **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
+| **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
 
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
+
+## What it actually changes
+
+Take `fig1.py`. **Before** (hand-written numbers, rarely even):
+
+```python
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+```
+
+**After** (what `mpltweak apply --write` leaves behind):
+
+```diff
+-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
++ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
+-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
++ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
+-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
++ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
+```
+
+**Only those numbers move.** No new lines, no `import`, no inserted scaffolding, no trace of the
+tool. Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters
+that were **already in your code**.
 
 ## Demos
 
@@ -58,7 +79,7 @@ flowchart TD
     A["fig1.py<br/>plain matplotlib, not a line to change"]:::script
     B(["Live window<br/>drag · align · snap · font size"]):::win
     C[".tweak_params/fig1.json<br/>params saved silently"]:::script
-    D["AST lookup → rewrite<br/>only the numbers already there"]:::script
+    D["AST lookup → rewrite the plotting params"]:::script
     E{"Three-layer verification"}:::check
     F(["commit + keep a backup"]):::ok
     G(["auto rollback, never leaves a broken script"]):::bad
@@ -100,9 +121,6 @@ Check your setup afterwards with `mpltweak doctor` (Python / matplotlib version,
 > installs just the code (add `pip install matplotlib` yourself) and skips Qt entirely.
 > Other Qt bindings (PySide6 / PyQt6) work too — `mpltweak doctor` tells you which one it picked.
 
-> `matplotlib.use('Agg')` in your script (common in batch plotting) **does not need changing** —
-> the launcher takes over the backend temporarily and `savefig` output stays identical.
-
 ## Quick start
 
 ### 1 · Your existing script, not a line to change
@@ -139,7 +157,7 @@ mpltweak fig1.py
 In the window: **drag** a panel to move it, drag an **edge / corner** to resize,
 **Ctrl+click** to multi-select → `Ctrl+Shift+L` to left-align / `Ctrl+Shift+V` to distribute,
 **hover text** and press `+` / `-` to resize it, **space** for wireframe mode (fast on heavy
-figures), **Ctrl+F** to trim the white margin. Full key list below.
+figures), **Ctrl+F** to trim the white margin. Press **`?`** any time for the key cheat-sheet.
 
 **Close the window when you are done.** Not a single character of your script has changed —
 the params are sitting in `.tweak_params/fig1.json`.
@@ -179,7 +197,7 @@ python fig1.py
 
 | Symptom | What to do |
 |---|---|
-| No window / missing backend | Run `mpltweak doctor`; if Qt is missing, `pip install "mpltweak[qt]"` |
+| No window / missing backend | Run `mpltweak doctor`; reinstall `mpltweak` if Qt is missing |
 | Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
 | Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
 | Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
@@ -190,6 +208,7 @@ python fig1.py
 
 | Action | Effect |
 |---|---|
+| **`?`** | **Open / close the key cheat-sheet** (in-canvas overlay: Esc closes, L switches language) |
 | Drag a panel / drag an edge or corner | Move / PowerPoint-style resize (opposite edge pinned; aspect-locked axes scale uniformly) |
 | **Ctrl+click** (or Shift+click) | Add / remove from selection; drag on empty space for rubber-band select |
 | **Ctrl+Shift+L/R/T/B/C/M** | Align left / right / top / bottom / centre horizontally / centre vertically |
@@ -202,7 +221,7 @@ python fig1.py
 | Drag a colorbar's long edge / thin side / middle | Length / thickness / move the whole bar |
 | Drag the legend | Preview of 8 standard spots, snaps on release |
 | `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | Line width / line colour / colormap / grid / spines / linear-log axes |
-| `n` · `e` · `?` | Snapping toggle / manual export / help |
+| `n` · `e` | Snapping toggle / manual export |
 | Drag the window edge | Change the canvas size (written back as `figsize`) |
 
 ## Three-layer verification
