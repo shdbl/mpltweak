@@ -198,7 +198,7 @@ mpltweak doctor     # Python / matplotlib 版本、可用后端、字体等
 ## 开发
 
 ```bash
-git clone <repo> && cd mpltweak
+git clone https://github.com/shdbl/mpltweak && cd mpltweak
 pip install -e .
 python tests/test_tweak.py       # 交互内核
 python tests/test_events.py      # 事件路径
