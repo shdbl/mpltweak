@@ -188,8 +188,9 @@ flowchart TD
     classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
 ```
 
-Until you close the window, not a single character of your script changes — and the write-back
-only happens when you explicitly ask for it in step three.
+From opening the window to `mpltweak apply --write`, not a single character of your script changes
+at any point (including after you close it) — the write-back only happens when you explicitly ask
+for it in step three.
 
 ## Keys
 

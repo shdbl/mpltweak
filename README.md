@@ -183,7 +183,8 @@ flowchart TD
     classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
 ```
 
-关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
+从打开窗口到 `mpltweak apply --write`，中间任何一步（包括关窗之后）脚本一个字符都不会变；
+写回是你在第三步显式点头后的动作。
 
 ## 键位速查
 
