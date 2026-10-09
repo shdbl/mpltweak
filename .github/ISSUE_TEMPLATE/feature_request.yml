@@ -1,0 +1,39 @@
+name: Feature request
+description: Suggest an improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: mpltweak deliberately only touches **position / font size /
+        legend / style**. It never invents content (text, data, artists stay whatever
+        your code says). Requests outside that scope will likely be declined — not
+        because they're bad ideas, but because they'd change what the tool is.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: Describe the workflow that's painful today, not the solution yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Current workaround, or another tool that handles it.
+
+  - type: textarea
+    id: script
+    attributes:
+      label: Example script / figure (optional)
+      render: python

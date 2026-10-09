@@ -9,6 +9,7 @@
 [![PyPI](https://img.shields.io/pypi/v/mpltweak?style=flat-square&color=2F6FEB)](https://pypi.org/project/mpltweak/)
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
+[![Tests](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml/badge.svg)](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml)
 
 **中文** | [English](https://github.com/shdbl/mpltweak/blob/main/README.en.md)
 

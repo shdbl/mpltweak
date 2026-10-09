@@ -1,0 +1,75 @@
+name: Bug report
+description: Something doesn't work as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The two fields that save the most round-trips are
+        the **version** and the **minimal script** — please fill them if you can.
+
+  - type: input
+    id: version
+    attributes:
+      label: mpltweak version
+      description: "Output of `pip show mpltweak` (the Version line)"
+      placeholder: "0.1.6"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: backend
+    attributes:
+      label: Interactive backend
+      description: "The `backend` line from `mpltweak doctor`"
+      placeholder: "QtAgg"
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the exact command you ran and the full output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: script
+    attributes:
+      label: Minimal script (if the problem involves a specific figure)
+      description: Please trim it down as far as you can — a 10-line reproducer gets fixed much faster.
+      render: python
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which stage fails?
+      multiple: true
+      options:
+        - Opening the window (`mpltweak script.py`)
+        - Dragging / snapping in the window
+        - Writing back (`mpltweak apply --write`)
+        - Verification / rollback
+        - Agent interface (`describe` / `check` / `schema` / `mcp`)
+        - Something else
+    validations:
+      required: true

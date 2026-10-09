@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    env:
+      # 测试全程无头，只用 Agg。开窗那部分（Qt）不参与 CI ——
+      # 源码里 Qt 的 import 都在函数内部，模块顶层不碰 Qt。
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 刻意 --no-deps：CI 不需要 PyQt5（那是开窗才用的），
+          # 只装测试真正依赖的 matplotlib / numpy / mcp。
+          python -m pip install matplotlib numpy "mcp>=1.0"
+          python -m pip install -e . --no-deps
+
+      - name: Run test suites
+        run: |
+          set -e
+          for t in test_tweak test_events test_redo test_writeback \
+                   test_agent_api test_check test_mcp; do
+            echo "::group::$t"
+            python "tests/$t.py"
+            echo "::endgroup::"
+          done
+
+      - name: Smoke-test the CLI
+        run: |
+          mpltweak --help
+          # doctor 会探测交互后端；无头 runner 上没有 Qt/Tk，它给出人话提示后
+          # 返回非 0 是预期行为，不算失败。
+          mpltweak doctor || true
