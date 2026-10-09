@@ -26,7 +26,3 @@ docs/alternatives/
 .vscode/
 .idea/
 docs/gifs/_orig/
-
-# 只在本地保留，不上传
-MAINTENANCE.md
-
