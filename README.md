@@ -18,8 +18,8 @@
 
 ## 它解决什么问题
 
-科研绘图脚本里，最耗时的从来不是数据，是**排版**：子图挡住轴标签、间距不匀、
-左边缘差 0.02、图例压住曲线、字号在论文里太小……而这一切只能靠一遍遍试。
+多面板图的返工，多半不是数据的问题，而是布局：轴标签被相邻子图压住、面板间距不等、
+左边缘差 0.02、图例落在曲线上 —— 每一处都只能靠改参数、重跑、再看一遍。
 
 | | |
 |---|---|
@@ -27,6 +27,23 @@
 | **mpltweak** | 开窗 → 手拖到位 → `mpltweak apply --write` → 那几个数字自己回到代码里 |
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
+
+## 演示
+
+<table>
+<tr>
+<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
+<b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
+<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
+<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</sub></td>
+</tr>
+<tr>
+<td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
+<b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
+<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
+<b>重图切线框（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，排版时不再卡</sub></td>
+</tr>
+</table>
 
 ## 它到底改了什么
 
@@ -52,70 +69,13 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 **只动了这些数字**：没有新增一行、没有 `import`、没有插入调整块、没有留下它的痕迹。
 字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
 
-## 演示
-
-<table>
-<tr>
-<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
-<b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
-<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
-<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分，从"随手写的参数"变整齐一列</sub></td>
-</tr>
-<tr>
-<td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
-<b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
-<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
-<b>重图切线框（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，排版时不再卡</sub></td>
-</tr>
-</table>
-
-## 工作流
-
-```mermaid
-flowchart TD
-    A["fig1.py<br/>纯 matplotlib，一行都不用改"]:::script
-    B(["交互窗口<br/>拖 · 对齐 · 吸附 · 调字号"]):::win
-    C[".tweak_params/fig1.json<br/>参数静默落盘，代码没动"]:::script
-    D["AST 定位 → 原位改写画图参数"]:::script
-    E{"三层验证"}:::check
-    F(["提交改动 + 留备份"]):::ok
-    G(["自动回滚，绝不留下改坏的脚本"]):::bad
-
-    A -->|mpltweak fig1.py| B
-    B -->|关窗| C
-    C -->|mpltweak apply --write| D
-    D -->|自动比对| E
-    E -->|通过| F
-    E -->|失败| G
-
-    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
-    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
-    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
-    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
-    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
-```
-
-关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
-
 ## 安装
 
 ```bash
 pip install mpltweak
 ```
 
-装上就能弹窗 —— **交互窗口后端（PyQt5）是默认依赖**，不需要方括号选项：
-
-| 装了什么 | 说明 |
-|---|---|
-| matplotlib | 绘图内核 |
-| PyQt5 | 交互窗口后端 |
-| CLI | `mpltweak` · `mpltweak apply` · `mpltweak doctor` |
-
-装完先自检：`mpltweak doctor`（Python / matplotlib 版本、可用后端、字体）
-
-> 纯服务器 / CI 上只想要写回功能，可以 `pip install mpltweak --no-deps` 只装代码
-> （再单独 `pip install matplotlib`），省掉 Qt 的体积；
-> 装了别的 Qt 绑定（PySide6 / PyQt6）也能用，`mpltweak doctor` 会告诉你它选了哪个。
+<sub>可选：`mpltweak doctor` 自检环境（Python / matplotlib 版本、可用后端、字体）</sub>
 
 ## 快速开始
 
@@ -190,12 +150,40 @@ python fig1.py
 
 | 现象 | 处理 |
 |---|---|
-| 没弹窗 / 报缺后端 | `mpltweak doctor` 看诊断；缺 Qt 就重新装 `mpltweak` |
+| 没弹窗 | 运行 `mpltweak doctor` 看诊断 |
 | 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
 | 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
 | 脚本要读数据 / 跑很久 | `--write --no-verify` 跳过重跑验证，或 `--timeout 600` 放宽 |
 | **拖动特别卡** | 按 **空格** 切线框模式：只画边框、坐标轴和文字，**不渲染数据图元**（cartopy 大图实测 494ms → 169ms），挪完再按一次空格恢复 |
 | 手动改过代码后再开窗 | 会自动**不套用**上次参数（避免静默覆盖你的改动）并给出提示；确要接着上次调，加 `--force-resume` |
+
+## 工作流
+
+```mermaid
+flowchart TD
+    A["fig1.py<br/>纯 matplotlib，一行都不用改"]:::script
+    B(["交互窗口<br/>拖 · 对齐 · 吸附 · 调字号"]):::win
+    C[".tweak_params/fig1.json<br/>参数静默落盘，代码没动"]:::script
+    D["AST 定位 → 原位改写画图参数"]:::script
+    E{"三层验证"}:::check
+    F(["提交改动 + 留备份"]):::ok
+    G(["自动回滚，绝不留下改坏的脚本"]):::bad
+
+    A -->|mpltweak fig1.py| B
+    B -->|关窗| C
+    C -->|mpltweak apply --write| D
+    D -->|自动比对| E
+    E -->|通过| F
+    E -->|失败| G
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
+```
+
+关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
 
 ## 键位速查
 
@@ -229,9 +217,10 @@ python fig1.py
 备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录）；
 慢脚本超时不会被误判为失败，只提示手动确认。
 
-## `.tweak_params/*.json` 规范（version 3）
+## 参数文件（`.tweak_params/*.json`）
 
-参数文件是**公开格式** —— 可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实：
+参数文件是**公开格式** —— 可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。
+顶层 `version` 字段标记格式版本（当前为 3），工具据此判断跨版本兼容性：
 
 ```jsonc
 {
@@ -278,7 +267,7 @@ src/mpltweak/
 ├── cli.py          # mpltweak <脚本> | apply | doctor
 ├── launch.py       # 跑脚本 → 挂窗口 → 关窗存参数
 ├── toolbox.py      # 交互内核（Tweak 控制器，纯 matplotlib 事件）
-├── params.py       # 参数 JSON 规范（version 3）
+├── params.py       # 参数 JSON 规范
 ├── apply.py        # 改动清单 / 写回入口
 ├── writeback.py    # AST 定位 + 原位 / 块写回
 └── verify.py       # 语义验证（重跑后逐项比对）

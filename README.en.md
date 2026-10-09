@@ -18,9 +18,9 @@
 
 ## What it solves
 
-In a plotting script, the data is rarely what eats your time — **the layout is**: a panel
-covering an axis label, uneven gutters, a left edge that is off by 0.02, a legend sitting on a
-curve, text too small for print. And the only way to fix any of it is trial and error.
+Most rework on a multi-panel figure has nothing to do with the data. It is layout: an axis label
+clipped by the neighbouring panel, uneven gutters, a left edge off by 0.02, a legend sitting on a
+curve — each one costing another edit, another re-run, another look.
 
 | | |
 |---|---|
@@ -29,6 +29,23 @@ curve, text too small for print. And the only way to fix any of it is trial and 
 
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
+
+## Demos
+
+<table>
+<tr>
+<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
+<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
+<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
+<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
+</tr>
+<tr>
+<td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
+<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
+<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
+<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
+</tr>
+</table>
 
 ## What it actually changes
 
@@ -55,71 +72,13 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 tool. Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters
 that were **already in your code**.
 
-## Demos
-
-<table>
-<tr>
-<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
-<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
-<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
-<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
-</tr>
-<tr>
-<td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
-<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
-<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
-</tr>
-</table>
-
-## Workflow
-
-```mermaid
-flowchart TD
-    A["fig1.py<br/>plain matplotlib, not a line to change"]:::script
-    B(["Live window<br/>drag · align · snap · font size"]):::win
-    C[".tweak_params/fig1.json<br/>params saved silently"]:::script
-    D["AST lookup → rewrite the plotting params"]:::script
-    E{"Three-layer verification"}:::check
-    F(["commit + keep a backup"]):::ok
-    G(["auto rollback, never leaves a broken script"]):::bad
-
-    A -->|mpltweak fig1.py| B
-    B -->|close window| C
-    C -->|mpltweak apply --write| D
-    D -->|compare| E
-    E -->|passed| F
-    E -->|failed| G
-
-    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
-    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
-    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
-    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
-    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
-```
-
-Until you close the window, not a single character of your script changes — and the write-back
-only happens when you explicitly ask for it in step three.
-
 ## Install
 
 ```bash
 pip install mpltweak
 ```
 
-That's it — **the window backend (PyQt5) is a default dependency**, no extra bracket needed:
-
-| What you get | Why |
-|---|---|
-| matplotlib | the plotting core |
-| PyQt5 | the interactive window backend |
-| CLI | `mpltweak` · `mpltweak apply` · `mpltweak doctor` |
-
-Check your setup afterwards with `mpltweak doctor` (Python / matplotlib version, backends, fonts).
-
-> On a headless server / CI where you only want the write-back, `pip install mpltweak --no-deps`
-> installs just the code (add `pip install matplotlib` yourself) and skips Qt entirely.
-> Other Qt bindings (PySide6 / PyQt6) work too — `mpltweak doctor` tells you which one it picked.
+<sub>Optional: `mpltweak doctor` checks your environment (Python / matplotlib version, backends, fonts).</sub>
 
 ## Quick start
 
@@ -197,12 +156,41 @@ python fig1.py
 
 | Symptom | What to do |
 |---|---|
-| No window / missing backend | Run `mpltweak doctor`; reinstall `mpltweak` if Qt is missing |
+| No window | Run `mpltweak doctor` for a diagnosis |
 | Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
 | Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
 | Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
 | **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
 | You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
+
+## Workflow
+
+```mermaid
+flowchart TD
+    A["fig1.py<br/>plain matplotlib, not a line to change"]:::script
+    B(["Live window<br/>drag · align · snap · font size"]):::win
+    C[".tweak_params/fig1.json<br/>params saved silently"]:::script
+    D["AST lookup → rewrite the plotting params"]:::script
+    E{"Three-layer verification"}:::check
+    F(["commit + keep a backup"]):::ok
+    G(["auto rollback, never leaves a broken script"]):::bad
+
+    A -->|mpltweak fig1.py| B
+    B -->|close window| C
+    C -->|mpltweak apply --write| D
+    D -->|compare| E
+    E -->|passed| F
+    E -->|failed| G
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+    classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
+```
+
+Until you close the window, not a single character of your script changes — and the write-back
+only happens when you explicitly ask for it in step three.
 
 ## Keys
 
@@ -238,10 +226,11 @@ python fig1.py
 The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
 and a slow script that times out is not treated as a failure — you are simply told to confirm.
 
-## `.tweak_params/*.json` spec (version 3)
+## Params file (`.tweak_params/*.json`)
 
 The params file is a **public format** — edit it by hand, or let an AI / agent generate it, and
-`--write` will still apply it:
+`--write` will still apply it. The top-level `version` field marks the format revision (currently 3)
+so the tool can tell how to read older files:
 
 ```jsonc
 {
@@ -288,7 +277,7 @@ src/mpltweak/
 ├── cli.py          # mpltweak <script> | apply | doctor
 ├── launch.py       # run the script → attach windows → save params on close
 ├── toolbox.py      # interactive core (the Tweak controller, pure matplotlib events)
-├── params.py       # params JSON spec (version 3)
+├── params.py       # params JSON spec
 ├── apply.py        # change list / write-back entry point
 ├── writeback.py    # AST lookup + in-place / block write-back
 └── verify.py       # semantic verification (re-run, compare field by field)
