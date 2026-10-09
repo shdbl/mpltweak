@@ -59,6 +59,93 @@ flowchart TD
 Until you close the window, not a single character of your script changes — and the write-back
 only happens when you explicitly ask for it in step three.
 
+## Quick start
+
+### 0 · Install
+
+```bash
+pip install "mpltweak[qt]"      # with the interactive window
+```
+
+### 1 · Your existing script, not a line to change
+
+```python
+# fig1.py — just plain matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+
+fig = plt.figure(figsize=(10, 8))
+x = np.linspace(0, 1, 200)
+
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])      # the layout is these numbers
+ax1.plot(x, np.sin(6 * x))
+ax1.set_title('(a)')
+
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # hand-written numbers are rarely even
+ax2.scatter(np.random.rand(60), np.random.rand(60), s=8)
+
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+ax3.hist(np.random.randn(300), bins=20)
+
+fig.savefig('fig1.png', dpi=150)
+```
+
+No `import mpltweak`, no hooks, no decorators.
+
+### 2 · Open the window and drag things
+
+```bash
+mpltweak fig1.py
+```
+
+In the window: **drag** a panel to move it, drag an **edge / corner** to resize,
+**Ctrl+click** to multi-select → `Ctrl+Shift+L` to left-align / `Ctrl+Shift+V` to distribute,
+**hover text** and press `+` / `-` to resize it, **space** for wireframe mode (fast on heavy
+figures), **Ctrl+F** to trim the white margin. Full key list below.
+
+**Close the window when you are done.** Not a single character of your script has changed —
+the params are sitting in `.tweak_params/fig1.json`.
+
+### 3 · See what it intends to change (read-only)
+
+```bash
+mpltweak apply fig1.py
+```
+
+Prints the position and font-size list for every axis. Writes nothing.
+
+### 4 · Write it back
+
+```bash
+mpltweak apply fig1.py --write
+```
+
+```text
+✓ 已原位写回: fig1.py
+  原位修改 4 处: ax0.pos, ax1.pos, ax2.pos, ax3.pos
+  备份: .tweak_params/fig1.tweak.bak
+  ✓ Agg 重跑验证通过
+  ✓ 语义验证通过（目标图状态 == 参数）
+```
+
+It only rewrites the numbers inside your `add_axes([...])` calls; if any verification step
+fails, it rolls back.
+
+### 5 · Re-run and look
+
+```bash
+python fig1.py
+```
+
+### Common cases
+
+| Symptom | What to do |
+|---|---|
+| No window / missing backend | Run `mpltweak doctor`; if Qt is missing, `pip install "mpltweak[qt]"` |
+| Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
+| Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
+| Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
+
 ## Demos
 
 <table>

@@ -56,6 +56,90 @@ flowchart TD
 
 关窗之前，脚本一个字符都不会变；写回是你在第三步显式点头后的动作。
 
+## 快速开始
+
+### 0 · 装
+
+```bash
+pip install "mpltweak[qt]"      # 带上交互窗口
+```
+
+### 1 · 你原来的脚本，一行都不用改
+
+```python
+# fig1.py —— 就是平时写的 matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+
+fig = plt.figure(figsize=(10, 8))
+x = np.linspace(0, 1, 200)
+
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])      # 位置就是这几个数字
+ax1.plot(x, np.sin(6 * x))
+ax1.set_title('(a)')
+
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # 手写的数字，通常都不齐
+ax2.scatter(np.random.rand(60), np.random.rand(60), s=8)
+
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+ax3.hist(np.random.randn(300), bins=20)
+
+fig.savefig('fig1.png', dpi=150)
+```
+
+不需要 `import mpltweak`，不需要任何钩子。
+
+### 2 · 弹窗调图
+
+```bash
+mpltweak fig1.py
+```
+
+窗口里：**拖**面板移动、拖**边 / 角**缩放、**Ctrl 加选**多个面板 →
+`Ctrl+Shift+L` 左对齐 / `Ctrl+Shift+V` 垂直均分、鼠标**悬停文字**按 `+` `-` 调字号、
+**空格**切线框（大图提速）、**Ctrl+F** 裁掉白边。完整键位见下表。
+
+**调完直接关窗。** 此时脚本一个字符都没变，参数落在 `.tweak_params/fig1.json`。
+
+### 3 · 先看它打算改什么（只读）
+
+```bash
+mpltweak apply fig1.py
+```
+
+打印每个轴的位置、字号清单，不写任何文件。
+
+### 4 · 写回
+
+```bash
+mpltweak apply fig1.py --write
+```
+
+```text
+✓ 已原位写回: fig1.py
+  原位修改 4 处: ax0.pos, ax1.pos, ax2.pos, ax3.pos
+  备份: .tweak_params/fig1.tweak.bak
+  ✓ Agg 重跑验证通过
+  ✓ 语义验证通过（目标图状态 == 参数）
+```
+
+它在你的脚本里只改 `add_axes([...])` 里那几个数字；任何一步验证不过就自动回滚。
+
+### 5 · 重跑看图
+
+```bash
+python fig1.py
+```
+
+### 常见情况
+
+| 现象 | 处理 |
+|---|---|
+| 没弹窗 / 报缺后端 | `mpltweak doctor` 看诊断；缺 Qt 就 `pip install "mpltweak[qt]"` |
+| 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
+| 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
+| 脚本要读数据 / 跑很久 | `--write --no-verify` 跳过重跑验证，或 `--timeout 600` 放宽 |
+
 ## 演示
 
 <table>
