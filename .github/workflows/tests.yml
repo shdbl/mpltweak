@@ -30,7 +30,11 @@ jobs:
           python -m pip install --upgrade pip
           # 刻意 --no-deps：CI 不需要 PyQt5（那是开窗才用的），
           # 只装测试真正依赖的 matplotlib / numpy / mcp。
-          python -m pip install matplotlib numpy "mcp>=1.0"
+          python -m pip install matplotlib numpy
+          # mcp 要求 Python >= 3.10；3.9 上跳过它，test_mcp 会自行 skip。
+          if [ "${{ matrix.python-version }}" != "3.9" ]; then
+            python -m pip install "mcp>=1.0"
+          fi
           python -m pip install -e . --no-deps
 
       - name: Run test suites

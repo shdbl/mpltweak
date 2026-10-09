@@ -107,6 +107,18 @@ def main():
         check(False, 'schema 可解析', e)
 
     print('§5 apply --json')
+    # 夹具的参数文件放在 .tweak_params/ 里，而那个目录是「用户脚本目录的临时产物」，
+    # 被 .gitignore 排除了 —— 所以它不会进仓库，CI 上 checkout 下来是空的，
+    # 导致 apply 没有参数可预览（files 为空）。这里现场用 describe 生成一份，
+    # 让本地与 CI 行为一致。§6/§7 用的是自己新建的临时脚本，不受影响。
+    fix_pdir = os.path.join(os.path.dirname(FIX), '.tweak_params')
+    fix_stem = os.path.splitext(os.path.basename(FIX))[0]
+    fix_ppath = os.path.join(fix_pdir, fix_stem + '.json')
+    if not os.path.exists(fix_ppath):
+        os.makedirs(fix_pdir, exist_ok=True)
+        _rc, _out, _err = run('describe', FIX)
+        with open(fix_ppath, 'w', encoding='utf-8') as _f:
+            _f.write(_out)
     rc, out, err = run('apply', FIX, '--json')
     try:
         r = json.loads(out)                     # stdout 必须只有 JSON
