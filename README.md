@@ -28,6 +28,29 @@
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
+## 给 AI / agent 的排版接口
+
+大模型能写出正确的绘图代码，但**排版数字基本靠猜** —— 它看不到那张图。
+
+mpltweak 把这部分从"猜"变成"写"：
+
+- 参数文件（`.tweak_params/*.json`）是**公开格式**：字段固定、有默认值、可校验；
+- 所以 agent 可以直接**生成或修改**它，不需要"看懂"图；
+- `mpltweak apply --write` 负责把 JSON **确定性地**落进源码 —— AST 定位、三层验证、失败回滚，
+  写错了也不会把你的脚本改坏。
+
+**让 AI 管内容，让 mpltweak 管排版。**
+
+```jsonc
+// agent 产出这个 → mpltweak apply fig1.py --write → 落进你的源码
+{ "axes": [
+  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
+  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
+] }
+```
+
 ## 演示
 
 <table>

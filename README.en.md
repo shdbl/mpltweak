@@ -31,6 +31,31 @@ need all that editing — that is what mpltweak does.**
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
 
+## A layout interface for AI agents
+
+An LLM can write correct plotting code, but **the layout numbers are guesswork** — it cannot see
+the figure.
+
+mpltweak turns that guesswork into a file write:
+
+- the params file (`.tweak_params/*.json`) is a **public format** — fixed fields, defaults,
+  validatable;
+- so an agent can generate or edit it directly, without "seeing" the figure;
+- `mpltweak apply --write` commits it to your source **deterministically**: AST lookup, three-layer
+  verification, rollback on failure — a bad guess can't corrupt your script.
+
+**Let the AI own the content; let mpltweak own the layout.**
+
+```jsonc
+// the agent produces this → mpltweak apply fig1.py --write → it lands in your source
+{ "axes": [
+  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
+  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
+] }
+```
+
 ## Demos
 
 <table>
