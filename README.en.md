@@ -1,41 +1,48 @@
 <div align="center">
 
-<img src="docs/banner.png" width="820" alt="mpltweak — matplotlib layout, the PPT way">
+<img src="docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
 
 # mpltweak
 
-**Lay out matplotlib like a slide deck — then write it back into your code.**
+**Lay out matplotlib like a slide deck — then write the numbers back into your code.**
 
-[![PyPI](https://img.shields.io/badge/pypi-mpltweak-blue)](https://pypi.org/project/mpltweak/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue)]()
+[![PyPI](https://img.shields.io/pypi/v/mpltweak?style=flat-square&color=2F6FEB)](https://pypi.org/project/mpltweak/)
+[![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
+[![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-`pip install mpltweak` · matplotlib only (a Qt or Tk backend is needed for the window)
+<sub>matplotlib event-driven · zero extra dependencies · deterministic AST write-back · three-layer verification</sub>
 
-**English** · [中文](README.md)
+<sub><code>pip install mpltweak</code> &nbsp;·&nbsp; <a href="README.md">中文</a></sub>
 
 </div>
 
----
+## What it solves
 
-## Layout is something you see, not something you guess
+In a plotting script, the data is rarely what eats your time — **the layout is**: a panel
+covering an axis label, uneven gutters, a left edge that is off by 0.02, a legend sitting on a
+curve, text too small for print. And the only way to fix any of it is the loop
+"edit a number → re-run → look at the PNG → edit again".
 
-Drag, align, snap — put the panels where they belong, on the real figure. Close the window and
-the numbers land in `.tweak_params/`.
+mpltweak turns that loop into **eyes and a mouse**:
 
-One `mpltweak apply --write` finds those exact numbers via the AST and **rewrites them in place** —
-no scaffolding inserted. Backup, headless re-run, semantic comparison: if any step fails it rolls
-back. **It never leaves a broken script behind.**
+```text
+  edit → re-run → look → edit again ...                    ← the old way
+  ──────────────────────────────────────────────────
+  mpltweak fig1.py  →  drag  →  mpltweak apply --write     ← three steps
+```
 
-No imports, no hooks, no residue. Your source code never knows it was there.
+**It only touches style and position — it never invents content.** Text, data and artists stay
+exactly what your code says.
+
+## Workflow
 
 ```mermaid
 flowchart TD
-    A["fig1.py &nbsp;·&nbsp; plain matplotlib, not a line to change"]
-    B["Live window &nbsp;·&nbsp; drag · align · snap · font size"]
-    C[".tweak_params/fig1.json &nbsp;·&nbsp; params saved silently"]
-    D["AST lookup → rewrite &nbsp;·&nbsp; only the numbers already in your code"]
-    E["Three-layer verification &nbsp;·&nbsp; runs · is right · retry another anchor"]
+    A["fig1.py · plain matplotlib, not a line to change"]
+    B["Live window · drag · align · snap · font size"]
+    C[".tweak_params/fig1.json · params saved silently"]
+    D["AST lookup → rewrite · only the numbers already there"]
+    E["Three-layer verification · runs · is right · retry anchor"]
 
     A -->|mpltweak fig1.py| B
     B -->|close window| C
@@ -49,30 +56,31 @@ flowchart TD
     style G stroke:#D97706
 ```
 
-The last step looks like this (real output, real diff):
-
-<img src="docs/gifs/05_writeback.gif" width="760" alt="Write-back loop: real apply --write output and code diff">
-
----
+Until you close the window, not a single character of your script changes — and the write-back
+only happens when you explicitly ask for it in step three.
 
 ## Demos
 
 <table>
 <tr>
 <td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
-<b>Drag + edge snapping</b><br>Ghost preview and alignment guides while dragging; it clicks into place near a target</td>
+<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
 <td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
-<b>Align / distribute</b><br>Ctrl-select three panels → one keystroke to left-align and distribute evenly</td>
+<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
 </tr>
 <tr>
 <td><img src="docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
-<b>Hover to resize text</b><br>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></td>
+<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
 <td><img src="docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode (space)</b><br>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</td>
+<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — layout stops stuttering</sub></td>
 </tr>
 </table>
 
----
+## The write-back loop
+
+One command puts it back into the source — below is **real output and a real diff**:
+
+<img src="docs/gifs/05_writeback.gif" width="620" alt="Write-back loop: real apply --write output and code diff">
 
 ## Install
 
@@ -81,16 +89,10 @@ pip install mpltweak            # core (write-back / doctor, no window needed)
 pip install "mpltweak[qt]"      # with the PyQt5 window (recommended on Windows / Linux)
 ```
 
-Check your environment:
-
-```bash
-mpltweak doctor     # Python / matplotlib version, available backends, fonts
-```
+Check your environment with `mpltweak doctor` (Python / matplotlib version, backends, fonts).
 
 > `matplotlib.use('Agg')` in your script (common in batch plotting) **does not need changing** —
 > the launcher takes over the backend temporarily and `savefig` output stays identical.
-
----
 
 ## Keys
 
@@ -111,8 +113,6 @@ mpltweak doctor     # Python / matplotlib version, available backends, fonts
 | `n` · `e` · `?` | Snapping toggle / manual export / help |
 | Drag the window edge | Change the canvas size (written back as `figsize`) |
 
----
-
 ## Three-layer verification
 
 `--write` never edits blindly, and every step is reversible:
@@ -126,8 +126,6 @@ mpltweak doctor     # Python / matplotlib version, available backends, fonts
 
 The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
 and a slow script that times out is not treated as a failure — you are simply told to confirm.
-
----
 
 ## `.tweak_params/*.json` spec (version 3)
 
@@ -162,8 +160,6 @@ The params file is a **public format** — edit it by hand, or let an AI / agent
 }
 ```
 
----
-
 ## Development
 
 ```bash
@@ -176,7 +172,7 @@ python tests/test_writeback.py   # AST write-back + three-layer verification
 python tools/crosscheck.py       # environment / API compatibility check
 ```
 
-```
+```text
 src/mpltweak/
 ├── cli.py          # mpltweak <script> | apply | doctor
 ├── launch.py       # run the script → attach windows → save params on close
