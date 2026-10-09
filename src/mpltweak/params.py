@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any, Dict, List, Optional
 
 # 当前公开格式版本
@@ -131,6 +132,78 @@ def normalize(data: Dict[str, Any]) -> Dict[str, Any]:
     out['axes'] = [_fill_axis(a) if isinstance(a, dict) else a
                    for a in (data.get('axes') or [])]
     return out
+
+
+def schema() -> Dict[str, Any]:
+    """生成参数文件的 JSON Schema（draft-07）。
+
+    给 agent / 第三方工具校验自己生成的参数用，也能直接当作 function-calling
+    的工具定义。注意 additionalProperties=True —— 与「未知键一律忽略」的兼容
+    约定一致（新版本加字段不会让旧校验失败）。
+    """
+    _num_or_null = {'type': ['number', 'null']}
+    axis = {
+        'type': 'object',
+        'required': ['index'],
+        'properties': {
+            'index': {'type': ['integer', 'null']},
+            'pos': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                    'minItems': 4, 'maxItems': 4},
+            'aspect_locked': {'type': 'boolean'},
+            'title_fontsize': _num_or_null,
+            'label_fontsize': _num_or_null,
+            'tick_fontsize': _num_or_null,
+            'is_colorbar': {'type': 'boolean'},
+            'clim': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                     'minItems': 2, 'maxItems': 2},
+            'cmap': {'type': ['string', 'null']},
+            'xscale': {'type': 'string', 'enum': ['linear', 'log']},
+            'yscale': {'type': 'string', 'enum': ['linear', 'log']},
+            'grid': {'type': 'boolean'},
+            'spines': {'type': 'object',
+                       'additionalProperties': {'type': 'boolean'}},
+            'lines': {'type': 'array', 'items': {
+                'type': 'object',
+                'properties': {
+                    'index': {'type': 'integer'},
+                    'linewidth': _num_or_null,
+                    'color': {'type': ['string', 'null']},
+                }}},
+            'legend': {'type': ['object', 'null'], 'properties': {
+                'loc': {'type': ['string', 'null']},
+                'anchor': {'type': ['array', 'null'], 'items': {'type': 'number'}},
+                'fontsize': _num_or_null,
+            }},
+        },
+        'additionalProperties': True,
+    }
+    return {
+        '$schema': 'http://json-schema.org/draft-07/schema#',
+        'title': 'mpltweak params',
+        'description': 'mpltweak 公开参数格式（.tweak_params/*.json）',
+        'type': 'object',
+        'required': ['version'],
+        'properties': {
+            'version': {'type': 'integer', 'const': SCHEMA_VERSION},
+            'script': {'type': 'string'},
+            'figsize_px': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                           'minItems': 2, 'maxItems': 2},
+            'figsize_in': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                           'minItems': 2, 'maxItems': 2},
+            'fig_index': {'type': ['integer', 'null']},
+            'n_figs': {'type': ['integer', 'null']},
+            'axes': {'type': 'array', 'items': axis},
+        },
+        'additionalProperties': True,
+    }
+
+
+def schema_main(argv=None) -> int:
+    """``mpltweak schema``：把 JSON Schema 打到 stdout（供 agent / 工具消费）。"""
+    compact = bool(argv) and '--compact' in argv
+    sys.stdout.write(json.dumps(schema(), ensure_ascii=False,
+                                indent=None if compact else 2) + '\n')
+    return 0
 
 
 def load(path: str) -> Dict[str, Any]:

@@ -21,7 +21,7 @@ from .params import (
     validate,
 )
 
-__version__ = '0.1.0'
+__version__ = '0.1.4'
 __all__ = [
     'SCHEMA_VERSION',
     'defaults',

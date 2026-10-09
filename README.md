@@ -51,6 +51,20 @@ mpltweak 把这部分从"猜"变成"写"：
 ] }
 ```
 
+三个命令构成完整回路 —— agent 不只是"能写"，而是能**读 → 改 → 写**：
+
+| 命令 | 作用 |
+|---|---|
+| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"） |
+| `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
+| `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr） |
+
+```bash
+mpltweak describe fig1.py -o layout.json    # 读：拿到现在的排版
+# ...agent 改 layout.json 里的几个数字...
+mpltweak apply fig1.py --write --json       # 写：落回源码并自检
+```
+
 ## 演示
 
 <table>

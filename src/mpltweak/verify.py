@@ -68,6 +68,51 @@ def _state(fig) -> Dict[str, Any]:
     return {'figsize_px': px, 'axes': axes}
 
 
+def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+    """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
+
+    与 collect 同一套拦截口径（plt.show / plt.close / matplotlib.use /
+    switch_backend 全拦掉，cwd 切到脚本目录），只是把每张图都抽出来，
+    每张附加 fig_index（0-based，顺序同 plt.get_fignums()）与 n_figs。
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    plt.switch_backend('Agg')
+
+    real = (plt.show, plt.close, matplotlib.use, plt.switch_backend)
+    plt.show = lambda *a, **k: None
+    plt.close = lambda *a, **k: None
+    matplotlib.use = lambda *a, **k: None
+    plt.switch_backend = lambda *a, **k: None
+    d = os.path.dirname(os.path.abspath(script))
+    old = os.getcwd()
+    os.chdir(d)
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    try:
+        runpy.run_path(script, run_name='__main__')
+        nums = plt.get_fignums()
+        if not nums:
+            return None, '脚本没有留下任何图（可能存完图就 close 了）'
+        out = []
+        for _k, _num in enumerate(nums):
+            _st = _state(plt.figure(_num))
+            _st['fig_index'] = _k
+            _st['n_figs'] = len(nums)
+            out.append(_st)
+        return out, ''
+    except Exception as e:                       # noqa: BLE001
+        return None, '%s: %s' % (type(e).__name__, e)
+    finally:
+        plt.show, plt.close, matplotlib.use, plt.switch_backend = real
+        try:
+            plt.close('all')
+        except Exception:                        # noqa: BLE001
+            pass
+        os.chdir(old)
+
+
 def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict], str]:
     """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
 

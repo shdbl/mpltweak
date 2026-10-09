@@ -43,6 +43,12 @@ def main(argv=None):
     if cmd == 'apply':
         from .apply import main as apply_main
         return apply_main(argv[1:])
+    if cmd == 'describe':
+        from .describe import main as describe_main
+        return describe_main(argv[1:])
+    if cmd == 'schema':
+        from .params import schema_main
+        return schema_main(argv[1:])
     if cmd == 'doctor':
         from .launch import doctor
         return doctor()

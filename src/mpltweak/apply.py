@@ -169,6 +169,28 @@ def _all_params_files(script, override=None):
     return [by_idx[k] for k in sorted(by_idx)] + fallback
 
 
+def _emit_json(script, results, stdout_ref):
+    """--json 的机器可读输出（每个 return 分支前都要调用一次）。"""
+    import json as _json
+    sys.stdout = stdout_ref
+    print(_json.dumps({
+        'script': os.path.basename(script),
+        'ok': not [r for _, r in results
+                   if r['reason'] not in ('ok', 'best_effort', 'no_change',
+                                          'preview')],
+        'files': [
+            {'params': os.path.basename(p),
+             'reason': r['reason'],
+             'style': r.get('style'),
+             'changes': r.get('changes') or [],
+             'backup': r.get('backup'),
+             'verified': r.get('verified'),
+             'semantic': r.get('semantic'),
+             'warnings': r.get('warnings') or []}
+            for p, r in results],
+    }, ensure_ascii=False, indent=2))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='mpltweak apply')
     ap.add_argument('script')
@@ -192,12 +214,21 @@ def main(argv=None):
                     help='验证重跑超时秒数（默认 300）')
     ap.add_argument('--dry-run', action='store_true',
                     help='只生成调整块预览，不落盘（调试用）')
+    ap.add_argument('--json', action='store_true',
+                    help='以 JSON 输出结果（给 agent / 脚本消费；过程信息改走 stderr）')
     args = ap.parse_args(argv)
+
+    # --json：人读的过程信息全部走 stderr，stdout 只留最后那一段 JSON
+    _stdout = sys.stdout
+    if args.json:
+        sys.stdout = sys.stderr
 
     script = os.path.abspath(args.script)
     files = _all_params_files(script, args.params)
     if not files:
         print('no params: %s' % params.params_path(script, args.params))
+        if args.json:
+            _emit_json(script, [], _stdout)
         return 2
     if len(files) > 1:
         print('发现 %d 份参数文件（一次会话改过多张图）——逐张落实：' % len(files))
@@ -223,6 +254,7 @@ def main(argv=None):
             if args.snippet:
                 print('-' * 62)
                 _print_snippet(data)
+            results.append((p, {'reason': 'preview'}))   # 只读预览也计入结果（给 --json）
             continue
 
         print('-' * 62)
@@ -284,10 +316,14 @@ def main(argv=None):
         print('提示：以上数值需按脚本自身风格写回；colorbar 轴若改了位置，必须同时')
         print('      cb.ax.set_box_aspect(None)，否则 matplotlib 每次重绘会把宽度重置回自动值。')
         print('      机械插入可用 --write（AST 确定性写回，零 LLM）。')
+        if args.json:
+            _emit_json(script, results, _stdout)
         return 0
 
     bad = [r for _, r in results
            if r['reason'] not in ('ok', 'best_effort', 'no_change')]
+    if args.json:
+        _emit_json(script, results, _stdout)
     if len(results) > 1:
         print('=' * 62)
         print('多图落实小结：共 %d 张，成功 %d，失败 %d'

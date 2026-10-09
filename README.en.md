@@ -56,6 +56,20 @@ mpltweak turns that guesswork into a file write:
 ] }
 ```
 
+Three commands make it a full loop — an agent can **read → edit → write**, not just write:
+
+| Command | What it does |
+|---|---|
+| `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
+| `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
+| `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
+
+```bash
+mpltweak describe fig1.py -o layout.json    # read: the layout as it is now
+# ...the agent edits a few numbers in layout.json...
+mpltweak apply fig1.py --write --json       # write: back into source, self-checked
+```
+
 ## Demos
 
 <table>
