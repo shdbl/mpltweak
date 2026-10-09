@@ -21,13 +21,17 @@ def _usage(out):
         'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n'
         '\n'
         '用法：\n'
-        '  mpltweak <script.py> [--fig N] [--params X] [--dry-run]  开窗调图\n'
-        '  mpltweak apply <script.py> [--write] [--snippet] [--params X]\n'
-        '  mpltweak doctor                                          环境自检\n'
+        '  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n'
+        '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
+        '  mpltweak describe <script.py>                   不开窗导出当前排版\n'
+        '  mpltweak check <script.py>                      排版体检\n'
+        '  mpltweak schema                                 参数 JSON Schema\n'
+        '  mpltweak mcp                                    启动 MCP server\n'
+        '  mpltweak doctor                                 环境自检\n'
         '\n'
-        '交互：拖面板移动 / PPT式缩放 / Ctrl+点击多选 / 对齐均分 / 吸附 /\n'
-        '      Ctrl+F 裁白边 / 悬停±字号 / 方向键微调 / 空格线条模式 /\n'
-        '      Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做\n'
+        '交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n'
+        '      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n'
+        '      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n'
     )
 
 

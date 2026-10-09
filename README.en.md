@@ -14,6 +14,21 @@
 
 </div>
 
+## Contents
+
+- [What it solves](#what-it-solves)
+- [Demos](#demos)
+- [What it actually changes](#what-it-actually-changes)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Keys](#keys)
+- [Workflow](#workflow)
+- [Three-layer verification](#three-layer-verification)
+- [Params file](#params-file)
+- [A layout interface for AI agents](#a-layout-interface-for-ai-agents)
+- [Splitting the work: human + agent](#splitting-the-work-human--agent)
+- [Development](#development)
+
 ## What it solves
 
 mpltweak is an **interactive layout editor for matplotlib multi-panel figures**. Laying those out
@@ -30,64 +45,10 @@ need all that editing — that is what mpltweak does.**
 
 **Core feature: deterministic source rewriting.** AST-based precise targeting — it only touches the numbers already in your code, never inserts adjustment blocks, never adds imports, leaves no trace of the tool. Built-in three-layer verification (runs / rewrote correctly / retry with fallback anchor), auto-rollback on any failure — **it will never leave a broken script behind**.
 
-Tools like Tavotto take a non-destructive route (your script is never modified). mpltweak takes the opposite stance: **precisely because we do modify source, we must be deterministic** — this is the project's core differentiator.
+**Precisely because we do modify source, we must be deterministic** — that is the premise mpltweak is built on.
 
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
-
-## A layout interface for AI agents
-
-An LLM can write correct plotting code, but **the layout numbers are guesswork** — it cannot see
-the figure.
-
-mpltweak turns that guesswork into a file write:
-
-**The params file is public JSON format (with JSON Schema).** AI can generate or edit it directly, without "seeing" the figure. `mpltweak apply --write` commits it to your source **deterministically**: AST lookup + three-layer verification + rollback on failure — **a bad guess can't corrupt your script**.
-
-**Core idea: let the AI own the content; let mpltweak own the layout.**
-
-```jsonc
-// the agent produces this → mpltweak apply fig1.py --write → it lands in your source
-{ "axes": [
-  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
-  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
-] }
-```
-
-**Full read → edit → write → check loop:**
-
-| Command | What it does |
-|---|---|
-| `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
-| `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
-| `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
-| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap |
-
-```bash
-mpltweak describe fig1.py -o layout.json    # read: the layout as it is now
-# ...the agent edits a few numbers in layout.json...
-mpltweak apply fig1.py --write --json       # write: back into source, self-checked
-mpltweak check fig1.py --json               # check: layout health report in JSON
-```
-
-**Why "read" is needed**: for explicit `add_axes([...])` you can just read the source. But a
-`plt.subplots()` grid, the effective default when no `fontsize=` is written, the positions after
-`tight_layout()`, and the true sizes of colorbars and aspect-locked (cartopy) axes — **those numbers
-do not exist in the source**; you have to run it once.
-
-## Splitting the work: human + agent
-
-| Division | How |
-|---|---|
-| **Human drags → agent commits** | You finish dragging, say the word, the agent runs `apply --write` |
-| **Agent drafts → human fine-tunes** | The agent lays it out by rule first → you keep tweaking in the window (params resume) → commit |
-| **Agent self-check** | After plotting, the agent runs `check`: uneven/unaligned/mismatched/overflow/overlap, without seeing the figure |
-| **One figure as a template** | `describe` the good one → change its `script` field → `apply` it to the others, for a consistent paper |
-| **Human drags → agent summarises** | The agent reads the params JSON and explains the change in plain words (good for commit messages or captions) |
-
-The rule of thumb: **taste belongs to you, precision belongs to the agent.**
 
 ## Demos
 
@@ -135,7 +96,7 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 tool. Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters
 that were **already in your code**.
 
-This is the biggest difference from competing tools: Tavotto and others keep the result in their own sidecar (the script is never modified). mpltweak uses AST-based precise targeting + three-layer verification to achieve deterministic rewriting — **making layout results truly land in your code, not just live inside a tool**.
+That is the payoff of deterministic rewriting: mpltweak uses AST-based precise targeting + three-layer verification — **making layout results truly land in your code, not just live inside a tool**.
 
 ## Install
 
@@ -230,6 +191,26 @@ python fig1.py
 | **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
 | You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
 
+## Keys
+
+| Action | Effect |
+|---|---|
+| **`?`** | **Open / close the key cheat-sheet** (in-canvas overlay: Esc closes, L switches language) |
+| Drag a panel / drag an edge or corner | Move / PowerPoint-style resize (opposite edge pinned; aspect-locked axes scale uniformly) |
+| **Ctrl+click** (or Shift+click) | Add / remove from selection; drag on empty space for rubber-band select |
+| **Ctrl+Shift+L/R/T/B/C/M** | Align left / right / top / bottom / centre horizontally / centre vertically |
+| **Ctrl+Shift+H / V** | Distribute horizontally / vertically (ends fixed, equal gaps) |
+| **Ctrl+Z** / **Ctrl+Y** (or Ctrl+Shift+Z) | Undo / redo |
+| Hover text, then `+` / `-` | Font size of title, axis label, ticks, legend, colorbar |
+| **Space** | Wireframe mode (borders and text only, data artists hidden) |
+| **Ctrl+F** | Fit the canvas to its content (trim the white margin; panels keep their pixel size) |
+| **Arrow keys** / Shift+arrows | Move the panel (PPT muscle memory) / fine-tune size around its centre |
+| Drag a colorbar's long edge / thin side / middle | Length / thickness / move the whole bar |
+| Drag the legend | Preview of 8 standard spots, snaps on release |
+| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | Line width / line colour / colormap / grid / spines / linear-log axes |
+| `n` · `e` | Snapping toggle / manual export |
+| Drag the window edge | Change the canvas size (written back as `figsize`) |
+
 ## Workflow
 
 ```mermaid
@@ -260,26 +241,6 @@ From opening the window to `mpltweak apply --write`, not a single character of y
 at any point (including after you close it) — the write-back only happens when you explicitly ask
 for it in step three.
 
-## Keys
-
-| Action | Effect |
-|---|---|
-| **`?`** | **Open / close the key cheat-sheet** (in-canvas overlay: Esc closes, L switches language) |
-| Drag a panel / drag an edge or corner | Move / PowerPoint-style resize (opposite edge pinned; aspect-locked axes scale uniformly) |
-| **Ctrl+click** (or Shift+click) | Add / remove from selection; drag on empty space for rubber-band select |
-| **Ctrl+Shift+L/R/T/B/C/M** | Align left / right / top / bottom / centre horizontally / centre vertically |
-| **Ctrl+Shift+H / V** | Distribute horizontally / vertically (ends fixed, equal gaps) |
-| **Ctrl+Z** / **Ctrl+Y** (or Ctrl+Shift+Z) | Undo / redo |
-| Hover text, then `+` / `-` | Font size of title, axis label, ticks, legend, colorbar |
-| **Space** | Wireframe mode (borders and text only, data artists hidden) |
-| **Ctrl+F** | Fit the canvas to its content (trim the white margin; panels keep their pixel size) |
-| **Arrow keys** / Shift+arrows | Move the panel (PPT muscle memory) / fine-tune size around its centre |
-| Drag a colorbar's long edge / thin side / middle | Length / thickness / move the whole bar |
-| Drag the legend | Preview of 8 standard spots, snaps on release |
-| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | Line width / line colour / colormap / grid / spines / linear-log axes |
-| `n` · `e` | Snapping toggle / manual export |
-| Drag the window edge | Change the canvas size (written back as `figsize`) |
-
 ## Three-layer verification
 
 `--write` never edits blindly, and every step is reversible:
@@ -294,7 +255,7 @@ for it in step three.
 **This is the safety net for deterministic rewriting.** The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
 and a slow script that times out is not treated as a failure — you are simply told to confirm.
 
-## Params file (`.tweak_params/*.json`)
+## Params file
 
 The params file is a **public format** — edit it by hand, or let an AI / agent generate it, and
 `--write` will still apply it. The top-level `version` field marks the format revision (currently 3)
@@ -327,6 +288,85 @@ so the tool can tell how to read older files:
   ]
 }
 ```
+
+## A layout interface for AI agents
+
+An LLM can write correct plotting code, but **the layout numbers are guesswork** — it cannot see
+the figure.
+
+mpltweak turns that guesswork into a file write:
+
+**The params file is public JSON format (with JSON Schema).** AI can generate or edit it directly, without "seeing" the figure. `mpltweak apply --write` commits it to your source **deterministically**: AST lookup + three-layer verification + rollback on failure — **a bad guess can't corrupt your script**.
+
+**Core idea: let the AI own the content; let mpltweak own the layout.**
+
+```jsonc
+// the agent produces this → mpltweak apply fig1.py --write → it lands in your source
+{ "axes": [
+  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
+  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
+    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
+] }
+```
+
+**Full read → edit → write → check loop:**
+
+| Command | What it does |
+|---|---|
+| `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
+| `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
+| `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
+| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap |
+
+```bash
+mpltweak describe fig1.py -o layout.json    # read: the layout as it is now
+# ...the agent edits a few numbers in layout.json...
+mpltweak apply fig1.py --write --json       # write: back into source, self-checked
+mpltweak check fig1.py --json               # check: layout health report in JSON
+```
+
+**Why "read" is needed**: for explicit `add_axes([...])` you can just read the source. But a
+`plt.subplots()` grid, the effective default when no `fontsize=` is written, the positions after
+`tight_layout()`, and the true sizes of colorbars and aspect-locked (cartopy) axes — **those numbers
+do not exist in the source**; you have to run it once.
+
+### Also usable from AI clients (MCP)
+
+MCP is an optional extra. With it installed you can attach mpltweak to Claude Desktop / Cursor /
+Claude Code and let the AI call it directly, instead of shelling out:
+
+```bash
+pip install "mpltweak[mcp]"
+mpltweak mcp                    # start the stdio server
+```
+
+Then add this to the client config:
+
+```json
+{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}
+```
+
+Four tools map to the four commands above: `describe_layout` / `check_layout` / `params_schema` /
+`apply_layout` (read-only preview unless `write=true`).
+
+### Let your AI read the manual (skill)
+
+`skills/mpltweak/SKILL.md` in this repo is an **operating manual written for AI assistants**
+(Agent Skills format): the full command set, the ground rules, and the human/agent workflows.
+Feed it to your assistant and it will know how to drive mpltweak — no repeated explaining.
+
+## Splitting the work: human + agent
+
+| Division | How |
+|---|---|
+| **Human drags → agent commits** | You finish dragging, say the word, the agent runs `apply --write` |
+| **Agent drafts → human fine-tunes** | The agent lays it out by rule first → you keep tweaking in the window (params resume) → commit |
+| **Agent self-check** | After plotting, the agent runs `check`: uneven/unaligned/mismatched/overflow/overlap, without seeing the figure |
+| **One figure as a template** | `describe` the good one → change its `script` field → `apply` it to the others, for a consistent paper |
+| **Human drags → agent summarises** | The agent reads the params JSON and explains the change in plain words (good for commit messages or captions) |
+
+The rule of thumb: **taste belongs to you, precision belongs to the agent.**
 
 ## Development
 
