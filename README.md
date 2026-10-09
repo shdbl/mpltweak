@@ -10,21 +10,19 @@
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-<sub>matplotlib 事件驱动 · 零依赖 · AST 确定性写回 · 三层验证</sub>
-
-<sub><code>pip install mpltweak</code> &nbsp;·&nbsp; <a href="README.en.md">English</a></sub>
+<sub><a href="README.en.md">English</a></sub>
 
 </div>
 
 ## 它解决什么问题
 
-多面板图的返工，多半不是数据的问题，而是布局：轴标签被相邻子图压住、面板间距不等、
-左边缘差 0.02、图例落在曲线上 —— 每一处都只能靠改参数、重跑、再看一遍。
+多面板图的排版由一组彼此耦合的参数决定（子图位置、间距、字号、图例位置），
+改动一处往往要在别处重新平衡；而在纯代码的流程里，这只能通过改数值、
+重跑脚本、比对输出图来完成。
 
-| | |
-|---|---|
-| **传统方式** | 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改 |
-| **mpltweak** | 开窗 → 手拖到位 → `mpltweak apply --write` → 那几个数字自己回到代码里 |
+**传统方式** —— 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改
+
+**mpltweak** —— 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
@@ -75,8 +73,6 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 pip install mpltweak
 ```
 
-<sub>可选：`mpltweak doctor` 自检环境（Python / matplotlib 版本、可用后端、字体）</sub>
-
 ## 快速开始
 
 ### 1 · 你原来的脚本，一行都不用改
@@ -104,7 +100,7 @@ fig.savefig('fig1.png', dpi=150)
 
 不需要 `import mpltweak`，不需要任何钩子。
 
-### 2 · 弹窗调图
+### 2 · 打开调图窗口
 
 ```bash
 mpltweak fig1.py

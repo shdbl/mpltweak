@@ -10,22 +10,19 @@
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-<sub>matplotlib event-driven · zero extra dependencies · deterministic AST write-back · three-layer verification</sub>
-
-<sub><code>pip install mpltweak</code> &nbsp;·&nbsp; <a href="README.md">中文</a></sub>
+<sub><a href="README.md">中文</a></sub>
 
 </div>
 
 ## What it solves
 
-Most rework on a multi-panel figure has nothing to do with the data. It is layout: an axis label
-clipped by the neighbouring panel, uneven gutters, a left edge off by 0.02, a legend sitting on a
-curve — each one costing another edit, another re-run, another look.
+The layout of a multi-panel figure is a set of coupled parameters — panel positions, gutters,
+font sizes, legend placement. Changing one usually means rebalancing another, and in a pure-code
+workflow the only way to do that is to edit numbers, re-run the script and compare output figures.
 
-| | |
-|---|---|
-| **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
-| **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
+**The old way** — edit a number → re-run the script → wait → look at the PNG → still wrong → edit again
+
+**mpltweak** — open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code
 
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
@@ -78,8 +75,6 @@ that were **already in your code**.
 pip install mpltweak
 ```
 
-<sub>Optional: `mpltweak doctor` checks your environment (Python / matplotlib version, backends, fonts).</sub>
-
 ## Quick start
 
 ### 1 · Your existing script, not a line to change
@@ -107,7 +102,7 @@ fig.savefig('fig1.png', dpi=150)
 
 No `import mpltweak`, no hooks, no decorators.
 
-### 2 · Open the window and drag things
+### 2 · Open the tuning window
 
 ```bash
 mpltweak fig1.py
