@@ -10,19 +10,19 @@
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-<sub><a href="README.en.md">English</a></sub>
+**中文** | [English](README.en.md)
 
 </div>
 
 ## 它解决什么问题
 
-多面板图的排版由一组彼此耦合的参数决定（子图位置、间距、字号、图例位置），
-改动一处往往要在别处重新平衡；而在纯代码的流程里，这只能通过改数值、
-重跑脚本、比对输出图来完成。
+多面板图的排版参数互相牵连：挪一下子图，旁边的轴标签就被挡住；字号放大一点，
+图例又压到曲线上。而每改一次，都要重跑脚本、再看一遍图。
 
-**传统方式** —— 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改
-
-**mpltweak** —— 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里
+| 方式 | 流程 |
+|---|---|
+| **传统方式** | 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改 |
+| **mpltweak** | 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里 |
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 

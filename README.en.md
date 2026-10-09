@@ -10,19 +10,20 @@
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-<sub><a href="README.md">中文</a></sub>
+[中文](README.md) | **English**
 
 </div>
 
 ## What it solves
 
-The layout of a multi-panel figure is a set of coupled parameters — panel positions, gutters,
-font sizes, legend placement. Changing one usually means rebalancing another, and in a pure-code
-workflow the only way to do that is to edit numbers, re-run the script and compare output figures.
+The layout parameters of a multi-panel figure pull against each other: nudge one panel and the
+axis label next to it gets covered; enlarge the fonts and the legend lands on a curve. And every
+change costs another re-run and another look at the output.
 
-**The old way** — edit a number → re-run the script → wait → look at the PNG → still wrong → edit again
-
-**mpltweak** — open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code
+| Way | Process |
+|---|---|
+| **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
+| **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
 
 **It only touches style and position — it never invents content.** Text, data and artists stay
 exactly what your code says.
