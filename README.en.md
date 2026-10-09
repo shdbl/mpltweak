@@ -29,35 +29,24 @@ back. **It never leaves a broken script behind.**
 
 No imports, no hooks, no residue. Your source code never knows it was there.
 
-```
-              ┌────────────────────────┐
-              │        fig1.py         │   plain matplotlib
-              │  fig.add_axes([...])   │   untouched
-              └───────────┬────────────┘
-                          │  mpltweak fig1.py
-                          ▼
-              ┌────────────────────────┐
-              │      live window       │   drag · align · snap · font size
-              │                        │   in-memory only
-              └───────────┬────────────┘
-                          │  close the window
-                          ▼
-              ┌────────────────────────┐
-              │  .tweak_params/        │   params saved silently (public JSON spec)
-              │      fig1.json         │   not a single character of code changed
-              └───────────┬────────────┘
-                          │  mpltweak apply fig1.py --write
-                          ▼
-              ┌────────────────────────┐
-              │  AST lookup → rewrite  │   only the numbers already in your code
-              └───────────┬────────────┘
-                          │  three-layer verification
-              ┌───────────┴────────────┐
-              ▼                        ▼
-     ┌──────────────────┐     ┌──────────────────┐
-     │      passed       │     │      failed       │
-     │  commit + backup  │     │   auto rollback   │
-     └──────────────────┘     └──────────────────┘
+```mermaid
+flowchart TD
+    A["fig1.py &nbsp;·&nbsp; plain matplotlib, not a line to change"]
+    B["Live window &nbsp;·&nbsp; drag · align · snap · font size"]
+    C[".tweak_params/fig1.json &nbsp;·&nbsp; params saved silently"]
+    D["AST lookup → rewrite &nbsp;·&nbsp; only the numbers already in your code"]
+    E["Three-layer verification &nbsp;·&nbsp; runs · is right · retry another anchor"]
+
+    A -->|mpltweak fig1.py| B
+    B -->|close window| C
+    C -->|mpltweak apply --write| D
+    D --> E
+    E -->|passed| F["commit + keep a backup"]
+    E -->|failed| G["auto rollback, never leaves a broken script"]
+
+    style B stroke:#2F6FEB,stroke-width:2px
+    style F stroke:#2E9E5B
+    style G stroke:#D97706
 ```
 
 The last step looks like this (real output, real diff):
