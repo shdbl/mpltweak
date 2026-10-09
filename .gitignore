@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# 测试/运行产物
+.tmp_*/
+*.tweak.bak
+*.json.lock
+tests/test_*.json
+tests/*.png
+out.png
+
+# 文档/演示产物（GIF 与封面图入库，运行产物不入库）
+docs/examples/*.png
+docs/examples/*.orig.py
+docs/alternatives/
+
+# 交互调图的参数文件（用户脚本目录里的临时产物）
+.tweak_params/
+
+# 编辑器
+.vscode/
+.idea/

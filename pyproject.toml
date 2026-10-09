@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mpltweak"
+version = "0.1.0"
+description = "交互式 matplotlib 调图：脚本零侵入，拖图 → 参数 JSON → 纯 matplotlib 代码写回"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+qt = ["PyQt5>=5.15"]          # 交互窗口后端（纯 Agg 无窗口）
+
+[project.scripts]
+mpltweak = "mpltweak.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mpltweak = ["resources/*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
