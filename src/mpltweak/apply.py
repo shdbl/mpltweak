@@ -261,6 +261,14 @@ def main(argv=None):
                 print('  [dry-run] 未落盘；%s：' % ('原位修改预览'
                       if res.get('style') == 'inplace' else '生成的调整块'))
                 print(res['block'])
+            # 写回成功 → 刷新参数文件的修改时间。此刻"参数 == 代码"，重新开窗
+            # 应当能正常接着上次调；而如果之后你手动改了脚本，脚本就会比它新，
+            # 下次开窗便会拒绝套用旧参数（见 launch.py 的 mtime 校验）。
+            if not args.dry_run:
+                try:
+                    os.utime(p, None)
+                except OSError:
+                    pass
         elif res['reason'] == 'no_change':
             print('· 参数与原代码一致，无需改动')
             for w in res.get('warnings', []):

@@ -214,6 +214,9 @@ def main(argv=None):
                     help='要调图的用户脚本（里面不需要任何本工具的代码）')
     ap.add_argument('--fig', type=int, default=-1, help='调第 N 张图（默认最后一张）')
     ap.add_argument('--params', default=None, help='参数输出路径')
+    ap.add_argument('--force-resume', action='store_true',
+                    help='脚本在参数保存后被改过也强行套用旧参数'
+                         '（默认不套用，避免静默覆盖你的手动改动）')
     ap.add_argument('--doctor', action='store_true',
                     help='只做环境自检（后端/绑定/版本/光标），不跑脚本')
     ap.add_argument('--dry-run', action='store_true',
@@ -441,6 +444,17 @@ def main(argv=None):
             with open(pth, 'r', encoding='utf-8-sig') as f:
                 _d2 = json.load(f)
         except Exception:
+            continue
+        # 脚本比参数文件新 → 代码在保存参数之后被手动改过。此时套用旧参数会
+        # 静默覆盖那些改动（你改的看不到效果，关窗写回还会把旧值盖回去），
+        # 所以默认跳过；确要接着上次调，加 --force-resume。
+        try:
+            _stale = os.path.getmtime(script) > os.path.getmtime(pth) + 1.0
+        except OSError:
+            _stale = False
+        if _stale and not args.force_resume:
+            print('[launch] ⚠ 脚本在参数保存之后被修改过 → 本次不套用该参数'
+                  '（避免覆盖你的手动改动）；确要续调加 --force-resume', flush=True)
             continue
         kk = _d2.get('fig_index')
         if kk is None:

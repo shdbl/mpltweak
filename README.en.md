@@ -183,6 +183,8 @@ python fig1.py
 | Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
 | Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
 | Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
+| **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
+| You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
 
 ## Keys
 
