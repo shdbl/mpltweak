@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
 
 # mpltweak
 
@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 
-**中文** | [English](README.en.md)
+**中文** | [English](https://github.com/shdbl/mpltweak/blob/main/README.en.md)
 
 </div>
 
@@ -51,15 +51,15 @@
 
 <table>
 <tr>
-<td width="50%"><img src="docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
 <b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
-<td width="50%"><img src="docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
 <b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分</sub></td>
 </tr>
 <tr>
-<td><img src="docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
 <b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
-<td><img src="docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
 <b>线框模式提速（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，拖动不再卡顿</sub></td>
 </tr>
 </table>

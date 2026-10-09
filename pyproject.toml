@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.5"
-description = "像在 PPT 里调多图排版一样调 matplotlib：拖拽排版 + AST 确定性写回脚本（调试零侵入）"
+version = "0.1.6"
+description = "Interactive layout editor for matplotlib multi-panel figures - drag, align, snap, then write the numbers back into your Python code"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
