@@ -71,6 +71,10 @@ that were **already in your code**.
 
 ## Install
 
+Every command below runs in a **shell** — cmd / PowerShell on Windows, Terminal on macOS / Linux,
+or the **Terminal** pane at the bottom of PyCharm (**not** the Python Console / interactive
+interpreter). `cd` into your script's folder before tuning.
+
 ```bash
 pip install mpltweak
 ```

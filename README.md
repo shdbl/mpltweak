@@ -69,6 +69,10 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 
 ## 安装
 
+下面所有命令都在**终端**里执行 —— Windows 用 cmd / PowerShell，macOS / Linux 用 Terminal，
+在 PyCharm 里则是底部的 **Terminal** 面板（**不是** Python Console / 交互式解释器）。
+调图前先 `cd` 到脚本所在目录。
+
 ```bash
 pip install mpltweak
 ```
