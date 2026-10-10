@@ -57,9 +57,20 @@ def _dec(b):
     return raw.decode('utf-8', 'replace')
 
 
-def run(*args, cwd=None):
+def run(*args, cwd=None, env=None):
+    """跑一次 CLI。env 里的键**并入**当前环境。
+
+    用途：把**界面语言**和**输出编码**由测试钉死，而不是听凭宿主 locale ——
+    messages 的探测顺序是 ``--lang > MPLTWEAK_LANG > locale > LANG > en``，
+    于是同一份断言在 CI（Linux，LANG=C）走英文、在本地（Windows zh-CN）走中文。
+    0.1.8 发布时就栽在这里：只断言中文的用例在 CI 全红（本地全绿）。
+    """
+    _env = None
+    if env:
+        _env = dict(os.environ)
+        _env.update(env)
     r = subprocess.run([PY, '-m', 'mpltweak.cli', *args], cwd=cwd or ROOT,
-                       capture_output=True)
+                       capture_output=True, env=_env)
     return r.returncode, _dec(r.stdout), _dec(r.stderr)
 
 
@@ -506,17 +517,29 @@ def main():
               (r13.get('verify_mode'), r13.get('verified')))
 
         _setup13()
-        rc, out, err = run('apply', s13, '--write', '--verify-fast')
-        check('没有重跑脚本' in out,
-              '人读输出用原话说清"没有重跑脚本"', out[-260:])
+        # 语言由测试自己钉住（见 run() 的说明）：两种语言都断言，两个分支都真被覆盖。
+        # 之前只断言中文 -> CI 走英文时整条用例失败；而下面那条"不含中文"的断言在
+        # 英文环境下是**恒真**的（等于没测），钉住 zh 之后它才真的有鉴别力。
+        rc, out, err = run('apply', s13, '--write', '--verify-fast',
+                           env={'MPLTWEAK_LANG': 'zh'})
+        check('没有重跑脚本' in out and '不保证能跑通' in out,
+              '人读输出（zh）用原话说清"没有重跑脚本"与不保证什么', out[-300:])
         check('Agg 重跑验证通过' not in out,
-              '快速档不再打印"Agg 重跑验证通过"')
+              '快速档不再打印"Agg 重跑验证通过"（zh）', out[-200:])
         _src13 = open(s13, encoding='utf-8').read()
         _m13 = re.search(r'add_axes\(\[([^\]]*)\]\)', _src13)
         _v13 = [float(x) for x in _m13.group(1).split(',')] if _m13 else []
         check(len(_v13) == 4 and all(abs(a - b) < 1e-9
                                     for a, b in zip(_v13, [0.2, 0.2, 0.5, 0.5])),
               '快速档仍然把改动写出去了', str(_v13))
+
+        _setup13()          # 复位（否则第二次是 no_change、根本不会打印快速档说明）
+        rc, out, err = run('apply', s13, '--write', '--verify-fast',
+                           env={'MPLTWEAK_LANG': 'en'})
+        check('NOT re-run' in out and 'does not prove it runs' in out,
+              '人读输出（en）同样说清 "NOT re-run" 与不保证什么', out[-300:])
+        check('Agg re-run check passed' not in out,
+              '快速档不再打印英文的"Agg re-run check passed"', out[-200:])
 
         rc, out, err = run('apply', s13, '--write', '--no-verify', '--verify-fast')
         check(rc == 2, '--no-verify 与 --verify-fast 互斥 → rc=2', rc)
