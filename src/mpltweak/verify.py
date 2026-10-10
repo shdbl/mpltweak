@@ -33,9 +33,118 @@ from typing import Any, Dict, List, Optional, Tuple
 POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
 FS_TOL = 0.51         # 字号容差（磅）
 CLIM_REL_TOL = 0.01   # clim 容差（相对量程）
+TEXT_BOX_LIMIT = 600  # 文字盒条数上限（超多刻度的图别把状态 JSON 撑爆）
 
 
-def _state(fig) -> Dict[str, Any]:
+def _ax_identity(ax) -> Optional[Dict[str, Any]]:
+    """轴的**稳定身份**：网格位置（subplotspec）优先，其次标题/标签文字。
+
+    ``fig.axes`` 的下标是**运行期顺序**，脚本一变（加个 colorbar、条件分支少建一个轴）
+    就会变 —— 调整块若按下标寻址就会静默错位。这里采一份与顺序无关的身份：
+      * ``grid``：[行数, 列数, 起始行, 起始列]（网格轴非常稳定）；
+      * ``title`` / ``xlabel`` / ``ylabel``：文字身份（非空时才记）。
+    取不到就返回 None（写成块时退回下标，行为与旧版一致）。
+
+    整段包一个兜底：这是**尽力而为**的附加信息，任何取不到都不该影响主流程
+    （主流程的轴状态在上面已经采完了）。
+    """
+    try:
+        out: Dict[str, Any] = {}
+        sp = ax.get_subplotspec()
+        # grid 显式给 None = "这个轴本来就不是网格轴"（手工 add_axes）；
+        # 整函数返回 None = "**取不到**"（异常兜底）。两者必须能区分开：
+        # compare 只在"期望是网格轴、实测明确不是网格轴"时判失败（独立审阅 C1）。
+        out['grid'] = None
+        if sp is not None:
+            nrow, ncol = sp.get_geometry()[0], sp.get_geometry()[1]
+            out['grid'] = [int(nrow), int(ncol),
+                           int(sp.rowspan.start), int(sp.colspan.start)]
+        for key, getter in (('title', ax.get_title),
+                            ('xlabel', ax.get_xlabel),
+                            ('ylabel', ax.get_ylabel)):
+            v = (getter() or '').strip()
+            if v:
+                out[key] = v[:80]
+        return out if (out.get('grid') is not None or len(out) > 1) else out
+    except Exception:                             # noqa: BLE001 尽力采集，见 docstring
+        return None
+
+
+def _collect_texts(fig, axes_items) -> Tuple[List[Dict], str]:
+    """draw 之后采集文字盒（figure 归一化坐标），写进 ``axes_items[i]['_texts']``。
+
+    **为什么必须 draw**：``Text.get_window_extent()`` 需要真实 renderer，刻度标签的
+    尺寸要等排版算完才知道。这也是 check 能看出"刻度标签太长互相压/超出画布"的唯一
+    途径（纯几何框查不到）。代价是一次绘制——所以只在 ``check`` 里按需开启，
+    ``describe`` / 写回验证都不付这个成本。
+    """
+    out: List[Dict] = []
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        inv = fig.transFigure.inverted()
+    except Exception as e:                        # noqa: BLE001
+        return [], '%s: %s' % (type(e).__name__, e)
+
+    def box_of(t):
+        bb = t.get_window_extent(renderer=renderer)
+        (x0, y0) = inv.transform((bb.x0, bb.y0))
+        (x1, y1) = inv.transform((bb.x1, bb.y1))
+        return [round(min(x0, x1), 4), round(min(y0, y1), 4),
+                round(max(x0, x1), 4), round(max(y0, y1), 4)]
+
+    def usable(t):
+        return bool(t.get_visible()) and bool((t.get_text() or '').strip())
+
+    n = 0
+    for i, ax in enumerate(fig.axes):
+        if i >= len(axes_items):
+            break
+        boxes = []
+        try:
+            cand = [(ax.title, 'title'), (ax.xaxis.label, 'xlabel'),
+                    (ax.yaxis.label, 'ylabel')]
+            # 刻度标签必须**逐个问 Tick 对象**，不能用 ax.get_xticklabels()：
+            # 那个列表里包含落在**视图外**的刻度（实测 ylim=(0.85, 4.15) 时仍给出
+            # 位置为 5 的刻度），而视图外的刻度 matplotlib 根本不画 —— 直接拿它的
+            # 外框就会报出"越界 1.010"这种假阳性（真实探针抓到过）。
+            for axis, kind in ((ax.xaxis, 'xtick'), (ax.yaxis, 'ytick')):
+                lo, hi = axis.get_view_interval()
+                for tick in axis.get_major_ticks():
+                    t = getattr(tick, 'label1', None)
+                    if t is None:
+                        continue
+                    loc = float(tick.get_loc())
+                    if not (min(lo, hi) - 1e-9 <= loc <= max(lo, hi) + 1e-9):
+                        continue                  # 视图外的刻度不画，别算它
+                    cand.append((t, kind))
+            for t in getattr(ax, 'texts', []):
+                cand.append((t, 'text'))
+            for t, kind in cand:
+                if not usable(t) or n >= TEXT_BOX_LIMIT:
+                    continue
+                boxes.append({'kind': kind, 's': t.get_text()[:60],
+                              'box': box_of(t)})
+                n += 1
+        except Exception:                         # noqa: BLE001 尽力采集：某个轴取不到
+            boxes = []                            # 外框不该让整个 check 失败
+        axes_items[i]['_texts'] = boxes
+    try:
+        for t in getattr(fig, 'texts', []):
+            if not usable(t) or n >= TEXT_BOX_LIMIT:
+                continue
+            out.append({'kind': 'figtext', 's': t.get_text()[:60],
+                        'box': box_of(t)})
+            n += 1
+    except Exception:                             # noqa: BLE001 同上（尽力采集）
+        pass
+    if n >= TEXT_BOX_LIMIT:
+        out.append({'kind': 'capped', 's': '文字盒超过 %d 条，已截断' % TEXT_BOX_LIMIT,
+                    'box': [0, 0, 0, 0]})
+    return out, ''
+
+
+def _state(fig, with_text: bool = False) -> Dict[str, Any]:
     """抽取图形的可比对状态（口径同 toolbox.export）。"""
     from .toolbox import _bbox, _clim_of, _title_fs
     axes = []
@@ -66,6 +175,20 @@ def _state(fig) -> Dict[str, Any]:
         clim = _clim_of(ax)
         if clim is not None:
             item['clim'] = [round(float(clim[0]), 6), round(float(clim[1]), 6)]
+        # 轴范围：**只在脚本显式固定过时才采**。判据是 matplotlib 自己的开关 ——
+        # set_xlim/set_ylim 会关掉该轴的 autoscale（get_autoscalex_on() → False）。
+        # 全采的话：每张 autoscale 的图都会带一组"当前自动范围"，而 apply 在源码里
+        # 找不到对应写法 → 每个轴都进"未原位应用"清单，噪音淹没真问题；而且自动范围
+        # 随数据变，写回去没有意义（这是参数语义问题，不只是省事）。
+        try:
+            if not ax.get_autoscalex_on():
+                _lo, _hi = ax.get_xlim()
+                item['xlim'] = [round(float(_lo), 6), round(float(_hi), 6)]
+            if not ax.get_autoscaley_on():
+                _lo, _hi = ax.get_ylim()
+                item['ylim'] = [round(float(_lo), 6), round(float(_hi), 6)]
+        except (AttributeError, ValueError, TypeError):
+            pass                                  # 取不到就不记（可选字段）
         # 坐标轴尺度：不采集的话 describe 只能靠默认值，会把 log 轴**谎报**成
         # linear（t3-M4 / t6-M4），agent 拿到的"图状态"就是错的。
         try:
@@ -76,6 +199,14 @@ def _state(fig) -> Dict[str, Any]:
             item['yscale'] = ax.get_yscale()
         except Exception:                         # noqa: BLE001
             item['yscale'] = 'linear'
+        # 稳定身份：``cell`` 是**正式字段**（进参数文件，写回后可回比）；
+        # ``_identity`` 是内部合并视图（给以后按身份寻址用，不进参数）。
+        ident = _ax_identity(ax)
+        if ident is not None:
+            item['_identity'] = ident
+            # 显式写 None：compare 需要区分"这个轴不是网格轴"与"没采到"
+            _g = ident.get('grid')
+            item['cell'] = list(_g) if _g else None
         axes.append(item)
     try:
         px = list(fig.canvas.get_width_height())
@@ -87,7 +218,15 @@ def _state(fig) -> Dict[str, Any]:
         inch = [round(float(v), 4) for v in fig.get_size_inches()]
     except Exception:                            # noqa: BLE001
         inch = None
-    return {'figsize_px': px, 'figsize_in': inch, 'axes': axes}
+    out = {'figsize_px': px, 'figsize_in': inch, 'axes': axes}
+    if with_text:
+        # 注意顺序：上面的位置/字号是 **draw 之前** 采的（与 describe 口径一致），
+        # 文字盒则必须在 draw 之后 —— 所以补在最后，不改动已有字段。
+        fig_texts, err = _collect_texts(fig, axes)
+        out['_fig_texts'] = fig_texts
+        if err:
+            out['_text_error'] = err
+    return out
 
 
 # os.chdir 是**进程级**全局状态，而 MCP server 会用线程并发执行同步工具
@@ -128,7 +267,8 @@ def _fd_restore(saved):
         pass
 
 
-def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+def collect_all(script: str, with_text: bool = False
+                ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
 
     与 collect 同一套拦截口径（plt.show / plt.close / matplotlib.use /
@@ -163,7 +303,7 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
             return None, '脚本没有留下任何图（可能存完图就 close 了）'
         out = []
         for _k, _num in enumerate(nums):
-            _st = _state(plt.figure(_num))
+            _st = _state(plt.figure(_num), with_text=with_text)
             _st['fig_index'] = _k
             _st['n_figs'] = len(nums)
             out.append(_st)
@@ -182,7 +322,8 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
         _CHDIR_LOCK.release()
 
 
-def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict], str]:
+def collect(script: str, fig_index: Optional[int] = None,
+            with_text: bool = False) -> Tuple[Optional[Dict], str]:
     """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
 
     与 launch 一样拦掉 plt.show / plt.close / matplotlib.use / switch_backend，
@@ -226,7 +367,7 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
                           % (fig_index, len(nums), len(nums) - 1))
         idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
                else len(nums) - 1)
-        st = _state(plt.figure(nums[idx]))
+        st = _state(plt.figure(nums[idx]), with_text=with_text)
         # 必须自报家门：产物会被直接喂回 apply，而 apply 在没有 fig_index 时
         # 只能按第 0 张处理 → 参数会落到错的图上（多图脚本的 agent 闭环曾 100% 中招）。
         st['fig_index'] = idx
@@ -247,7 +388,7 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
         if not (0 <= idx < len(nums)):
             return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
                           % (fig_index, len(nums)))
-        st = _state(plt.figure(nums[idx]))
+        st = _state(plt.figure(nums[idx]), with_text=with_text)
         st['fig_index'] = idx
         st['n_figs'] = len(nums)
         return st, ''
@@ -266,8 +407,13 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
 
 
 def _r(v):
+    """把一串数字格式化进提示里：整数就显示成整数（网格身份 [1,3,0,0] 更好读）。"""
     try:
-        return [round(float(x), 3) for x in v]
+        out = []
+        for x in v:
+            fx = float(x)
+            out.append(int(fx) if fx.is_integer() else round(fx, 3))
+        return out
     except Exception:                            # noqa: BLE001
         return v
 
@@ -332,6 +478,36 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                 if (abs(float(ec[0]) - float(ac[0])) > CLIM_REL_TOL * span
                         or abs(float(ec[1]) - float(ac[1])) > CLIM_REL_TOL * span):
                     bad.append('ax%d clim %s≠%s' % (i, _r(ec), _r(ac)))
+        # 轴范围：容差按**量程的相对量**给（范围可能很大，如时间轴 1e9），
+        # 与 clim 同一口径；只在参数里有值时比对（autoscale 的轴压根不记）。
+        # 网格身份：调整块按下标（fig.axes[i]）寻址，脚本一变（加个 colorbar、
+        # 条件分支少建一个轴）下标与面板的对应关系就会漂 —— 这里把"调图时这个下标
+        # 是哪个网格格位"回比一遍，好让验证给出**指名道姓**的失败，而不是默默改错面板。
+        # 变量名独立（_ecell/_acell）：上面 clim 分支已经用过 `ec`，串了就会拿 clim
+        # 当网格身份比（补丁里真犯过这个错，§1 全绿变全红）。
+        _ecell, _acell = e.get('cell'), a.get('cell')
+        if isinstance(_ecell, list) and 'cell' in a:
+            if _acell is None:
+                # 期望是网格轴、实测这条轴不再是网格轴（被手工 add_axes 顶掉了）——
+                # 轴身份已经变了，必须判失败（独立审阅 C1：原先这种情况被默默放行）。
+                bad.append('ax%d 的网格身份对不上：期望 %s，实测该轴不是网格轴'
+                           '（轴序/结构变了：块按下标寻址会改错面板）'
+                           % (i, _r(_ecell)))
+            elif _acell != _ecell:
+                bad.append('ax%d 的网格身份 %s≠%s（轴序变了：块按下标寻址会改错面板）'
+                           % (i, _r(_ecell), _r(_acell)))
+        # 'cell' 不在实测里 = 采集侧没读到（旧参数/异常兜底）→ 不判，保持向后兼容
+        for key in ('xlim', 'ylim'):
+            if fields is not None and key not in fields:
+                continue
+            ex, ac2 = e.get(key), a.get(key)
+            if not (isinstance(ex, (list, tuple)) and len(ex) == 2
+                    and isinstance(ac2, (list, tuple)) and len(ac2) == 2):
+                continue
+            _span = abs(float(ex[1]) - float(ex[0])) or 1.0
+            if (abs(float(ex[0]) - float(ac2[0])) > CLIM_REL_TOL * _span
+                    or abs(float(ex[1]) - float(ac2[1])) > CLIM_REL_TOL * _span):
+                bad.append('ax%d %s %s≠%s' % (i, key, _r(ex), _r(ac2)))
     return bad
 
 

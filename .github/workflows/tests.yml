@@ -47,6 +47,15 @@ jobs:
             echo "::endgroup::"
           done
 
+      # 同一批套件再走一遍 pytest：拿到逐条用例的报告（GitHub 的失败摘要/重跑单条），
+      # 外加工程卫生棘轮（宽兜底计数 / 消息 GBK 可编码）。只在最新版 python 上跑，
+      # 避免把 CI 时间乘 4。见 tests/test_suites.py 与 tests/test_hygiene.py。
+      - name: pytest report + hygiene ratchet
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install "pytest>=7.0"
+          python -m pytest -q
+
       - name: Smoke-test the CLI
         run: |
           mpltweak --help

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.7"
+version = "0.1.8"
 description = "Interactive layout editor for matplotlib multi-panel figures - drag, align, snap, then write the numbers back into your Python code"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -51,6 +51,8 @@ qt = ["PyQt5>=5.15"]
 # `pip install "mpltweak[mcp]"` 会**静默降级到旧版本且不装 mcp**（t4-F7）。
 mcp = ["mcp>=1.0; python_version >= '3.10'"]
 all = ["PyQt5>=5.15", "mcp>=1.0; python_version >= '3.10'"]
+# 贡献者用的：pytest 只为"把七个纯脚本套件包出报告"服务，运行时不需要它。
+dev = ["pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/shdbl/mpltweak"
@@ -68,3 +70,7 @@ mpltweak = ["resources/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 只收集这两个"包装"文件。七个套件本身是**模块级脚本**（没有 if __name__ 守卫），
+# 默认规则会把它们当测试模块 import —— 那会在收集期就把整个套件跑掉，失败还表现为
+# ImportError，看不出是哪条断言挂了。包装文件用子进程跑它们并给出清晰的报告。
+python_files = ["test_suites.py", "test_hygiene.py"]

@@ -112,6 +112,21 @@ for _ax, _p in zip(fig.axes, [
 
 这就是确定性写回的价值：mpltweak 用 AST 精确定位 + 三层验证，**让排版结果真正落进你的代码里，而不是只存在于工具中**。
 
+## 不适用场景（先说清楚）
+
+写回验证要在**你的机器上、用你的环境把整个脚本重跑一遍**——这是机制的一部分，不是可选步骤
+（`--no-verify` 能跳过，但那等于关掉唯一的安全网）。所以下面这些脚本它帮不上忙：
+
+| 脚本特征 | 为什么 |
+|---|---|
+| 跑一次要很久（分钟级以上） | 每次写回都要重跑；`--timeout 600` 只是放宽等待，不能免除 |
+| 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
+| 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
+| 需要在特定交互后端才有意义的图 | 验证固定用 Agg 无头后端 |
+
+这类脚本走只读路线（`mpltweak describe` / `mpltweak check`，都不跑写回），或者手动改代码。
+它的目标用户是**本地跑得动的小中型科研绘图脚本**。
+
 ## 安装
 
 下面所有命令都在**终端**里执行 —— Windows 用 cmd / PowerShell，macOS / Linux 用 Terminal，
@@ -210,6 +225,24 @@ python fig1.py
 | 脚本要读数据 / 跑很久 | 先试 `--timeout 600` **放宽**等待。`--no-verify` 会**完全跳过重跑验证**——那是写坏代码时唯一的自动安全网，只在脚本确实无法在无头环境重跑时才用，且用前请确认脚本已在版本控制里 |
 | **拖动特别卡** | 按 **空格** 切线框模式：只画边框、坐标轴和文字，**不渲染数据图元**（cartopy 大图实测 494ms → 169ms），挪完再按一次空格恢复 |
 | 手动改过代码后再开窗 | 会自动**不套用**上次参数（避免静默覆盖你的改动）并给出提示；确要接着上次调，加 `--force-resume` |
+| 脚本里开着 `constrained_layout` / `autolayout` | 开窗与写回时会提示（**带行号**）：布局引擎在每次绘制时重算轴位置，拖拽/写回的位置会被它覆盖。调图前先关掉（或把要精调的轴改成 `add_axes([...])`，引擎不管这类轴） |
+
+## 原位改数字，还是插入调整块
+
+`apply --write` 默认 `--style auto`：**每张图各自决定**，规则如下。
+
+| 这张图的情况 | 结果 |
+|---|---|
+| 代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`） | **原位改那几个数字**，脚本风格不变 |
+| 一个字段都改不到（典型：位置来自 `plt.subplots()` / `GridSpec` 的网格轴） | 整张图**退到插入调整块** |
+| 有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置） | **保持原位**，改不到的字段进"未原位应用"清单**逐条列出**（不静默丢），需要时用 `--style block` 统一 |
+
+想强制统一：`--style inplace`（一处都不插块，改不了的保持原样）或 `--style block`（一律插块）。
+
+**跨轮可能混用**：先原位改过数字，后来某轮因为"一个字段都没落地"退成了块，文件里就会同时
+存在两种形态。两者都有效，但读代码的人容易困惑。要彻底统一，先从备份恢复（
+`.tweak_params/<脚本>.tweak.bak` 是写回前的原文），再用 `--style block` 写一次——
+块是整体替换的，单靠再写一次并不会把之前原位改掉的数字改回去。
 
 ## 键位速查
 
@@ -279,14 +312,57 @@ flowchart TD
 代价是**文件 inode 会变**：如果你用硬链接指向这个脚本，替换后链接仍指向旧内容。
 软链接不受影响，文件权限位会被保留。
 
+### 后悔了：`mpltweak revert`
+
+写回错了、或者拖完发现还是原来那版好看？不用去翻备份：
+
+```bash
+mpltweak revert fig1.py            # 只预览：会改回哪几行（默认，不动代码）
+mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
+```
+
+它用的就是 `.tweak_params/<脚本>.tweak.bak` 那份备份（每次 `apply --write` 之前自动留的）。
+**revert 自身也可逆**：覆盖前会把当前版本另存为 `<脚本>.revert.bak`，所以手滑了还能再回去。
+恢复是**字节级原样复制**（BOM / 换行 / 编码都不动）。
+
+### 慢脚本：`--verify-fast`（快速档）
+
+脚本要跑几分钟、你只是想先看一眼结果，可以用快速档：
+
+```bash
+mpltweak apply fig1.py --write --verify-fast
+```
+
+**它保证什么**：源码仍然是合法 Python（写坏了当场回滚，不会留下跑不起来的脚本）。
+
+**它不保证什么**（重要）：**没有重跑脚本** —— 不保证脚本能跑通，也不保证布局真的落到目标图上。
+所以它只适合"先快速落实、马上自己跑一遍看图"的迭代过程；正式落实请去掉这个开关。
+`--json` 里会如实标 `"verify_mode": "fast"`、`"verified": null`，agent 一眼能看出来这份结果没经过重跑。
+
+### 接进 CI：`--strict`
+
+`check` 默认把布局引擎冲突（`constrained_layout` / `autolayout`）当**提示** —— 那是 matplotlib 的正常写法。
+如果你的项目要求"别用会被引擎覆盖的布局方式"，加 `--strict` 让它变成**问题**（退出码 1）：
+
+```bash
+mpltweak check fig1.py --strict            # 有布局引擎冲突就 rc=1
+mpltweak apply fig1.py --write --strict    # 有冲突时拒绝写回（要放行加 --allow-layout-conflict）
+```
+
+`check --json` 也是天然的 CI 用例（`ok` 字段 + 退出码）：
+
+```bash
+mpltweak check figures/*.py --json | jq -e '.ok'    # 有问题就非 0 退出
+```
+
 ## 参数文件
 
 参数文件是**公开格式** —— 可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。
-顶层 `version` 字段标记格式版本（当前为 3），工具据此判断跨版本兼容性：
+顶层 `version` 字段标记格式版本（当前为 4；旧版文件照读），工具据此判断跨版本兼容性：
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "script": "fig1.py",
   "figsize_px": [1500, 700],             // 画布逻辑像素（未 resize 为 null）
   "figsize_in": [15.0, 7.0],             // 写回 figsize 的英寸数
@@ -304,6 +380,9 @@ flowchart TD
       "yscale": "linear",
       "is_colorbar": false,
       "clim": [-2.0, 2.0],
+      "xlim": [-0.01, 1.01],             // 轴范围：只在脚本**显式固定**过时才记（autoscale 不记）
+      "ylim": [0.0, 10.0],
+      "cell": [1, 2, 0, 1],              // 网格身份 [行数, 列数, 起始行, 起始列]（手工 add_axes 为 null）
       "cmap": "RdBu_r",
       "lines": [ { "index": 0, "linewidth": 1.2, "color": "#0F4D92" } ],
       "legend": { "loc": "upper right", "fontsize": 8.0 }
@@ -339,7 +418,8 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"） |
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr） |
-| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠 |
+| `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
+| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突单独一栏（`--strict` 可升级为问题） |
 
 ```bash
 mpltweak describe fig1.py -o layout.json    # 读：拿到现在的排版

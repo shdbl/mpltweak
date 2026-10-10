@@ -16,6 +16,7 @@
 """
 import locale
 import os
+import sys
 
 LANGS = ('zh', 'en')
 _DEFAULT = 'en'
@@ -105,6 +106,17 @@ MESSAGES = {
     'verify_run_ok': {
         'zh': '  [OK] Agg 重跑验证通过',
         'en': '  [OK] Agg re-run check passed',
+    },
+    'verify_fast_note': {
+        # 快速档的**契约原话**：说清它保证什么、不保证什么。
+        # 宁可啰嗦，也不能让用户以为"验证过了"（那是这个项目最容易犯的错）。
+        'zh': '  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。'
+              '**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。'
+              '正式落实请去掉 --verify-fast',
+        'en': '  [!] Fast check: syntax only (the file still parses; a broken '
+              'edit is rolled back). The script was NOT re-run - this does not '
+              'prove it runs or that the layout actually landed. Drop '
+              '--verify-fast for a real check',
     },
     'verify_run_fail': {
         'zh': '  [X] Agg 重跑验证失败（已回滚到备份）',
@@ -218,6 +230,23 @@ MESSAGES = {
         'zh': '[launch] 共 %(n)d 个窗口，全部关闭后才退出',
         'en': '[launch] %(n)d window(s) - the process exits after all are closed',
     },
+    # --- 布局引擎冲突（constrained_layout / autolayout）---
+    'layout_engine_conflict': {
+        'zh': '[!] 脚本第 %(line)d 行启用了 %(how)s：布局引擎会在**每次绘制**时'
+              '重算轴位置，拖拽/写回的位置改动会被它覆盖'
+              '（表现是"验证不一致"，而不是位置没改）。',
+        'en': '[!] line %(line)d enables %(how)s: the layout engine recomputes '
+              'axes positions on **every draw**, so dragged/written-back '
+              'positions get overridden (it shows up as "verification '
+              'mismatch", not as "position not written").',
+    },
+    'layout_engine_hint': {
+        'zh': '    建议：调图前先关掉它（删掉该参数，或改成 layout=None），'
+              '或把要精调的轴改成 add_axes([...]) 定位 —— 引擎不管这类轴。',
+        'en': '    suggestion: turn it off before tweaking (drop the argument, '
+              'or set layout=None), or position the axes you care about with '
+              'add_axes([...]) - the engine does not manage those.',
+    },
     'script_failed': {
         'zh': '[launch] 用户脚本执行出错，已中止',
         'en': '[launch] the script raised an error; aborted',
@@ -264,6 +293,44 @@ def t(key, **kw):
 def code(key):
     """稳定的机器可读标识：消息 key 本身就是错误码（不翻译、不受语言影响）。"""
     return key
+
+
+def emit_json(obj, indent=2):
+    """把机器可读结果以 **UTF-8 字节**写到 fd1（``--json`` 的**成功**路径）。
+
+    **为什么不能直接 ``print(json.dumps(...))``**：Python 的 stdout 在被管道/重定向
+    捕获时用的是**本地编码**（中国 Windows 上是 cp936/GBK）。JSON 里只要有一个中文
+    （``check`` 的 ``msg``、``schema`` 的 description、``apply`` 的 warnings），产出
+    就是 GBK 字节；按 UTF-8 解码的消费方（agent / MCP 客户端 / CI 测试）会直接崩。
+    更糟的是**成功路径比失败路径更脆** —— ``fail_json`` 早就走 fd 级 UTF-8 了，
+    于是"同一条命令，成功时解不开、失败时反而正常"。
+
+    实测（本机 2026-10，子进程管道下 ``sys.stdout.encoding == 'gbk'``）：
+    ``mpltweak check x.py --json`` 的 stdout 是 GBK，失败路径是 UTF-8。
+    回归钉在 ``tests/test_agent_api.py`` 的 §9。
+
+    注意：只影响**机器可读**输出。终端里给人看的那几行仍走 locale 编码（cp936 控制台
+    能正常显示中文），这个分工与模块开头的两层设计一致。
+
+    另一个副作用（目前无害，但改用时要知道）：fd 级直写**绕过
+    ``contextlib.redirect_stdout``**，所以在进程内重定向 stdout 的调用者那里，
+    JSON 仍会落到真实 fd1 上。现有调用者都满足：CLI 走子进程，
+    ``mcp_server.apply_layout`` 走人读路径。
+    """
+    import json as _json
+    text = _json.dumps(obj, ensure_ascii=False, indent=indent) + '\n'
+    try:
+        sys.stdout.flush()          # 先排空 TextIO 缓冲，避免与 fd 直写交错
+    except Exception:               # noqa: BLE001 - 排空失败不该影响结果输出
+        pass
+    try:
+        os.write(1, text.encode('utf-8'))
+    except OSError:
+        # fd1 不可写（管道已关）：退回 print，至少别把命令弄崩
+        try:
+            sys.stdout.write(text)
+        except Exception:           # noqa: BLE001
+            pass
 
 
 def fail_json(error_code, msg):

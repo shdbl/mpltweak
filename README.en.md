@@ -115,6 +115,22 @@ The block is **self-contained**: no `import`, nothing beyond matplotlib, no chan
 
 That is the payoff of deterministic rewriting: mpltweak uses AST-based precise targeting + three-layer verification — **making layout results truly land in your code, not just live inside a tool**.
 
+## When not to use it
+
+Write-back verification **re-runs your whole script on your machine, in your environment** — that is part of
+the mechanism, not an optional step (`--no-verify` can skip it, but that turns off the only safety net).
+So these scripts are out of scope:
+
+| Script trait | Why |
+|---|---|
+| A single run takes minutes or more | Every write-back re-runs it; `--timeout 600` widens the wait, it does not remove it |
+| Loads big data / heavy deps / needs network or credentials | The headless re-run stalls or fails |
+| Needs human input midway (`input()`, interactive choices) | The headless re-run simply blocks |
+| Only meaningful under a specific interactive backend | Verification always uses the headless Agg backend |
+
+For those, stay on the read-only path (`mpltweak describe` / `mpltweak check`, neither writes back),
+or edit the code by hand. The target user is **small-to-medium plotting scripts that run locally**.
+
 ## Install
 
 Every command below runs in a **shell** — cmd / PowerShell on Windows, Terminal on macOS / Linux,
@@ -207,6 +223,25 @@ python fig1.py
 | Script loads data / runs long | Try `--timeout 600` first to **widen** the wait. `--no-verify` **skips the re-run check entirely** — that check is the only automatic safety net against writing broken code, so use it only when the script truly cannot be re-run headlessly, and only after committing it to version control |
 | **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
 | You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
+| The script enables `constrained_layout` / `autolayout` | You get a warning (with the **line number**) when opening the window and when writing back: the layout engine recomputes axes positions on every draw, so dragged/written-back positions get overridden. Turn it off before tweaking (or position the axes you care about with `add_axes([...])` — the engine does not manage those) |
+
+## In-place numbers vs. an inserted block
+
+`apply --write` defaults to `--style auto`: **each figure decides for itself**.
+
+| Case | Result |
+|---|---|
+| The code has editable literals (`add_axes([...])`, `set_title/set_xlabel(fontsize=)`, `tick_params(labelsize=)`, `grid(...)`) | **The numbers are edited in place**; your script's style is untouched |
+| Not a single field can be matched (typically axes created by `plt.subplots()` / `GridSpec`) | That figure **falls back to an inserted block** |
+| Some fields match, some do not (`clim` / `cmap` / `legend` / `spines`, grid-axis positions, colorbar host position) | **Stays in place**; the unmatched fields are **listed one by one** under "not applied in place" (never dropped silently) — use `--style block` if you want them unified |
+
+Force one mode: `--style inplace` (never insert a block; unmatched stays untouched) or
+`--style block` (always a block).
+
+**A file can end up mixed across runs**: numbers edited in place first, then a later run fell back to a
+block. Both are valid, but readers of the code get confused. To truly unify, restore from the backup first
+(`.tweak_params/<script>.tweak.bak` is the pre-write-back source), then write once with `--style block` —
+blocks are replaced wholesale, but a second write-back alone will not undo numbers edited earlier.
 
 ## Keys
 
@@ -272,15 +307,57 @@ for it in step three.
 **This is the safety net for deterministic rewriting.** The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
 and a slow script that times out is not treated as a failure — you are simply told to confirm.
 
+### Changed your mind: `mpltweak revert`
+
+Wrong write-back, or the previous version actually looked better? No need to dig for the backup:
+
+```bash
+mpltweak revert fig1.py            # preview only: which lines come back (the default; touches nothing)
+mpltweak revert fig1.py --write    # actually go back to "before the last write-back"
+```
+
+It uses the same `.tweak_params/<script>.tweak.bak` file that every `apply --write` leaves behind.
+**Revert is itself reversible**: the current version is saved as `<script>.revert.bak` first, so a
+slip can be undone. The restore copies **bytes verbatim** (BOM / line endings / encoding untouched).
+
+### Slow scripts: `--verify-fast`
+
+If the script takes minutes and you just want to see the result:
+
+```bash
+mpltweak apply fig1.py --write --verify-fast
+```
+
+**What it guarantees**: the source is still valid Python (a broken edit is rolled back on the spot,
+so you never end up with a script that refuses to run).
+
+**What it does not guarantee** (important): **the script is not re-run** — it does not prove the
+script runs, nor that the layout actually landed on the target figure. Use it for the fast
+iterate-and-look loop, and drop the flag for the real thing. `--json` reports
+`"verify_mode": "fast"` and `"verified": null`, so an agent can tell the result was never re-run.
+
+### In CI: `--strict`
+
+By default `check` reports layout-engine conflicts (`constrained_layout` / `autolayout`) as
+**advisory** — that is normal matplotlib. If your project wants to forbid layouts the engine will
+override, `--strict` turns them into **problems** (exit code 1):
+
+```bash
+mpltweak check fig1.py --strict            # layout-engine conflict -> rc=1
+mpltweak apply fig1.py --write --strict    # refuses to write back (override with --allow-layout-conflict)
+```
+
+`check --json` is a natural CI gate (the `ok` field plus the exit code).
+
 ## Params file
 
 The params file is a **public format** — edit it by hand, or let an AI / agent generate it, and
-`--write` will still apply it. The top-level `version` field marks the format revision (currently 3)
-so the tool can tell how to read older files:
+`--write` will still apply it. The top-level `version` field marks the format revision (currently 4;
+older files still load) so the tool can tell how to read older files:
 
 ```jsonc
 {
-  "version": 3,
+  "version": 4,
   "script": "fig1.py",
   "figsize_px": [1500, 700],             // canvas in logical pixels (null if never resized)
   "figsize_in": [15.0, 7.0],             // inches written back to figsize
@@ -299,6 +376,9 @@ so the tool can tell how to read older files:
       "is_colorbar": false,
       "clim": [-2.0, 2.0],
       "cmap": "RdBu_r",
+      "xlim": [-0.01, 1.01],             // axis limits: recorded only when the script fixes them (never for autoscale)
+      "ylim": [0.0, 10.0],
+      "cell": [1, 2, 0, 1],              // grid identity [nrows, ncols, row, col] (null for hand-placed add_axes)
       "lines": [ { "index": 0, "linewidth": 1.2, "color": "#0F4D92" } ],
       "legend": { "loc": "upper right", "fontsize": 8.0 }
     }
@@ -334,7 +414,8 @@ mpltweak turns that guesswork into a file write:
 | `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
 | `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
 | `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
-| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap |
+| `mpltweak revert <script> [--write]` | Go back to before the last write-back (preview by default; the current version is kept as well) |
+| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap, plus **text measured at its real rendered size** (out of canvas = problem, texts colliding = advisory) and inconsistent axis limits; layout-engine conflicts get their own column (`--strict` promotes them to problems) |
 
 ```bash
 mpltweak describe fig1.py -o layout.json    # read: the layout as it is now

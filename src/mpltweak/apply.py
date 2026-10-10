@@ -22,6 +22,7 @@ import argparse
 import os
 import sys
 
+from . import layoutwarn
 from . import messages as _msg
 from . import params
 from . import writeback
@@ -199,7 +200,6 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None):
     ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
     而退出码却是 2 —— 退出码与 ok 字段语义打架（t6-M7）。
     """
-    import json as _json
     sys.stdout = stdout_ref
     _ok = (not [r for _, r in results
                 if r['reason'] not in ('ok', 'best_effort', 'no_change',
@@ -214,13 +214,15 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None):
              'changes': r.get('changes') or [],
              'backup': r.get('backup'),
              'verified': r.get('verified'),
+             'verify_mode': r.get('verify_mode'),
              'semantic': r.get('semantic'),
-             'warnings': r.get('warnings') or []}
+             'warnings': r.get('warnings') or [],
+             'layout_conflicts': r.get('layout_conflicts') or []}
             for p, r in results],
     }
     if error:
         _payload['error'] = error
-    print(_json.dumps(_payload, ensure_ascii=False, indent=2))
+    _msg.emit_json(_payload)
 
 
 @_msg.guard_json_main
@@ -237,8 +239,18 @@ def main(argv=None):
                          '安全网，仅在脚本确实无法无头重跑时使用；用前请先提交到版本控制）')
     ap.add_argument('--no-semantic', action='store_true',
                     help='跳过语义验证（默认会重跑并比对目标图的位置/字号等是否真的等于参数）')
+    ap.add_argument('--verify-fast', action='store_true',
+                    help='快速验证档：只做语法检查（**不重跑脚本**）—— 坏语法会当场回滚，'
+                         '但"能跑通"和"布局真的落到目标图上"都不保证。'
+                         '适合脚本重跑很贵、且你先要快速看一眼结果的场景')
+    ap.add_argument('--strict', action='store_true',
+                    help='遇到布局引擎冲突（constrained_layout / autolayout）拒绝写回：'
+                         '引擎会在每次绘制时重算轴位置，写回的位置会被它覆盖。'
+                         '确要写回加 --allow-layout-conflict')
     ap.add_argument('--all-figs', action='store_true',
                     help='循环出图时统一应用到所有迭代（默认只对参数记录的图号加 if 守卫）')
+    ap.add_argument('--allow-layout-conflict', action='store_true',
+                    help='与 --strict 配对：明知有布局引擎冲突也照样写回')
     ap.add_argument('--style', default='auto', choices=('auto', 'inplace', 'block'),
                     help='写回方式：auto=每张图各自决定（默认，能改代码里已有的数字就改，'
                          '改不了才插入调整块）；inplace=只用原位改数字（改不了就保持原样）；'
@@ -266,7 +278,34 @@ def main(argv=None):
     if args.json:
         sys.stdout = sys.stderr
 
+    if args.no_verify and args.verify_fast:
+        # 参数互斥错误也**必须**在 --json 下给出可解析 JSON（与下面的 --strict 拒绝、
+        # 以及 messages.fail_json 的约定一致）。这段原先在 stdout 交换**之前**就 return，
+        # 于是 --json 时 stdout 是空的（独立审阅 F4）。
+        _err = 'no_verify and verify_fast are mutually exclusive'
+        if args.json:
+            _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
+                       error=_err)
+        sys.stderr.write('[apply] --no-verify 与 --verify-fast 不能同时用：\n'
+                         '  --no-verify   = 完全不做检查（连语法都不查）；\n'
+                         '  --verify-fast = 只做语法检查。二选一。\n')
+        return 2
+
     script = os.path.abspath(args.script)
+    # 布局引擎冲突（constrained_layout / figure.autolayout）：位置写回会被引擎在每次
+    # 绘制时覆盖。只扫一次，逐份参数文件复用到 res['layout_conflicts']。
+    _conflicts = layoutwarn.messages_for(layoutwarn.scan(script))
+    if _conflicts and args.strict and args.write and not args.allow_layout_conflict:
+        # --strict：布局引擎会在**每次绘制**时重算轴位置，写回的位置/尺寸会被它覆盖，
+        # 所以拒绝写回并给出可操作的办法（关掉引擎 / 用 add_axes 定位 / 显式放行）。
+        if args.json:
+            _emit_json(script, [], _stdout, ok=False,
+                       error='layout conflict (use --allow-layout-conflict to override)')
+        for _line in _conflicts:
+            sys.stderr.write('[apply] %s\n' % _line)
+        sys.stderr.write('[apply] --strict：检测到布局引擎冲突，已拒绝写回。'
+                         '要照样写回请加 --allow-layout-conflict\n')
+        return 2
     files = _all_params_files(script, args.params)
     if not files:
         _hint = 'no params: %s' % params.params_path(script, args.params)
@@ -313,7 +352,10 @@ def main(argv=None):
             if args.snippet:
                 print('-' * 62)
                 _print_snippet(data)
-            results.append((p, {'reason': 'preview'}))   # 只读预览也计入结果（给 --json）
+            # 只读预览也计入结果（给 --json）。`style` 填**请求的模式**：
+            # 预览阶段还没决定"这张图最后会不会退到块"，用 'auto' 如实表达"待定"；
+            # 之前这里不带 style → 预览时 JSON 里 style=null，与写回时的取值口径不一致。
+            results.append((p, {'reason': 'preview', 'style': args.style}))
             continue
 
         print('-' * 62)
@@ -322,9 +364,14 @@ def main(argv=None):
             # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
             print('  正在验证（子进程重跑脚本，最长 %gs；不想等可加 --no-verify）'
                   % args.timeout)
-        _kw = dict(verify=not args.no_verify, python=args.python,
+        # --verify-fast **隐含** --no-verify：快速档要的就是"不重跑"。
+        # 若 verify 仍为 True，writeback 里 `if fast_check and not verify` 的分支
+        # 根本进不去（实测踩过：加了 --verify-fast 却照旧跑了完整验证）。
+        _kw = dict(verify=not args.no_verify and not args.verify_fast,
+                   python=args.python,
                    timeout=args.timeout, dry_run=args.dry_run,
-                   semantic=not args.no_semantic, only_fig=not args.all_figs)
+                   semantic=not args.no_semantic, only_fig=not args.all_figs,
+                   fast_check=bool(args.verify_fast))
         _lk = None
         if args.write and not args.dry_run:
             # 串行化写回：并发跑两个 apply --write 时两边都基于同一份原文算替换，
@@ -354,6 +401,13 @@ def main(argv=None):
         finally:
             if _lk is not None:
                 _lk.__exit__(None, None, None)
+        if _conflicts and res.get('reason') in ('ok', 'best_effort', 'preview'):
+            # 只在**这次确实落地/确实有计划**时才提示（no_change / fail / no_fig 不提示，
+            # 否则是跟当前动作无关的噪音）。
+            # 注意别用 `res['changes']` 判：**块模式**的 changes 是空的（它插的是块，
+            # 不是逐字段原位替换），而"块 + 布局引擎"恰恰是最该提示的组合 ——
+            # 2026-10-10 端到端冒烟发现漏提示，这里按 reason 判。
+            res['layout_conflicts'] = _conflicts
         results.append((p, res))
         if res['reason'] in ('ok', 'best_effort'):
             if res.get('style') == 'inplace':
@@ -368,8 +422,12 @@ def main(argv=None):
                 print(_msg.t('block_info', fig_var=res.get('fig_var'),
                              anchor=res.get('anchor'),
                              figsize=res.get('figsize_edited')))
+            for _line in res.get('layout_conflicts', []):
+                print(_line)
             if res.get('backup'):
                 print(_msg.t('backup_at', path=res['backup']))
+            if res.get('verify_mode') == 'fast':
+                print(_msg.t('verify_fast_note'))
             if res.get('verified') is True:
                 print(_msg.t('verify_run_ok'))
             elif res.get('verified') is False:

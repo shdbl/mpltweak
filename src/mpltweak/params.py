@@ -16,13 +16,13 @@ mpltweak 的「人肉调图 ↔ 程序写回」共用这一份文件格式：
 ``set_color('#rrggbb')``）；figsize 用英寸（100dpi 逻辑口径，无头 savefig dpi=100
 一致，不用 fig.dpi —— 高 DPI 显示器上 Qt 会把 fig.dpi 放大到 200）。
 
-Schema（version = 3）
+Schema（version = 4）
 --------------------
 
 顶层::
 
     {
-      "version": 3,                  # int  格式版本，读方据此做兼容
+      "version": 4,                  # int  格式版本，读方据此做兼容
       "script": "xxx.py",            # str  脚本 basename（写回定位用）
       "figsize_px": [1500, 700],     # [w, h]|null 画布逻辑像素；未 resize 过为 null
       "figsize_in": [15.0, 7.0],     # [w, h]|null 写回 figsize 的英寸数
@@ -43,6 +43,10 @@ AxisItem::
       "tick_fontsize": 9,            # int|None 刻度字号
       "is_colorbar": false,          # bool 是否 colorbar 轴（落实前须先解除 locator/box_aspect）
       "clim": [0.0, 1.0] | null,     # [vmin, vmax] 仅含 mappable 的轴有
+      "cell": [1, 2, 0, 1] | null,   # [行数, 列数, 起始行, 起始列] 网格身份
+                                     #   （add_axes 手工轴为 null）
+      "xlim": [-0.01, 1.01] | null,  # [xmin, xmax] 仅在脚本**显式固定**过时才记
+      "ylim": [0.0, 10.0] | null,    #   见 verify._state 里的说明（autoscale 不记）
       "cmap": "viridis",             # str  mappable 的 colormap 名（有 mappable 时）
       "xscale": "linear",            # 'linear'|'log'
       "yscale": "linear",            # 'linear'|'log'
@@ -74,11 +78,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 # 当前公开格式版本
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+# v3 → v4：AxisItem 增加可选的 ``xlim`` / ``ylim``（各 2 个数或 null）。
+# 读方兼容：v3 文件照读（normalize 补 None）；v4 文件被旧工具读到时 validate 会
+# 给出"version 高于当前"的警告，并按"尽力读"处理（旧工具不会写回这两个字段）。
 
 # 顶层字段默认值（读方补齐缺失键用）
 TOP_DEFAULTS: Dict[str, Any] = {
@@ -99,6 +105,9 @@ AXIS_DEFAULTS: Dict[str, Any] = {
     'tick_fontsize': None,
     'is_colorbar': False,
     'clim': None,
+    'cell': None,
+    'xlim': None,
+    'ylim': None,
     'xscale': 'linear',
     'yscale': 'linear',
     'grid': False,
@@ -120,15 +129,20 @@ def params_path(script: str, override: Optional[str] = None) -> str:
 
 
 def _fill_axis(item: Dict[str, Any]) -> Dict[str, Any]:
+    # 约定：``_`` 开头的键是**内部字段**（如 verify 采到的 ``_texts`` 文字盒），
+    # 只在本进程里用，绝不进参数文件、不进 describe 的 agent 输出。
+    # 放在 normalize 这一层是因为它是"进参数/出参数"的唯一收口。
     out = dict(AXIS_DEFAULTS)
-    out.update({k: v for k, v in item.items() if v is not None})
+    out.update({k: v for k, v in item.items()
+                if v is not None and not k.startswith('_')})
     return out
 
 
 def normalize(data: Dict[str, Any]) -> Dict[str, Any]:
     """补齐缺失字段（读方入口；不抛异常，坏值保留原样交 validate 报告）。"""
     out = dict(TOP_DEFAULTS)
-    out.update({k: v for k, v in data.items() if v is not None})
+    out.update({k: v for k, v in data.items()
+                if v is not None and not k.startswith('_')})
     out['axes'] = [_fill_axis(a) if isinstance(a, dict) else a
                    for a in (data.get('axes') or [])]
     return out
@@ -156,6 +170,17 @@ def schema() -> Dict[str, Any]:
             'is_colorbar': {'type': 'boolean'},
             'clim': {'type': ['array', 'null'], 'items': {'type': 'number'},
                      'minItems': 2, 'maxItems': 2},
+            # 轴范围：源码里能原位改的写法有 set_xlim(a, b) / set_xlim((a, b)) /
+            # set_xlim(xmin=, xmax=)；写不了就进"未原位应用"清单（--style block 可兜底）。
+            'xlim': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                     'minItems': 2, 'maxItems': 2},
+            'ylim': {'type': ['array', 'null'], 'items': {'type': 'number'},
+                     'minItems': 2, 'maxItems': 2},
+            # 网格身份 [行数, 列数, 起始行, 起始列]：轴按下标寻址时，
+            # 它就是"这个下标在调图时代表哪个面板"的可回比凭据。
+            'cell': {'type': ['array', 'null'],
+                     'items': {'type': 'integer'},
+                     'minItems': 4, 'maxItems': 4},
             'cmap': {'type': ['string', 'null']},
             'xscale': {'type': 'string', 'enum': ['linear', 'log']},
             'yscale': {'type': 'string', 'enum': ['linear', 'log']},
@@ -201,8 +226,10 @@ def schema() -> Dict[str, Any]:
 def schema_main(argv=None) -> int:
     """``mpltweak schema``：把 JSON Schema 打到 stdout（供 agent / 工具消费）。"""
     compact = bool(argv) and '--compact' in argv
-    sys.stdout.write(json.dumps(schema(), ensure_ascii=False,
-                                indent=None if compact else 2) + '\n')
+    from . import messages as _msg          # 局部导入：避免顶层循环依赖
+    # 走 fd 级 UTF-8：schema 的 description 是中文，cp936 管道下会编成 GBK，
+    # 按 UTF-8 解码的 agent 直接崩（README 承诺"机器可读"就该是 UTF-8）
+    _msg.emit_json(schema(), indent=None if compact else 2)
     return 0
 
 

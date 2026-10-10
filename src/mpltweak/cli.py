@@ -8,6 +8,7 @@ mpltweak —— CLI 入口（库内核 + CLI 外挂）
   mpltweak apply <script.py>                     # 改动清单（只读）
   mpltweak apply <script.py> --write             # AST 确定性写回（零 LLM）
   mpltweak apply <script.py> --snippet           # 输出可粘贴片段
+  mpltweak revert <script.py> [--write]          # 回退到上次写回之前（默认只预览）
   mpltweak doctor                                # 环境自检（后端/绑定/版本）
 """
 
@@ -23,6 +24,7 @@ def _usage(out):
         '用法：\n'
         '  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n'
         '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
+        '  mpltweak revert <script.py> [--write]           回退到上次写回之前\n'
         '  mpltweak describe <script.py>                   不开窗导出当前排版\n'
         '  mpltweak check <script.py>                      排版体检\n'
         '  mpltweak schema                                 参数 JSON Schema\n'
@@ -50,6 +52,9 @@ def main(argv=None):
     if cmd == 'describe':
         from .describe import main as describe_main
         return describe_main(argv[1:])
+    if cmd == 'revert':
+        from .revert import main as revert_main
+        return revert_main(argv[1:])
     if cmd == 'schema':
         from .params import schema_main
         return schema_main(argv[1:])

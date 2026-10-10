@@ -51,7 +51,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from . import messages as _msg
 from . import params
@@ -78,6 +78,8 @@ NO_AXES = 'no_axes'          # 参数文件没有 axes
 BEST_EFFORT = 'best_effort'  # 已写回，但有需人工确认处（mappable 兜底等）
 FAIL = 'fail'                # 写文件/验证失败
 
+
+
 FIG_FACTORIES = ('figure', 'subplots')
 MAPPABLE_FACTORIES = ('contourf', 'pcolormesh', 'imshow', 'contour',
                       'scatter', 'bar', 'tripcolor', 'quiver', 'streamplot')
@@ -99,6 +101,38 @@ def _num(v):
 
 def _fmt_pos(v):
     return '%.4f' % v
+
+
+def _is_num_literal(node) -> bool:
+    """是否是"可整体替换的数字字面量"（含带符号写法）。
+
+    ``-0.01`` 在 AST 里是 ``UnaryOp(USub, Constant(0.01))``，**不是** ``Constant`` ——
+    只认 Constant 的话，`add_axes([-0.01, 0.1, ...])`、`set_xlim(-0.01, 1.01)`
+    这些"越界一点"的常见写法会被静默丢进 skipped（外部审阅第 2 条点名的就是它）。
+    替换是按节点整个源区间做的，所以带符号的字面量整体替换没问题。
+    """
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, (int, float))
+    if (isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, (ast.USub, ast.UAdd))
+            and isinstance(node.operand, ast.Constant)):
+        return isinstance(node.operand.value, (int, float))
+    return False
+
+
+def _lit_num(node):
+    """把数字字面量节点取值（含带符号写法）；取不到返回 None。"""
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return float(node.value)
+    if (isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, (ast.USub, ast.UAdd))
+            and isinstance(node.operand, ast.Constant)
+            and isinstance(node.operand.value, (int, float))
+            and not isinstance(node.operand.value, bool)):
+        v = float(node.operand.value)
+        return -v if isinstance(node.op, ast.USub) else v
+    return None
 
 
 def _is_registered_cmap(name):
@@ -450,13 +484,15 @@ def edit_figsize(src, tree, figsize_in, fig_index=None):
 # --------------------------------------------------------------------------
 # 原位写回：直接改原代码里的数字（不加调整块）—— 用户主推方式
 # --------------------------------------------------------------------------
-def _find_call(tree, recv_name, attr, after_lineno=0):
+def _find_call(tree, recv_name, attr, after_lineno=0, before_lineno=10 ** 9):
     """找 ``Name(recv_name).attr(...)`` 的调用节点（没有返回 None）。
 
-    ``after_lineno``：只接受行号 >= 它的节点。多图脚本里同一个轴变量名
-    （如两张图都用 ``ax``）会在不同 figure 里各出现一次，整树取第一个
-    会把参数写到**另一张图**上（t1-E2 / t6-B1）；限定在目标图创建之后
-    就避开了上一张图的同名调用。
+    ``after_lineno`` / ``before_lineno``：只接受落在 [after, before) 里的节点。
+    多图脚本里同一个轴变量名（两张图都用 ``ax``）会在不同 figure 里各出现一次：
+    只限下界能避开**上一张图**的同名调用（t1-E2 / t6-B1），但**挡不住下一张图**
+    —— 只有上界才挡得住。独立审阅 C2 实测：第一张图的 ``ax`` 没有 set_xlim、
+    第二张图有，改第一张图的 xlim 会写到第二张图那一行上（set_title /
+    tick_params / grid 同样中招）。
     """
     found = None
     for node in ast.walk(tree):
@@ -464,11 +500,29 @@ def _find_call(tree, recv_name, attr, after_lineno=0):
                 and node.func.attr == attr
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == recv_name):
-            if getattr(node, 'lineno', 0) < after_lineno:
+            _ln = getattr(node, 'lineno', 0)
+            if _ln < after_lineno or _ln >= before_lineno:
                 continue
             if found is None or node.lineno < found.lineno:
                 found = node
     return found
+
+
+def _fig_span(tree, fig_index):
+    """第 fig_index 个 figure 的源码区间 [lo, hi)：本图创建行 → 下一张图创建行。"""
+    fig_calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr in FIG_FACTORIES]
+    fig_calls.sort(key=lambda n: (n.lineno, n.col_offset))
+    if not (isinstance(fig_index, int) and 0 <= fig_index < len(fig_calls)):
+        return 0, 10 ** 9
+    f0 = fig_calls[fig_index]
+    hi = 10 ** 9
+    for fc in fig_calls:
+        if (fc.lineno, fc.col_offset) > (f0.lineno, f0.col_offset):
+            hi = fc.lineno
+            break
+    return f0.lineno, hi
 
 
 def _figure_axes_for_index(tree, fig_index):
@@ -485,13 +539,7 @@ def _figure_axes_for_index(tree, fig_index):
     fig_calls.sort(key=lambda n: (n.lineno, n.col_offset))
     if not (isinstance(fig_index, int) and 0 <= fig_index < len(fig_calls)):
         return []
-    f0 = fig_calls[fig_index]
-    f1 = None
-    for fc in fig_calls:
-        if (fc.lineno, fc.col_offset) > (f0.lineno, f0.col_offset):
-            f1 = fc
-            break
-    lo, hi = f0.lineno, (f1.lineno if f1 else 10 ** 9)
+    lo, hi = _fig_span(tree, fig_index)
     # colorbar 槽轴（fig.colorbar(..., cax=cax) 的 cax）也是 add_axes 创建的，
     # 但它是 colorbar 轴、params 里 is_colorbar=True；配对"非 colorbar 轴"时必须
     # 剔除，否则数据轴序号会错位（cax 夹在中间时 ax1 会被误配到 cax 的源码）。
@@ -549,14 +597,31 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
     # 这种语法坏掉的源码。这里直接拒绝重复登记——宁可少改一处，也不写坏代码。
     _conflicts: List[tuple] = []
 
-    def _add(node, txt):
+    # 按 (轴序号, 字段) 记：登记了几次、其中几次是"值没变"的空改。
+    # 整字段都空改 → 从 covered 里拿掉：否则 changes 非空会把 auto 模式骗住
+    # （它据此决定"要不要退到块模式"），也会把 no_change 谎报成"改了 N 处"。
+    _reg: Dict[tuple, int] = {}
+    _noop: Dict[tuple, int] = {}
+
+    def _add(node, txt, key=None, value=None):
         """登记一处替换；被重叠检测拒绝时返回 False。
 
         调用方必须据此决定是否把该字段记进 covered —— 否则会出现
         "声称原位修改了 N 处、磁盘上只落了 N-1 处"（t6-M16）。
+
+        key=(轴序号, 字段名)、value=目标数值时，若原字面量的**数值**已等于目标
+        （注意 `0.10` 与 `0.1` 文本不同但数值相同），这处就不登记为改动 ——
+        字段是否算"真改到"由 _reg/_noop 的计数在收尾处判定。
         """
         _s = _offset(starts, node.lineno, node.col_offset, src)
         _e = _offset(starts, node.end_lineno, node.end_col_offset, src)
+        if key is not None:
+            _reg[key] = _reg.get(key, 0) + 1
+            _lit = _lit_num(node)
+            if (value is not None and _lit is not None
+                    and abs(_lit - float(value)) <= 1e-12):
+                _noop[key] = _noop.get(key, 0) + 1
+                return True
         for _s0, _e0, _t0 in edits:
             if _s < _e0 and _s0 < _e:
                 _conflicts.append((_s, _e, txt))
@@ -574,15 +639,24 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                               axes_calls):
         if isinstance(a.get('index'), int):
             var_for[a['index']] = nm
-    addaxes: Dict[str, ast.List] = {}
+    addaxes: Dict[str, ast.expr] = {}
     for nm, call in axes_calls:
+        # 位置字面量两种写法都要认：`add_axes([x0, y0, w, h])`（ast.List）与
+        # `add_axes((x0, y0, w, h))`（ast.Tuple）。只认列表时，元组写法会被静默
+        # 丢进 skipped —— 用户看到的是"拖了没反应"（外部审阅第 2 条）。
+        # 元素的登记/替换按节点源区间做（_add），与容器是 List 还是 Tuple 无关。
         if (isinstance(call.func, ast.Attribute) and call.func.attr == 'add_axes'
-                and call.args and isinstance(call.args[0], ast.List)
+                and call.args and isinstance(call.args[0], (ast.List, ast.Tuple))
                 and len(call.args[0].elts) == 4):
             addaxes.setdefault(nm, call.args[0])
     # 目标图内第一个轴创建的行号：轴属性（set_title / tick_params / grid）的查找
     # 必须限定在它之后，否则多图脚本复用同名变量时会命中**上一张图**的同名调用。
-    _scope_lo = min((getattr(c, 'lineno', 0) for _n, c in axes_calls), default=0)
+    # 字段查找必须夹在**本图源码区间**里：只有下界时，后面那张图的同名轴调用
+    # 会被误命中（独立审阅 C2 实测把 xlim 写到了第二张图上）。
+    _scope_lo, _scope_hi = _fig_span(tree, _fi if isinstance(_fi, int) else 0)
+    if axes_calls:
+        _scope_lo = min(_scope_lo,
+                        min(getattr(c, 'lineno', 0) for _n, c in axes_calls))
     # ② subplots 网格轴：add_axes/add_subplot 序列覆盖不到（subplots(2,2) 不产生
     #    add_axes 节点）。单图脚本里 axis_var_index 的序号就是本图的轴序，补上变量
     #    映射，让 set_title/tick_params/grid 能原位改（pos 仍是网格位置、进 skipped）。
@@ -636,7 +710,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
             if isinstance(_w0, (int, float)) and _w0 > 0:
                 _fr = _cw / _w0
                 if 0 < _fr < 1:
-                    if _add(_frac.value, _num(_fr)):
+                    if _add(_frac.value, _num(_fr), (_pa['index'], 'fraction'), _fr):
                         covered.setdefault(_pa['index'], set()).add('fraction')
 
     for a in axes:
@@ -653,10 +727,11 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                                '保持原样；拖 colorbar 轴可调，或 --style block）', pos))
         elif pos and nm is not None:
             lst = addaxes.get(nm)
-            if lst is not None and all(isinstance(e, ast.Constant)
-                                       for e in lst.elts):
+            # 字面量判定要认带符号写法（-0.01 → UnaryOp）：见 _is_num_literal
+            if lst is not None and all(_is_num_literal(e) for e in lst.elts):
                 # 四个数字要**全部**登记成功才算改到（all() 会短路，不能直接用）
-                _oks = [_add(lst.elts[k], _num(pos[k])) for k in range(4)]
+                _oks = [_add(lst.elts[k], _num(pos[k]), (i, 'pos'), pos[k])
+                        for k in range(4)]
                 if all(_oks):
                     covered.setdefault(i, set()).add('pos')
                 else:
@@ -669,7 +744,8 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
             # pos 同样要记：否则网格轴的拖动是 100% 静默丢弃（t1-P / t6-M3）。
             if pos:
                 skipped.append((i, 'pos', pos))
-            for field in ('title_fontsize', 'label_fontsize', 'tick_fontsize'):
+            for field in ('title_fontsize', 'label_fontsize', 'tick_fontsize',
+                          'xlim', 'ylim'):
                 if a.get(field) is not None:
                     skipped.append((i, field, a[field]))
             if a.get('grid') is not None:
@@ -682,12 +758,12 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
             val = a.get(field)
             if val is None:
                 continue
-            node = _find_call(tree, nm, attr, _scope_lo)
+            node = _find_call(tree, nm, attr, _scope_lo, _scope_hi)
             kw = None
             if node is not None:
                 kw = next((k for k in node.keywords if k.arg == 'fontsize'), None)
             if kw is not None and isinstance(kw.value, ast.Constant):
-                if _add(kw.value, _num(val)):
+                if _add(kw.value, _num(val), (i, field), val):
                     covered.setdefault(i, set()).add(field)
                 else:
                     skipped.append((i, field + '（替换位置重叠，已跳过）', val))
@@ -696,12 +772,12 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
         # ④ tick_params(labelsize=)
         tf = a.get('tick_fontsize')
         if tf is not None:
-            node = _find_call(tree, nm, 'tick_params', _scope_lo)
+            node = _find_call(tree, nm, 'tick_params', _scope_lo, _scope_hi)
             kw = None
             if node is not None:
                 kw = next((k for k in node.keywords if k.arg == 'labelsize'), None)
             if kw is not None and isinstance(kw.value, ast.Constant):
-                if _add(kw.value, _num(tf)):
+                if _add(kw.value, _num(tf), (i, 'tick_fontsize'), tf):
                     covered.setdefault(i, set()).add('tick_fontsize')
                 else:
                     skipped.append((i, 'tick_fontsize（替换位置重叠，已跳过）', tf))
@@ -710,15 +786,53 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
         # ⑤ grid：ax.grid(True/False)
         g = a.get('grid')
         if g is not None:
-            node = _find_call(tree, nm, 'grid', _scope_lo)
+            node = _find_call(tree, nm, 'grid', _scope_lo, _scope_hi)
             if (node is not None and node.args
                     and isinstance(node.args[0], ast.Constant)):
-                if _add(node.args[0], 'True' if bool(g) else 'False'):
+                if _add(node.args[0], 'True' if bool(g) else 'False',
+                         (i, 'grid'), 1.0 if bool(g) else 0.0):
                     covered.setdefault(i, set()).add('grid')
                 else:
                     skipped.append((i, 'grid（替换位置重叠，已跳过）', g))
             else:
                 skipped.append((i, 'grid', g))
+        # ⑤b 轴范围 set_xlim / set_ylim（外部审阅第 2 条：这类常见写法原先完全不在
+        #     覆盖里）。三种写法都认：
+        #       ax.set_xlim(a, b)          → 改两个位置参数
+        #       ax.set_xlim((a, b)) / [..] → 改容器里的两个元素（元组列表都认）
+        #       ax.set_xlim(xmin=a, xmax=b) → 改两个关键字
+        #     找不到对应调用（范围来自 autoscale / set_xlim 在别处）→ 进 skipped，
+        #     由 auto 模式决定是否退到块模式（块里会带 set_xlim）。
+        for attr, field, kws in (('set_xlim', 'xlim', ('xmin', 'xmax')),
+                                 ('set_ylim', 'ylim', ('ymin', 'ymax'))):
+            rng = a.get(field)
+            if not (isinstance(rng, (list, tuple)) and len(rng) == 2):
+                continue
+            node = _find_call(tree, nm, attr, _scope_lo, _scope_hi)
+            dst = None
+            if node is not None:
+                if (len(node.args) == 2
+                        and all(_is_num_literal(v) for v in node.args)):
+                    dst = [(node.args[0], _num(rng[0]), rng[0]),
+                           (node.args[1], _num(rng[1]), rng[1])]
+                elif (len(node.args) == 1
+                      and isinstance(node.args[0], (ast.List, ast.Tuple))
+                      and len(node.args[0].elts) == 2
+                      and all(_is_num_literal(v)
+                              for v in node.args[0].elts)):
+                    dst = [(node.args[0].elts[0], _num(rng[0]), rng[0]),
+                           (node.args[0].elts[1], _num(rng[1]), rng[1])]
+                else:
+                    _kw = {k.arg: k for k in node.keywords if k.arg in kws}
+                    if all(k in _kw and _is_num_literal(_kw[k].value)
+                           for k in kws):
+                        dst = [(_kw[kws[0]].value, _num(rng[0]), rng[0]),
+                               (_kw[kws[1]].value, _num(rng[1]), rng[1])]
+            if dst and all(_add(nd, tx, (i, field), val)
+                           for nd, tx, val in dst):
+                covered.setdefault(i, set()).add(field)
+            elif field not in covered.get(i, ()):
+                skipped.append((i, field, rng))
         # ⑥ 其余无法原位表达的字段（有目标值时记 skipped）
         for field in ('clim', 'cmap', 'lines', 'legend', 'spines'):
             v = a.get(field)
@@ -733,6 +847,13 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                 _v = a.get(_f)
                 if _v and _v != 'linear' and _f not in covered.get(i, ()):
                     skipped.append((i, _f, _v))
+    # 整字段都是"值没变"的空改 → 不算改到（否则 auto 模式会以为有改动落地而
+    # 不退到块模式，网格轴图里用户拖的位置就落不了地；重复 apply 也会谎报改动）
+    for _key, _n in _reg.items():
+        if _n and _noop.get(_key, 0) == _n:
+            _i, _f = _key
+            if _i in covered:
+                covered[_i].discard(_f)
     # 按原始位置**从右往左**落：后面的替换不影响前面位置，偏移永不失效
     edits.sort(key=lambda x: -x[0])
     out = src
@@ -951,7 +1072,8 @@ def _rollback_note(backup, script, expect=None):
 
 
 def _writeback_inplace(script, src, tree, data, params_path, verify,
-                       python, timeout, dry_run, semantic, encoding='utf-8'):
+                       python, timeout, dry_run, semantic, encoding='utf-8',
+                       fast_check=False):
     """原位写回主流程：改数字 → 备份 → 写文件 → Agg + 语义验证（只比被覆盖字段）。"""
     res: Dict[str, Any] = {'reason': FAIL, 'changes': [], 'block': None,
                            'backup': None, 'warnings': [], 'verified': None,
@@ -1033,6 +1155,22 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     except OSError as e:
         res['err'] = '写文件失败: %s（%s）' % (e, _rollback_note(backup, script))
         return res
+    if fast_check and not verify:
+        # 快速验证档（--verify-fast）：**不重跑**，只做静态检查。
+        # 它的价值在于源码手术最容易坏的地方（缩进/括号/引号）是**免费**可查的，
+        # 坏在这里当场回滚，比"明明写坏了却报成功"强得多。
+        # 但它给出的是**弱保证**：脚本能不能跑通、布局有没有真的落到目标图上，
+        # 它一概不知道 —— 所以结论里必须原话说清，别让用户误以为"验证过了"。
+        try:
+            ast.parse(in_src)
+            res['verified'] = None
+            res['verify_mode'] = 'fast'
+        except SyntaxError as e:
+            res.update({'reason': FAIL, 'verify_mode': 'fast',
+                        'err': '快速验证失败：写回后的源码语法错误（%s）：%s'
+                               % (_rollback_note(backup, script, expect=in_src), e),
+                        'verified': False})
+            return res
     if verify:
         vok, verr = verify_run(script, python, timeout)
         res['verified'] = vok
@@ -1130,6 +1268,14 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
     out.append(_msg.t('block_comment', ts=time.strftime('%Y-%m-%d %H:%M')))
     if tag:
         out.append('# ' + tag)          # 多图会话：标明本块属于哪张图（兜底定位用）
+    # 轴身份线索：下面所有 `fig.axes[i]` 都是**下标寻址**，脚本一改（加 colorbar、
+    # 条件分支少建一个轴）下标就可能漂。把调图时的网格身份写进注释，出问题时人一眼
+    # 能看出"这个下标原本是哪个面板"；真正的兜底是写回后的语义验证 —— 它会把 cell
+    # 身份回比一遍，不匹配就直接回滚（verify.compare 里的 cell 比对）。
+    _cells = [(a.get('index'), a.get('cell')) for a in axes if a.get('cell')]
+    if _cells:
+        out.append('# 轴身份（调图时）：%s'
+                   % '，'.join('ax%s=网格%s' % (i, c) for i, c in _cells))
     if figsize_in:
         out.append('%s.set_size_inches(%s, %s)'
                    % (fig_var, _num(figsize_in[0]), _num(figsize_in[1])))
@@ -1165,6 +1311,12 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
             out.append('%s.tick_params(labelsize=%s)' % (ax, _num(a['tick_fontsize'])))
         if a.get('grid') is not None:
             out.append('%s.grid(%s)' % (ax, 'True' if a['grid'] else 'False'))
+        # 轴范围：块是"源码里没有 set_xlim 写法"时的兜底，所以这里必须带上，
+        # 否则 --style block 会静默丢掉用户设的范围（grid 之后、spines 之前）。
+        for field, meth in (('xlim', 'set_xlim'), ('ylim', 'set_ylim')):
+            rng = a.get(field)
+            if isinstance(rng, (list, tuple)) and len(rng) == 2:
+                out.append('%s.%s(%s, %s)' % (ax, meth, _num(rng[0]), _num(rng[1])))
         for k, vis in (a.get('spines') or {}).items():
             if not vis:
                 out.append('%s.spines[%r].set_visible(False)' % (ax, k))
@@ -1334,18 +1486,24 @@ def verify_run(script, python=None, timeout=300):
 # --------------------------------------------------------------------------
 def writeback(script, data, params_path, verify=True, python=None,
               timeout=300, dry_run=False, semantic=True, only_fig=True,
-              style='block'):
+              style='block', fast_check=False):
     """确定性写回。返回结果 dict：
       {reason, changes, block, backup, warnings, verified, semantic, err}
     reason：ok / best_effort / no_change / no_fig / no_axes / fail。
     semantic=True 时在"能跑通"之后再比对目标图状态是否真的等于参数。
     only_fig=True（默认）循环出图时按 fig_index 加守卫只改目标那张；False = 统一应用。
     style：'block'（默认，插调整块）/ 'inplace'（直接改原代码数字，用户主推）。
+    fast_check=True 且 verify=False 时走**快速验证档**：只做语法静态检查 + 必要时回滚，
+    **不重跑脚本**（保证很弱，见 _FAST_VERIFY_NOTE 的原话）。
     """
     script = os.path.abspath(script)
+    # style 必须如实回报：apply 用它选"已原位改 N 处"还是"已插入调整块"两种消息，
+    # --json 里 agent 也靠它判断这次到底动了源码的哪个形态。原先这条路径漏设，
+    # 结果**块模式以外的写回在 JSON 里 style=None**、人读消息也永远说"插入调整块"
+    # （2026-10-10 写 §11 用例时抓到）。
     res: Dict[str, Any] = {'reason': FAIL, 'changes': [], 'block': None,
                            'backup': None, 'warnings': [], 'verified': None,
-                           'err': ''}
+                           'err': '', 'style': 'block'}
     axes = data.get('axes') or []
     if not axes:
         res['reason'] = NO_AXES
@@ -1376,7 +1534,7 @@ def writeback(script, data, params_path, verify=True, python=None,
         # 原位写回：直接改原代码数字，不插调整块（用户主推方式）
         return _writeback_inplace(script, src, tree, data, params_path,
                                   verify, python, timeout, dry_run, semantic,
-                                  encoding=_src_enc)
+                                  encoding=_src_enc, fast_check=fast_check)
 
     fig_var, _ = find_fig_var(tree)
     pre_warnings: List[str] = []
@@ -1571,6 +1729,22 @@ def writeback(script, data, params_path, verify=True, python=None,
         chosen_block, guard_note = _guarded(block, cands[0])
     if guard_note:
         warnings.append(guard_note)
+
+    if fast_check and not verify and not dry_run:
+        # 快速验证档（块路径）：与 _writeback_inplace 同一套弱保证 —— 只查语法，
+        # 坏在这里当场回滚；不重跑，所以"能跑通/布局对不对"它不负责（原话说清）。
+        # **`not dry_run` 是必须的**：dry-run 走上面的 else 分支，`content` 根本没绑定，
+        # 漏掉这个条件就是 UnboundLocalError（独立审阅 F2 实测复现：
+        # `apply g.py --write --style block --dry-run --verify-fast` → rc=1）。
+        try:
+            ast.parse(content)
+            res['verify_mode'] = 'fast'
+        except SyntaxError as e:
+            res.update({'reason': FAIL, 'verify_mode': 'fast',
+                        'err': '快速验证失败：写回后的源码语法错误（%s）：%s'
+                               % (_rollback_note(backup, script, expect=content), e),
+                        'verified': False})
+            return res
 
     res.update({'reason': BEST_EFFORT if warnings else OK,
                 'block': chosen_block, 'backup': backup, 'warnings': warnings,

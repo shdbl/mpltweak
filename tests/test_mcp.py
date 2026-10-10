@@ -17,6 +17,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = sys.executable
 FIX = os.path.join(ROOT, 'tests', 'fixtures', 'synth_script.py')
 
+# 版本号引用 SCHEMA_VERSION，别写字面量（schema 升 4 时这里曾经硬编码 3 而挂）
+sys.path.insert(0, os.path.join(ROOT, 'src'))
+from mpltweak import params as _params                            # noqa: E402
+
 try:
     import mcp                                                # noqa: F401
     HAS_MCP = True
@@ -54,7 +58,9 @@ async def run():
             print('§3 describe_layout')
             r = await session.call_tool('describe_layout', {'script': FIX})
             d = json.loads(r.content[0].text)
-            check(d.get('version') == 3, 'version=3', d.get('version'))
+            check(d.get('version') == _params.SCHEMA_VERSION,
+                  'version = SCHEMA_VERSION(%d)' % _params.SCHEMA_VERSION,
+                  d.get('version'))
             check(len(d.get('axes', [])) >= 1, '带 axes', len(d.get('axes', [])))
 
             print('§4 check_layout')

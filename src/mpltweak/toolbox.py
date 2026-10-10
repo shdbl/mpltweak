@@ -43,6 +43,9 @@ from matplotlib.lines import Line2D
 from matplotlib.backend_tools import Cursors
 from matplotlib.backend_bases import MouseEvent
 
+# 参数规范的版本号只维护在 params 里（params 只依赖标准库，无循环导入风险）
+from .params import SCHEMA_VERSION
+
 # ---- 口径常量（置顶，带依据） ----
 STEP = 0.01          # 每按键一格的 figure 比例（沿用原版 0.01）
 NUDGE_STEP = 0.005   # 方向键微调尺寸的每次增量（中心不动）
@@ -61,7 +64,6 @@ BAND_EDGE = '#1f77b4'  # 橡皮筋框选颜色
 
 QUIET = False          # 安静模式：交互期不打印任何 [mpltweak] 日志（供外部启动器用）
 CLIM_TIP_TOL = 10      # colorbar 长轴端点的 clim 抓取区（像素）
-CLIM_MIN_SPAN = 1e-9   # clim 端点不允许完全重合
 LINE_LW_STEP = 0.5
 LINE_LW_MIN = 0.5
 LINE_LW_MAX = 12.0
@@ -754,6 +756,38 @@ def _bbox(ax):
     '''取坐标框 [x0, y0, w, h]（figure 比例坐标）。'''
     p = ax._position
     return [p.x0, p.y0, p.width, p.height]
+
+
+def _cell_of(ax):
+    '''轴在网格里的格位 [行数, 列数, 起始行, 起始列]；手工 add_axes 的轴返回 None。
+
+    口径必须与 ``verify._ax_identity`` 一致（那边是采集侧、这边是交互导出侧，
+    两边都写进同一份参数规范）。它让"轴序漂移"能在写回后被语义验证回比出来。
+    '''
+    try:
+        sp = ax.get_subplotspec()
+        if sp is None:
+            return None
+        g = sp.get_geometry()
+        return [int(g[0]), int(g[1]), int(sp.rowspan.start), int(sp.colspan.start)]
+    except (AttributeError, ValueError, TypeError):
+        return None
+
+
+def _fixed_lim(ax, which):
+    '''轴范围 [min, max]；**只在脚本显式固定过时**才返回（autoscale 关掉 = 固定）。
+
+    口径同 ``verify._state``：autoscale 的图不记范围 —— 否则每张图都会带一组
+    "当前自动范围"，写回时在源码里找不到对应写法，白白刷一堆"未原位应用"。
+    '''
+    try:
+        on = ax.get_autoscalex_on() if which == 'x' else ax.get_autoscaley_on()
+        if on:
+            return None
+        lo, hi = ax.get_xlim() if which == 'x' else ax.get_ylim()
+        return [round(float(lo), 6), round(float(hi), 6)]
+    except (AttributeError, ValueError, TypeError):
+        return None
 
 
 def _set_bbox(ax, box):
@@ -3424,6 +3458,12 @@ class Tweak:
                 # 落实时要靠这个标记决定"要不要先解除 locator/box_aspect"
                 'is_colorbar': bool(_is_colorbar_ax(ax)),
                 'clim': list(_clim_of(ax)) if _clim_of(ax) is not None else None,
+                # 与 verify._state / describe 同口径：网格身份 + 显式固定过的范围。
+                # 交互导出的参数也必须带 `cell`，否则"开窗调图"这条路径就丢掉了
+                # 轴序漂移的保护（apply 只在两边都有 cell 时才回比）。
+                'cell': _cell_of(ax),
+                'xlim': _fixed_lim(ax, 'x'),
+                'ylim': _fixed_lim(ax, 'y'),
                 'xscale': ax.get_xscale(),
                 'yscale': ax.get_yscale(),
                 'grid': any(line.get_visible() for line in
@@ -3457,7 +3497,10 @@ class Tweak:
                 }
             axes.append(item)
         data = {
-            'version': 3,
+            # 版本号引用参数规范的单一真相源（params 只依赖标准库，不会有循环导入）。
+            # 这里曾硬编码 3 —— schema 升到 4 后，交互导出的文件与 describe 的产物
+            # 版本号就不一致了，靠自查才翻出来。
+            'version': SCHEMA_VERSION,
             'script': os.path.basename(sys.argv[0]) if sys.argv else '',
             # 画布逻辑像素尺寸（Qt get_width_height 返回逻辑 px，与显示器缩放无关）
             'figsize_px': list(self._fig_px) if self._fig_px else None,

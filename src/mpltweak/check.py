@@ -17,10 +17,10 @@ colorbar 轴、aspect 锁定的轴（cartopy 地图）不参与几何比对。
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 
+from . import layoutwarn
 from . import messages as _msg
 from . import verify
 
@@ -28,6 +28,19 @@ from . import verify
 DEFAULT_TOL = 0.010
 # 两个轴若"近到 0.2 以内"就认为它们本来该对齐（否则是分列/分区，不算不齐）
 ALIGN_NEAR = 0.20
+# --- 文字渲染尺寸检查（按真实像素外框，不是几何框）---
+# 超出画布：留一点余量再判（文字贴边不算"被裁"）
+TEXT_EDGE_EPS = 0.002
+# 互压：重叠面积下限（figure 比例²）——碰一下不算压，肉眼看得出来才算
+TEXT_OVERLAP_MIN = 1.5e-3
+# 互压最多报几条（刻度标签多的图别刷屏）
+TEXT_OVERLAP_REPORT = 6
+# 同轴相邻刻度标签：沿刻度方向的重叠达到标签尺寸的这么多比例，才算"太密"
+TICK_CROWD_RATIO = 0.20
+# 文字种类 → 人话（写进提示里，用户才知道是哪儿）
+_KIND_ZH = {'title': '标题', 'xlabel': 'x 轴标签', 'ylabel': 'y 轴标签',
+            'xtick': 'x 刻度', 'ytick': 'y 刻度', 'text': '文字',
+            'figtext': '图注', 'capped': '文字'}
 
 
 def _normal(axes):
@@ -201,6 +214,156 @@ def analyze(axes, tol=DEFAULT_TOL):
                                % (label, mode, '、'.join(odd)),
                     })
 
+    # ---- 7. 轴范围不统一（多面板常见毛病：同一组面板该共享 xlim/ylim）----
+    # 只在"有明显多数派"时报（≥60% 的面板范围一致、另有少数不同）——各自为政的多面板
+    # 图（每个面板画不同物理量）本来就不该统一，这种情况下不报。
+    for key, label in (('xlim', 'x 轴范围'), ('ylim', 'y 轴范围')):
+        vals = [(a, a.get(key)) for a in normal
+                if isinstance(a.get(key), (list, tuple)) and len(a[key]) == 2]
+        if len(vals) < 3:
+            continue
+        groups = {}                       # {范围: [轴, ...]}
+        for a, v in vals:
+            groups.setdefault((round(float(v[0]), 6), round(float(v[1]), 6)),
+                              []).append(a)
+        if len(groups) < 2:
+            continue
+        ranked = sorted(groups.items(), key=lambda kv: -len(kv[1]))
+        mode, top = ranked[0]
+        if len(top) < 0.6 * len(vals):
+            continue
+        odd = []
+        for k, g in ranked[1:]:
+            for a in g:
+                odd.append('%s %s' % (_name(a), list(k)))
+        if odd:
+            warns.append({
+                'rule': 'limits_mismatch', 'level': 'warn',
+                'axes': [o.split()[0] for o in odd],
+                'msg': '%s不统一：%d 个面板是 %s，另有 %s（同组面板通常应一致；'
+                       '刻意放大某个面板时忽略本条）'
+                       % (label, len(top), list(mode), '、'.join(odd)),
+            })
+
+    return problems, warns
+
+
+def analyze_texts(state):
+    """按**真实渲染尺寸**查文字：超出画布（error）/ 互相压住（warn）。
+
+    与几何规则的分工：几何规则只看轴的位置框，**看不到文字**——所以
+    "刻度标签特别长、已经戳出画布"或"标题和邻图标题压在一起"这类问题它一律漏报。
+    这里的输入是 ``verify._state(..., with_text=True)`` 采集的文字盒
+    （figure 归一化坐标，由 ``Text.get_window_extent(renderer)`` 得到真实外框）。
+
+    判定口径（刻意保守，宁可漏报也不刷屏）：
+      * **超出画布 = error**：客观可判定——超出 0~1 的文字一定会被裁掉；
+      * **互压 = warn**：文字挨着不等于难看，所以只报"两维都重叠且面积够大"的，
+        同轴同类的刻度标签之间不算（相邻刻度轻微搭边是常态）；
+      * 最多报 ``TEXT_OVERLAP_REPORT`` 条互压。
+    """
+    problems, warns = [], []
+    err = state.get('_text_error')
+    if err:
+        warns.append({'rule': 'text_unavailable', 'level': 'warn', 'axes': [],
+                      'msg': '文字尺寸检测不可用（%s），本次只做几何检查' % err})
+        return problems, warns
+
+    entries = []          # [(轴名 or '', 文字盒 dict)]
+    for a in state.get('axes') or []:
+        for t in a.get('_texts') or []:
+            entries.append((_name(a), t))
+    for t in state.get('_fig_texts') or []:
+        entries.append(('', t))
+
+    def label(where, t):
+        return '%s 的%s「%s」' % (where or '画布', _KIND_ZH.get(t.get('kind'),
+                                                          '文字'), t.get('s'))
+
+    # ---- 1. 超出画布（error）----
+    for where, t in entries:
+        b = t.get('box') or [0, 0, 0, 0]
+        out = []
+        if b[0] < -TEXT_EDGE_EPS:
+            out.append('左 %.3f' % b[0])
+        if b[1] < -TEXT_EDGE_EPS:
+            out.append('下 %.3f' % b[1])
+        if b[2] > 1 + TEXT_EDGE_EPS:
+            out.append('右 %.3f' % b[2])
+        if b[3] > 1 + TEXT_EDGE_EPS:
+            out.append('上 %.3f' % b[3])
+        if out:
+            problems.append({
+                'rule': 'text_out_of_canvas', 'level': 'error',
+                'axes': [where] if where else [],
+                'msg': '%s 超出画布（%s），这段文字会被裁掉'
+                       % (label(where, t), '、'.join(out)),
+                'text': t.get('s'), 'box': b})
+
+    # ---- 2. 互相压住（warn）----
+    # 分两类，判据不同：
+    #   a) 跨轴 / 不同类型的文字：按**重叠面积**判（标题压邻图标题、标注压刻度……）；
+    #   b) 同轴同类刻度标签：按**沿刻度方向的重叠占标签尺寸比例**判 —— 这正是
+    #      外部审阅说的"刻度标签特别长"（相邻标签互相吃掉一半宽度，数字就看不清了）。
+    #      轻微搭边（< TICK_CROWD_RATIO）是常态，不报。
+    n_rep = 0
+    for i in range(len(entries)):
+        if n_rep >= TEXT_OVERLAP_REPORT:
+            break
+        wa, ta = entries[i]
+        ba = ta.get('box')
+        if not ba or ta.get('kind') == 'capped':
+            continue
+        for j in range(i + 1, len(entries)):
+            if n_rep >= TEXT_OVERLAP_REPORT:
+                break
+            wb, tb = entries[j]
+            bb = tb.get('box')
+            if not bb or tb.get('kind') == 'capped':
+                continue
+            dx = min(ba[2], bb[2]) - max(ba[0], bb[0])
+            dy = min(ba[3], bb[3]) - max(ba[1], bb[1])
+            if dx <= 0 or dy <= 0:
+                continue
+            ka, kb = ta.get('kind'), tb.get('kind')
+            if wa == wb and ka == kb and ka in ('xtick', 'ytick'):
+                # b) 同轴同类刻度：沿刻度方向的重叠比例
+                if ka == 'xtick':
+                    ratio = dx / max(1e-9, min(ba[2] - ba[0], bb[2] - bb[0]))
+                else:
+                    ratio = dy / max(1e-9, min(ba[3] - ba[1], bb[3] - bb[1]))
+                if ratio < TICK_CROWD_RATIO:
+                    continue
+                warns.append({
+                    'rule': 'tick_labels_crowded', 'level': 'warn',
+                    'axes': [wa],
+                    'msg': '%s 的%s太密：「%s」与「%s」有 %.0f%% 的宽度重叠，'
+                           '数字会看不清（抽稀刻度或缩小字号）'
+                           % (wa, _KIND_ZH.get(ka, '刻度'), ta.get('s'),
+                              tb.get('s'), ratio * 100),
+                    'overlap_ratio': round(ratio, 3)})
+                n_rep += 1
+                continue
+            # a) 跨轴 / 跨类型：按面积
+            if dx * dy < TEXT_OVERLAP_MIN:
+                continue
+            warns.append({
+                'rule': 'text_overlap', 'level': 'warn',
+                'axes': sorted({x for x in (wa, wb) if x}),
+                'msg': '%s 与 %s 压在一起（重叠 %.3f×%.3f）'
+                       % (label(wa, ta), label(wb, tb), dx, dy),
+                'overlap': [round(dx, 4), round(dy, 4)]})
+            n_rep += 1
+    return problems, warns
+
+
+def analyze_state(state, tol=DEFAULT_TOL, with_text=True):
+    """``check`` 与 MCP ``check_layout`` 的共同入口：几何规则 + 文字渲染尺寸规则。"""
+    problems, warns = analyze(state.get('axes') or [], tol)
+    if with_text:
+        tp, tw = analyze_texts(state)
+        problems += tp
+        warns += tw
     return problems, warns
 
 
@@ -213,6 +376,12 @@ def main(argv=None) -> int:
     ap.add_argument('--fig', type=int, default=-1, help='第几张图（0-based，默认最后一张）')
     ap.add_argument('--tol', type=float, default=DEFAULT_TOL, help='几何容差（默认 0.010）')
     ap.add_argument('--json', action='store_true', help='机器可读输出')
+    ap.add_argument('--no-text', action='store_true',
+                    help='跳过文字渲染尺寸检查（刻度标签/标题/标注；'
+                         '默认开启，重图少等一次绘制时可用）')
+    ap.add_argument('--strict', action='store_true',
+                    help='把布局引擎冲突（constrained_layout / figure.autolayout）'
+                         '也当成问题：退出码变 1，适合接进 CI')
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     _real = sys.stdout
@@ -225,7 +394,8 @@ def main(argv=None) -> int:
         if args.json:
             _msg.fail_json('file_not_found', 'script not found: %s' % script)
         return 2
-    state, err = verify.collect(script, args.fig if args.fig >= 0 else None)
+    state, err = verify.collect(script, args.fig if args.fig >= 0 else None,
+                                with_text=not args.no_text)
     if state is None:
         sys.stdout = _real
         sys.stderr.write('[check] 采集失败: %s\n' % err)
@@ -234,12 +404,31 @@ def main(argv=None) -> int:
         return 2
 
     axes = state.get('axes') or []
-    problems, warns = analyze(axes, args.tol)
+    text_checked = not args.no_text and not state.get('_text_error')
+    problems, warns = analyze_state(state, args.tol,
+                                    with_text=not args.no_text)
+    n_texts = sum(len(a.get('_texts') or []) for a in axes) \
+        + len(state.get('_fig_texts') or [])
     n_cb = len([a for a in axes if a.get('is_colorbar')])
+    # 布局引擎冲突（constrained_layout / autolayout）：单独一栏报，**不进 problems**
+    # —— 它不影响退出码，也不该混进"几何问题"里（外部审阅第 4 条的落地）。
+    conflicts = layoutwarn.scan(script)
+    # --strict：把布局引擎冲突升级成**问题**（rc=1）—— 接 CI 的用户可以这样要求
+    # "别用会被引擎覆盖的布局方式"。默认仍是提示：引擎本身是 matplotlib 的正常写法，
+    # 不该因为用了它就让 check 红掉（见 README / 手册里的取舍说明）。
+    if args.strict and conflicts:
+        for _c in conflicts:
+            problems.append({
+                'rule': 'layout_engine_conflict', 'level': 'error',
+                'axes': [],
+                'msg': '第 %d 行开了 %s：布局引擎会在每次绘制时重算轴位置，'
+                       '写回的位置会被覆盖（--strict 视为问题）'
+                       % (_c.get('line'), _c.get('how')),
+            })
 
     if args.json:
         sys.stdout = _real
-        print(json.dumps({
+        _msg.emit_json({
             'script': os.path.basename(script),
             'n_axes': len(axes),
             'n_colorbar': n_cb,
@@ -247,13 +436,21 @@ def main(argv=None) -> int:
             'ok': not problems,
             'problems': problems,
             'warnings': warns,
-        }, ensure_ascii=False, indent=2))
+            'layout_engine': conflicts,
+            'text_checked': text_checked,
+            'n_texts': n_texts,
+        })
         return 1 if problems else 0
 
     sys.stdout = _real
     print('检查 %d 个轴%s，容差 %.3f'
           % (len(axes), '（其中 %d 个 colorbar 不参与几何比对）' % n_cb
              if n_cb else '', args.tol))
+    if text_checked:
+        print('文字 %d 处已按**真实渲染尺寸**检查（超出画布 → 问题；互相压住 → 提示）'
+              % n_texts)
+    elif args.no_text:
+        print('（已用 --no-text 跳过文字尺寸检查）')
     print()
     if not problems and not warns:
         print('√ 没发现问题：对齐 / 等大 / 间距 / 字号 / 边界都正常')
@@ -261,6 +458,10 @@ def main(argv=None) -> int:
         print('× %s' % p['msg'])
     for w in warns:
         print('· %s（若是有意为之可忽略）' % w['msg'])
+    if conflicts:
+        print()
+        for line in layoutwarn.messages_for(conflicts):
+            print(line)
     print()
     if problems:
         print('%d 个问题%s' % (len(problems),

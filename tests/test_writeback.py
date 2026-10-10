@@ -5,18 +5,22 @@
 #   3. 幂等：重复写回 = 整体替换旧块，不叠加
 #   4. 安全网：写回后 Agg 重跑失败 → 自动回滚备份
 import os
+import re
 import shutil
 import sys
 import json
 import tempfile
 import time
 
-from mpltweak import apply, launch, writeback
+from mpltweak import apply, launch, revert, verify, writeback
 
 fail = 0
 
 # 沙箱：测试只能写 workspace 内；用测试文件旁目录做临时区
-_TMPROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.tmp_writeback')
+# 临时根目录带 pid：本套件与 CI/手工并行跑时，两边的 rmtree 不会互删对方正在用的
+# case 目录（独立审阅实测踩到过 FileNotFoundError: case_19/target.py）。
+_TMPROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        '.tmp_writeback_%d' % os.getpid())
 
 
 def check(name, cond, detail=''):
@@ -93,7 +97,8 @@ def read(script):
 # ---- 1. 主流程 ----
 d, script, pp = setup()
 res = writeback.writeback(script, PARAMS, pp, verify=True)
-check('reason=OK', res['reason'] == 'ok', res['reason'])
+check('reason=OK', res['reason'] == 'ok',
+      '%s | err=%s' % (res['reason'], res.get('err')))
 check('fig 变量=fig', res.get('fig_var') == 'fig', str(res.get('fig_var')))
 check('figsize 原位替换', res.get('figsize_edited') is True)
 check('插入点=before(savefig)', res.get('anchor') == 'before', str(res.get('anchor')))
@@ -380,12 +385,13 @@ with open(script11, 'w', encoding='utf-8') as f:
 
 
 def _mkpar(idx, pos):
-    return {'version': 3, 'script': 'target.py', 'figsize_px': None,
+    return {'version': 4, 'script': 'target.py', 'figsize_px': None,
             'figsize_in': None, 'fig_index': idx, 'n_figs': 2,
             'axes': [{'index': 0, 'pos': pos, 'aspect_locked': False,
                       'title_fontsize': None, 'label_fontsize': None,
                       'tick_fontsize': None, 'is_colorbar': False,
-                      'clim': None, 'cmap': None, 'xscale': 'linear',
+                      'clim': None, 'cmap': None, 'xlim': None, 'ylim': None,
+                      'xscale': 'linear',
                       'yscale': 'linear', 'grid': None,
                       'spines': {}, 'lines': []}]}
 
@@ -1011,6 +1017,308 @@ check('带 BOM 的脚本也能写回（原先直接抛 UnicodeDecodeError）',
 check('写回后 BOM 不再叠加', not _raw29.startswith(b'\xef\xbb\xbf'),
       repr(_raw29[:8]))
 shutil.rmtree(d29, ignore_errors=True)
+
+# ---- 30. 元组写法 add_axes((...)) 也要进原位写回 ----
+# 外部审阅第 2 条：原位路径原先只认 ast.List，元组写法会被**静默**丢进 skipped
+# （用户看到的是"拖了没反应"，而代码里明明有可改的数字）。
+# 反向验证：把 writeback.py 的 `isinstance(..., (ast.List, ast.Tuple))` 改回只认
+# ast.List，本条立刻失败 → 证明它真的在测东西。
+d30, _s30, _pp30 = setup()
+with open(_s30, 'w', encoding='utf-8') as f:
+    f.write('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(6, 4))\n'
+            'ax = fig.add_axes((0.10, 0.10, 0.40, 0.40))\n'
+            'fig.savefig("o.png")\n')
+_par30 = _mkpar(0, [0.25, 0.30, 0.35, 0.45])
+with open(_pp30, 'w', encoding='utf-8') as f:
+    json.dump(_par30, f, ensure_ascii=False)
+_res30 = writeback.writeback(_s30, _par30, _pp30, verify=False, style='inplace')
+_src30 = read(_s30)
+_m30 = re.search(r'add_axes\(\(([^)]*)\)\)', _src30)
+_vals30 = [float(x) for x in _m30.group(1).split(',')] if _m30 else []
+check('元组 add_axes((...)) 原位写回（原先静默进 skipped）',
+      len(_vals30) == 4 and all(abs(a - b) < 1e-6
+                                for a, b in zip(_vals30, [0.25, 0.30, 0.35, 0.45])),
+      'reason=%s pos=%r' % (_res30.get('reason'), _vals30))
+check('元组写回不改容器类型（仍然是一对圆括号，不是方括号）',
+      _m30 is not None and 'add_axes([' not in _src30,
+      str([ln for ln in _src30.splitlines() if 'add_axes' in ln]))
+check('元组写回被记进 covered（不是"改了 0 处"）',
+      bool(_res30.get('changes')), str(_res30.get('changes')))
+
+shutil.rmtree(d30, ignore_errors=True)
+
+# ---- 31. 轴范围 xlim/ylim 的位置参数写法（含带符号字面量）----
+# 外部审阅第 2 条点名的 `set_xlim(-0.01, 1.01)`：负号在 AST 里是 UnaryOp 而不是
+# Constant，只认 Constant 会把它静默丢进 skipped（用户看到"改了没反应"）。
+# 反向验证：把 _is_num_literal 换回 isinstance(..., ast.Constant)，本条立刻失败。
+d31, _s31, _p31 = setup()
+with open(_s31, 'w', encoding='utf-8') as f:
+    f.write('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(6, 4))\n'
+            'ax = fig.add_axes([-0.02, 0.10, 0.80, 0.80])\n'
+            'ax.plot([1, 2, 3])\n'
+            'ax.set_xlim(-0.01, 1.01)\n'
+            'ax.set_ylim(0.0, 10.0)\n'
+            'fig.savefig("o.png")\n')
+_par31 = _mkpar(0, [0.0, 0.10, 0.80, 0.80])
+_par31['axes'][0]['xlim'] = [0.0, 2.0]
+_par31['axes'][0]['ylim'] = [0.5, 8.5]
+with open(_p31, 'w', encoding='utf-8') as f:
+    json.dump(_par31, f, ensure_ascii=False)
+_res31 = writeback.writeback(_s31, _par31, _p31, verify=False, style='inplace')
+_src31 = read(_s31)
+check('负数 pos 原位改写（-0.02 → 0，原先整项进 skipped）',
+      'add_axes([0, 0.10, 0.80, 0.80])' in _src31,
+      str([ln for ln in _src31.splitlines() if 'add_axes' in ln]))
+check('只改真正变了的数字（未变的 0.10 / 0.80 原样保留）',
+      '0.10' in _src31 and '0.80' in _src31,
+      str([ln for ln in _src31.splitlines() if 'add_axes' in ln]))
+check('set_xlim(a, b) 原位改写（负数范围要认）',
+      'set_xlim(0, 2)' in _src31,
+      str([ln for ln in _src31.splitlines() if 'set_xlim' in ln]))
+check('set_ylim(a, b) 原位改写',
+      'set_ylim(0.5, 8.5)' in _src31,
+      str([ln for ln in _src31.splitlines() if 'set_ylim' in ln]))
+check('三处都被记进 covered（不是"改了 0 处"）',
+      {'ax0.pos', 'ax0.xlim', 'ax0.ylim'} <= set(_res31.get('changes') or []),
+      str(_res31.get('changes')))
+shutil.rmtree(d31, ignore_errors=True)
+
+# ---- 32. 轴范围的容器 / 关键字写法 ----
+d32, _s32, _p32 = setup()
+with open(_s32, 'w', encoding='utf-8') as f:
+    f.write('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(6, 4))\n'
+            'ax = fig.add_axes([0.10, 0.10, 0.80, 0.80])\n'
+            'ax.plot([1, 2, 3])\n'
+            'ax.set_xlim((-0.01, 1.01))\n'          # 元组容器
+            'ax.set_ylim(ymin=0.0, ymax=10.0)\n'    # 关键字
+            'fig.savefig("o.png")\n')
+_par32 = _mkpar(0, [0.10, 0.10, 0.80, 0.80])
+_par32['axes'][0]['xlim'] = [0.0, 2.0]
+_par32['axes'][0]['ylim'] = [0.5, 8.5]
+with open(_p32, 'w', encoding='utf-8') as f:
+    json.dump(_par32, f, ensure_ascii=False)
+writeback.writeback(_s32, _par32, _p32, verify=False, style='inplace')
+_src32 = read(_s32)
+check('set_xlim((a, b)) 容器写法原位改写', 'set_xlim((0, 2))' in _src32,
+      str([ln for ln in _src32.splitlines() if 'set_xlim' in ln]))
+check('set_ylim(ymin=, ymax=) 关键字写法原位改写',
+      'ymin=0.5' in _src32 and 'ymax=8.5' in _src32,
+      str([ln for ln in _src32.splitlines() if 'set_ylim' in ln]))
+shutil.rmtree(d32, ignore_errors=True)
+
+# ---- 33. 源码里没有对应写法时：范围要进"未原位应用"，且块模式能承载 ----
+d33, _s33, _p33 = setup()
+_par33 = _mkpar(0, [0.05, 0.10, 0.42, 0.78])
+_par33['axes'][0]['xlim'] = [0.0, 4.0]
+with open(_p33, 'w', encoding='utf-8') as f:
+    json.dump(_par33, f, ensure_ascii=False)
+_res33 = writeback.writeback(_s33, _par33, _p33, verify=False, style='inplace')
+check('没有 set_xlim 可改 → 明确进"未原位应用"（不静默）',
+      any('xlim' in w for w in (_res33.get('warnings') or [])),
+      str(_res33.get('warnings')))
+_blk33, _warn33 = writeback.render_block(_par33, 'fig', [], [])
+check('块模式会带上 set_xlim（--style block 不丢范围）',
+      'set_xlim(0, 4)' in _blk33,
+      str([ln for ln in _blk33.splitlines() if 'set_xlim' in ln]))
+shutil.rmtree(d33, ignore_errors=True)
+
+# ---- 34. revert：从备份回退，而且自身可逆 ----
+# "完整本地回路"缺的那一环：写回错了要能一键回去（用户提过"没有 undo"）。
+d34, _s34, _ = setup()
+# 用单轴脚本（共用的 SCRIPT 有两轴 + colorbar，pos 只给一个轴会走不到干净的原位路径）
+_SRC34 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+          'fig.savefig("o.png")\n')
+with open(_s34, 'w', encoding='utf-8') as f:
+    f.write(_SRC34)
+_pd34 = os.path.join(d34, '.tweak_params')
+os.makedirs(_pd34, exist_ok=True)
+_pp34 = os.path.join(_pd34, 'target.json')       # 规范位置（revert 按它算备份路径）
+_par34 = _mkpar(0, [0.2, 0.2, 0.5, 0.5])
+with open(_pp34, 'w', encoding='utf-8') as f:
+    json.dump(_par34, f, ensure_ascii=False)
+writeback.writeback(_s34, _par34, _pp34, verify=False, style='inplace')
+check('写回后源码确实变了（前提）',
+      'add_axes([0.2, 0.2, 0.5, 0.5])' in read(_s34),
+      str([ln for ln in read(_s34).splitlines() if 'add_axes' in ln]))
+_bak34 = writeback._backup_path(_s34, _pp34)
+check('写回留了备份（revert 的依据）', os.path.exists(_bak34), _bak34)
+
+_before34 = read(_s34)
+check('revert 默认只预览：rc=0 且代码一个字节没动',
+      revert.main([_s34]) == 0 and read(_s34) == _before34)
+check('预览阶段不会生成 revert.bak',
+      not os.path.exists(os.path.join(_pd34, 'target.revert.bak')))
+
+check('revert --write rc=0', revert.main([_s34, '--write']) == 0)
+check('回到写回前的原文', read(_s34) == _SRC34, read(_s34)[:140])
+_rev34 = os.path.join(_pd34, 'target.revert.bak')
+check('revert 自身可逆：留了 revert.bak，内容是回退前那份',
+      os.path.exists(_rev34) and '[0.2, 0.2, 0.5, 0.5]' in read(_rev34),
+      _rev34)
+_d34b, _s34b, _ = setup()
+check('没有备份时 rc=2（并给出去哪找备份的说明）', revert.main([_s34b]) == 2)
+check('脚本不存在时 rc=2',
+      revert.main([os.path.join(d34, 'nope.py')]) == 2)
+shutil.rmtree(d34, ignore_errors=True)
+shutil.rmtree(_d34b, ignore_errors=True)
+
+# ---- 35. 快速验证档：只查语法；写出坏语法要当场回滚 ----
+_SRC35 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+          'fig.savefig("o.png")\n')
+d35, _s35, _pp35 = setup()
+_par35 = _mkpar(0, [0.2, 0.2, 0.5, 0.5])
+with open(_s35, 'w', encoding='utf-8') as f:
+    f.write(_SRC35)
+with open(_pp35, 'w', encoding='utf-8') as f:
+    json.dump(_par35, f, ensure_ascii=False)
+_res35 = writeback.writeback(_s35, _par35, _pp35, verify=False,
+                             fast_check=True, style='inplace')
+check('快速档标记 verify_mode=fast、且不声称验证通过',
+      _res35.get('verify_mode') == 'fast' and _res35.get('verified') is None,
+      str((_res35.get('verify_mode'), _res35.get('verified'))))
+check('快速档仍然把改动写进去了',
+      '[0.2, 0.2, 0.5, 0.5]' in read(_s35),
+      str([ln for ln in read(_s35).splitlines() if 'add_axes' in ln]))
+shutil.rmtree(d35, ignore_errors=True)
+
+# 安全网：注入一个"写出的源码语法坏了"的场景（替换后续被污染），
+# 快速档必须当场识破并回滚 —— 这是它唯一的强保证，必须真的成立。
+d35b, _s35b, _pp35b = setup()
+with open(_s35b, 'w', encoding='utf-8') as f:
+    f.write(_SRC35)
+with open(_pp35b, 'w', encoding='utf-8') as f:
+    json.dump(_par35, f, ensure_ascii=False)
+_orig_apply = writeback.apply_inplace
+
+
+def _bad_apply(*a, **k):
+    _new, _cov, _skip = _orig_apply(*a, **k)
+    return _new + '\ndef broken(:\n', _cov, _skip
+
+
+writeback.apply_inplace = _bad_apply
+try:
+    _res35b = writeback.writeback(_s35b, _par35, _pp35b, verify=False,
+                                  fast_check=True, style='inplace')
+finally:
+    writeback.apply_inplace = _orig_apply
+check('语法坏了 → reason=fail，且错误里点名"快速验证"',
+      _res35b.get('reason') == 'fail' and '快速验证失败' in (_res35b.get('err') or ''),
+      _res35b.get('err'))
+check('语法坏了 → 已回滚，磁盘上没留下坏脚本',
+      read(_s35b) == _SRC35 and 'broken' not in read(_s35b),
+      read(_s35b)[-80:])
+shutil.rmtree(d35b, ignore_errors=True)
+
+# ---- 36. 网格身份（cell）：轴序变了要**指名道姓**地失败，而不是默默改错面板 ----
+# 做法与取舍：块生成仍按 fig.axes 下标寻址（重写寻址会动整块格式、且在脚本变结构时
+# 有把用户脚本跑崩的风险），但把"调图时这个下标对应哪个网格格位"记进参数，
+# 写回后由语义验证回比 → 不匹配就回滚并说清原因。这条用例测的正是这个回比。
+_par36 = _mkpar(0, [0.1, 0.1, 0.4, 0.4])
+_par36['axes'][0]['cell'] = [1, 3, 0, 0]
+_par36['axes'][0]['title_fontsize'] = 12.0
+_act36 = [{'index': 0, 'cell': [1, 4, 0, 0], 'title_fontsize': 12.0}]
+_bad36 = verify.compare(_par36['axes'], _act36)
+check('cell 身份不一致 → 比对失败且信息里点名"轴序变了"',
+      any('网格身份' in b and '轴序变了' in b for b in _bad36),
+      str(_bad36))
+_act36b = [{'index': 0, 'cell': [1, 3, 0, 0], 'title_fontsize': 12.0}]
+check('cell 一致 → 不报（否则会误伤正常写回）',
+      not [b for b in verify.compare(_par36['axes'], _act36b) if '网格身份' in b],
+      str(verify.compare(_par36['axes'], _act36b)))
+_blk36, _w36 = writeback.render_block(_par36, 'fig', [], [])
+check('块注释里带出轴身份（出问题人一眼能对上）',
+      '轴身份' in _blk36 and '[1, 3, 0, 0]' in _blk36,
+      str([ln for ln in _blk36.splitlines() if '轴身份' in ln]))
+
+# ---- 37. 值没变的字段不算"改到"（否则 auto 模式会被骗住）----
+# 这条是实打实踩出来的：xlim/ylim 进参数后，**值没变**的字段也被登记成一处改动，
+# 于是 changes 非空 → apply 的 auto 模式以为"有改动落地"、不再退到块模式 →
+# 网格轴图里用户拖的位置就落不了地（只剩一句"未原位应用"警告）。
+# 顺带它也让"重复 apply 同一份参数"从谎报"原位修改 N 处"变成正确的 no_change。
+d37, _s37, _pp37 = setup()
+_SRC37 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+          'ax.set_xlim(-0.01, 1.01)\n'
+          'fig.savefig("o.png")\n')
+with open(_s37, 'w', encoding='utf-8') as f:
+    f.write(_SRC37)
+_par37 = _mkpar(0, [0.10, 0.10, 0.40, 0.40])          # 与源码**数值完全相同**
+_par37['axes'][0]['xlim'] = [-0.01, 1.01]
+with open(_pp37, 'w', encoding='utf-8') as f:
+    json.dump(_par37, f, ensure_ascii=False)
+_res37 = writeback.writeback(_s37, _par37, _pp37, verify=False, style='inplace')
+check('值与源码一致 → reason=no_change（不再谎报"改了 N 处"）',
+      _res37.get('reason') == 'no_change',
+      '%s / changes=%s' % (_res37.get('reason'), _res37.get('changes')))
+check('no_change 时源码一个字节都没变', read(_s37) == _SRC37, read(_s37)[-60:])
+shutil.rmtree(d37, ignore_errors=True)
+# ---- 39. 多图同名轴变量：字段查找必须夹在本图区间内 ----
+# 独立审阅 C2 的构造：两张图都用 `ax`，只有第二张写了 set_xlim。改第一张图的
+# xlim 时，_find_call 若只有下界就会命中第二张图那一行 —— 静默改错图。
+d39, _s39, _pp39 = setup()
+_SRC39 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+          'ax.plot([1, 2, 3])\n'
+          'fig.savefig("a.png")\n'
+          'fig2 = plt.figure(figsize=(6, 4))\n'
+          'ax = fig2.add_axes([0.20, 0.20, 0.50, 0.50])\n'
+          'ax.plot([3, 2, 1])\n'
+          'ax.set_xlim(0.0, 10.0)\n'          # 只在第二张图里
+          'fig2.savefig("b.png")\n')
+with open(_s39, 'w', encoding='utf-8') as f:
+    f.write(_SRC39)
+_par39 = _mkpar(0, [0.10, 0.10, 0.40, 0.40])     # 目标 = 第 0 张图
+_par39['axes'][0]['xlim'] = [0.0, 5.0]
+with open(_pp39, 'w', encoding='utf-8') as f:
+    json.dump(_par39, f, ensure_ascii=False)
+_res39 = writeback.writeback(_s39, _par39, _pp39, verify=False, style='inplace')
+_src39 = read(_s39)
+check('第一张图的图内没有 set_xlim → 不能去改第二张图那一行',
+      'ax.set_xlim(0.0, 10.0)' in _src39,
+      str([ln for ln in _src39.splitlines() if 'set_xlim' in ln]))
+check('该字段如实进"未原位应用"（不静默）',
+      any('xlim' in w for w in (_res39.get('warnings') or [])),
+      str(_res39.get('warnings')))
+shutil.rmtree(d39, ignore_errors=True)
+
+# ---- 38. 网格身份：期望是网格轴、实测不是 → 必须判失败（不能默默放行）----
+_c38 = [{'index': 0, 'cell': [1, 2, 0, 0], 'title_fontsize': 12.0}]
+check('实测该轴不再是网格轴（cell=None）→ 判失败',
+      any('网格身份对不上' in b for b in verify.compare(
+          _c38, [{'index': 0, 'cell': None, 'title_fontsize': 12.0}])),
+      str(verify.compare(_c38, [{'index': 0, 'cell': None,
+                                 'title_fontsize': 12.0}])))
+check('实测侧没这个字段（旧参数/采集失败）→ 不判，保持向后兼容',
+      not [b for b in verify.compare(
+          _c38, [{'index': 0, 'title_fontsize': 12.0}]) if '网格身份' in b],
+      str(verify.compare(_c38, [{'index': 0, 'title_fontsize': 12.0}])))
+check('cell 不同 → 判失败（此前已有）',
+      any('网格身份' in b for b in verify.compare(
+          _c38, [{'index': 0, 'cell': [1, 2, 0, 1], 'title_fontsize': 12.0}])))
 
 shutil.rmtree(d, ignore_errors=True)
 shutil.rmtree(d3, ignore_errors=True)

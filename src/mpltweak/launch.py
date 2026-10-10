@@ -248,6 +248,13 @@ def main(argv=None):
         sys.stderr.write('[launch] 找不到脚本: %s\n' % script)
         return 3
 
+    # 布局引擎冲突（constrained_layout / figure.autolayout）必须**在开窗之前**提示：
+    # 引擎会在每次绘制时重算轴位置，用户拖完看到的是"位置弹回去/验证不一致"，
+    # 而病因在脚本第 N 行（外部审阅第 4 条）。开窗后再提醒已经白拖了。
+    from . import layoutwarn
+    for _line in layoutwarn.messages_for(layoutwarn.scan(script)):
+        sys.stderr.write(_line + '\n')
+
     # Qt 后端必须在用户脚本之前设置。Qt 绑定/版本差异（PyQt5/PyQt6/PySide2/PySide6、
     # 老版本没有 QtAgg 名字）全在这里兜住：逐个候选后端真建一次 canvas 验证，
     # 都不行就给一句人话（而不是甩 traceback）。

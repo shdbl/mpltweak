@@ -41,7 +41,7 @@ def build_server():
 
     @mcp.tool()
     def describe_layout(script: str, fig: int = -1, all_figs: bool = False) -> str:
-        """读：不开窗导出脚本当前的排版，返回符合 mpltweak 公开规范（version 3）的参数 JSON。
+        """读：不开窗导出脚本当前的排版，返回符合 mpltweak 公开规范（version = params.SCHEMA_VERSION，当前 4）的参数 JSON。
 
         Args:
             script: 绘图脚本路径。
@@ -84,17 +84,22 @@ def build_server():
             tol: 几何容差（默认 0.01，即画布宽度的 1%）。
         """
         from . import verify
-        from .check import analyze
+        from .check import analyze_state
 
         script = os.path.abspath(script)
         if not os.path.exists(script):
             return json.dumps({'error': '找不到脚本: %s' % script}, ensure_ascii=False)
-        state, err = verify.collect(script, fig if fig >= 0 else None)
+        # with_text=True：文字尺寸检查（刻度标签/标题/标注）需要一次真实绘制 ——
+        # 与 CLI 的 `mpltweak check` 走**同一个入口**，免得两边规则漂移。
+        state, err = verify.collect(script, fig if fig >= 0 else None,
+                                    with_text=True)
         if state is None:
             return json.dumps({'error': err}, ensure_ascii=False)
-        problems, warns = analyze(state.get('axes') or [], tol)
+        problems, warns = analyze_state(state, tol, with_text=True)
         return json.dumps({'ok': not problems, 'problems': problems,
-                           'warnings': warns}, ensure_ascii=False, indent=2)
+                           'warnings': warns,
+                           'text_checked': not state.get('_text_error')},
+                          ensure_ascii=False, indent=2)
 
     @mcp.tool()
     def params_schema() -> str:

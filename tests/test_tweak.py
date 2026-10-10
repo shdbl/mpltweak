@@ -18,6 +18,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+from mpltweak import params as _params
 from mpltweak.toolbox import (Tweak, _resize_box, _snap_box,
                            _aspect_locked, LEGEND_LOCS, MIN_SIZE, MIN_SIZE_CB,
                            _resize_frac, _snap_resize, _hit_handle,
@@ -93,7 +94,8 @@ tw.export()
 with open(os.path.join(tempfile.gettempdir(), 'test_v3.json'),
           'r', encoding='utf-8') as f:
     data = json.load(f)
-check('export version 3', data.get('version') == 3)
+check('export version = SCHEMA_VERSION',
+      data.get('version') == _params.SCHEMA_VERSION)
 a0 = data['axes'][0]
 check('export pos', a0['pos'] == [0.1, 0.1, 0.6, 0.6], str(a0['pos']))
 check('export title_fontsize', a0['title_fontsize'] == 11)
@@ -101,6 +103,34 @@ check('export label_fontsize', a0['label_fontsize'] == 8)
 check('export legend loc', a0['legend']['loc'] == LEGEND_LOCS[2], str(a0['legend']))
 check('export legend fontsize', a0['legend']['fontsize'] == 9)
 check('export aspect_locked', a0['aspect_locked'] is False)
+
+# ---- 5b. export 的新字段：网格身份 + 显式固定过的轴范围 ----
+# 交互导出（开窗调图这条路径）产出的参数也必须带 `cell`，否则 apply 的
+# "轴序漂移"回比（两边都有 cell 才比）在这条最常走的路径上形同不存在。
+check('export cell（手工 add_axes → None）', a0.get('cell') is None,
+      str(a0.get('cell')))
+check('export xlim（没显式固定 → None，autoscale 不记）', a0.get('xlim') is None,
+      str(a0.get('xlim')))
+ax.set_xlim(-0.01, 1.01)          # 显式固定 → 之后应当被采集
+ax.set_ylim(0.0, 10.0)
+tw.export()
+with open(os.path.join(tempfile.gettempdir(), 'test_v3.json'),
+          'r', encoding='utf-8') as f:
+    data2 = json.load(f)
+check('export 显式固定的 xlim 被采集', data2['axes'][0].get('xlim') == [-0.01, 1.01],
+      str(data2['axes'][0].get('xlim')))
+check('export 显式固定的 ylim 被采集', data2['axes'][0].get('ylim') == [0.0, 10.0],
+      str(data2['axes'][0].get('ylim')))
+_fig5b, _axes5b = plt.subplots(1, 2, figsize=(6, 3))
+tw5b = Tweak(_fig5b, export_path=os.path.join(tempfile.gettempdir(),
+                                              'test_v3_grid.json'), heavy=False)
+tw5b.export()
+with open(os.path.join(tempfile.gettempdir(), 'test_v3_grid.json'),
+          'r', encoding='utf-8') as f:
+    data3 = json.load(f)
+check('export 网格轴的 cell = [1, 2, 0, col]',
+      [a.get('cell') for a in data3['axes']] == [[1, 2, 0, 0], [1, 2, 0, 1]],
+      str([a.get('cell') for a in data3['axes']]))
 
 # ---- 6. PPT 式边框/角点缩放 ----
 # 未锁：右边缘拖动（x1 变，x0 固定，高不变）

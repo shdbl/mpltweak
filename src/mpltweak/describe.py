@@ -9,7 +9,7 @@
     mpltweak describe fig1.py --all-figs      # 多图脚本：一次导出全部
     mpltweak describe fig1.py -o layout.json  # 写文件（默认 stdout）
 
-产物直接符合 .tweak_params 公开规范（version 3），可以原样喂给 apply。
+产物直接符合 .tweak_params 公开规范（version = params.SCHEMA_VERSION，当前 4），可以原样喂给 apply。
 """
 
 from __future__ import annotations
@@ -24,7 +24,11 @@ from . import params, verify
 
 
 def _to_params(state, script):
-    """把 verify 采集到的图状态整理成参数文件格式（version 3）。"""
+    """把 verify 采集到的图状态整理成参数文件格式（version = params.SCHEMA_VERSION）。
+
+    注意这是**白名单**：采集侧多采了什么，这里不写进去 agent 就看不到
+    （xlim/ylim 第一次加进来时就在这儿漏了一次，靠探针才发现）。
+    """
     out = {
         'version': params.SCHEMA_VERSION,
         'script': os.path.basename(script),
@@ -50,6 +54,9 @@ def _to_params(state, script):
             'tick_fontsize': it.get('tick_fontsize'),
             'is_colorbar': bool(it.get('is_colorbar')),
             'clim': it.get('clim'),
+            'cell': it.get('cell'),
+            'xlim': it.get('xlim'),
+            'ylim': it.get('ylim'),
             'xscale': it.get('xscale', 'linear'),
             'yscale': it.get('yscale', 'linear'),
             'grid': bool(it.get('grid')),
@@ -117,7 +124,9 @@ def main(argv=None) -> int:
             f.write(text + '\n')
         sys.stderr.write('[describe] 已写入 %s\n' % args.output)
     else:
-        sys.stdout.write(text + '\n')
+        # 走 emit_json（fd 级 UTF-8）而不是 print：payload 里的中文（脚本名/路径）
+        # 在 cp936 管道下会被编成 GBK，按 UTF-8 解码的 agent 直接崩（见 messages.emit_json）
+        _msg.emit_json(payload, indent=None if args.compact else 2)
     return 0
 
 

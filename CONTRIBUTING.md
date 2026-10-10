@@ -22,11 +22,15 @@ pip install matplotlib numpy
 mpltweak doctor              # check your interactive backend is usable
 ```
 
-Qt (PyQt5) is in the default dependencies because opening the window requires it.
-For headless work you can skip it:
+**Qt (PyQt5) is an extra, not a default dependency** — `pyproject.toml` declares it as
+`qt = ["PyQt5>=5.15"]` (see also `mcp` and `all`), because servers / headless boxes /
+pure-agent users only need `describe` / `check` / `apply` / `mcp` and should not pull in
+~100MB of Qt. Opening the window does need it, so add the extra when you work on the GUI:
 
 ```bash
-pip install -e . --no-deps   # then install only what you need
+pip install -e ".[qt]"       # PyQt5, for the interactive window
+pip install -e ".[all]"      # qt + mcp
+pip install -e . --no-deps   # then install only what you need (fully headless)
 ```
 
 ## Running the tests
@@ -44,6 +48,39 @@ python tests/test_mcp.py          # MCP server (skips itself if `mcp` isn't inst
 ```
 
 Each prints `ALL PASS` or a failure list. **All seven must pass before a PR.**
+
+### The pytest route (optional, same suites)
+
+`tests/test_suites.py` wraps those seven scripts in pytest — one test case per suite, so CI
+reports, single-suite selection and IDE integration all work:
+
+```bash
+pip install -e ".[dev]"
+pytest -q                       # all suites + the hygiene ratchet
+pytest -q -k test_writeback     # just the write-back engine
+```
+
+`tests/test_hygiene.py` holds two ratchets that used to live only in prose:
+
+- **`except Exception` may not grow unregistered.** Broad catches are correct in GUI
+  callbacks and runtime probes, but at ~150 of them you can no longer tell "expected
+  degradation" from "hiding a bug". Narrowing them all at once is too risky, so the test
+  only pins the count per file (`BASELINE`); going down is welcome, going up needs a
+  registered reason. Full list with "narrowable" hints:
+  `python tools/audit_exceptions.py --markdown`.
+- **Every message template must be GBK-encodable.** On a Chinese Windows, stdout captured
+  through a pipe is cp936 with `errors='strict'` — a single `✓` turns "write-back
+  succeeded" into `rc=1` + `UnicodeEncodeError`, *after* the file was already written.
+  `messages.py` says this in a comment; now it is enforced.
+
+### Adding a suite
+
+Adding a test file means touching four places — CI, both test wrappers and the docs:
+
+1. `tests/test_yoursuite.py`, printing `ALL PASS` (copy the shape of `test_check.py`);
+2. the `for t in ...` loop in `.github/workflows/tests.yml`;
+3. `SUITES` in `tests/test_suites.py`;
+4. the list above, plus the handbook section that describes the suites.
 
 `test_writeback.py` deserves special care: the write-back engine edits a user's
 real source file, so any change there needs a green run of that suite plus, ideally,
