@@ -14,6 +14,8 @@ import time
 
 from mpltweak import apply, launch, revert, verify, writeback
 
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 fail = 0
 
 # 沙箱：测试只能写 workspace 内；用测试文件旁目录做临时区

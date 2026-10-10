@@ -14,6 +14,12 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+# messages 的顺序是 --lang > MPLTWEAK_LANG > locale > LANG > en：CI(Linux,
+# LANG=C) 走英文、本地(zh-CN)走中文 —— 不钉住就会"本地全绿、CI 全红"（0.1.8 真栽过）。
+# 需要英文分支的用例，自行 run(..., env={'MPLTWEAK_LANG': 'en'}) 覆盖即可。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 PY = sys.executable
 FIX = os.path.join(ROOT, 'tests', 'fixtures', 'synth_script.py')
 

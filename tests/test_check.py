@@ -16,6 +16,12 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+# messages 的顺序是 --lang > MPLTWEAK_LANG > locale > LANG > en：CI(Linux,
+# LANG=C) 走英文、本地(zh-CN)走中文 —— 不钉住就会"本地全绿、CI 全红"（0.1.8 真栽过）。
+# 需要英文分支的用例，自行 run(..., env={'MPLTWEAK_LANG': 'en'}) 覆盖即可。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 PY = sys.executable
 
 HEAD = "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
@@ -154,9 +160,19 @@ def _dec(b):
     return raw.decode('utf-8', 'replace')
 
 
-def run(*args):
+def run(*args, env=None):
+    """跑一次 CLI。env 里的键**并入**当前环境 —— 用来把界面语言钉死。
+
+    messages 的语言探测顺序是 ``--lang > MPLTWEAK_LANG > locale > LANG > en``：
+    CI（Linux，LANG=C）走英文、本地（Windows zh-CN）走中文。断言人读文案却不钉住
+    语言，就会"本地全绿、CI 全红"（0.1.8 发布时真栽过，见 test_agent_api 同款说明）。
+    """
+    _env = None
+    if env:
+        _env = dict(os.environ)
+        _env.update(env)
     r = subprocess.run([PY, '-m', 'mpltweak.cli', *args], cwd=ROOT,
-                       capture_output=True)
+                       capture_output=True, env=_env)
     return r.returncode, _dec(r.stdout), _dec(r.stderr)
 
 
@@ -240,9 +256,13 @@ def main():
         rc, out, err = run('check', paths['tidy'], '--json')
         check(json.loads(out).get('layout_engine') == [],
               '干净脚本无 layout_engine 噪音', json.loads(out).get('layout_engine'))
-        rc, out, err = run('check', cst)
+        # 人读输出：语言钉死，中英两种都断言（英文宿主上只断言中文必然落空）
+        rc, out, err = run('check', cst, env={'MPLTWEAK_LANG': 'zh'})
         check('布局引擎' in out and '第' in out,
-              '人读输出里也有提示', repr(out[-200:]))
+              '人读输出里也有提示（zh，带行号）', repr(out[-200:]))
+        rc_en, out_en, err_en = run('check', cst, env={'MPLTWEAK_LANG': 'en'})
+        check('layout engine' in out_en and 'line ' in out_en,
+              '人读输出里也有提示（en，同一处冲突带行号）', repr(out_en[-200:]))
 
         print('§8 文字渲染尺寸（真实外框，不是几何框）')
         # 干净图：文字检查开着也**不能**报（否则这功能就是噪音）

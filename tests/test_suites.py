@@ -16,6 +16,7 @@ ImportError（看不出是哪条断言挂了），套件输出也会和 pytest �
     pytest -q -k test_writeback  # 只跑写回引擎那套（最敏感的那套）
 """
 
+import locale
 import os
 import subprocess
 import sys
@@ -30,10 +31,21 @@ SUITES = ['test_tweak', 'test_events', 'test_redo', 'test_writeback',
 @pytest.mark.parametrize('name', SUITES)
 def test_suite(name):
     """跑一个套件：要求退出码 0 且确实打印了 ALL PASS。"""
-    env = dict(os.environ, MPLBACKEND='Agg')
+    # 语言钉死 + 输出按候选编码解码：CI 上套件 stdout 是 UTF-8，
+    # 本地 Windows 控制台是 GBK，硬解 UTF-8 会把失败信息变成乱码。
+    env = dict(os.environ, MPLBACKEND='Agg', MPLTWEAK_LANG='zh')
     r = subprocess.run([sys.executable, os.path.join('tests', name + '.py')],
                        cwd=ROOT, capture_output=True, env=env)
-    out = (r.stdout + r.stderr).decode('utf-8', 'replace')
+    raw = r.stdout + r.stderr
+    out = None
+    for _enc in ('utf-8', locale.getpreferredencoding(False) or 'utf-8'):
+        try:
+            out = raw.decode(_enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if out is None:
+        out = raw.decode('utf-8', 'replace')
     assert r.returncode == 0, (
         '%s 退出码 %s（期望 0）\n---- 输出尾巴 ----\n%s'
         % (name, r.returncode, out[-4000:]))

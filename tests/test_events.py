@@ -14,6 +14,8 @@ from matplotlib.backend_bases import MouseEvent, KeyEvent
 from mpltweak.toolbox import (Tweak, _bbox, _snap_box, LEGEND_LOCS, _set_bbox,
                            MIN_SIZE, _clim_of)
 
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 fail = 0
 
 def check(name, cond, detail=''):

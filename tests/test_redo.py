@@ -12,6 +12,8 @@ from matplotlib.backend_bases import KeyEvent
 
 from mpltweak.toolbox import Tweak, _bbox, _set_bbox
 
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 fail = 0
 
 

@@ -25,6 +25,8 @@ from mpltweak.toolbox import (Tweak, _resize_box, _snap_box,
                            _is_colorbar_ax, _bbox, _title_fs, _resize_anchored,
                            _hit_cb_endpoint, _clim_of)
 
+# 测试断言的是中文人读文案：把界面语言**钉死**，别让宿主 locale 决定结论。
+os.environ['MPLTWEAK_LANG'] = 'zh'
 fail = 0
 
 def check(name, cond, detail=''):

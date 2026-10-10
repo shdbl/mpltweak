@@ -82,6 +82,22 @@ Adding a test file means touching four places — CI, both test wrappers and the
 3. `SUITES` in `tests/test_suites.py`;
 4. the list above, plus the handbook section that describes the suites.
 
+**Pin the interface language in your suite.** `messages.detect_lang()` resolves
+`--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose
+passes locally (Windows, zh-CN) and fails on CI (Linux, `LANG=C` → English). That is not
+hypothetical: it turned the whole 0.1.8 CI red after a green local run. Every suite now
+starts with `os.environ['MPLTWEAK_LANG'] = 'zh'`; if you want to assert the English branch
+too, override it per call:
+
+```python
+rc, out, err = run('apply', src, '--verify-fast', env={'MPLTWEAK_LANG': 'en'})
+```
+
+The same trap applies to the *encoding* of subprocess output: decode by bytes with a
+candidate list (`utf-8` then `locale.getpreferredencoding(False)`), never assume UTF-8.
+Both suites that assert human-readable prose (`test_agent_api`, `test_check`) cover the
+zh **and** en branches explicitly.
+
 `test_writeback.py` deserves special care: the write-back engine edits a user's
 real source file, so any change there needs a green run of that suite plus, ideally,
 a try on a real script of your own.
