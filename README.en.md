@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@main/docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@a64370a/docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
 
 # mpltweak
 
@@ -55,15 +55,15 @@ exactly what your code says.
 
 <table>
 <tr>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@v0.1.6/docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@a64370a/docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
 <b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@v0.1.6/docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@a64370a/docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
 <b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
 </tr>
 <tr>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@v0.1.6/docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@a64370a/docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
 <b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@v0.1.6/docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@a64370a/docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
 <b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — dragging stops stuttering</sub></td>
 </tr>
 </table>
