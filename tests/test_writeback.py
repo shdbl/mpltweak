@@ -9,6 +9,7 @@ import shutil
 import sys
 import json
 import tempfile
+import time
 
 from mpltweak import apply, launch, writeback
 
@@ -152,7 +153,7 @@ with open(script4, 'w', encoding='utf-8') as f:
             'plt.savefig("o.png")\n')
 params_gcf = {
     'version': 3, 'script': 'target.py', 'figsize_px': [600, 400],
-    'figsize_in': [6.0, 4.0],
+    'figsize_in': [6.0, 4.0], 'fig_index': 0,
     'axes': [{'index': 0, 'pos': [0.15, 0.15, 0.75, 0.75], 'aspect_locked': False,
               'title_fontsize': 14, 'label_fontsize': None, 'tick_fontsize': None,
               'is_colorbar': False, 'clim': None, 'cmap': None,
@@ -222,7 +223,10 @@ with open(script6, 'w', encoding='utf-8') as f:
             'plt.figure(figsize=(5, 3))\n'
             'ax1 = plt.gca()\n'
             'plt.savefig("b.png")\n')
-res6 = writeback.writeback(script6, params_gcf, pp6, verify=True)
+# §6 用独立参数：多图脚本必须带 fig_index（writeback 现在会拒绝"多图却无图号"），
+# 这里明确指向第 2 张，锚点应当落在它的 savefig（第 9 行 plt.savefig("b.png")）。
+params_gcf6 = dict(params_gcf, fig_index=1)
+res6 = writeback.writeback(script6, params_gcf6, pp6, verify=True)
 check('多图脚本改用 plt.gcf()',
       res6.get('gcf_fallback') is True and res6.get('fig_var') == 'plt.gcf()',
       'gcf=%s fig=%s' % (res6.get('gcf_fallback'), res6.get('fig_var')))
@@ -702,6 +706,311 @@ check('超时：verified=None 且有超时警告',
       res22.get('verified') is None
       and any('超时' in w for w in res22.get('warnings', [])), '')
 shutil.rmtree(d22, ignore_errors=True)
+
+# ---- 23. S1 原子写：写文件失败或进程被打断时，原脚本绝不能变成 0 字节/半截 ----
+#   修前：`open(script, 'w')` 会**先截断为目标 0 字节**再写入；进程若在该窗口内
+#   消失（断电/OOM/taskkill），用户脚本就永久变空文件。修后：写同目录临时文件后
+#   `os.replace` 原子替换；替换失败则原文件原样保留。
+d23, script23, pp23 = setup()
+ORIG23 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes([0.10, 0.10, 0.70, 0.70])\n'
+          'ax.set_title("t", fontsize=12)\n'
+          'fig.savefig("o.png")\n')
+with open(script23, 'w', encoding='utf-8', newline='') as f:
+    f.write(ORIG23)
+
+# 23a 正常路径：内容写对，且不留临时文件
+writeback._atomic_write(script23, 'AAA\nBBB\n')
+check('原子写：内容正确', read(script23) == 'AAA\nBBB\n', repr(read(script23))[:50])
+check('原子写：不留 .mpltweak-*.tmp 临时文件',
+      not [n for n in os.listdir(os.path.dirname(script23))
+           if n.startswith('.mpltweak-')], '')
+
+# 23b 换行符保持 LF（newline='' 的作用；修前 open(...,'w') 会把 \n 翻译成 os.linesep）
+writeback._atomic_write(script23, ORIG23)
+check('原子写：换行符仍是 LF，未被悄悄改成 CRLF',
+      '\r\n' not in read(script23), '')
+
+# 23c 替换失败 → 原文件保持旧内容（关键：不能出现 0 字节或半截）
+_real_replace = os.replace
+
+
+def _boom_replace(a, b):
+    raise OSError('simulated replace failure')
+
+
+os.replace = _boom_replace
+try:
+    try:
+        writeback._atomic_write(script23, 'SHOULD-NOT-LAND')
+        _raised = False
+    except OSError:
+        _raised = True
+finally:
+    os.replace = _real_replace
+check('原子写：替换失败会抛错（不静默吞掉）', _raised, '')
+check('原子写：替换失败后原文件内容完好（不是 0 字节）',
+      read(script23) == ORIG23, 'len=%d' % len(read(script23)))
+
+# 23d 端到端：写回流程中替换失败 → 脚本仍是原文，且结论如实报告
+params23 = {'version': 3, 'script': 'target.py', 'fig_index': 0, 'n_figs': 1,
+            'figsize_px': None, 'figsize_in': None,
+            'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.70, 0.70],
+                      'aspect_locked': False, 'title_fontsize': 14,
+                      'label_fontsize': None, 'tick_fontsize': None,
+                      'is_colorbar': False, 'clim': None, 'cmap': None,
+                      'xscale': 'linear', 'yscale': 'linear', 'grid': None,
+                      'spines': {}, 'lines': [], 'legend': None}]}
+os.replace = _boom_replace
+try:
+    res23 = writeback.writeback(script23, params23, pp23, verify=False,
+                                style='inplace')
+finally:
+    os.replace = _real_replace
+check('原子写端到端：替换失败 → 脚本未被破坏',
+      read(script23) == ORIG23, 'len=%d' % len(read(script23)))
+check('原子写端到端：如实报错而不是假装成功',
+      res23.get('reason') == writeback.FAIL, str(res23.get('reason')))
+shutil.rmtree(d23, ignore_errors=True)
+
+# ---- 24. S2 回滚诚实：回滚失败时结论必须说"回滚失败"，不能谎称"已回滚" ----
+#   修前：`except OSError: pass` 吞掉回滚异常，而提示语照旧写"（已回滚）"——
+#   用户以为安全了，磁盘上却仍是改坏的脚本。
+d24, script24, _ = setup()
+writeback._atomic_write(script24, 'X = 1\n')
+_bak24 = os.path.join(d24, 'good.bak')
+writeback._atomic_write(_bak24, 'ORIG\n')
+check('回滚说明：成功时返回「已回滚」且内容确实被拷回',
+      writeback._rollback_note(_bak24, script24) == '已回滚'
+      and read(script24) == 'ORIG\n', repr(read(script24)))
+writeback._atomic_write(script24, 'BROKEN\n')
+_missing24 = os.path.join(d24, 'nonexistent.bak')
+_note24 = writeback._rollback_note(_missing24, script24)
+check('回滚说明：失败时如实报告（含「回滚也失败」与备份路径）',
+      '回滚也失败' in _note24 and _missing24 in _note24, _note24[:90])
+check('回滚说明：失败时绝不谎称「已回滚」',
+      '已回滚' not in _note24, _note24[:90])
+check('回滚说明：失败后坏内容留在盘上（这正是必须如实告知的原因）',
+      read(script24) == 'BROKEN\n', repr(read(script24)))
+shutil.rmtree(d24, ignore_errors=True)
+
+# ---- 25. auto 模式（默认）：每张图各自决定写回方式 ----
+#   默认 --style auto = 先试"原位改代码里的数字"；若这张图什么都没落地
+#   （典型：位置来自 plt.subplots / plt.subplot(1,2,n) / GridSpec，源码里根本
+#   没有可改的数字），再改用插入调整块。这样同一脚本里能干净改的图和只能插块的
+#   图各得其所，而不是因为少数几张图就把整份脚本都变成插块。
+#   同时锁死：显式 --style 时绝不能被 auto 逻辑覆盖（曾经踩过这个坑）。
+d25, script25, _pp25 = setup()
+
+
+def _write25(src):
+    with open(script25, 'w', encoding='utf-8', newline='') as f:
+        f.write(src)
+
+
+def _params25(pos):
+    # CLI 在 <脚本目录>/.tweak_params/<stem>.json 找参数；setup() 返回的 pp 是
+    # 侧边元数据用的 <d>/target.json，两者不是一回事，这里必须建在前者。
+    _pd = os.path.join(d25, '.tweak_params')
+    os.makedirs(_pd, exist_ok=True)
+    with open(os.path.join(_pd, 'target.json'), 'w', encoding='utf-8') as f:
+        json.dump(_mkpar(0, pos), f, ensure_ascii=False)
+
+
+_GRID_SRC = ('import matplotlib\n'
+             'matplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n'
+             'fig, axs = plt.subplots(2, 2, figsize=(8, 6))\n'
+             'fig.savefig("o.png")\n')
+_ADD_SRC = ('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(8, 6))\n'
+            'ax = fig.add_axes([0.10, 0.10, 0.70, 0.70])\n'
+            'fig.savefig("o.png")\n')
+
+# 25a 网格轴（subplots）→ auto 应自动退到插块
+_write25(_GRID_SRC)
+_params25([0.08, 0.55, 0.38, 0.38])
+_rc25 = apply.main([script25, '--write'])
+_s25 = read(script25)
+check('auto：网格轴（subplots）→ 自动改用插入调整块',
+      _rc25 == 0 and writeback.BLOCK_START in _s25,
+      'rc=%s blocks=%d' % (_rc25, _s25.count(writeback.BLOCK_START)))
+check('auto：退到块模式后确实改到了位置',
+      'set_position' in _s25, '')
+
+# 25b add_axes 字面量 → auto 应原位改、不插块
+_write25(_ADD_SRC)
+_params25([0.20, 0.20, 0.50, 0.50])
+_rc25b = apply.main([script25, '--write'])
+_s25b = read(script25)
+check('auto：add_axes 字面量 → 原位改，不插块',
+      writeback.BLOCK_START not in _s25b and '[0.2, 0.2, 0.5, 0.5]' in _s25b,
+      repr([ln for ln in _s25b.splitlines() if 'add_axes' in ln]))
+
+# 25c 显式 --style inplace → 不得被 auto 逻辑覆盖（保持原样、不插块）
+_write25(_GRID_SRC)
+_params25([0.08, 0.55, 0.38, 0.38])
+_rc25c = apply.main([script25, '--write', '--style', 'inplace'])
+_s25c = read(script25)
+check('--style inplace：显式指定时不得退到块模式',
+      writeback.BLOCK_START not in _s25c and 'set_position' not in _s25c,
+      'rc=%s' % _rc25c)
+
+# 25d 显式 --style block → 即使能原位改也必须插块
+_write25(_ADD_SRC)
+_params25([0.20, 0.20, 0.50, 0.50])
+_rc25d = apply.main([script25, '--write', '--style', 'block'])
+_s25d = read(script25)
+check('--style block：显式指定时即使能原位改也插块',
+      writeback.BLOCK_START in _s25d, 'rc=%s' % _rc25d)
+shutil.rmtree(d25, ignore_errors=True)
+
+# ---- 26. 写回互斥锁 + 备份不共享（P0：并发 apply 会互相覆盖）----
+#   修前（t5-S4 / t6-B2 实测 7/7）：两个 apply --write 同时跑，两边都打印
+#   "✓ 已原位写回"，其中一份改动凭空消失，而且共用同一个 .tweak.bak ——
+#   出事后唯一的恢复点已经不可信。
+d26, script26, _p26 = setup()
+_lkdir = os.path.join(d26, '.tweak_params')
+os.makedirs(_lkdir, exist_ok=True)
+_lk = os.path.join(_lkdir, 'target.apply.lock')
+
+# 26a 已持锁时，第二个写回必须被挡住（等待后超时报错），而不是并行跑
+with writeback.script_lock(script26, timeout=5):
+    _t0 = time.time()
+    _blocked = False
+    try:
+        with writeback.script_lock(script26, timeout=0.6):
+            pass
+    except RuntimeError:
+        _blocked = True
+    _waited = time.time() - _t0
+check('互斥锁：第二个写回被挡住（超时报错）', _blocked,
+      'blocked=%s waited=%.2f' % (_blocked, _waited))
+check('互斥锁：是等待后超时，不是立刻失败', _waited >= 0.5, '%.2f' % _waited)
+
+# 26b 释放后锁文件要清掉（否则下次会被自己的陈旧锁挡住）
+check('互斥锁：释放后锁文件已删除', not os.path.exists(_lk), _lk)
+
+# 26c 陈旧锁（持有进程已死）应被清理，不能误挡
+with open(_lk, 'w', encoding='utf-8') as f:
+    f.write('999999')                     # 几乎不可能存在的 pid
+_ok26c = True
+try:
+    with writeback.script_lock(script26, timeout=2):
+        pass
+except RuntimeError:
+    _ok26c = False
+check('互斥锁：陈旧锁（持有者已死）被清理，不误挡', _ok26c, '')
+
+# 26d 备份：固定名 + 带 pid 的专属副本（后者谁也覆盖不了）
+#   直接测 _make_backup —— 走完整 writeback 时若参数与原码一致会提前返回
+#   （no_change），压根不写备份，反而测不到这条。
+_pp26 = os.path.join(_lkdir, 'target.json')
+_fixed26 = writeback._make_backup(script26, _pp26)
+check('备份：固定名 target.tweak.bak 仍生成（兼容 README/测试/用户习惯）',
+      _fixed26 == os.path.join(_lkdir, 'target.tweak.bak')
+      and os.path.exists(_fixed26), _fixed26)
+check('备份：同时生成带 pid 的专属副本（并发不互相覆盖）',
+      os.path.exists(os.path.join(_lkdir,
+                                  'target.tweak.%d.bak' % os.getpid())), '')
+shutil.rmtree(d26, ignore_errors=True)
+
+# ---- 27. M16：被重叠检测跳过的字段不得计进 changes（不许"声称改了但没改"）----
+#   同名轴变量被 add_axes 赋值两次时，第二处替换会被重叠检测拒绝（L 的修复）。
+#   修前 covered/changes 照记 → 输出"原位修改 2 处"而磁盘上只落了 1 处（t6-M16）。
+d27, script27, _p27x = setup()
+with open(script27, 'w', encoding='utf-8', newline='') as f:
+    f.write('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(6, 4))\n'
+            'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+            'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+            'fig.savefig("o.png")\n')
+_pd27 = os.path.join(d27, '.tweak_params')
+os.makedirs(_pd27, exist_ok=True)
+_ax27 = {'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5], 'aspect_locked': False,
+         'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
+         'is_colorbar': False, 'clim': None, 'cmap': None,
+         'xscale': 'linear', 'yscale': 'linear', 'grid': None,
+         'spines': {}, 'lines': []}
+params27 = {'version': 3, 'script': 'target.py', 'fig_index': 0, 'n_figs': 1,
+            'figsize_px': None, 'figsize_in': None,
+            # 两个轴项都指向同一个变量 ax → 第二处替换必然与第一处重叠
+            'axes': [dict(_ax27), dict(_ax27, index=1)]}
+_pp27 = os.path.join(_pd27, 'target.json')
+with open(_pp27, 'w', encoding='utf-8') as f:
+    json.dump(params27, f, ensure_ascii=False)
+res27 = writeback.writeback(script27, params27, _pp27, verify=False,
+                            style='inplace')
+_s27 = read(script27)
+_ch27 = res27.get('changes') or []
+check('M16：有替换被重叠跳过时给出警告',
+      any('重叠' in w for w in res27.get('warnings', [])),
+      str(res27.get('warnings')))
+check('M16：changes 只算真正落盘的（不多报）',
+      _ch27 == ['ax0.pos'], 'changes=%s' % _ch27)
+check('M16：源码确实只改了第一处、第二处原样',
+      _s27.count('[0.2, 0.2, 0.5, 0.5]') == 1
+      and _s27.count('[0.10, 0.10, 0.40, 0.40]') == 1,
+      str([_l.strip() for _l in _s27.splitlines() if 'add_axes' in _l]))
+shutil.rmtree(d27, ignore_errors=True)
+
+# ---- 28. 写回不得给脚本加 BOM（C2 编码兜底的回归）----
+#   坑：params.read_text 探测到 'utf-8-sig' 后把这个编码直接交给写回，而 Python
+#   用 'utf-8-sig' **写入时会自动加 BOM** → 用户的脚本被改脏，compile() 立刻报
+#   invalid non-printable character U+FEFF。七套件全都查不出来（它们不查 BOM），
+#   是被 t1 的验收脚本"落盘语法非法=True"照出来的。
+d28, _s28, _p28 = setup()
+with open(_s28, 'w', encoding='utf-8', newline='') as f:
+    f.write('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig = plt.figure(figsize=(6, 4))\n'
+            'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+            'fig.savefig("o.png")\n')
+_pd28 = os.path.join(d28, '.tweak_params')
+os.makedirs(_pd28, exist_ok=True)
+_pp28 = os.path.join(_pd28, 'target.json')
+with open(_pp28, 'w', encoding='utf-8') as f:
+    json.dump(_mkpar(0, [0.2, 0.2, 0.5, 0.5]), f, ensure_ascii=False)
+writeback.writeback(_s28, _mkpar(0, [0.2, 0.2, 0.5, 0.5]), _pp28,
+                    verify=False, style='inplace')
+_raw28 = open(_s28, 'rb').read()
+check('写回不给脚本加 BOM（否则 compile 报 U+FEFF）',
+      not _raw28.startswith(b'\xef\xbb\xbf'), repr(_raw28[:8]))
+check('写回后确实改了内容（不是空跑）',
+      b'[0.2, 0.2, 0.5, 0.5]' in _raw28, repr(_raw28[-120:]))
+shutil.rmtree(d28, ignore_errors=True)
+
+# 带 BOM 的脚本也要能写回（写回后不再有 BOM，但内容正确）
+d29, _s29, _p29 = setup()
+with open(_s29, 'wb') as f:
+    f.write(b'\xef\xbb\xbf' + b'import matplotlib\n'
+            b'matplotlib.use("Agg")\n'
+            b'import matplotlib.pyplot as plt\n'
+            b'fig = plt.figure(figsize=(6, 4))\n'
+            b'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+            b'fig.savefig("o.png")\n')
+_pd29 = os.path.join(d29, '.tweak_params')
+os.makedirs(_pd29, exist_ok=True)
+_pp29 = os.path.join(_pd29, 'target.json')
+with open(_pp29, 'w', encoding='utf-8') as f:
+    json.dump(_mkpar(0, [0.2, 0.2, 0.5, 0.5]), f, ensure_ascii=False)
+_res29 = writeback.writeback(_s29, _mkpar(0, [0.2, 0.2, 0.5, 0.5]), _pp29,
+                             verify=False, style='inplace')
+_raw29 = open(_s29, 'rb').read()
+check('带 BOM 的脚本也能写回（原先直接抛 UnicodeDecodeError）',
+      _res29.get('reason') != 'fail' and b'[0.2, 0.2, 0.5, 0.5]' in _raw29,
+      '%s / %r' % (_res29.get('reason'), _raw29[:8]))
+check('写回后 BOM 不再叠加', not _raw29.startswith(b'\xef\xbb\xbf'),
+      repr(_raw29[:8]))
+shutil.rmtree(d29, ignore_errors=True)
 
 shutil.rmtree(d, ignore_errors=True)
 shutil.rmtree(d3, ignore_errors=True)

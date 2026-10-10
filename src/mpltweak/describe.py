@@ -19,6 +19,7 @@ import json
 import os
 import sys
 
+from . import messages as _msg
 from . import params, verify
 
 
@@ -60,6 +61,7 @@ def _to_params(state, script):
     return out
 
 
+@_msg.guard_json_main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog='mpltweak describe',
@@ -84,12 +86,14 @@ def main(argv=None) -> int:
     if not os.path.exists(script):
         sys.stdout = _real_stdout           # 早退也要把 stdout 还回去
         sys.stderr.write('[describe] 找不到脚本: %s\n' % script)
+        _msg.fail_json('file_not_found', 'script not found: %s' % script)
         return 1
 
     if args.all_figs:
         states, err = verify.collect_all(script)
         if states is None:
             sys.stderr.write('[describe] 采集失败: %s\n' % err)
+            _msg.fail_json('collect_failed', err)
             return 1
         payload = {
             'version': params.SCHEMA_VERSION,
@@ -101,6 +105,7 @@ def main(argv=None) -> int:
         state, err = verify.collect(script, args.fig if args.fig >= 0 else None)
         if state is None:
             sys.stderr.write('[describe] 采集失败: %s\n' % err)
+            _msg.fail_json('collect_failed', err)
             return 1
         payload = _to_params(state, script)
 

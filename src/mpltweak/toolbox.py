@@ -1742,7 +1742,11 @@ class Tweak:
         fs = snap.get('figsize') if isinstance(snap, dict) else None
         if fs is not None:
             try:
-                self.fig.set_size_inches(fs[0] / 100.0, fs[1] / 100.0)
+                # 必须用图自己的 dpi 换算：原先硬编码 /100.0，dpi=150 的图一撤销
+                # 画布就被放大 1.5 倍（t2-B2 / t6-M11），而且经 writeback 写回脚本
+                # 会把图真的改大。
+                _dpi = float(self.fig.dpi) or 100.0
+                self.fig.set_size_inches(fs[0] / _dpi, fs[1] / _dpi)
                 self._fig_px = (int(fs[0]), int(fs[1]))
             except Exception:
                 pass
@@ -2090,11 +2094,18 @@ class Tweak:
     def _push_undo(self):
         # 每次真实改动前压快照 —— 这里同时记录"本图被改过"与全局改动顺序。
         # 快照附带操作名（diff 上一快照），撤销/重做时能告诉用户"撤的是什么"。
-        self._edit_clock[0] += 1
-        self.edit_seq = self._edit_clock[0]
         _new = self._snapshot()
         _prev = self._undo[-1] if self._undo else None
-        _new['_name'] = self._diff_name(_prev, _new) or '调整'
+        _name = self._diff_name(_prev, _new) if _prev is not None else '调整'
+        # 状态没变就不占一步撤销：典型是"裸点击"（面板上按下即抬起，没拖动）——
+        # 原先照样压栈并清空 redo，于是第一次 Ctrl+Z 看起来没反应、Ctrl+Y 也失效
+        # （t2-B4 / t6-M10）。edit_clock / edit_seq 也要一起跳过，否则"哪张图改过"
+        # 会被裸点击误标。
+        if _prev is not None and not _name:
+            return
+        self._edit_clock[0] += 1
+        self.edit_seq = self._edit_clock[0]
+        _new['_name'] = _name or '调整'
         self._undo.append(_new)
         if len(self._undo) > 60:
             self._undo.pop(0)
@@ -2449,8 +2460,14 @@ class Tweak:
             self._band_active = True
             return
         # 4) Ctrl/Shift+点击：切换该面板的选中态（PPT 里是 Ctrl+点击）。
-        #    Ctrl+Shift 同时按住时 event.key='ctrl+shift'，不能只匹配单个键名。
-        if set((event.key or '').split('+')) & {'ctrl', 'shift'}:
+        #    注意：**真实 Qt 的鼠标事件不带 key**，matplotlib 的 _mouse_handler 会从
+        #    canvas._key 回填，而 Ctrl 在那里叫 'control'（只有"修饰键列表"里才叫
+        #    'ctrl'）→ 只按 event.key 匹配会漏掉 Ctrl+点击（t2-A6 / t6-H7，真
+        #    QMouseEvent 实测：Shift+点击选中 2、Ctrl+点击只选中 1）。
+        #    event.modifiers 一直是准的（['ctrl'] / ['ctrl','shift']），以它为准。
+        _mods = set(event.modifiers or ())
+        if _mods & {'ctrl', 'shift'} or \
+                set((event.key or '').split('+')) & {'ctrl', 'control', 'shift'}:
             aid = id(event.inaxes)
             if aid in self._selected:
                 self._selected.discard(aid)

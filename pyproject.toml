@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.6"
+version = "0.1.7"
 description = "Interactive layout editor for matplotlib multi-panel figures - drag, align, snap, then write the numbers back into your Python code"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -37,12 +37,20 @@ classifiers = [
 ]
 dependencies = [
     "matplotlib>=3.5",
-    "PyQt5>=5.15",
 ]
 
 [project.optional-dependencies]
-# 只在用 `mpltweak mcp`（把排版能力暴露给 AI 客户端）时需要
-mcp = ["mcp>=1.0"]
+# 开窗调图需要一个图形后端。**故意不设成默认依赖**：
+#   - 服务器 / headless 环境只用 describe / check / apply / mcp，没必要装 100MB 的 Qt；
+#   - 有些用户环境已有 PySide6 / PyQt6，不该被硬塞一个 PyQt5；
+#   - macOS / Linux 上 Qt 依赖偶有麻烦。
+# 没装时 `mpltweak <脚本>` 会给出明确的安装指引（见 launch.py 的无后端分支）。
+qt = ["PyQt5>=5.15"]
+# 只在用 `mpltweak mcp`（把排版能力暴露给 AI 客户端）时需要。
+# 必须带 python_version 标记：mcp 包要求 Python >= 3.10，否则 3.9 上
+# `pip install "mpltweak[mcp]"` 会**静默降级到旧版本且不装 mcp**（t4-F7）。
+mcp = ["mcp>=1.0; python_version >= '3.10'"]
+all = ["PyQt5>=5.15", "mcp>=1.0; python_version >= '3.10'"]
 
 [project.urls]
 Homepage = "https://github.com/shdbl/mpltweak"

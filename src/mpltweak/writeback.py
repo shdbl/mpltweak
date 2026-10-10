@@ -41,19 +41,35 @@ mappable 走结构兜底时给出 best_effort 警告，由人工确认。
 from __future__ import annotations
 
 import ast
+import contextlib
+import errno
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import messages as _msg
+from . import params
 from . import verify as _verify
 
 # ---- 调整块哨兵（幂等替换依据；中性命名，不在用户脚本里留品牌痕迹）----
-BLOCK_START = '# ===== 自动布局调整（由调图工具生成，勿手改；重复写回会整体替换）====='
-BLOCK_END = '# ===== 自动布局调整结束 ====='
+# **必须语言无关**：哨兵同时是"识别旧块、整体替换"的锚点。若让它跟随系统语言，
+# 中文系统写一次、英文系统再写一次就认不出旧块 → 堆两个块互相打架。
+# 语言相关的那句说明写在哨兵**下面**，随便变都不影响识别。
+BLOCK_START = '# ===== auto layout (generated) - do not edit inside ====='
+BLOCK_END = '# ===== end auto layout ====='
+# 旧版中文哨兵（0.1.x 已发布，用户脚本里可能已有）必须继续认，否则会被当成
+# 普通代码、在它旁边再插一个新块。
+_LEGACY_STARTS = ('# ===== 自动布局调整（由调图工具生成，勿手改；'
+                  '重复写回会整体替换）=====',)
+_LEGACY_ENDS = ('# ===== 自动布局调整结束 =====',)
+_ALL_STARTS = (BLOCK_START,) + _LEGACY_STARTS
+_ALL_ENDS = (BLOCK_END,) + _LEGACY_ENDS
 
 # 结构化结果码（全小写，公共 CLI 输出契约）
 OK = 'ok'
@@ -434,15 +450,25 @@ def edit_figsize(src, tree, figsize_in, fig_index=None):
 # --------------------------------------------------------------------------
 # 原位写回：直接改原代码里的数字（不加调整块）—— 用户主推方式
 # --------------------------------------------------------------------------
-def _find_call(tree, recv_name, attr):
-    """找 ``Name(recv_name).attr(...)`` 的第一个调用节点（没有返回 None）。"""
+def _find_call(tree, recv_name, attr, after_lineno=0):
+    """找 ``Name(recv_name).attr(...)`` 的调用节点（没有返回 None）。
+
+    ``after_lineno``：只接受行号 >= 它的节点。多图脚本里同一个轴变量名
+    （如两张图都用 ``ax``）会在不同 figure 里各出现一次，整树取第一个
+    会把参数写到**另一张图**上（t1-E2 / t6-B1）；限定在目标图创建之后
+    就避开了上一张图的同名调用。
+    """
+    found = None
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == attr
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == recv_name):
-            return node
-    return None
+            if getattr(node, 'lineno', 0) < after_lineno:
+                continue
+            if found is None or node.lineno < found.lineno:
+                found = node
+    return found
 
 
 def _figure_axes_for_index(tree, fig_index):
@@ -490,7 +516,7 @@ def _figure_axes_for_index(tree, fig_index):
     return out
 
 
-def apply_inplace(src, tree, data, idx_map=None):
+def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
     """原位写回：直接改原代码里的数字，不插调整块。
 
     覆盖（按"轴变量名 → 轴序号"精确映射，只动非 colorbar 轴）：
@@ -515,10 +541,28 @@ def apply_inplace(src, tree, data, idx_map=None):
     skipped: List[tuple] = []
     axes = data.get('axes') or []
 
+    # 重叠检测：同一段源码区间只能被替换一次。
+    # 触发场景（t1 审计的 L / blocker）：同一个 figure 里**同名轴变量被 add_axes
+    # 赋值多次**（如 `ax2 = fig.add_axes([...])` 出现两回）时，var_for 会把两个轴项
+    # 都映射到同一个变量名，于是同一段 `[...]` 被登记两次；落盘按"从右往左"遍历
+    # 时第二次替换用的还是原始坐标，会切出 `ax2=fig.add_axes([0.2ojection=...]`
+    # 这种语法坏掉的源码。这里直接拒绝重复登记——宁可少改一处，也不写坏代码。
+    _conflicts: List[tuple] = []
+
     def _add(node, txt):
-        edits.append((_offset(starts, node.lineno, node.col_offset, src),
-                      _offset(starts, node.end_lineno, node.end_col_offset, src),
-                      txt))
+        """登记一处替换；被重叠检测拒绝时返回 False。
+
+        调用方必须据此决定是否把该字段记进 covered —— 否则会出现
+        "声称原位修改了 N 处、磁盘上只落了 N-1 处"（t6-M16）。
+        """
+        _s = _offset(starts, node.lineno, node.col_offset, src)
+        _e = _offset(starts, node.end_lineno, node.end_col_offset, src)
+        for _s0, _e0, _t0 in edits:
+            if _s < _e0 and _s0 < _e:
+                _conflicts.append((_s, _e, txt))
+                return False
+        edits.append((_s, _e, txt))
+        return True
 
     # ① 目标图（第 fig_index 个 figure 调用）所辖的 add_axes/add_subplot 创建调用。
     #    非 colorbar 轴按 index 序一一对应 —— 限定在当前图内，避免跨图误匹配。
@@ -536,6 +580,9 @@ def apply_inplace(src, tree, data, idx_map=None):
                 and call.args and isinstance(call.args[0], ast.List)
                 and len(call.args[0].elts) == 4):
             addaxes.setdefault(nm, call.args[0])
+    # 目标图内第一个轴创建的行号：轴属性（set_title / tick_params / grid）的查找
+    # 必须限定在它之后，否则多图脚本复用同名变量时会命中**上一张图**的同名调用。
+    _scope_lo = min((getattr(c, 'lineno', 0) for _n, c in axes_calls), default=0)
     # ② subplots 网格轴：add_axes/add_subplot 序列覆盖不到（subplots(2,2) 不产生
     #    add_axes 节点）。单图脚本里 axis_var_index 的序号就是本图的轴序，补上变量
     #    映射，让 set_title/tick_params/grid 能原位改（pos 仍是网格位置、进 skipped）。
@@ -589,8 +636,8 @@ def apply_inplace(src, tree, data, idx_map=None):
             if isinstance(_w0, (int, float)) and _w0 > 0:
                 _fr = _cw / _w0
                 if 0 < _fr < 1:
-                    _add(_frac.value, _num(_fr))
-                    covered.setdefault(_pa['index'], set()).add('fraction')
+                    if _add(_frac.value, _num(_fr)):
+                        covered.setdefault(_pa['index'], set()).add('fraction')
 
     for a in axes:
         i = a.get('index')
@@ -608,14 +655,20 @@ def apply_inplace(src, tree, data, idx_map=None):
             lst = addaxes.get(nm)
             if lst is not None and all(isinstance(e, ast.Constant)
                                        for e in lst.elts):
-                for k in range(4):
-                    _add(lst.elts[k], _num(pos[k]))
-                covered.setdefault(i, set()).add('pos')
+                # 四个数字要**全部**登记成功才算改到（all() 会短路，不能直接用）
+                _oks = [_add(lst.elts[k], _num(pos[k])) for k in range(4)]
+                if all(_oks):
+                    covered.setdefault(i, set()).add('pos')
+                else:
+                    skipped.append((i, 'pos（替换位置重叠，已跳过）', pos))
             else:
                 skipped.append((i, 'pos', pos))
         if nm is None:
             # 没有变量映射（多图 subplots 网格轴等）→ 这些字段也进 skipped，
             # 避免"拖了字号却没写回也无提示"的静默丢失。
+            # pos 同样要记：否则网格轴的拖动是 100% 静默丢弃（t1-P / t6-M3）。
+            if pos:
+                skipped.append((i, 'pos', pos))
             for field in ('title_fontsize', 'label_fontsize', 'tick_fontsize'):
                 if a.get(field) is not None:
                     skipped.append((i, field, a[field]))
@@ -629,35 +682,41 @@ def apply_inplace(src, tree, data, idx_map=None):
             val = a.get(field)
             if val is None:
                 continue
-            node = _find_call(tree, nm, attr)
+            node = _find_call(tree, nm, attr, _scope_lo)
             kw = None
             if node is not None:
                 kw = next((k for k in node.keywords if k.arg == 'fontsize'), None)
             if kw is not None and isinstance(kw.value, ast.Constant):
-                _add(kw.value, _num(val))
-                covered.setdefault(i, set()).add(field)
+                if _add(kw.value, _num(val)):
+                    covered.setdefault(i, set()).add(field)
+                else:
+                    skipped.append((i, field + '（替换位置重叠，已跳过）', val))
             elif field not in covered.get(i, ()):
                 skipped.append((i, field, val))
         # ④ tick_params(labelsize=)
         tf = a.get('tick_fontsize')
         if tf is not None:
-            node = _find_call(tree, nm, 'tick_params')
+            node = _find_call(tree, nm, 'tick_params', _scope_lo)
             kw = None
             if node is not None:
                 kw = next((k for k in node.keywords if k.arg == 'labelsize'), None)
             if kw is not None and isinstance(kw.value, ast.Constant):
-                _add(kw.value, _num(tf))
-                covered.setdefault(i, set()).add('tick_fontsize')
+                if _add(kw.value, _num(tf)):
+                    covered.setdefault(i, set()).add('tick_fontsize')
+                else:
+                    skipped.append((i, 'tick_fontsize（替换位置重叠，已跳过）', tf))
             else:
                 skipped.append((i, 'tick_fontsize', tf))
         # ⑤ grid：ax.grid(True/False)
         g = a.get('grid')
         if g is not None:
-            node = _find_call(tree, nm, 'grid')
+            node = _find_call(tree, nm, 'grid', _scope_lo)
             if (node is not None and node.args
                     and isinstance(node.args[0], ast.Constant)):
-                _add(node.args[0], 'True' if bool(g) else 'False')
-                covered.setdefault(i, set()).add('grid')
+                if _add(node.args[0], 'True' if bool(g) else 'False'):
+                    covered.setdefault(i, set()).add('grid')
+                else:
+                    skipped.append((i, 'grid（替换位置重叠，已跳过）', g))
             else:
                 skipped.append((i, 'grid', g))
         # ⑥ 其余无法原位表达的字段（有目标值时记 skipped）
@@ -667,32 +726,252 @@ def apply_inplace(src, tree, data, idx_map=None):
                 continue
             if field not in covered.get(i, ()):
                 skipped.append((i, field, v))
+        # ⑥b xscale/yscale：非 linear 时原位写回也没有对应写法（只能进块），
+        # 原先一声不响 —— 用户设了 log 轴又调刻度，看不出"没生效"（t1-C / t6-M2）。
+        if not a.get('is_colorbar'):
+            for _f in ('xscale', 'yscale'):
+                _v = a.get(_f)
+                if _v and _v != 'linear' and _f not in covered.get(i, ()):
+                    skipped.append((i, _f, _v))
     # 按原始位置**从右往左**落：后面的替换不影响前面位置，偏移永不失效
     edits.sort(key=lambda x: -x[0])
     out = src
     for s, e, t in edits:
         out = out[:s] + t + out[e:]
+    if overlaps is not None:
+        overlaps.extend(_conflicts)
     return out, covered, skipped
 
 
-def _backup_path(script, params_path):
-    """备份文件放 `.tweak_params/` 里，不散落在代码目录。"""
+def _backup_path(script, params_path, pid=None):
+    """备份文件放 `.tweak_params/` 里，不散落在代码目录。
+
+    pid=None → 固定名 `<stem>.tweak.bak`：README、测试和用户习惯都依赖它，
+    代表"最近一次备份"。
+    传 pid → `<stem>.tweak.<pid>.bak`：本次专属副本。并发跑两个 apply 时固定名
+    会被后写者覆盖（t5-S4 / t6-B2 实测：出事后唯一的恢复点已经不可信），所以
+    再留一份谁也覆盖不了的。
+    """
     d = os.path.dirname(os.path.abspath(params_path))
-    return os.path.join(d, os.path.splitext(os.path.basename(script))[0]
-                        + '.tweak.bak')
+    stem = os.path.splitext(os.path.basename(script))[0]
+    if pid is None:
+        return os.path.join(d, stem + '.tweak.bak')
+    return os.path.join(d, '%s.tweak.%s.bak' % (stem, pid))
+
+
+def _prune_backups(script, params_path, keep=5):
+    """只保留最近 keep 份带 pid 的备份；固定名那份不动。"""
+    d = os.path.dirname(os.path.abspath(params_path))
+    stem = os.path.splitext(os.path.basename(script))[0]
+    pat = re.compile(r'^%s\.tweak\.(\d+)\.bak$' % re.escape(stem))
+    try:
+        files = [os.path.join(d, n) for n in os.listdir(d) if pat.match(n)]
+    except OSError:
+        return
+    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    for old in files[keep:]:
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+
+
+def _make_backup(script, params_path, keep=5):
+    """写备份并返回固定名路径；失败抛 OSError。
+
+    写两份：固定名（最近一次，兼容既有约定）+ 带 pid 的专属副本（并发时不互相
+    覆盖），并把旧的 pid 副本裁到最近 keep 份。
+    """
+    fixed = _backup_path(script, params_path)
+    os.makedirs(os.path.dirname(fixed), exist_ok=True)
+    shutil.copy2(script, fixed)
+    try:
+        shutil.copy2(script, _backup_path(script, params_path, os.getpid()))
+    except OSError:
+        pass                     # 专属副本是加强项，失败不影响主流程
+    _prune_backups(script, params_path, keep)
+    return fixed
+
+
+def _pid_alive(pid):
+    """进程是否还在。
+
+    Windows 上**不能**用 os.kill(pid, 0) 探活 —— 那会真的去终止目标进程。
+    这里改用 OpenProcess + GetExitCodeProcess 只读查询。
+    """
+    if not pid:
+        return False
+    if os.name == 'nt':
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(0x1000, False, int(pid))   # QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if k.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return code.value == 259              # STILL_ACTIVE
+                return True
+            finally:
+                k.CloseHandle(h)
+        except Exception:                                 # noqa: BLE001
+            return True                                   # 查不出来就当成活着，稳妥
+    try:
+        os.kill(pid, 0)
+    except OSError as e:
+        return getattr(e, 'errno', None) == errno.EPERM
+    return True
+
+
+def _lock_holder(lock):
+    try:
+        with open(lock, 'r', encoding='utf-8') as f:
+            return int((f.read() or '').strip() or 0) or None
+    except (OSError, ValueError):
+        return None
+
+
+@contextlib.contextmanager
+def script_lock(script, lock_dir=None, timeout=10.0, poll=0.2):
+    """同一脚本的写回互斥锁。
+
+    并发跑两个 `apply --write` 时，两边都基于同一份原始内容算替换，后写者盖掉
+    先写者，且都会打印"✓ 已写回"（t5-S4 实测 7/7 一份改动凭空消失）。
+
+    用 O_EXCL 原子创建 `<stem>.apply.lock` 并写入自己的 pid：
+      - 锁被活着的进程持有 → 短暂等待（并发多是"两个命令几乎同时起"），
+        超过 timeout 抛 RuntimeError；
+      - 持锁进程已死（上次崩了留下的陈旧锁）→ 删掉重来。
+    """
+    lock = os.path.join(lock_dir or os.path.join(
+        os.path.dirname(os.path.abspath(script)), '.tweak_params'),
+        os.path.splitext(os.path.basename(script))[0] + '.apply.lock')
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    deadline = time.time() + max(0.0, timeout)
+    while True:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            holder = _lock_holder(lock)
+            if holder is None or not _pid_alive(holder):
+                try:
+                    os.remove(lock)          # 陈旧锁 → 清掉重试
+                except OSError:
+                    pass
+                continue
+            if time.time() >= deadline:
+                raise RuntimeError(
+                    '另一个 mpltweak 写回正在进行（pid=%s）。若确认它已不在运行，'
+                    '请手动删除 %s' % (holder, lock))
+            time.sleep(poll)
+            continue
+        except OSError:
+            raise
+        else:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                f.write(str(os.getpid()))
+            break
+    try:
+        yield lock
+    finally:
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
+
+
+def _atomic_write(path, text, encoding='utf-8'):
+    """原子地把 text 写进 path。
+
+    直接 `open(path, 'w')` 会**立即把目标截断为 0 字节**；进程若恰好在
+    "已截断、还没写完"的窗口里消失（断电 / OOM / taskkill），用户的脚本就
+    永久变成空文件 —— 而本项目对外的承诺是"绝不把改坏的脚本留在磁盘上"。
+    这里先写同目录临时文件，再用 os.replace 原子替换：同一文件系统内
+    os.replace 是原子操作，目标文件要么是旧内容、要么是新内容，不会半截。
+
+    newline='' 保持文本原样：不传的话 Python 会把 '\\n' 翻译成 os.linesep，
+    在 Windows 上等于把**整个文件**的换行符悄悄改成 CRLF。
+    """
+    d = os.path.dirname(os.path.abspath(path)) or '.'
+    # os.replace 换的是 inode，新文件权限来自 mkstemp（0600）。不显式恢复的话，
+    # 用户脚本的权限位会被改窄（t6-M18）。注意：硬链接在替换后仍指向旧 inode
+    # —— 这是"原子替换"的固有代价，用 os.replace 就换不回硬链接，已在 README 说明。
+    try:
+        _mode = os.stat(path).st_mode & 0o7777
+    except OSError:
+        _mode = None
+    fd, tmp = tempfile.mkstemp(prefix='.mpltweak-', suffix='.tmp', dir=d)
+    try:
+        with os.fdopen(fd, 'w', encoding=encoding, newline='') as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())               # 先落盘，再替换
+        if _mode is not None:
+            try:
+                os.chmod(tmp, _mode)
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _rollback_note(backup, script, expect=None):
+    """把备份拷回脚本，返回一句可直接写进结论的说明。
+
+    成功 → '已回滚'；失败 → 如实说明"回滚也失败了"并给出备份路径。
+
+    必须这么做的原因：这里过去是 `except OSError: pass`，回滚失败被吞掉，
+    而提示语照旧写"（已回滚）"—— 用户以为安全了，磁盘上却仍是改坏的脚本。
+    结论必须与磁盘的真实状态一致。
+
+    ``expect`` 是我们刚写进去的文本。若磁盘上的内容已经和它不同，说明用户
+    （或编辑器）在验证期间改过这个文件 —— 这时**不能**拿备份整体覆盖，那会把
+    用户刚写的改动一起抹掉而且只字不提（t5-S5 / t6-M13）。改为保留现状 + 告知。
+    """
+    if expect is not None:
+        try:
+            _now, _ = params.read_text(script)
+        except (OSError, UnicodeDecodeError):
+            _now = None
+        if _now is not None and _now != expect:
+            return ('检测到脚本在验证期间被外部修改，已跳过自动回滚以免抹掉你的改动；'
+                    '备份在 %s' % backup)
+    try:
+        shutil.copy2(backup, script)
+        return '已回滚'
+    except OSError as e:
+        return ('回滚也失败了（%s: %s）—— 脚本目前是改坏的状态，'
+                '备份在 %s，请手动恢复' % (type(e).__name__, e, backup))
 
 
 def _writeback_inplace(script, src, tree, data, params_path, verify,
-                       python, timeout, dry_run, semantic):
+                       python, timeout, dry_run, semantic, encoding='utf-8'):
     """原位写回主流程：改数字 → 备份 → 写文件 → Agg + 语义验证（只比被覆盖字段）。"""
     res: Dict[str, Any] = {'reason': FAIL, 'changes': [], 'block': None,
                            'backup': None, 'warnings': [], 'verified': None,
                            'err': '', 'style': 'inplace'}
     warnings: List[str] = []
     figsize_in = data.get('figsize_in')
-    new_src, figsize_edited = (edit_figsize(src, tree, figsize_in,
-                                            data.get('fig_index'))
-                               if figsize_in else (src, False))
+    # 多图脚本但参数没带 fig_index 时，"改哪张图的画布尺寸"无从确定：edit_figsize
+    # 会退化成改第 1 张 —— 那正是"写错对象图"（t1-A / t6-M1）。宁可不改并说明。
+    _n_fig = count_figures(tree)
+    _fig_idx = data.get('fig_index')
+    _fs_ambiguous = bool(figsize_in) and _n_fig > 1 \
+        and not isinstance(_fig_idx, int)
+    new_src, figsize_edited = (
+        (src, False) if _fs_ambiguous
+        else (edit_figsize(src, tree, figsize_in, _fig_idx)
+              if figsize_in else (src, False)))
+    if _fs_ambiguous:
+        warnings.append('脚本有 %d 张图但参数没有 fig_index，无法确定该改哪张的'
+                        '画布尺寸 → 保持原样；请用 describe --fig N 重新导出，'
+                        '或手动改' % _n_fig)
     if figsize_edited:
         # figsize 原位替换改变了文件长度 → 原 tree 的节点坐标全部失效 →
         # 重新 parse，让 apply_inplace 的新坐标与新文件对齐（否则后续替换错位）。
@@ -704,7 +983,13 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     if figsize_in and not figsize_edited:
         warnings.append('画布尺寸保持原样（代码里 figsize 是位置参数或没有 '
                         'figsize=）；用 --style block 或手动改')
-    in_src, covered, skipped = apply_inplace(new_src, tree, data)
+    _overlaps: List[tuple] = []
+    in_src, covered, skipped = apply_inplace(new_src, tree, data,
+                                             overlaps=_overlaps)
+    if _overlaps:
+        warnings.append('有 %d 处替换位置重叠，已跳过以免写坏源码（同一个 figure 里'
+                        '同名轴变量被 add_axes 赋值多次时会出现）；涉及的位置保持'
+                        '原样，可用 --style block 或手动改' % len(_overlaps))
     changes = ['ax%d.%s' % (i, f) for i in sorted(covered)
                for f in sorted(covered[i])]
     # 无法原位写回、但参数里有目标值的项 → 聚合成警告（不静默）
@@ -737,23 +1022,16 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                     'warnings': warnings, 'figsize_edited': figsize_edited,
                     'anchor': 'inplace'})
         return res
-    backup = _backup_path(script, params_path)
     try:
-        os.makedirs(os.path.dirname(backup), exist_ok=True)
-        shutil.copy2(script, backup)
+        backup = _make_backup(script, params_path)
     except OSError as e:
         res['err'] = '备份失败: %s' % e
         return res
     res['backup'] = backup
     try:
-        with open(script, 'w', encoding='utf-8') as f:
-            f.write(in_src)
+        _atomic_write(script, in_src, encoding=encoding)
     except OSError as e:
-        try:
-            shutil.copy2(backup, script)
-        except OSError:
-            pass
-        res['err'] = '写文件失败: %s' % e
+        res['err'] = '写文件失败: %s（%s）' % (e, _rollback_note(backup, script))
         return res
     if verify:
         vok, verr = verify_run(script, python, timeout)
@@ -769,16 +1047,16 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                     _i = _a.get('index')
                     if isinstance(_i, int):
                         fba[_i] = set(covered.get(_i, ()))
-                sok, sdetail = _verify.verify_semantic(script, data, python,
-                                                       timeout, fields_by_axis=fba)
+                sok, sdetail = _verify.verify_semantic(
+                    script, data, python, timeout, fields_by_axis=fba,
+                    figsize_edited=figsize_edited)
                 res['semantic'] = sok
                 if sok is False:
-                    try:
-                        shutil.copy2(backup, script)
-                    except OSError:
-                        pass
                     res.update({'reason': FAIL,
-                                'err': '语义验证不一致（已回滚）：%s' % sdetail,
+                                'err': '语义验证不一致（%s）：%s'
+                                       % (_rollback_note(backup, script,
+                                                         expect=in_src),
+                                          sdetail),
                                 'verified': True, 'semantic': False})
                     return res
                 if sok is None:
@@ -792,13 +1070,11 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                                 'colorbar / 无对应调用），只应用了画布尺寸；'
                                 '位置/字号请用 --style block 或手动改代码')
         elif vok is False:
-            try:
-                shutil.copy2(backup, script)
-            except OSError:
-                pass
             res.update({'reason': FAIL,
-                        'err': '写回后脚本跑不通（已回滚）：%s'
-                               % (verr or '').strip()[:300],
+                        'err': '写回后脚本跑不通（%s）：%s'
+                               % (_rollback_note(backup, script,
+                                                 expect=in_src),
+                                  (verr or '').strip()[:300]),
                         'verified': False})
             return res
         elif vok is None:
@@ -850,8 +1126,8 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
     axes = data.get('axes', [])
     warnings: List[str] = []
     out = [BLOCK_START]
-    out.append('# 本块由 mpltweak 自动生成于 %s（可手动微调，勿删上下两行标记）'
-               % time.strftime('%Y-%m-%d %H:%M'))
+    # 说明行跟随界面语言（哨兵本身固定 ASCII，见 BLOCK_START 处的说明）
+    out.append(_msg.t('block_comment', ts=time.strftime('%Y-%m-%d %H:%M')))
     if tag:
         out.append('# ' + tag)          # 多图会话：标明本块属于哪张图（兜底定位用）
     if figsize_in:
@@ -949,9 +1225,9 @@ def _block_spans(lines):
     """返回文件里所有调整块的 (start, end) 1-based 区间（按出现顺序）。"""
     spans, start = [], None
     for idx, line in enumerate(lines):
-        if BLOCK_START in line:
+        if any(s in line for s in _ALL_STARTS):
             start = idx + 1
-        elif BLOCK_END in line and start is not None:
+        elif any(e in line for e in _ALL_ENDS) and start is not None:
             spans.append((start, idx + 1))
             start = None
     return spans
@@ -973,7 +1249,8 @@ def _existing_span(lines, meta_path, tag=None):
             s, e = m.get('span')
             if (isinstance(s, int) and isinstance(e, int)
                     and 1 <= s <= e <= len(lines)
-                    and BLOCK_START in lines[s - 1] and BLOCK_END in lines[e - 1]
+                    and any(x in lines[s - 1] for x in _ALL_STARTS)
+                    and any(x in lines[e - 1] for x in _ALL_ENDS)
                     and (not tag or any(tag in ln for ln in lines[s - 1:e]))):
                 return s, e
         except Exception:
@@ -1074,17 +1351,32 @@ def writeback(script, data, params_path, verify=True, python=None,
         res['reason'] = NO_AXES
         return res
     try:
-        with open(script, 'r', encoding='utf-8') as f:
-            src = f.read()
+        # 用 params.read_text 兜编码：GBK / UTF-8-BOM 的老脚本也要能读能写回
+        # （t1-J：原先是裸 open(encoding='utf-8')，GBK 脚本直接抛 UnicodeDecodeError，
+        #  CLI 下 --json 的 stdout 全空）。
+        src, _src_enc = params.read_text(script)
         tree = ast.parse(src)
-    except (OSError, SyntaxError) as e:
+    except (OSError, SyntaxError, UnicodeDecodeError) as e:
         res['err'] = str(e)
+        return res
+
+    # 多图脚本却没有 fig_index：候选搜索只能退化成"按第 0 张处理"，而语义验证
+    # 看的是最后一张 → 参数会落到**另一张图**上（t6-B1 的 P0）。这种情况必须
+    # 拒绝，不能猜：让调用方用 describe --fig N 重新导出，或手工补上图号。
+    _n_fig0 = count_figures(tree)
+    if _n_fig0 > 1 and not isinstance(data.get('fig_index'), int):
+        res['reason'] = NO_FIG
+        res['err'] = ('脚本有 %d 张图，但参数里没有 fig_index —— 无法确定这些改动'
+                      '该落到哪张上（凭猜会改错图）。请用 '
+                      '`mpltweak describe <脚本> --fig N` 重新导出参数后再写回。'
+                      % _n_fig0)
         return res
 
     if style == 'inplace':
         # 原位写回：直接改原代码数字，不插调整块（用户主推方式）
         return _writeback_inplace(script, src, tree, data, params_path,
-                                  verify, python, timeout, dry_run, semantic)
+                                  verify, python, timeout, dry_run, semantic,
+                                  encoding=_src_enc)
 
     fig_var, _ = find_fig_var(tree)
     pre_warnings: List[str] = []
@@ -1133,8 +1425,14 @@ def writeback(script, data, params_path, verify=True, python=None,
     figsize_in = data.get('figsize_in')
     new_src = src
     figsize_edited = False
-    if figsize_in:
-        new_src, figsize_edited = edit_figsize(src, tree, figsize_in)
+    # 必须按数据里的 fig_index 定位（不给就退化成改第 1 张，即 t1-A / t6-M1）；
+    # 多图脚本又没带图号时无从确定改哪张 → 不原位改，交给块里的
+    # set_size_inches（块用 fig_var 寻址，与"验证取最后一张"的口径一致）。
+    _fig_idx_b = data.get('fig_index')
+    _fs_amb = bool(figsize_in) and n_fig > 1 \
+        and not isinstance(_fig_idx_b, int)
+    if figsize_in and not _fs_amb:
+        new_src, figsize_edited = edit_figsize(src, tree, figsize_in, _fig_idx_b)
     figsize_in_block = figsize_in if (figsize_in and not figsize_edited) else None
 
     block, warnings = render_block(data, fig_var, mappables, cb_args,
@@ -1182,10 +1480,8 @@ def writeback(script, data, params_path, verify=True, python=None,
     chosen_block = block
     guard_note = ''
     if not dry_run:
-        backup = _backup_path(script, params_path)
         try:
-            os.makedirs(os.path.dirname(backup), exist_ok=True)
-            shutil.copy2(script, backup)
+            backup = _make_backup(script, params_path)
         except OSError as e:
             res['err'] = '备份失败: %s' % e
             return res
@@ -1197,11 +1493,10 @@ def writeback(script, data, params_path, verify=True, python=None,
             blk, note = _guarded(block, cand)
             content = insert_or_replace(new_src, blk, cand, meta, tag)
             try:
-                with open(script, 'w', encoding='utf-8') as f:
-                    f.write(content)
+                _atomic_write(script, content, encoding=_src_enc)
             except OSError as e:
-                shutil.copy2(backup, script)
-                res['err'] = '写文件失败: %s' % e
+                res['err'] = '写文件失败: %s（%s）' % (
+                    e, _rollback_note(backup, script))
                 return res
             if not verify:
                 chosen = cand
@@ -1223,8 +1518,11 @@ def writeback(script, data, params_path, verify=True, python=None,
                 break
             if vok:
                 if semantic:
-                    sok, sdetail = _verify.verify_semantic(script, data,
-                                                           python, timeout)
+                    # 块路径会把画布尺寸写进块里（set_size_inches），所以只要参数
+                    # 带了 figsize 就该比对，而不是只在"原位替换过 figsize"时才比。
+                    sok, sdetail = _verify.verify_semantic(
+                        script, data, python, timeout,
+                        figsize_edited=bool(data.get('figsize_in')))
                     attempts[-1]['semantic'] = sok
                     res['semantic'] = sok
                     if sok is False:
@@ -1256,14 +1554,15 @@ def writeback(script, data, params_path, verify=True, python=None,
                     res['verified'] = None
                     break
         if chosen is None:
-            try:                                     # 全部候选都跑不通 → 回滚
-                shutil.copy2(backup, script)
-            except OSError:
-                pass
+            # 全部候选都跑不通 → 回滚；回滚是否真的成功要如实写进结论。
+            # 传 expect：若用户在我们验证期间改过这个文件，就别拿备份整体覆盖。
             res.update({'reason': FAIL, 'attempts': attempts, 'verified': False,
                         'err': ('所有锚点写回后 Agg 重跑均失败（原脚本单独可跑通），'
-                                '已回滚备份。尝试：%s\n'
-                                'stderr 尾部：\n%s' % (attempts, last_err.strip()))})
+                                '%s。尝试：%s\n'
+                                'stderr 尾部：\n%s'
+                                % (_rollback_note(backup, script,
+                                                  expect=content),
+                                   attempts, last_err.strip()))})
             return res
         anchor = chosen
         res['attempts'] = attempts

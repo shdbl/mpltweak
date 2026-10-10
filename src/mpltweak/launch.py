@@ -43,13 +43,16 @@ def _summarize(fig):
     return '图 %dx%dpx，%d 个轴' % (X, Y, len(fig.axes))
 
 
-def _prune_fig_params(tmps, keep_keys):
-    """收尾清理：删掉**未改动**图的参数文件 + 全部 ``.lock``。
+def _prune_fig_params(tmps, keep_keys, protect=()):
+    """收尾清理：删掉**本轮新产生且未改动**的参数文件 + 全部 ``.lock``。
 
-    注意：多图会话里 ``<stem>.fig<k>.json`` 既是过程中写的那份、也是最终留下的
-    正式参数（一个图一份），所以**改动过的必须保留**，否则"一次改多张"会被清掉。
+    多图会话里 ``<stem>.fig<k>.json`` 既是过程中写的那份、也是最终留下的正式参数
+    （一个图一份），所以**改动过的必须保留**，否则"一次改多张"会被清掉。
+
+    ``protect``：开窗前就已经存在的图号 —— 那是**上一轮**留下的正式参数，删掉会让
+    用户白调一轮（t2-A4/A5、t6-H5）。清理只应针对本轮新产生的临时产物。
     """
-    keep = set(keep_keys)
+    keep = set(keep_keys) | set(protect)
     for k in list(tmps):
         if k not in keep:
             try:
@@ -168,7 +171,16 @@ def _apply_saved(fig, params):
 
 def doctor():
     '''环境自检：报告后端/Qt 绑定/版本/光标枚举支持，供排查"别人的机器"差异。'''
-    import matplotlib
+    try:
+        import matplotlib
+    except ImportError as e:
+        # 连 matplotlib 都没有时，原先会抛裸 ModuleNotFoundError（t4-F9 / t6-M19）。
+        # 这正是 `pip install -e . --no-deps` 之后的首次体验，必须给人话。
+        print('python       :', sys.version.split()[0])
+        print('matplotlib   : 未安装 ->', e)
+        print('             -> 先安装：pip install matplotlib（或直接 pip install '
+              'mpltweak 会一并装上）')
+        return 0
     print('python       :', sys.version.split()[0])
     print('matplotlib   :', matplotlib.__version__)
     tried = []
@@ -252,11 +264,18 @@ def main(argv=None):
         except Exception as e:             # noqa: BLE001 - 故意兜所有
             backend_err = e
     if backend_err is not None:
+        # 注意：此时**还没有**改过 cwd（chdir 在下面才做），所以无需恢复。
+        # 这里曾经写的是 os.chdir(old_cwd)，而 old_cwd 在下面才赋值 →
+        # 抛 UnboundLocalError，把一段友好提示变成看不懂的 traceback。
         sys.stderr.write(
             '[launch] 找不到可用的交互后端（试过 QtAgg/Qt5Agg/Qt6Agg/TkAgg）：%s\n'
             % backend_err)
-        sys.stderr.write('[launch] 请先装图形后端，例如：pip install PyQt5\n')
-        os.chdir(old_cwd)
+        sys.stderr.write(
+            '[launch] 开窗调图需要一个图形后端，任选其一：\n'
+            '           pip install "mpltweak[qt]"     # 推荐（装 PyQt5）\n'
+            '           # Linux 也可以用系统包管理器装 python3-tk\n'
+            '[launch] 若你只需要命令行用法（describe / check / apply / mcp），\n'
+            '         则不需要图形后端，那些命令照常可用。\n')
         return 4
 
     # 以脚本所在目录为工作目录（脚本里的相对路径/存图位置才和平时一致），
@@ -363,10 +382,16 @@ def main(argv=None):
     # 并把最后改动的那张另存成主文件 —— 所以不必预先 --fig 指定。
     clock = [0]
     tws, tmps = {}, {}
+    _preexisting = set()     # 开窗前已存在的参数文件（上一轮的成果，清理时必须保）
     _closed_cnt = [0]        # 已关闭的主图窗口数（用于主图全关后清理 ? 键位表窗口）
     for k in targets:
         _f = plt.figure(nums[k])
         tmps[k] = '%s.fig%d.json' % (stem, k)
+        # 记下"开窗前就已存在"的：收尾清理只能删本轮新产生的临时产物，绝不能删
+        # 上一轮留下的正式参数（t2-A4/A5、t6-H5 实测：多图分轮调图时第 2 轮会把
+        # 第 1 轮改好的记录删掉，用户白调一轮）。
+        if os.path.exists(tmps[k]):
+            _preexisting.add(k)
         tws[k] = gaitu(_f, export_path=tmps[k],
                        quiet=not args.verbose, fig_index=k, n_figs=len(nums),
                        edit_clock=clock)
@@ -393,11 +418,18 @@ def main(argv=None):
             finally:
                 # 主图全关 → 顺带关掉 ? 键位表窗口，否则 plt.show() 会等它，
                 # 用户忘了关键位表窗口会导致进程不退出。
-                if _closed_cnt[0] >= len(nums):
+                if _closed_cnt[0] >= len(targets):
                     try:
-                        _close_help_fig()
-                    except Exception:              # noqa: BLE001
-                        pass
+                        # 注意：_close_help_fig 只在本模块的**函数内部** import 过，
+                        # launch 的全局命名空间里并没有它 —— 直接调用会 NameError，
+                        # 而原先的 `except Exception: pass` 会把错误吞掉，于是帮助窗
+                        # 关不掉、plt.show() 永远等它 → 进程挂死（t2-A1 / t6-H6，
+                        # 真 Qt E2E 实测 12s 不退出 vs 注入后 3.2s 正常退出）。
+                        from . import toolbox as _tb
+                        _tb._close_help_fig()
+                    except Exception as _e:        # noqa: BLE001
+                        print('[launch] 警告：关闭帮助窗口失败: %s' % _e,
+                              file=sys.stderr, flush=True)
 
         _f.canvas.mpl_connect('close_event', _on_close)
 
@@ -453,7 +485,7 @@ def main(argv=None):
         except OSError:
             _stale = False
         if _stale and not args.force_resume:
-            print('[launch] ⚠ 脚本在参数保存之后被修改过 → 本次不套用该参数'
+            print('[launch] 注意：脚本在参数保存之后被修改过 → 本次不套用该参数'
                   '（避免覆盖你的手动改动）；确要续调加 --force-resume', flush=True)
             continue
         kk = _d2.get('fig_index')
@@ -492,12 +524,20 @@ def main(argv=None):
             fdst.write(blob)
 
     def _clean_temps(keep_keys=()):
-        _prune_fig_params(tmps, keep_keys)
+        _prune_fig_params(tmps, keep_keys, protect=_preexisting)
 
     if args.dry_run:
         src_k = apply_to if apply_to in tws else sorted(tws)[-1]
         _copy_to_params(src_k)
-        _clean_temps()
+        # --dry-run 绝不做破坏性清理：原先这里是 _clean_temps()（keep=()），会把
+        # **之前所有**已存参数删光（t2 / t6-H5 实测：跑完只剩主文件）。
+        # 但本轮自己产生的 .lock 是标记文件、不是用户数据，要收掉（否则残留，
+        # t5-S13）。
+        for _k in tws:
+            try:
+                os.remove(tmps[_k] + '.lock')
+            except OSError:
+                pass
         print('[launch] --dry-run：参数已写出（未开窗）-> %s' % params, flush=True)
         os.chdir(old_cwd)
         return 0
@@ -534,18 +574,20 @@ def main(argv=None):
     _clean_temps([k for _, k in changed])
 
     # 3) 变化摘要（只读，不写代码）
-    try:
-        with open(params, 'r', encoding='utf-8-sig') as f:
-            data = json.load(f)
-        if chosen is not None and bases.get(chosen):
+    if chosen is None:
+        # 没有任何改动时主文件根本不存在 —— 原先会去 open 它，然后打印
+        # "参数摘要读取失败: [Errno 2]"，一切正常却像出了事（t6-M17）。
+        print('[launch] 参数摘要: 无改动', flush=True)
+    else:
+        try:
+            with open(params, 'r', encoding='utf-8-sig') as f:
+                data = json.load(f)
             before = {a['index']: a['pos'] for a in bases[chosen].get('axes', [])}
             ch = _diff(before, data)
             print('[launch] 位置变化: %s' % ('; '.join(ch) if ch else '无'),
                   flush=True)
-        else:
-            print('[launch] 参数摘要: 无改动', flush=True)
-    except Exception as e:
-        print('[launch] 参数摘要读取失败: %s' % e, flush=True)
+        except Exception as e:
+            print('[launch] 参数摘要读取失败: %s' % e, flush=True)
 
     os.chdir(old_cwd)
     return 0

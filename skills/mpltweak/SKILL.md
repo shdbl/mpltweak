@@ -27,7 +27,8 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 | `mpltweak <脚本.py>` | **开窗调图**（主用法）。`--fig N` 只挂第 N 张；`--params X` 改参数位置 |
 | `mpltweak apply <脚本.py>` | 只读预览：列出会改哪些数字，**不动代码** |
 | `mpltweak apply <脚本.py> --write` | **原位写回**（备份 + 三层验证 + 失败自动回滚） |
-| `mpltweak apply <脚本.py> --style block` | 原位改不了时插调整块（兼容用，非默认） |
+| `mpltweak apply <脚本.py>`（默认 `--style auto`） | 每张图各自决定：代码里有数字就原位改，改不了（如 `plt.subplots` 网格位置）自动改用插入调整块 |
+| `mpltweak apply <脚本.py> --style inplace` | 强制只用原位改数字（改不了就保持原样，脚本最干净） |
 | `mpltweak apply <脚本.py> --snippet` | 输出可粘贴片段（你要手动按用户风格落实时用） |
 | `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr） |
 | `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部；`-o 文件` 写文件；`--compact` 紧凑 |
@@ -36,7 +37,9 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
 | `mpltweak doctor` | 环境自检（后端 / Qt 绑定 / matplotlib 版本） |
 
-其他选项：`--all-figs`（循环出图时统一应用，默认只改参数记录的那张）、`--no-verify` / `--no-semantic`（跳过验证，一般不要用）、`--timeout 秒`、`--python 解释器`。
+其他选项：`--all-figs`（循环出图时统一应用，默认只改参数记录的那张）、`--timeout 秒`、`--python 解释器`、`--lang zh|en`（界面语言，默认跟随系统）、`--force`（脚本比参数新时仍强行套用；默认跳过以免覆盖手改）。
+
+`--no-verify` / `--no-semantic` 会跳过验证 —— **那是写坏代码时唯一的自动安全网，一般不要用**；脚本确实无法无头重跑时才考虑，且用前先确认脚本已在版本控制里。
 
 ## 三种用法，先判断该走哪个
 
@@ -123,7 +126,8 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   位置比对会跳过；`check` 也不把这些轴算进几何比对。
 - **字号是"悬停"改的**，不是选中改的 —— 鼠标要停在那个文字上再按 `+`/`-`。
 - **原地改不了的情况很正常**：`plt.subplots()` 的网格位置、代码里没写的字号，原位写回会
-  列进"保持原样"清单（不是错误）。要改这些用 `--style block`，或手动改。
+  列进"保持原样"清单（不是错误）。默认的 `--style auto` 会自动改用插入调整块，
+  通常不用手动加参数。
 
 ## 本 skill 是薄壳
 

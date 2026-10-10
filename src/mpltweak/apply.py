@@ -8,7 +8,8 @@ mpltweak apply —— 「落实」助手（CLI：mpltweak apply <脚本.py>）
   mpltweak apply <脚本.py>                     # 改动清单（默认，只读不改）
   mpltweak apply <脚本.py> --snippet           # 额外输出可粘贴片段
   mpltweak apply <脚本.py> --write             # AST 确定性写回（见 mpltweak.writeback）
-  mpltweak apply <脚本.py> --write --no-verify # 写回但跳过 Agg 重跑验证
+  mpltweak apply <脚本.py> --write --timeout 600   # 写回；脚本跑得久就放宽验证等待
+  mpltweak apply <脚本.py> --write --no-verify     # 完全跳过重跑验证（安全网，慎用）
   mpltweak apply <脚本.py> --params X          # 指定参数文件
 
 它默认**不改脚本**（只读 + 只打印）：落实交给 AI 按脚本自身风格完成；
@@ -21,6 +22,7 @@ import argparse
 import os
 import sys
 
+from . import messages as _msg
 from . import params
 from . import writeback
 
@@ -53,7 +55,12 @@ def _print_changes(script, data, p):
             continue
         i = a.get('index')
         pos = a.get('pos')
-        print('ax%-2d 位置 [%s]' % (i, ', '.join(_fmt(v) for v in pos)))
+        if pos is None:
+            # 轴项缺 pos 是**通过官方 schema 校验的合法输入**（pos 不是必填）；
+            # 原先直接 `for v in None` 会抛 TypeError，且 --json 下 stdout 为空。
+            print('ax%-2d 位置（参数里没给，保持原样）' % i)
+        else:
+            print('ax%-2d 位置 [%s]' % (i, ', '.join(_fmt(v) for v in pos)))
         if a.get('title_fontsize') is not None or a.get('label_fontsize') is not None:
             print('      字号 title=%s label=%s tick=%s'
                   % (a.get('title_fontsize'), a.get('label_fontsize'),
@@ -133,6 +140,23 @@ def _print_snippet(data):
                 print(r)
 
 
+def _inplace_fell_flat(res):
+    """原位写回是否"什么都没落到代码里"——auto 模式据此决定要不要改用块模式。
+
+    判据：
+      no_change   = 参数与原代码一致（代码里根本没有任何可改的数字）
+      best_effort = 有目标值，但一个字段都没能落到代码里（典型：位置来自
+                    plt.subplots() / plt.subplot(1,2,n) / GridSpec 的网格轴）
+      fail        = 验证没过、已回滚（块模式换锚点的策略不同，值得再试一次）
+    """
+    # 注意 best_effort 要区别对待：它既可能是"一个字段都没改到"（该退到块模式），
+    # 也可能是"改到了一部分、其余字段代码里没有对应写法"（不该退 —— 那会把已经
+    # 干净改好的位置也变成插块）。所以只有"没有任何改动落地"才算真的落空。
+    if res.get('reason') in ('no_change', 'fail'):
+        return True
+    return not res.get('changes')
+
+
 def _all_params_files(script, override=None):
     """收集脚本的全部参数文件（主文件 + ``<stem>.fig<k>.json``），按图号排序。
 
@@ -169,15 +193,20 @@ def _all_params_files(script, override=None):
     return [by_idx[k] for k in sorted(by_idx)] + fallback
 
 
-def _emit_json(script, results, stdout_ref):
-    """--json 的机器可读输出（每个 return 分支前都要调用一次）。"""
+def _emit_json(script, results, stdout_ref, ok=None, error=None):
+    """--json 的机器可读输出（每个 return 分支前都要调用一次）。
+
+    ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
+    而退出码却是 2 —— 退出码与 ok 字段语义打架（t6-M7）。
+    """
     import json as _json
     sys.stdout = stdout_ref
-    print(_json.dumps({
+    _ok = (not [r for _, r in results
+                if r['reason'] not in ('ok', 'best_effort', 'no_change',
+                                       'preview')]) if ok is None else ok
+    _payload = {
         'script': os.path.basename(script),
-        'ok': not [r for _, r in results
-                   if r['reason'] not in ('ok', 'best_effort', 'no_change',
-                                          'preview')],
+        'ok': _ok,
         'files': [
             {'params': os.path.basename(p),
              'reason': r.get('reason', 'unknown'),
@@ -188,9 +217,13 @@ def _emit_json(script, results, stdout_ref):
              'semantic': r.get('semantic'),
              'warnings': r.get('warnings') or []}
             for p, r in results],
-    }, ensure_ascii=False, indent=2))
+    }
+    if error:
+        _payload['error'] = error
+    print(_json.dumps(_payload, ensure_ascii=False, indent=2))
 
 
+@_msg.guard_json_main
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='mpltweak apply')
     ap.add_argument('script')
@@ -200,14 +233,16 @@ def main(argv=None):
     ap.add_argument('--write', action='store_true',
                     help='AST 确定性写回脚本（零 LLM）')
     ap.add_argument('--no-verify', action='store_true',
-                    help='写回后跳过 Agg 无头重跑验证')
+                    help='写回后跳过 Agg 无头重跑验证（注意：这是写坏代码时唯一的自动'
+                         '安全网，仅在脚本确实无法无头重跑时使用；用前请先提交到版本控制）')
     ap.add_argument('--no-semantic', action='store_true',
                     help='跳过语义验证（默认会重跑并比对目标图的位置/字号等是否真的等于参数）')
     ap.add_argument('--all-figs', action='store_true',
                     help='循环出图时统一应用到所有迭代（默认只对参数记录的图号加 if 守卫）')
-    ap.add_argument('--style', default='inplace', choices=('inplace', 'block'),
-                    help='写回方式：inplace=直接改原代码数字（默认，不加调整块）；'
-                         'block=插调整块（旧方式，原位改不了时用）')
+    ap.add_argument('--style', default='auto', choices=('auto', 'inplace', 'block'),
+                    help='写回方式：auto=每张图各自决定（默认，能改代码里已有的数字就改，'
+                         '改不了才插入调整块）；inplace=只用原位改数字（改不了就保持原样）；'
+                         'block=一律插入调整块')
     ap.add_argument('--python', default=None,
                     help='验证用解释器（默认当前进程的解释器）')
     ap.add_argument('--timeout', type=float, default=300,
@@ -216,7 +251,15 @@ def main(argv=None):
                     help='只生成调整块预览，不落盘（调试用）')
     ap.add_argument('--json', action='store_true',
                     help='以 JSON 输出结果（给 agent / 脚本消费；过程信息改走 stderr）')
+    ap.add_argument('--force', action='store_true',
+                    help='即便脚本在参数保存之后被改过，也照样套用参数（默认会跳过，'
+                         '以免静默覆盖你的手动改动）')
+    ap.add_argument('--lang', default=None, choices=('auto', 'zh', 'en'),
+                    help='界面语言：auto=跟随系统（默认），或强制 zh / en。'
+                         '--json 的错误码始终是英文，不受此影响')
     args = ap.parse_args(argv)
+
+    _msg.set_lang(args.lang)
 
     # --json：人读的过程信息全部走 stderr，stdout 只留最后那一段 JSON
     _stdout = sys.stdout
@@ -226,9 +269,10 @@ def main(argv=None):
     script = os.path.abspath(args.script)
     files = _all_params_files(script, args.params)
     if not files:
-        print('no params: %s' % params.params_path(script, args.params))
+        _hint = 'no params: %s' % params.params_path(script, args.params)
+        print(_hint)
         if args.json:
-            _emit_json(script, [], _stdout)
+            _emit_json(script, [], _stdout, ok=False, error=_hint)
         return 2
     if len(files) > 1:
         print('发现 %d 份参数文件（一次会话改过多张图）——逐张落实：' % len(files))
@@ -241,6 +285,21 @@ def main(argv=None):
             print('!! 跳过 %s: %s' % (os.path.basename(p), e))
             continue
         k = data.get('fig_index')
+        # 参数比脚本旧 → 脚本在保存参数之后被手动改过，套用旧参数会**静默覆盖**
+        # 那些改动（对照 launch.py 的同类保护；t3-M5 / t6-M8）。
+        # 只读预览不拦（它本来就不写文件）。
+        if args.write and not args.force and not args.dry_run:
+            try:
+                _stale = os.path.getmtime(script) > os.path.getmtime(p) + 1.0
+            except OSError:
+                _stale = False
+            if _stale:
+                print('!! 跳过 %s：脚本在参数保存之后被修改过（套用旧参数会覆盖你'
+                      '手改的内容）；确要套用请加 --force' % os.path.basename(p))
+                results.append((p, {'reason': 'stale', 'changes': [],
+                                    'block': None, 'backup': None,
+                                    'warnings': []}))
+                continue
         print('=' * 62)
         print('# %s%s' % (os.path.basename(p),
                           '' if not isinstance(k, int)
@@ -258,40 +317,73 @@ def main(argv=None):
             continue
 
         print('-' * 62)
-        res = writeback.writeback(script, data, p,
-                                  verify=not args.no_verify,
-                                  python=args.python,
-                                  timeout=args.timeout,
-                                  dry_run=args.dry_run,
-                                  semantic=not args.no_semantic,
-                                  only_fig=not args.all_figs,
-                                  style=args.style)
+        if not args.no_verify and not args.dry_run:
+            # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
+            # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
+            print('  正在验证（子进程重跑脚本，最长 %gs；不想等可加 --no-verify）'
+                  % args.timeout)
+        _kw = dict(verify=not args.no_verify, python=args.python,
+                   timeout=args.timeout, dry_run=args.dry_run,
+                   semantic=not args.no_semantic, only_fig=not args.all_figs)
+        _lk = None
+        if args.write and not args.dry_run:
+            # 串行化写回：并发跑两个 apply --write 时两边都基于同一份原文算替换，
+            # 后写者会盖掉先写者，而且都会打印"✓ 已写回"（t5-S4 实测 7/7）。
+            try:
+                _lk = writeback.script_lock(script)
+                _lk.__enter__()
+            except RuntimeError as _e:
+                print('!! %s' % _e)
+                _lk = None
+                res = {'reason': 'fail', 'err': str(_e), 'changes': [],
+                       'block': None, 'backup': None, 'warnings': []}
+                results.append((p, res))
+                continue
+        try:
+            # auto（默认）：先按"原位改代码里的数字"试一次；若这张图什么都没落地
+            # （典型：位置来自 plt.subplots()/plt.subplot(1,2,n)/GridSpec，源码里
+            # 根本没有可改的数字），再改用插入调整块重试。
+            # 这样同一个脚本里"能干净改的图"和"只能插块的图"各得其所，而不是因为
+            # 少数几张图就把整份脚本都变成插块。
+            # 注意：--style 显式指定时必须直接用那个模式，不要先试 inplace。
+            _first = 'inplace' if args.style == 'auto' else args.style
+            res = writeback.writeback(script, data, p, style=_first, **_kw)
+            if args.style == 'auto' and _inplace_fell_flat(res):
+                res = writeback.writeback(script, data, p, style='block', **_kw)
+                res['auto_fallback'] = True
+        finally:
+            if _lk is not None:
+                _lk.__exit__(None, None, None)
         results.append((p, res))
         if res['reason'] in ('ok', 'best_effort'):
             if res.get('style') == 'inplace':
                 ch = res.get('changes') or []
-                print('✓ 已原位写回: %s' % script)
-                print('  原位修改 %d 处: %s' % (len(ch), ', '.join(ch)[:160]))
+                print(_msg.t('written_inplace', script=script))
+                print(_msg.t('written_inplace_count', n=len(ch),
+                             items=', '.join(ch)[:160]))
             else:
-                print('✓ 已写回: %s' % script)
-                print('  fig 变量名 = %s   插入点 = %s   figsize 原位替换 = %s'
-                      % (res.get('fig_var'), res.get('anchor'),
-                         res.get('figsize_edited')))
+                print(_msg.t('written_block', script=script))
+                if res.get('auto_fallback'):
+                    print(_msg.t('fallback_to_block'))
+                print(_msg.t('block_info', fig_var=res.get('fig_var'),
+                             anchor=res.get('anchor'),
+                             figsize=res.get('figsize_edited')))
             if res.get('backup'):
-                print('  备份: %s' % res['backup'])
+                print(_msg.t('backup_at', path=res['backup']))
             if res.get('verified') is True:
-                print('  ✓ Agg 重跑验证通过')
+                print(_msg.t('verify_run_ok'))
             elif res.get('verified') is False:
-                print('  ✗ Agg 重跑验证失败（已回滚到备份）')
+                print(_msg.t('verify_run_fail'))
             if res.get('semantic') is True:
-                print('  ✓ 语义验证通过（目标图状态 == 参数）')
+                print(_msg.t('semantic_ok'))
             elif res.get('semantic') is None and not args.no_semantic:
-                print('  · 语义验证未能判定（脚本不存图/跑不通），仅按"能跑通"判定')
+                print(_msg.t('semantic_unknown'))
             for w in res.get('warnings', []):
-                print('  · 保持原样: %s' % w)
+                print(_msg.t('kept_as_is', msg=w))
             if args.dry_run:
-                print('  [dry-run] 未落盘；%s：' % ('原位修改预览'
-                      if res.get('style') == 'inplace' else '生成的调整块'))
+                print(_msg.t('dry_run_inplace'
+                             if res.get('style') == 'inplace'
+                             else 'dry_run_block'))
                 print(res['block'])
             # 写回成功 → 刷新参数文件的修改时间。此刻"参数 == 代码"，重新开窗
             # 应当能正常接着上次调；而如果之后你手动改了脚本，脚本就会比它新，
@@ -302,14 +394,14 @@ def main(argv=None):
                 except OSError:
                     pass
         elif res['reason'] == 'no_change':
-            print('· 参数与原代码一致，无需改动')
+            print(_msg.t('no_change'))
             for w in res.get('warnings', []):
-                print('  · 保持原样: %s' % w)
+                print(_msg.t('kept_as_is', msg=w))
         elif res['reason'] == 'no_fig':
-            print('✗ 无法确定性写回: %s' % res['err'])
-            print('  建议：由 AI 按脚本风格落实，或 --snippet 拿片段手动粘贴')
+            print(_msg.t('no_fig', err=res['err']))
+            print(_msg.t('no_fig_hint'))
         else:
-            print('✗ 写回失败[%s]: %s' % (res['reason'], res['err']))
+            print(_msg.t('write_failed', reason=res['reason'], err=res['err']))
 
     if not args.write:
         print('-' * 62)
@@ -325,9 +417,11 @@ def main(argv=None):
     if args.json:
         _emit_json(script, results, _stdout)
     if len(results) > 1:
-        print('=' * 62)
-        print('多图落实小结：共 %d 张，成功 %d，失败 %d'
-              % (len(results), len(results) - len(bad), len(bad)))
+        # 这段在 _emit_json 之后打 —— 必须显式走 stderr，否则会拼在 JSON 尾巴
+        # 上，让 json.loads 报 "Extra data"（t3-H1 / t6-H3）。
+        print('=' * 62, file=sys.stderr)
+        print(_msg.t('summary_multi', total=len(results),
+                     ok=len(results) - len(bad), bad=len(bad)), file=sys.stderr)
     return 1 if bad else 0
 
 

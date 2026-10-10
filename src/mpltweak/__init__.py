@@ -21,7 +21,7 @@ from .params import (
     validate,
 )
 
-__version__ = '0.1.5'
+__version__ = '0.1.7'          # 必须与 pyproject.toml 的 version 保持一致
 __all__ = [
     'SCHEMA_VERSION',
     'defaults',

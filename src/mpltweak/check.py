@@ -21,6 +21,7 @@ import json
 import os
 import sys
 
+from . import messages as _msg
 from . import verify
 
 # 几何比对的容差
@@ -50,7 +51,13 @@ def _name(a):
 
 
 def analyze(axes, tol=DEFAULT_TOL):
-    """返回 (problems, warnings)。每条 = dict(rule/level/axes/msg/detail)。"""
+    """返回 (problems, warnings)。每条 = dict(rule/level/axes/msg/detail)。
+
+    ``tol`` 必须大于 0：下面多处用 ``w / tol`` 做聚类，tol=0 会 ZeroDivisionError
+    （t6-M6）。MCP 的 check_layout 也直接调这里，所以守在这一层而不是只守 CLI。
+    """
+    if not (tol > 0):
+        raise ValueError('几何容差 tol 必须大于 0（收到 %r）' % (tol,))
     problems, warns = [], []
     normal = _normal(axes)
     n = len(normal)
@@ -124,7 +131,11 @@ def analyze(axes, tol=DEFAULT_TOL):
         sizes[(round(w / tol), round(h / tol))] += 1
     if len(sizes) > 1:
         (mw, mh), mc = sizes.most_common(1)[0]
-        if mc >= 2 and mc >= n / 2:                 # 有"主流尺寸"才谈得上不一致
+        # 要有明确的"主流尺寸"才谈得上不一致：多数派至少 3 个、且占 2/3 以上。
+        # 原先的 `mc >= 2 and mc >= n / 2` 会把"上宽下两窄"这种**合法的非对称
+        # 排版**误报（n=3 时 2 个窄的就算主流，那个宽的被当成异类）——
+        # 与"宁可漏报也不误报"的定位矛盾（t3-M3 / t6-M14）。
+        if mc >= 3 and mc * 3 >= n * 2:
             odd = []
             for a in normal:
                 _, _, w, h = _pos(a)
@@ -193,6 +204,7 @@ def analyze(axes, tol=DEFAULT_TOL):
     return problems, warns
 
 
+@_msg.guard_json_main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog='mpltweak check',
@@ -210,11 +222,15 @@ def main(argv=None) -> int:
     if not os.path.exists(script):
         sys.stdout = _real
         sys.stderr.write('[check] 找不到脚本: %s\n' % script)
+        if args.json:
+            _msg.fail_json('file_not_found', 'script not found: %s' % script)
         return 2
     state, err = verify.collect(script, args.fig if args.fig >= 0 else None)
     if state is None:
         sys.stdout = _real
         sys.stderr.write('[check] 采集失败: %s\n' % err)
+        if args.json:
+            _msg.fail_json('collect_failed', err)
         return 2
 
     axes = state.get('axes') or []

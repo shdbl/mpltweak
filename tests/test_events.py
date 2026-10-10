@@ -165,10 +165,22 @@ check('redo 重做移动', abs(_bbox(axes[0])[0] - b0_0[0] - 0.04) < 1e-6,
 # ---- 10. Ctrl+点击多选 / 单击单选显示蓝框 ----
 tw._selected.clear()
 tw._rebuild_selection_artists()
+# 先单选一张，再 Ctrl+点击另一张：断言必须是"两张都在选"。
+# 原先直接 Ctrl+点击 ax0 然后断言 == {ax0} —— 单选分支也会让这个条件成立，
+# 所以 Ctrl 失效时测试照样绿（t2 发现的"假绿"）。
+cx3, cy3 = pxf(axes[3], 0.5, 0.5)
+send(fig.canvas, 'button_press_event', cx3, cy3, button=1)
+send(fig.canvas, 'button_release_event', cx3, cy3, button=1)
 cx0, cy0 = pxf(axes[0], 0.5, 0.5)
 send(fig.canvas, 'button_press_event', cx0, cy0, button=1, key='control')
+check('Ctrl 加选 ax0（ax3 仍在选，单选分支无法蒙对）',
+      tw._selected == {id(axes[0]), id(axes[3])},
+      'sel=%s' % len(tw._selected))
 send(fig.canvas, 'button_release_event', cx0, cy0, button=1)
-check('Ctrl 加选 ax0', tw._selected == {id(axes[0])}, str(len(tw._selected)))
+# 清空选中（等价于点空白），再验证"点击未选中的面板 = 单选"。
+# 注意不能直接点一张已在选中的面板：那是"多选整体拖拽"分支，本就不是单选。
+tw._selected.clear()
+tw._rebuild_selection_artists()
 cx3, cy3 = pxf(axes[3], 0.5, 0.5)
 send(fig.canvas, 'button_press_event', cx3, cy3, button=1)
 check('单击单选显蓝框', tw._selected == {id(axes[3])}, str(tw._selected))

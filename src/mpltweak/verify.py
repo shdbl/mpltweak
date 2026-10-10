@@ -27,6 +27,7 @@ import os
 import runpy
 import subprocess
 import sys
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
@@ -65,6 +66,16 @@ def _state(fig) -> Dict[str, Any]:
         clim = _clim_of(ax)
         if clim is not None:
             item['clim'] = [round(float(clim[0]), 6), round(float(clim[1]), 6)]
+        # 坐标轴尺度：不采集的话 describe 只能靠默认值，会把 log 轴**谎报**成
+        # linear（t3-M4 / t6-M4），agent 拿到的"图状态"就是错的。
+        try:
+            item['xscale'] = ax.get_xscale()
+        except Exception:                         # noqa: BLE001
+            item['xscale'] = 'linear'
+        try:
+            item['yscale'] = ax.get_yscale()
+        except Exception:                         # noqa: BLE001
+            item['yscale'] = 'linear'
         axes.append(item)
     try:
         px = list(fig.canvas.get_width_height())
@@ -77,6 +88,44 @@ def _state(fig) -> Dict[str, Any]:
     except Exception:                            # noqa: BLE001
         inch = None
     return {'figsize_px': px, 'figsize_in': inch, 'axes': axes}
+
+
+# os.chdir 是**进程级**全局状态，而 MCP server 会用线程并发执行同步工具
+# （mcp 2.3 走 anyio.to_thread）。两个工具同时采集时，A 的脚本会在 B 的目录里
+# 执行 —— 实测表现为读到错误的数据且毫无提示（t3-M15 / t6-G4）。
+# 同一进程内用一把锁把"chdir + 跑脚本 + 还原 cwd"整段串行化即可；
+# 不同进程各有自己的 cwd，不受影响。
+_CHDIR_LOCK = threading.Lock()
+
+
+def _fd_to_stderr():
+    """把 **fd 1** 也接到 stderr 上，返回保存的原 fd（失败返回 None）。
+
+    只在 Python 对象层换 ``sys.stdout`` 是拦不住脚本里的 ``os.write(1, ...)``、
+    C 扩展或子进程继承 fd1 的输出的 —— 那会把 stdout 上的 JSON 污染成不可解析
+    （t3-H3 / t6-H4）。这里直接 dup2 到 fd 层。
+    """
+    try:
+        sys.stdout.flush()
+        saved = os.dup(1)
+        os.dup2(2, 1)
+        return saved
+    except OSError:
+        return None
+
+
+def _fd_restore(saved):
+    if saved is None:
+        return
+    try:
+        sys.stdout.flush()
+    except Exception:                             # noqa: BLE001
+        pass
+    try:
+        os.dup2(saved, 1)
+        os.close(saved)
+    except OSError:
+        pass
 
 
 def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
@@ -100,7 +149,9 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     # JSON-RPC，混进一行 "savefig done" 就会让客户端解析失败。一律改道 stderr。
     _real_stdout = sys.stdout
     sys.stdout = sys.stderr
+    _fd_saved = _fd_to_stderr()     # fd 层也接过去：脚本 os.write(1,...) 拦得住
     d = os.path.dirname(os.path.abspath(script))
+    _CHDIR_LOCK.acquire()          # cwd 是进程级全局状态，见 _CHDIR_LOCK 处说明
     old = os.getcwd()
     os.chdir(d)
     if d not in sys.path:
@@ -125,8 +176,10 @@ def collect_all(script: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
             plt.close('all')            # 先做可能打印的清理，再恢复 stdout
         except Exception:                        # noqa: BLE001
             pass
+        _fd_restore(_fd_saved)
         sys.stdout = _real_stdout
         os.chdir(old)
+        _CHDIR_LOCK.release()
 
 
 def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict], str]:
@@ -149,7 +202,9 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
     # JSON-RPC，混进一行 "savefig done" 就会让客户端解析失败。一律改道 stderr。
     _real_stdout = sys.stdout
     sys.stdout = sys.stderr
+    _fd_saved = _fd_to_stderr()     # fd 层也接过去：脚本 os.write(1,...) 拦得住
     d = os.path.dirname(os.path.abspath(script))
+    _CHDIR_LOCK.acquire()          # cwd 是进程级全局状态，见 _CHDIR_LOCK 处说明
     old = os.getcwd()
     os.chdir(d)
     if d not in sys.path:
@@ -159,11 +214,43 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
         nums = plt.get_fignums()
         if not nums:
             return None, '脚本没有留下任何图（可能存完图就 close 了）'
-        if isinstance(fig_index, int) and 0 <= fig_index < len(nums):
-            num = nums[fig_index]
-        else:
-            num = nums[-1]
-        return _state(plt.figure(num)), ''
+        # 越界必须报错，不能静默返回最后一张：调用方（agent）会拿到"另一张图"的
+        # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
+        # 负值（含 verify 子进程约定的 -1）表示"最后一张"，不是越界。
+        # 越界只针对 >= 0 的序号：静默返回最后一张会让调用方拿到另一张图的
+        # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
+        if isinstance(fig_index, int) and fig_index >= 0 \
+                and not (0 <= fig_index < len(nums)):
+            return None, ('第 %d 张图不存在（脚本共留下 %d 张）；'
+                          '请用 0..%d 之间的序号，或用 --all-figs 全部导出'
+                          % (fig_index, len(nums), len(nums) - 1))
+        idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
+               else len(nums) - 1)
+        st = _state(plt.figure(nums[idx]))
+        # 必须自报家门：产物会被直接喂回 apply，而 apply 在没有 fig_index 时
+        # 只能按第 0 张处理 → 参数会落到错的图上（多图脚本的 agent 闭环曾 100% 中招）。
+        st['fig_index'] = idx
+        st['n_figs'] = len(nums)
+        return st, ''
+    except SystemExit:
+        # 脚本自己 sys.exit()：不算采集失败 —— 图还挂在 Gcf 上，继续往下取。
+        # 原先只捕 Exception，SystemExit 会直接穿出去：CLI 退出码被顶成脚本的
+        # 退出码，而 --json 下 stdout 一个字节都没有（t3-#9 / t6）。
+        try:
+            nums = plt.get_fignums()
+        except Exception:                        # noqa: BLE001
+            nums = []
+        if not nums:
+            return None, '脚本 sys.exit 退出，且没有留下任何图'
+        idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
+               else len(nums) - 1)
+        if not (0 <= idx < len(nums)):
+            return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
+                          % (fig_index, len(nums)))
+        st = _state(plt.figure(nums[idx]))
+        st['fig_index'] = idx
+        st['n_figs'] = len(nums)
+        return st, ''
     except Exception as e:                       # noqa: BLE001
         return None, '%s: %s' % (type(e).__name__, e)
     finally:
@@ -172,8 +259,10 @@ def collect(script: str, fig_index: Optional[int] = None) -> Tuple[Optional[Dict
             plt.close('all')            # 先做可能打印的清理，再恢复 stdout
         except Exception:                        # noqa: BLE001
             pass
+        _fd_restore(_fd_saved)
         sys.stdout = _real_stdout
         os.chdir(old)
+        _CHDIR_LOCK.release()
 
 
 def _r(v):
@@ -249,7 +338,8 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
 def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = None,
                     timeout: float = 300,
                     out_path: Optional[str] = None,
-                    fields_by_axis: Optional[Dict[int, set]] = None
+                    fields_by_axis: Optional[Dict[int, set]] = None,
+                    figsize_edited: bool = False
                     ) -> Tuple[Optional[bool], str]:
     """子进程重跑脚本 → dump 目标图状态 → 与参数比对。
 
@@ -287,6 +377,15 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         return None, '读取状态失败: %s' % e
     bad = compare(data.get('axes') or [], actual.get('axes') or [],
                   fields_by_axis=fields_by_axis)
+    # figsize 也必须比对：它同样会被写回，而"改到另一张图"恰恰在这条线上最容易
+    # 静默通过（块路径的 edit_figsize 曾不传 fig_index，见 t1-A / t6-M1）。
+    # 只在这次确实原位改了 figsize 时才比 —— 否则参数里的目标值本来就与当前
+    # 代码不一致，会把"本图不改画布"误判成失败。
+    if figsize_edited:
+        ev_fs, av_fs = data.get('figsize_in'), actual.get('figsize_in')
+        if ev_fs and av_fs and any(abs(float(a) - float(b)) > 0.01
+                                   for a, b in zip(ev_fs, av_fs)):
+            bad.append('figsize %s≠%s' % (_r(ev_fs), _r(av_fs)))
     return (not bad), ('; '.join(bad[:4]) if bad else '')
 
 

@@ -75,7 +75,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # 当前公开格式版本
 SCHEMA_VERSION = 3
@@ -206,17 +206,59 @@ def schema_main(argv=None) -> int:
     return 0
 
 
+def read_text(path: str) -> Tuple[str, str]:
+    """读文本文件，容忍 UTF-8-BOM 与 GBK 等常见编码。返回 ``(text, encoding)``。
+
+    中国 Windows 上大量老脚本是 GBK（带 ``# -*- coding: gbk -*-``），还有从记事本
+    存下来的 UTF-8-BOM。直接按 utf-8 打开会抛 ``UnicodeDecodeError``——
+    在 CLI 层表现为裸 traceback 且 ``--json`` 下 stdout 全空（t1-J / t4-F4 / t6-H2）。
+
+    返回探测到的编码，调用方写回时应沿用它，以免把用户的 GBK 脚本悄悄变成 UTF-8。
+    """
+    with open(path, 'rb') as f:
+        raw = f.read()
+    for enc in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030', 'big5'):
+        try:
+            text = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        # 返回的编码会被调用方用于**写回**。这里必须把 utf-8-sig 规范成 utf-8：
+        # Python 用 'utf-8-sig' 写入时会**自动加上 BOM**，那会把用户脚本改脏
+        # （compile() 立刻报 invalid non-printable character U+FEFF）。
+        # 代价是原本带 BOM 的脚本写回后不再有 BOM —— 无害（Python 3 默认 UTF-8，
+        # 而读的时候 utf-8-sig 照样认）。
+        return text, ('utf-8' if enc == 'utf-8-sig' else enc)
+    raise UnicodeDecodeError('mpltweak', raw, 0, min(1, len(raw)),
+                             '无法识别的文本编码（已试 utf-8-sig / utf-8 / gbk / '
+                             'gb18030 / big5）')
+
+
 def load(path: str) -> Dict[str, Any]:
-    """读参数文件并 normalize。文件不存在/非法抛 OSError / ValueError。"""
-    with open(path, 'r', encoding='utf-8-sig') as f:
-        raw = json.load(f)
-    return normalize(raw)
+    """读参数文件并 normalize。文件不存在/非法抛 OSError / ValueError / JSONDecodeError。
+
+    用 read_text 兜编码：GBK 写的参数文件也要能读（t6-H2 的四路畸形输入之一）。
+    """
+    text, _enc = read_text(path)
+    return normalize(json.loads(text))
 
 
 def dump(data: Dict[str, Any], path: str) -> None:
-    """写参数文件（UTF-8、缩进 2、保留中文）。"""
+    """写参数文件（UTF-8、缩进 2、保留中文）。
+
+    NaN / Infinity 一律转成 null —— 它们是 Python json 的私有扩展，严格的
+    JSON 解析器（多数语言 / jsonschema 校验器）会直接拒收（t5-S6 的 low 项）。
+    """
+    def _clean(v):
+        if isinstance(v, float):
+            return None if (v != v or v in (float('inf'), float('-inf'))) else v
+        if isinstance(v, dict):
+            return {k: _clean(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_clean(x) for x in v]
+        return v
+
     with open(path, 'w', encoding='utf-8') as f:
-        json.dump(normalize(data), f, ensure_ascii=False, indent=2)
+        json.dump(_clean(normalize(data)), f, ensure_ascii=False, indent=2)
 
 
 def validate(data: Dict[str, Any]) -> List[str]:

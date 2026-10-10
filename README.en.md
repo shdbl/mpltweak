@@ -44,7 +44,7 @@ need all that editing — that is what mpltweak does.**
 | **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
 | **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
 
-**Core feature: deterministic source rewriting.** AST-based precise targeting — it only touches the numbers already in your code, never inserts adjustment blocks, never adds imports, leaves no trace of the tool. Built-in three-layer verification (runs / rewrote correctly / retry with fallback anchor), auto-rollback on any failure — **it will never leave a broken script behind**.
+**Core feature: deterministic source rewriting.** AST-based precise targeting, in two modes: **when the code holds literal numbers, it edits exactly those numbers** (cleanest — nothing is inserted); **otherwise it inserts one self-contained adjustment block** (no imports, no change to your logic). Both modes come with built-in three-layer verification (runs / rewrote correctly / retry with fallback anchor), auto-rollback on any failure — **it will never leave a broken script behind**.
 
 **Precisely because we do modify source, we must be deterministic** — that is the premise mpltweak is built on.
 
@@ -70,7 +70,7 @@ exactly what your code says.
 
 **Full PPT-style gesture set:** Drag panels, Ctrl multi-select, align/distribute (Ctrl+Shift+L/R/T/B/C/M, H/V), edge snapping (with guides), Ctrl+F fit canvas to trim margins, space for wireframe mode, hover to resize text, legend snapping to 8 standard spots, colorbar length/thickness adjustment.
 
-**Deep research-scenario support:** cartopy maps, colorbar (position/clim/cmap), multi-mappable precise pairing (by receiver variable name / explicit parent axis in `fig.colorbar(cs, ax=ax1)`), `matplotlib.use('Agg')` scripts work as-is. The write-back engine has been audited (AST level) against **3,055 real research plotting scripts**, with a 99.7% rewrite rate.
+**Deep research-scenario support:** cartopy maps, colorbar (position/clim/cmap), multi-mappable precise pairing (by receiver variable name / explicit parent axis in `fig.colorbar(cs, ax=ax1)`), `matplotlib.use('Agg')` scripts work as-is.
 
 ## What it actually changes
 
@@ -93,9 +93,25 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 +ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
 ```
 
-**Only those numbers move.** No new lines, no `import`, no inserted scaffolding, no trace of the
-tool. Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters
-that were **already in your code**.
+**This is the first case: the code held literal numbers, so only those numbers moved** — no new lines, no `import`, no dependency introduced.
+Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters that were **already in your code**.
+
+When positions are computed by `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`, **there is no number in the source to edit** — which is common in real scripts. Those figures get a **self-contained adjustment block** instead:
+
+```python
+# ===== 自动布局调整（由调图工具生成，勿手改；重复写回会整体替换）=====
+# 本块由 mpltweak 自动生成于 2026-10-10 10:15（可手动微调，勿删上下两行标记）
+for _ax, _p in zip(fig.axes, [
+    [0.0480, 0.6550, 0.3000, 0.2150],
+    [0.0480, 0.3700, 0.3000, 0.2150],
+    [0.0480, 0.0850, 0.3000, 0.2150],
+    [0.4550, 0.5600, 0.4300, 0.3100],
+]):
+    _ax.set_position(_p)
+# ===== 自动布局调整结束 =====
+```
+
+The block is **self-contained**: no `import`, nothing beyond matplotlib, no change to your logic. Re-writing replaces it wholesale rather than piling up. Both modes have three-layer verification + automatic rollback.
 
 That is the payoff of deterministic rewriting: mpltweak uses AST-based precise targeting + three-layer verification — **making layout results truly land in your code, not just live inside a tool**.
 
@@ -188,7 +204,7 @@ python fig1.py
 | No window | Run `mpltweak doctor` for a diagnosis |
 | Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
 | Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
-| Script loads data / runs long | `--write --no-verify` to skip the re-run check, or `--timeout 600` |
+| Script loads data / runs long | Try `--timeout 600` first to **widen** the wait. `--no-verify` **skips the re-run check entirely** — that check is the only automatic safety net against writing broken code, so use it only when the script truly cannot be re-run headlessly, and only after committing it to version control |
 | **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
 | You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
 
