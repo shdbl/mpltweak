@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/banner.png" width="720" alt="mpltweak — matplotlib layout, the PPT way">
 
 # mpltweak
 
