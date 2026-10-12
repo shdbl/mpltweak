@@ -22,6 +22,23 @@ LANGS = ('zh', 'en')
 _DEFAULT = 'en'
 _lang = None
 
+# ---------------------------------------------------------------------------
+# 退出码矩阵（0.1.9 统一，CH-6）——**所有子命令都从这里取**，别再各写各的字面量。
+#
+#   0  OK         什么都没发现 / 动作成功
+#   1  PROBLEM    "确实有问题"：check 检出了排版问题（这是唯一该用 1 的场景）
+#   2  USAGE      "跑不起来"：参数非法、文件不存在、脚本报错、工具自身异常
+#   3  SCRIPT     交互命令（launch）找不到要打开的脚本文件
+#
+# 为什么把「工具自身异常」也归 2 而不是 1：CI 里 1 代表"要去修图"，
+# 工具自己炸了却报 1，用户会去看图找问题——找不到，因为问题在工具里（CH-6）。
+# ---------------------------------------------------------------------------
+EXIT_OK = 0
+EXIT_PROBLEM = 1
+EXIT_USAGE = 2
+EXIT_INTERNAL = 2
+EXIT_SCRIPT = 3
+
 
 def detect_lang():
     """按优先级推断界面语言：--lang > MPLTWEAK_LANG > locale > LANG/LC_ALL > en。
@@ -88,6 +105,33 @@ MESSAGES = {
         'zh': '[OK] 已写回: %(script)s',
         'en': '[OK] Written back: %(script)s',
     },
+    # T68：**没写盘**的人读行。块通道旧实现只看 reason 不看 applied，于是"拒绝写回"
+    # （applied=false，例如位置块目标轴证不出而 fail-closed）也打 `[OK] 已写回` ——
+    # JSON 一直是诚实的，只有这一行人读不诚实。这里如实说"未写回"+ 原因码。
+    'snippet_head': {
+        'zh': '# --- 手动落实片段（可选；粘贴后把 <ax> / <fig> / <mappable> 换成你自己的变量名）---',
+        'en': '# --- Manual snippet (optional; replace <ax> / <fig> / <mappable> with your own names) ---',
+    },
+    'snippet_provable_head': {
+        'zh': '# --- 想让它自动落地？给 figure/axes 起个名字，再运行一次本工具 ---',
+        'en': '# --- Want this applied automatically? Give the figure/axes a name, then run once more ---',
+    },
+    'snippet_provable_subplots': {
+        'zh': '#   fig, ax = plt.subplots(...)      # 一次拿到 figure 和 axes，工具就能把改动落到目标上',
+        'en': '#   fig, ax = plt.subplots(...)      # grabs figure and axes at once, so the change can land',
+    },
+    'snippet_provable_figure': {
+        'zh': '#   fig = plt.figure(...)            # 现在是 plt.figure(...)（没接名字）',
+        'en': '#   fig = plt.figure(...)            # currently plt.figure(...) (nothing is bound)',
+    },
+    'snippet_provable_colorbar': {
+        'zh': '#   cbar = fig.colorbar(im, ax=ax)   # 色条接上名字，它那条轴才可证',
+        'en': '#   cbar = fig.colorbar(im, ax=ax)   # bind the colorbar so its axes is provable',
+    },
+    'not_written': {
+        'zh': '[--] 未写回[%(reason)s]：脚本未被改动（%(script)s）',
+        'en': '[--] Not written back [%(reason)s]: file unchanged (%(script)s)',
+    },
     'fallback_to_block': {
         'zh': '  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块',
         'en': '  - no numbers to edit in this figure -> inserting an '
@@ -142,6 +186,26 @@ MESSAGES = {
     'dry_run_block': {
         'zh': '  [dry-run] 未落盘；生成的调整块：',
         'en': '  [dry-run] nothing written; generated block:',
+    },
+    # --- 跨组约定键（T7/T11 在 apply.py 里接的，键名按船长约定：无下划线）---
+    # 注意：与上面 `dry_run_inplace`/`dry_run_block`（**带**下划线）不是一回事 ——
+    # 那一组是"把预览块正文打出来"，这一组是"结尾的落地小结"。两组并存。
+    # 参数签名由调用方（apply.py）定：nothing_applied(script) /
+    # dryrun_inplace(n, items) / dryrun_block(script)。
+    'dryrun_inplace': {
+        'zh': '[预览] 将原位修改 %(n)d 处: %(items)s（未落盘）',
+        'en': '[dry-run] would edit %(n)d place(s) in place: %(items)s '
+              '(nothing written)',
+    },
+    'dryrun_block': {
+        'zh': '[预览] 将插入调整块: %(script)s（未落盘）',
+        'en': '[dry-run] would insert an auto-layout block: %(script)s '
+              '(nothing written)',
+    },
+    'nothing_applied': {
+        'zh': '[--] 本次没有可落地的字段：脚本未被改动（%(script)s）',
+        'en': '[--] nothing could be applied; the script was left untouched '
+              '(%(script)s)',
     },
     'no_change': {
         'zh': '· 参数与原代码一致，无需改动',
@@ -271,6 +335,218 @@ MESSAGES = {
         'zh': '采集失败: %(err)s',
         'en': 'collect failed: %(err)s',
     },
+    'guard_error': {
+        'zh': '[mpltweak] 未处理的错误: %(err)s',
+        'en': '[mpltweak] unhandled error: %(err)s',
+    },
+    # --- check / describe 的采集边界（A1/A2：子进程 + 超时）---
+    'collect_timeout': {
+        'zh': '采集超时（超过 %(sec)d 秒；脚本是不是在等输入或在跑重活？'
+              '可用 MPLTWEAK_TIMEOUT 放宽）',
+        'en': 'collection timed out (over %(sec)d s; is the script waiting for '
+              'input or doing heavy work? raise MPLTWEAK_TIMEOUT to allow more)',
+    },
+    'collect_no_state': {
+        'zh': '未能取到图状态（子进程 exit %(rc)d）',
+        'en': 'could not read the figure state (child exit %(rc)d)',
+    },
+    'collect_bad_state': {
+        'zh': '子进程返回的状态文件无法解析: %(err)s',
+        'en': 'the state file written by the child could not be parsed: %(err)s',
+    },
+    # --- check：几何规则（CH-12：机器可读的 msg 也要跟随语言，不再硬编码中文）---
+    'chk_out_of_canvas': {
+        'zh': '%(ax)s 超出画布：%(edges)s',
+        'en': '%(ax)s is outside the canvas: %(edges)s',
+    },
+    'chk_edge_left': {'zh': '左边缘 %(v)s', 'en': 'left edge %(v)s'},
+    'chk_edge_bottom': {'zh': '下边缘 %(v)s', 'en': 'bottom edge %(v)s'},
+    'chk_edge_right': {'zh': '右边缘 %(v)s', 'en': 'right edge %(v)s'},
+    'chk_edge_top': {'zh': '上边缘 %(v)s', 'en': 'top edge %(v)s'},
+    'chk_overlap': {
+        'zh': '%(a)s 与 %(b)s 重叠（%(ox).3f × %(oy).3f）',
+        'en': '%(a)s overlaps %(b)s (%.3f x %.3f)',
+    },
+    'chk_not_aligned': {
+        'zh': '%(ax)s 的%(edge)s是 %(v)s，与相邻面板 %(others)s 差 %(off)s',
+        'en': '%(ax)s %(edge)s is %(v)s, off by %(off)s from neighbouring %(others)s',
+    },
+    'chk_size_mismatch': {
+        'zh': '面板大小不一：多数是 %(mw).3f×%(mh).3f，另有 %(odd)s',
+        'en': 'panels differ in size: most are %(mw).3f x %(mh).3f, but %(odd)s',
+    },
+    'chk_uneven_gap': {
+        'zh': '同列垂直间距不均：%(gaps)s',
+        'en': 'uneven vertical gaps in the same column: %(gaps)s',
+    },
+    'chk_font_mismatch': {
+        'zh': '%(label)s字号不统一：多数 %(mode)spt，另有 %(odd)s',
+        'en': 'inconsistent %(label)s font size: most are %(mode)spt, but %(odd)s',
+    },
+    'chk_limits_mismatch': {
+        'zh': '%(label)s不统一：%(n)d 个面板是 %(mode)s，另有 %(odd)s'
+              '（同组面板通常应一致；刻意放大某个面板时忽略本条）',
+        'en': '%(label)s differ: %(n)d panels use %(mode)s, but %(odd)s '
+              '(panels in one group usually share limits; ignore if intentional)',
+    },
+    'chk_limit_x': {'zh': 'x 轴范围', 'en': 'x-axis limits'},
+    'chk_limit_y': {'zh': 'y 轴范围', 'en': 'y-axis limits'},
+    'chk_font_title': {'zh': '标题', 'en': 'title'},
+    'chk_font_label': {'zh': '轴标签', 'en': 'axis label'},
+    'chk_font_tick': {'zh': '刻度', 'en': 'tick'},
+    'chk_layout_conflict': {
+        'zh': '第 %(line)d 行开了 %(how)s：布局引擎会在每次绘制时重算轴位置，'
+              '写回的位置会被覆盖（--strict 视为问题）',
+        'en': 'line %(line)d enables %(how)s: the layout engine recomputes axes '
+              'positions on every draw, overriding written-back positions '
+              '(--strict treats this as a problem)',
+    },
+    # --- check：文字渲染尺寸 ---
+    'chk_kind_title': {'zh': '标题', 'en': 'title'},
+    'chk_kind_xlabel': {'zh': 'x 轴标签', 'en': 'x label'},
+    'chk_kind_ylabel': {'zh': 'y 轴标签', 'en': 'y label'},
+    'chk_kind_xtick': {'zh': 'x 刻度', 'en': 'x tick'},
+    'chk_kind_ytick': {'zh': 'y 刻度', 'en': 'y tick'},
+    'chk_kind_text': {'zh': '文字', 'en': 'text'},
+    'chk_kind_figtext': {'zh': '图注', 'en': 'figure text'},
+    'chk_text_label': {
+        'zh': '%(where)s 的%(kind)s「%(text)s」',
+        'en': '%(kind)s "%(text)s" of %(where)s',
+    },
+    'chk_text_label_canvas': {
+        'zh': '画布 的%(kind)s「%(text)s」',
+        'en': '%(kind)s "%(text)s" on the canvas',
+    },
+    'chk_text_out': {
+        'zh': '%(label)s 超出画布（%(edges)s），这段文字会被裁掉',
+        'en': '%(label)s is outside the canvas (%(edges)s) and will be clipped',
+    },
+    'chk_text_out_tight': {
+        # CH-4：脚本用 bbox_inches='tight' 导出时，画布会自适应扩张，
+        # 超出 figure 框的文字**不会**被裁掉 —— 这条必须降级，否则 README 的 CI 配方永远红。
+        'zh': '%(label)s 超出画布（%(edges)s）——脚本用 bbox_inches=\'tight\' 导出，'
+              '画布会按内容扩张，通常不会被裁掉（故降级为提示；要按旧口径判加 --no-tight）',
+        'en': '%(label)s is outside the canvas (%(edges)s) - the script saves with '
+              'bbox_inches=\'tight\', so the canvas grows to fit and the text is '
+              'usually NOT clipped (downgraded to a hint; add --no-tight for the '
+              'old behaviour)',
+    },
+    'chk_text_unavailable': {
+        'zh': '文字尺寸检测不可用（%(err)s），本次只做几何检查',
+        'en': 'text-size check unavailable (%(err)s); geometry rules only',
+    },
+    'chk_tick_crowded': {
+        'zh': '%(ax)s 的%(kind)s太密：「%(a)s」与「%(b)s」有 %(pct).0f%% 的宽度重叠，'
+              '数字会看不清（抽稀刻度或缩小字号）',
+        'en': '%(kind)s of %(ax)s are too dense: "%(a)s" and "%(b)s" overlap by '
+              '%(pct).0f%% (thin out the ticks or shrink the font)',
+    },
+    'chk_text_overlap': {
+        'zh': '%(a)s 与 %(b)s 压在一起（重叠 %(dx).3f×%(dy).3f）',
+        'en': '%(a)s and %(b)s sit on top of each other (overlap %(dx).3f x %(dy).3f)',
+    },
+    # --- check：参数校验 / 人读输出 / --static（A4）---
+    'chk_tol_invalid': {
+        'zh': '容差必须是**有限正数**（收到 %(tol)s）：inf / nan / <= 0 会让几何检查'
+              '静默失效（0.1.8 实测：--tol inf 时输出 `"tol": Infinity` 且 rc=0）',
+        'en': 'tolerance must be a **finite positive number** (got %(tol)s): '
+              'inf / nan / <= 0 silently disables every geometry rule',
+    },
+    'chk_header': {
+        'zh': '检查 %(n)d 个轴%(cb)s，容差 %(tol).3f',
+        'en': 'checked %(n)d axes%(cb)s, tolerance %(tol).3f',
+    },
+    'chk_cb_note': {
+        'zh': '（其中 %(n)d 个 colorbar 不参与几何比对）',
+        'en': ' (%(n)d colorbars excluded from the geometry rules)',
+    },
+    'chk_text_checked': {
+        'zh': '文字 %(n)d 处已按**真实渲染尺寸**检查（超出画布 → 问题；互相压住 → 提示）',
+        'en': '%(n)d text elements checked at their **real rendered size** '
+              '(outside canvas -> problem; overlapping -> hint)',
+    },
+    'chk_text_skipped': {
+        'zh': '（已用 --no-text 跳过文字尺寸检查）',
+        'en': '(--no-text: text-size check skipped)',
+    },
+    'chk_tight_note': {
+        'zh': '（脚本用 bbox_inches=\'tight\' 导出：超出画布的文字已按"画布会扩张"'
+              '降级为提示；要看旧口径加 --no-tight）',
+        'en': '(the script saves with bbox_inches=\'tight\': out-of-canvas text is '
+              'downgraded to a hint because the canvas grows; add --no-tight for '
+              'the old behaviour)',
+    },
+    'chk_all_clean': {
+        'zh': '√ 没发现问题：对齐 / 等大 / 间距 / 字号 / 边界都正常',
+        'en': 'OK - nothing found: alignment / equal size / gaps / fonts / '
+              'bounds all look fine',
+    },
+    'chk_problem_line': {'zh': '× %(msg)s', 'en': 'X %(msg)s'},
+    'chk_warn_line': {
+        'zh': '· %(msg)s（若是有意为之可忽略）',
+        'en': '- %(msg)s (ignore if intentional)',
+    },
+    'chk_summary_problems': {
+        'zh': '%(n)d 个问题%(extra)s',
+        'en': '%(n)d problem(s)%(extra)s',
+    },
+    'chk_summary_warns': {'zh': '，%(n)d 条提示', 'en': ', %(n)d hint(s)'},
+    'chk_summary_clean': {
+        'zh': '没发现问题%(extra)s',
+        'en': 'nothing found%(extra)s',
+    },
+    'chk_static_header': {
+        'zh': '静态检查（**不执行**脚本）：解析 %(parsed)s，布局引擎冲突 %(n)d 处',
+        'en': 'static check (**script NOT executed**): parse %(parsed)s, '
+              '%(n)d layout-engine conflict(s)',
+    },
+    'chk_static_parsed_ok': {'zh': '通过', 'en': 'ok'},
+    'chk_static_parsed_fail': {'zh': '失败', 'en': 'failed'},
+    'chk_syntax_error': {
+        'zh': '脚本语法错误（第 %(line)s 行）：%(msg)s',
+        'en': 'syntax error in the script (line %(line)s): %(msg)s',
+    },
+    'static_note': {
+        # A4 契约：--static 必须**明说没检查什么**，别让用户以为"体检过了"。
+        'zh': '注意：--static 只做了 AST 解析 + 布局引擎冲突扫描，**没有执行**你的脚本。'
+              '因此对齐 / 等大 / 间距 / 字号 / 越界 / 文字重叠 / colorbar 都**没有检查**'
+              '（这些必须真的跑一遍脚本）。要完整体检请去掉 --static。',
+        'en': 'NOTE: --static only parses the AST and scans for layout-engine '
+              'conflicts; it does **not run** your script. Alignment / sizes / '
+              'gaps / fonts / bounds / text overlap / colorbars are therefore '
+              '**not checked** (those need a real run). Drop --static for the '
+              'full check.',
+    },
+    'static_ok_meaning': {
+        'zh': '这里的 ok=true 只表示"脚本能解析、没发现布局引擎冲突"，'
+              '不代表排版没问题。',
+        'en': 'ok=true here only means "the script parses and no layout-engine '
+              'conflict was found"; it does NOT mean the layout is fine.',
+    },
+    # --- MCP（机器可读：一律稳定英文，见模块开头两层设计）---
+    'mcp_no_mcp_pkg': {
+        'zh': '[mcp] 需要 mcp 包：pip install "mpltweak[mcp]"',
+        'en': '[mcp] the mcp package is required: pip install "mpltweak[mcp]"',
+    },
+    'mcp_bad_tol': {
+        'zh': '几何容差 tol 必须是有限正数（收到 %(tol)r）',
+        'en': 'tol must be a finite positive number (got %(tol)r)',
+    },
+    # --- 窗口后端（gui-hunter 调用；P0-1 方案 B：回退到 Tk 必须告知，走 stderr）---
+    'backend_tk_hint': {
+        'zh': '当前是 Tk 后端（交互体验不如 Qt）；想要 Qt 界面：'
+              'pip install "mpltweak[qt]"',
+        'en': 'using the Tk backend (less polished than Qt); for the Qt UI: '
+              'pip install "mpltweak[qt]"',
+    },
+    # --- schema（CH-9：schema 不再忽略参数）---
+    'schema_usage': {
+        'zh': '用法: mpltweak schema [--compact]\n'
+              '  输出参数文件的 JSON Schema（draft-07），供 agent 校验自己生成的内容。',
+        'en': 'usage: mpltweak schema [--compact]\n'
+              '  print the params JSON Schema (draft-07) so agents can validate '
+              'what they generate.',
+    },
 }
 
 
@@ -293,6 +569,42 @@ def t(key, **kw):
 def code(key):
     """稳定的机器可读标识：消息 key 本身就是错误码（不翻译、不受语言影响）。"""
     return key
+
+
+def t_en(key, **kw):
+    """永远取**英文**模板。
+
+    MCP 工具与 ``--json`` 的字段是**机器可读**通道（模块开头那两层设计）：
+    同一台 server 在中文机器和英文机器上必须给出同一串文本，否则客户端按关键字
+    匹配就会坏。所以这些地方走 ``t_en`` 而不是 ``t``。
+    """
+    item = MESSAGES.get(key)
+    if not item:
+        return key
+    tpl = item.get(_DEFAULT) or item.get('zh') or key
+    try:
+        return tpl % kw if kw else tpl
+    except (KeyError, TypeError, ValueError):
+        return tpl
+
+
+def _finite(obj):
+    """把非有限浮点（inf / nan）换成 ``None``。
+
+    JSON（RFC 8259）**没有** Infinity / NaN 字面量：Python 的 json 会写出裸
+    ``Infinity``，而 jq / JavaScript 的 ``JSON.parse`` / 严格 pydantic 客户端
+    一律解析失败（0.1.8 实测：``check --json --tol inf`` 产出
+    ``"tol": Infinity``）。这里先把它们降级成 ``null``，emit_json/fail_json
+    再用 ``allow_nan=False`` 兜底。
+    """
+    import math
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _finite(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite(v) for v in obj]
+    return obj
 
 
 def emit_json(obj, indent=2):
@@ -318,7 +630,13 @@ def emit_json(obj, indent=2):
     ``mcp_server.apply_layout`` 走人读路径。
     """
     import json as _json
-    text = _json.dumps(obj, ensure_ascii=False, indent=indent) + '\n'
+    # allow_nan=False（CH-3）：Python 的 json 默认会把 inf/nan 写成裸 `Infinity`
+    # /`NaN`，那不是 RFC 8259 合法 JSON —— jq / JavaScript 的 JSON.parse /
+    # 严格 pydantic 客户端会直接解析失败（0.1.8 实测 `check --json --tol inf`
+    # 输出 `"tol": Infinity`）。这里先把非有限浮点降级成 null（JSON 有 null），
+    # 再让 allow_nan=False 兜底：任何时候都不会吐出非法文档。
+    text = _json.dumps(_finite(obj), ensure_ascii=False, indent=indent,
+                       allow_nan=False) + '\n'
     try:
         sys.stdout.flush()          # 先排空 TextIO 缓冲，避免与 fd 直写交错
     except Exception:               # noqa: BLE001 - 排空失败不该影响结果输出
@@ -344,8 +662,8 @@ def fail_json(error_code, msg):
     import json as _json
     try:
         os.write(1, (_json.dumps({'ok': False, 'error_code': error_code,
-                                  'error': msg}, ensure_ascii=False)
-                     + '\n').encode('utf-8'))
+                                  'error': msg}, ensure_ascii=False,
+                                 allow_nan=False) + '\n').encode('utf-8'))
     except OSError:
         pass
 
@@ -385,12 +703,16 @@ def guard_json_main(fn):
                 try:
                     os.write(1, (_json.dumps(
                         {'ok': False, 'error_code': 'internal_error',
-                         'error': _err}, ensure_ascii=False) + '\n').encode('utf-8'))
+                         'error': _err}, ensure_ascii=False,
+                        allow_nan=False) + '\n').encode('utf-8'))
                 except OSError:
                     pass
-            sys.stderr.write('[mpltweak] 未处理的错误: %s\n' % _err)
+            sys.stderr.write(t('guard_error', err=_err) + '\n')
             if os.environ.get('MPLTWEAK_DEBUG'):
                 traceback.print_exc(file=sys.stderr)
-            return 1
+            # 退出码 2（"跑不起来"）而不是 1（"发现了问题"）：CI 里 1 的含义是
+            # "去修你的图"，而这里的问题在工具自己身上 —— 混在一起用户会去图里
+            # 找一个不存在的问题（CH-6）。
+            return EXIT_INTERNAL
 
     return wrapper

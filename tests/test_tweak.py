@@ -422,7 +422,9 @@ twA._push_undo()
 twA._nudge_size('left', _E21())                # 再左移一次
 _snap1 = twA._snapshot()
 _nm21 = twA._diff_name(_snap0, _snap1) or ''
-check('撤销可视化：操作名提到移动', '移动' in _nm21, repr(_nm21))
+# F5 之后操作名按"有无 CJK 字体"双语（无 CJK 时回退英文），断言也要两可。
+check('撤销可视化：操作名提到移动', ('移动' in _nm21) or ('move' in _nm21),
+      repr(_nm21))
 twA._undo_once()                               # 撤销（内部 _toast 兜底，不崩）
 twA._redo_once()
 check('撤销可视化：undo/redo 不崩', True, '')
@@ -466,13 +468,17 @@ _bbS = cbS.ax.get_position().transformed(figS.transFigure)
 _exS, _eyS = _bbS.x0, (_bbS.y0 + _bbS.y1) / 2
 check('clim 端点命中', _hit_cb_endpoint(figS, _exS, _eyS) == (cbS.ax, 'vmin'))
 _oldS = _clim_of(cbS.ax)
-twS._push_undo(); twS._clim_ax = cbS.ax; twS._clim_side = 'vmin'; twS._clim0 = _oldS
-_twbb = cbS.ax.get_position().transformed(figS.transFigure)
-twS._clim_box_px = _twbb.bounds[:2] + (_twbb.x1, _twbb.y1)
-twS._clim_orientation = 'horizontal'; twS._drag_cb_clim = True
-twS._update_cb_clim_drag(_exS - 50, _eyS); twS._finish_cb_clim_drag()
+# F2：Alt+拖端点改 clim 已按用户要求移除（handler 与死代码全删）。
+# 这里钉死两点：①clim 保持原值（没有任何拖拽 handler 会改它）；
+# ②空函数/死属性确已不在（防"功能删了、死代码又悄悄长回来"）。
 check('clim 拖拽已移除（Alt+拖端点功能删）', _clim_of(cbS.ax) == _oldS,
       str(_clim_of(cbS.ax)))
+check('F2：clim 拖拽空函数已删除',
+      not hasattr(twS, '_update_cb_clim_drag')
+      and not hasattr(twS, '_finish_cb_clim_drag'), '')
+check('F2：_fmt_clim 已删除', not hasattr(twS, '_fmt_clim'), '')
+check('F2：clim 拖拽死属性已删除',
+      not hasattr(twS, '_clim_ax') and not hasattr(twS, '_drag_cb_clim'), '')
 _EvS = type('E', (), {'inaxes': axS, 'x': axS.transData.transform((4, 4))[0], 'y': axS.transData.transform((4, 4))[1]})()
 for _k in (']', 'c', 'C', 'g', 's', 'x', 'y'):
     twS._on_key(type('K', (), {'key': _k, 'inaxes': axS, 'x': _EvS.x, 'y': _EvS.y})())
@@ -534,6 +540,121 @@ twQ._on_key(type('E', (), {'key': 'c', 'inaxes': axQ,
                            'x': float(_lx), 'y': float(_ly)})())
 check('c 键悬停线条仍生效', _lq.get_color() != _c_before,
       '%s -> %s' % (_c_before, _lq.get_color()))
+
+# ---- 23. F4：续调 _apply_saved 恢复 loc=left/right 标题字号 + 字号类计入 n ----
+from mpltweak.launch import _apply_saved        # noqa: E402
+
+figF4 = plt.figure(figsize=(8, 6))
+axF4 = figF4.add_axes([0.1, 0.1, 0.7, 0.7])
+axF4.set_title('panel', loc='left', fontsize=12)
+axF4.set_title('mid', loc='center', fontsize=12)
+axF4.set_title('right', loc='right', fontsize=12)
+axF4.set_xlabel('x', fontsize=9)
+axF4.set_ylabel('y', fontsize=9)
+figF4.canvas.draw()
+_pF4 = os.path.join(tempfile.gettempdir(), 'test_f4_resume.json')
+with open(_pF4, 'w', encoding='utf-8') as _f:
+    json.dump({'version': 4, 'axes': [
+        {'index': 0, 'title_fontsize': 20,
+         'label_fontsize': 11, 'label_fontsize_y': 13}]}, _f)
+_nF4 = _apply_saved(figF4, _pF4)
+check('F4：续调恢复 loc=left 标题字号', axF4._left_title.get_fontsize() == 20,
+      'left=%s' % axF4._left_title.get_fontsize())
+check('F4：续调恢复 loc=right 标题字号', axF4._right_title.get_fontsize() == 20,
+      'right=%s' % axF4._right_title.get_fontsize())
+check('F4：续调恢复中间标题字号', axF4.title.get_fontsize() == 20,
+      'mid=%s' % axF4.title.get_fontsize())
+check('F4：label 按 x/y 各自套用', axF4.xaxis.label.get_fontsize() == 11
+      and axF4.yaxis.label.get_fontsize() == 13,
+      'x=%s y=%s' % (axF4.xaxis.label.get_fontsize(), axF4.yaxis.label.get_fontsize()))
+check('F4：字号类续调计入 n（不再误判未套用）', _nF4 >= 1, 'n=%d' % _nF4)
+
+# T73（零兼容）：参数只有单一 label_fontsize（无 label_fontsize_y）→ **只套 x，不动 y**
+# （上一步续调已把 y 设成 13；这一条要确认 y 不被 x 的值覆盖）
+with open(_pF4, 'w', encoding='utf-8') as _f:
+    json.dump({'version': 4, 'axes': [
+        {'index': 0, 'label_fontsize': 15}]}, _f)
+_nF4b = _apply_saved(figF4, _pF4)
+check('T73（零兼容）：只给 label_fontsize → 只套 x，y 保持 13 不被改成 15',
+      axF4.xaxis.label.get_fontsize() == 15 and axF4.yaxis.label.get_fontsize() == 13,
+      'x=%s y=%s' % (axF4.xaxis.label.get_fontsize(), axF4.yaxis.label.get_fontsize()))
+
+# ---- 24. T25-#1：figsize 口径（dpi=200 / dpi=100 导出必须等于源码 figsize）----
+for _dpi in (200, 100):
+    _figF = plt.figure(figsize=(6, 4), dpi=_dpi)
+    _axF = _figF.add_axes([0.1, 0.1, 0.8, 0.8])
+    _figF.canvas.draw()
+    _twF = Tweak(_figF, export_path=os.path.join(
+        tempfile.gettempdir(), 'test_figsize_dpi%d.json' % _dpi), heavy=False)
+    _twF._fig_px = _figF.canvas.get_width_height()   # 模拟 GUI resize 事件
+    _pF = os.path.join(tempfile.gettempdir(), 'test_figsize_dpi%d.json' % _dpi)
+    _twF.export(path=_pF)
+    with open(_pF, encoding='utf-8') as _f:
+        _dF = json.load(_f)
+    check('T25-#1：dpi=%d 导出 figsize_in == [6.0, 4.0]' % _dpi,
+          _dF.get('figsize_in') == [6.0, 4.0],
+          'figsize_in=%s（dpi=%d, px=%s）'
+          % (_dF.get('figsize_in'), _dpi, _dF.get('figsize_px')))
+    plt.close(_figF)
+
+# ---- 25. T25-#2a：双开丢改动必须大声提示（stderr），不得静默 return ----
+import io as _io
+import contextlib as _cl
+
+_figD = plt.figure(figsize=(6, 4))
+_axD = _figD.add_axes([0.1, 0.1, 0.8, 0.8])
+_figD.canvas.draw()
+_pD = os.path.join(tempfile.gettempdir(), 'test_double_open.json')
+_twD = Tweak(_figD, export_path=_pD, heavy=False)
+# 模拟后开进程覆盖 pid 锁
+with open(_pD + '.lock', 'w', encoding='utf-8') as _f:
+    _f.write(str(os.getpid() + 999999))
+if os.path.exists(_pD):
+    os.remove(_pD)
+_bufD = _io.StringIO()
+with _cl.redirect_stderr(_bufD):
+    _twD.export(path=_pD)
+_errD = _bufD.getvalue()
+check('T25-#2a：锁被接管时 stderr 有大响提示',
+      ('接管' in _errD) or ('taken over' in _errD) or ('未保存' in _errD),
+      repr(_errD))
+check('T25-#2a：锁被接管时不落盘（不覆盖新会话）', not os.path.exists(_pD),
+      'file exists=%s' % os.path.exists(_pD))
+
+# ---- 26. T25-#2c：图例重建用图例自身 handles（ax.legend(handles=[l1,l3]) 保持 2 条）----
+_figL = plt.figure(figsize=(8, 6))
+_axL = _figL.add_axes([0.1, 0.1, 0.8, 0.8])
+_l1, = _axL.plot([0, 1], [0, 1], label='a')
+_l2, = _axL.plot([0, 1], [1, 0], label='b')
+_l3, = _axL.plot([0, 1], [0.5, 0.5], label='c')
+_legL = _axL.legend(handles=[_l1, _l3], labels=['a', 'c'])
+_figL.canvas.draw()
+_twL = Tweak(_figL, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_legend_handles.json'), heavy=False)
+_stL = _twL.leg_state.get(id(_axL))
+check('T25-#2c：_init_legends 用图例自身 handles（2 条不是 3 条）',
+      _stL is not None and len(_stL['handles']) == 2,
+      'handles=%s labels=%s'
+      % (len(_stL['handles']) if _stL else None, _stL['labels'] if _stL else None))
+check('T25-#2c：labels 是图例自身文本', _stL is not None and _stL['labels'] == ['a', 'c'],
+      str(_stL['labels'] if _stL else None))
+_legL2 = _twL._mk_legend(_stL, _axL, loc='upper right')
+check('T25-#2c：重建后仍 2 条（l2 不被加回）',
+      len(list(getattr(_legL2, 'legend_handles', []))) == 2,
+      str(len(list(getattr(_legL2, 'legend_handles', [])))))
+# fig.legend() → 明确提示不接管
+_figL2 = plt.figure(figsize=(8, 6))
+_axL2 = _figL2.add_axes([0.1, 0.1, 0.8, 0.8])
+_ll, = _axL2.plot([0, 1], [0, 1], label='x')
+_figL2.legend()
+_figL2.canvas.draw()
+_bufL2 = _io.StringIO()
+with _cl.redirect_stderr(_bufL2):
+    Tweak(_figL2, export_path=os.path.join(
+        tempfile.gettempdir(), 'test_figlegend.json'), heavy=False)
+check('T25-#2c：fig.legend() 明确提示不接管',
+      ('fig.legend' in _bufL2.getvalue()) or ('图级图例' in _bufL2.getvalue()),
+      repr(_bufL2.getvalue()))
 
 print('----')
 print('FAILED: %d' % fail if fail else 'ALL PASS')

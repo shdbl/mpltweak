@@ -61,8 +61,33 @@ def _to_params(state, script):
             'yscale': it.get('yscale', 'linear'),
             'grid': bool(it.get('grid')),
             'spines': it.get('spines') or {},
-            'lines': [],
+            # T75：**y 侧字号**（纯增量，追加在末尾 —— 既有键的名字/语义/顺序
+            # 一个都不动，`--json` 消费者不受影响）。
+            # 值直接取自采集侧 verify._state（'label_fontsize_y' 一直在采；
+            # 'tick_fontsize_y' 由 T75 一并补采）——**不是**复制 x 的值。
+            'label_fontsize_y': it.get('label_fontsize_y'),
+            'tick_fontsize_y': it.get('tick_fontsize_y'),
         }
+        # 图元级字段（T26）：**采集侧给了才搬**，没给就完全不输出这个键。
+        #
+        # 0.1.8 这里硬编码 `'lines': []` —— 图里明明有线、产物却说"没有线"，
+        # 是个假字段（agent 读到的"当前排版"是错的）。schema 里
+        # `axes.items.required` 只有 ['index']，`lines/cmap/legend` 都不是必填，
+        # 省略合法（写 `null` 反而不合法：schema 给的是 array / string / object）。
+        for _out_key, _src_key in (('cmap', '_cmap'), ('legend', '_legend'),
+                                   ('lines', '_lines')):
+            _v = it.get(_src_key)
+            if _v is not None:
+                ax[_out_key] = _v
+        # T26（T25 下游）：x/y 字号分列导出。GUI 从 0.1.9 起分列输出
+        # `label_fontsize_y` / `tick_fontsize_y`，采集侧（verify._state）已经给了；
+        # 这里**给了才搬**，没给（旧版本/取不到）就不出现该键 —— 不让 describe 的
+        # 产物里出现"看起来采到了、其实是空壳"的字段。
+        for _out_key, _src_key in (('label_fontsize_y', 'label_fontsize_y'),
+                                   ('tick_fontsize_y', 'tick_fontsize_y')):
+            _v = it.get(_src_key)
+            if _v is not None:
+                ax[_out_key] = _v
         axes.append(ax)
     out['axes'] = axes
     return out
@@ -82,7 +107,10 @@ def main(argv=None) -> int:
                     help='输出文件（默认打印到 stdout）')
     ap.add_argument('--compact', action='store_true',
                     help='紧凑 JSON（不缩进；给程序读时省 token）')
+    ap.add_argument('--lang', choices=('auto', 'zh', 'en'), default='auto',
+                    help='界面语言（默认自动：--lang > MPLTWEAK_LANG > locale）')
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
+    _msg.set_lang(args.lang)
 
     # 脚本自己的 print 不能混进 stdout —— 采集期间把 stdout 让给 stderr，
     # 这样 `mpltweak describe ... > layout.json` 拿到的就是干净的 JSON。
@@ -92,16 +120,20 @@ def main(argv=None) -> int:
     script = os.path.abspath(args.script)
     if not os.path.exists(script):
         sys.stdout = _real_stdout           # 早退也要把 stdout 还回去
-        sys.stderr.write('[describe] 找不到脚本: %s\n' % script)
-        _msg.fail_json('file_not_found', 'script not found: %s' % script)
-        return 1
+        sys.stderr.write('[describe] %s\n' % _msg.t('file_not_found', path=script))
+        # 退出码 2（"跑不起来"）：与 check / apply 的同类失败一致（CH-6）。
+        # 0.1.8 这里给 1，而 1 在 CI 里的含义是"发现了排版问题"—— 语义打架。
+        _msg.fail_json('file_not_found', _msg.t_en('file_not_found', path=script))
+        return _msg.EXIT_USAGE
 
+    # A1：执行用户脚本**在子进程**里（sys.path / sys.modules / rcParams 不再串味）
     if args.all_figs:
-        states, err = verify.collect_all(script)
+        states, err = verify.collect_isolated(script, all_figs=True)
         if states is None:
-            sys.stderr.write('[describe] 采集失败: %s\n' % err)
+            sys.stdout = _real_stdout
+            sys.stderr.write('[describe] %s\n' % _msg.t('collect_failed', err=err))
             _msg.fail_json('collect_failed', err)
-            return 1
+            return _msg.EXIT_USAGE
         payload = {
             'version': params.SCHEMA_VERSION,
             'script': os.path.basename(script),
@@ -109,11 +141,13 @@ def main(argv=None) -> int:
             'figures': [_to_params(s, script) for s in states],
         }
     else:
-        state, err = verify.collect(script, args.fig if args.fig >= 0 else None)
+        state, err = verify.collect_isolated(script,
+                                             args.fig if args.fig >= 0 else None)
         if state is None:
-            sys.stderr.write('[describe] 采集失败: %s\n' % err)
+            sys.stdout = _real_stdout
+            sys.stderr.write('[describe] %s\n' % _msg.t('collect_failed', err=err))
             _msg.fail_json('collect_failed', err)
-            return 1
+            return _msg.EXIT_USAGE
         payload = _to_params(state, script)
 
     sys.stdout = _real_stdout

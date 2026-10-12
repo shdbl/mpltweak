@@ -4,77 +4,234 @@
 
 # mpltweak
 
-**Lay out matplotlib like a slide deck — then write the numbers back into your code.**
+**Lay out matplotlib figures the way you arrange slides in PowerPoint, then write the numbers back into your code.**
 
 [![PyPI](https://img.shields.io/pypi/v/mpltweak?style=flat-square&color=2F6FEB)](https://pypi.org/project/mpltweak/)
 [![Python](https://img.shields.io/pypi/pyversions/mpltweak?style=flat-square)](https://pypi.org/project/mpltweak/)
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 [![Tests](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml/badge.svg)](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml)
 
-[中文](https://github.com/shdbl/mpltweak/blob/main/README.md) | **English**
+[中文](README.md) | **English**
+
+Docs linked from this file (`docs/*.md`) are currently written in Chinese.
 
 </div>
 
 ## Contents
-
-- [What it solves](#what-it-solves)
-- [Demos](#demos)
-- [What it actually changes](#what-it-actually-changes)
-- [Install](#install)
-- [Quick start](#quick-start)
-- [Keys](#keys)
+- [What problem it solves](#what-problem-it-solves)
+- [Demo](#demo)
+- [Key map](#key-map)
+- [Install + quick start](#install--quick-start)
+- [Using it as a skill (for AI clients)](#using-it-as-a-skill-for-ai-clients)
+- [Layout interface for AI / agents](#layout-interface-for-ai--agents)
+- [How humans and agents split the work](#how-humans-and-agents-split-the-work)
+- [Edit numbers in place, or insert a layout block](#edit-numbers-in-place-or-insert-a-layout-block)
 - [Workflow](#workflow)
-- [Three-layer verification](#three-layer-verification)
+- [Three verification layers](#three-verification-layers)
+- [Execution boundaries: which commands run your script](#execution-boundaries-which-commands-run-your-script)
+- [When it does not apply (up front)](#when-it-does-not-apply-up-front)
+- [Static study on real plotting code](#static-study-on-real-plotting-code)
 - [Params file](#params-file)
-- [A layout interface for AI agents](#a-layout-interface-for-ai-agents)
-- [Splitting the work: human + agent](#splitting-the-work-human--agent)
 - [Development](#development)
+- [License](#license)
 
-## What it solves
+## What problem it solves
 
-mpltweak is an **interactive layout editor for matplotlib multi-panel figures**. Laying those out
-is fiddly: nudge one panel and the axis label next to it gets covered; enlarge the fonts and the
-legend lands on a curve. And every change costs another re-run and another look at the output.
+When you lay out a multi-panel figure, the trouble is usually the layout rather than the data: move one subplot and the neighbouring axis label is covered; increase a font size a little and the legend overlaps a curve. And every change means re-running the script and looking at the figure again.
 
-**If placing those panels were as direct as arranging pictures on a slide, the numbers would not
-need all that editing — that is what mpltweak does.**
+**What mpltweak does**: you drag panels the way you arrange pictures in PowerPoint, and then those few numbers go back into your source code.
 
-| Way | Process |
+| Approach | Flow |
 |---|---|
-| **The old way** | edit a number → re-run the script → wait → look at the PNG → still wrong → edit again |
-| **mpltweak** | open the window → drag it into place → `mpltweak apply --write` → the numbers are back in your code |
+| **Traditional** | change a number → re-run the script → wait tens of seconds → look at the PNG → still wrong → change again |
+| **mpltweak** | open the window → drag into place → `mpltweak apply --write` → those numbers are back in the code |
 
-**Core feature: deterministic source rewriting.** AST-based precise targeting, in two modes: **when the code holds literal numbers, it edits exactly those numbers** (cleanest — nothing is inserted); **otherwise it inserts one self-contained adjustment block** (no imports, no change to your logic). Both modes come with built-in three-layer verification (runs / rewrote correctly / retry with fallback anchor), auto-rollback on any failure — **it will never leave a broken script behind**.
+**Writing back is deterministic.** AST-based location; write-back takes one of two forms: **when the code holds literals, those numbers are edited directly** (no insertion of any kind); **otherwise a self-contained layout block is inserted** (no added import, no change to your own logic). Both forms go through three verification layers (syntax / re-run / semantic); if any layer does not pass, the file is **rolled back to the pre-batch state**, with the backup left in `.tweak_params/<script>.tweak.bak`.
 
-**Precisely because we do modify source, we must be deterministic** — that is the premise mpltweak is built on.
+**Changing source code requires determinism**; that is the premise mpltweak is built on.
 
-**It only touches style and position — it never invents content.** Text, data and artists stay
-exactly what your code says.
+**It only handles style and position; it does not invent content**: text, data and graphics are still decided by your code.
 
-## Demos
+## Demo
 
 <table>
 <tr>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/01_drag_layout.gif" alt="Dragging with snap guides"><br>
-<b>Drag + edge snapping</b><br><sub>Ghost preview and alignment guides while dragging; it clicks into place near a target</sub></td>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
-<b>Align / distribute</b><br><sub>Ctrl-select three panels → one keystroke to left-align and distribute evenly</sub></td>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/01_drag_layout.gif" alt="Drag a panel with snapping guides"><br>
+<b>Drag + edge snapping</b><br><sub>A ghost preview and alignment guides appear while dragging; near an alignment position it snaps</sub></td>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
+<b>Multi-select align / distribute</b><br><sub>Ctrl-click three panels → left align + vertical distribute</sub></td>
 </tr>
 <tr>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/03_fontsize.gif" alt="Hover to resize text"><br>
-<b>Hover to resize text</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode (space)</b><br><sub>Full cartopy redraw <b>494ms → 169ms</b> — dragging stops stuttering</sub></td>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/03_fontsize.gif" alt="Change font size by hovering"><br>
+<b>Font size on hover</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
+<b>Wireframe mode for speed (space bar)</b><br><sub>Full redraw of a cartopy world map <b>494ms → 169ms</b>, so dragging keeps up</sub></td>
 </tr>
 </table>
 
-**Full PPT-style gesture set:** Drag panels, Ctrl multi-select, align/distribute (Ctrl+Shift+L/R/T/B/C/M, H/V), edge snapping (with guides), Ctrl+F fit canvas to trim margins, space for wireframe mode, hover to resize text, legend snapping to 8 standard spots, colorbar length/thickness adjustment.
+**Gestures (similar to PowerPoint):** drag panels, Ctrl multi-select, align / distribute (Ctrl+Shift+L/R/T/B/C/M, H/V), edge snapping (with guides), Ctrl+F fit canvas and trim margins, space bar for wireframe mode, hover to change font size, legend snapping to 8 standard positions, colorbar length / thickness.
 
-**Deep research-scenario support:** cartopy maps, colorbar (position/clim/cmap), multi-mappable precise pairing (by receiver variable name / explicit parent axis in `fig.colorbar(cs, ax=ax1)`), `matplotlib.use('Agg')` scripts work as-is.
+## Key map
 
-## What it actually changes
+| Action | Effect |
+|---|---|
+| **`?`** | **open / close the key help overlay** (Esc closes it, L toggles Chinese/English) |
+| Drag a panel / drag an edge or corner | move / PowerPoint-style resize (opposite edge fixed; aspect-locked axes keep their ratio) |
+| **Ctrl+click** (or Shift+click) | add to / remove from the selection; drag on empty space for a rubber-band selection |
+| **Ctrl+Shift+L/R/T/B/C/M** | align: left / right / top / bottom / horizontal centre / vertical centre |
+| **Ctrl+Shift+H / V** | distribute: horizontal / vertical (ends fixed, equal gaps between) |
+| **Ctrl+Z** / **Ctrl+Y** (or Ctrl+Shift+Z) | undo / redo |
+| Hover text, then `+` / `-` | font size of title, axis label, tick labels, legend, colorbar |
+| **Space** | wireframe mode (borders and text only, data artists hidden) |
+| **Ctrl+F** | fit canvas to content (trims margins; subplot pixel size unchanged) |
+| **Arrow keys** / Shift+arrow | move a panel (PowerPoint habit) / nudge size (centre fixed) |
+| Drag a colorbar long-axis end / thin edge / middle | length / thickness / translate the whole bar |
+| Drag a legend | preview of 8 standard positions + snap on release |
+| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | line width / line colour / colormap / grid / spines / linear-log axes |
+| `n` · `e` | snapping toggle / manual export |
+| Drag the window edge | change canvas size (writes back `figsize`) |
 
-Take `fig1.py`. **Before** (hand-written numbers, rarely even):
+## Install + quick start
+
+```bash
+pip install mpltweak            # core: describe / check / apply (mcp is an optional adapter layer, see "layout interface for AI / agents")
+pip install "mpltweak[qt]"      # add this if you want to **drag figures in a window** (installs the PyQt5 backend)
+```
+
+Opening a window needs a graphics backend (PyQt5 recommended, about +150MB), hence the two steps: server / headless / agent-only use cases only need `describe` / `check` / `apply` and should not install a whole Qt stack for it (some environments already ship PySide6 / PyQt6). The official Python installers for Windows / macOS bundle `tkinter`, so `pip install mpltweak` alone usually opens a window; in that case it uses the **Tk backend (reduced interaction)**, which is neither an installation failure nor a broken install. With no backend at all, opening the window exits with `rc=4` and prints which one to install. Backend probing order, `doctor` output and common problems: [docs/exec-boundaries.md](docs/exec-boundaries.md).
+
+### Window backend: Qt (recommended) or Tk (default)
+
+`mpltweak[qt]` gives Qt (richest interaction); with only the core package you get Tk (reduced: it opens a window, but some gestures are missing); with neither backend, opening a window exits with `rc=4` and prints which one to install.
+Backend comparison table, per-platform installs and environment variables: [docs/exec-boundaries.md](docs/exec-boundaries.md).
+
+### 1 · Your existing script, unchanged
+
+```python
+# fig1.py -- ordinary matplotlib, nothing added
+import matplotlib.pyplot as plt
+import numpy as np
+
+fig = plt.figure(figsize=(10, 8))
+x = np.linspace(0, 1, 200)
+
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])      # the position is these numbers
+ax1.plot(x, np.sin(6 * x))
+ax1.set_title('(a)')
+
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # hand-written numbers, usually uneven
+ax2.scatter(np.random.rand(60), np.random.rand(60), s=8)
+
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+ax3.hist(np.random.randn(300), bins=20)
+
+fig.savefig('fig1.png', dpi=150)
+```
+
+No `import mpltweak`, no hooks.
+
+### 2 · Open the layout window
+
+```bash
+mpltweak fig1.py
+```
+
+> Subcommands: `launch` / `apply` / `revert` / `describe` / `check` / `schema` / `mcp` / `doctor`.
+> `mpltweak fig1.py` and `mpltweak launch fig1.py` are equivalent; apart from that, the first argument is always interpreted as a **script path**.
+
+In the window: **drag** panels to move them, drag **edges / corners** to resize, **Ctrl-click** to select several panels → `Ctrl+Shift+L` left align / `Ctrl+Shift+V` vertical distribute, **hover text** and press `+` `-` to change font size, **space** for wireframe (faster on heavy figures), **Ctrl+F** to trim margins. Press **`?`** at any time for the key help page; the key table and workflow diagram are in [docs/interaction.md](docs/interaction.md).
+
+**Close the window when you are done.** The script has not changed by a single character at this point; the params land in `.tweak_params/fig1.json`.
+
+### 3 · See what it intends to change (read-only)
+
+```bash
+mpltweak apply fig1.py
+```
+
+It prints the position and font-size inventory of every axis, and writes no file.
+
+### 4 · Write back
+
+```bash
+mpltweak apply fig1.py --write
+```
+
+```text
+✓ written back in place: fig1.py
+  4 in-place edits: ax0.pos, ax1.pos, ax2.pos, ax3.pos
+  backup: .tweak_params/fig1.tweak.bak
+  ✓ Agg re-run verification passed
+  ✓ semantic verification passed (target figure state == params)
+```
+
+The block above is the output of **one real write-back**; "re-run / semantic verification" re-runs the script **in your environment** (if it cannot run, or the semantics do not match, the file is rolled back; see "Three verification layers").
+
+When the code holds literals it edits only the numbers inside `add_axes([...]`; otherwise it inserts a self-contained layout block. If any verification step fails, the file is rolled back.
+
+### 5 · Re-run and look
+
+```bash
+python fig1.py
+```
+
+### If nothing happens
+
+No window, no change after write-back, or wondering where the params come from: see "If nothing happens" in [docs/exec-boundaries.md](docs/exec-boundaries.md) (a per-symptom table covering `doctor`, `--timeout 600`, `--force-resume`, layout-engine conflicts and more).
+
+## Using it as a skill (for AI clients)
+
+[`skills/mpltweak/SKILL.md`](skills/mpltweak/SKILL.md) in this repository is an operating manual written for AI (Agent Skills format): the commands, the rules, and the human-machine workflow. Drop it into your client's skills directory (for example `~/.dsh/skills/`), or paste its content to the AI.
+
+**How the two sides fit together**: the AI decides what the figure should look like (reading the output of `describe`, editing the params file), and mpltweak decides **whether the change actually landed** (three verification layers + rollback on error + `revert`) — it does not rely on the AI saying "I fixed it". mpltweak itself contains no AI model; it provides commands and a verdict. The `--json` output carries `ok` / `reason` / `changes` / `pending` for the AI to read.
+
+MCP (the optional adapter layer) and the JSON contract: [docs/agent.md](docs/agent.md).
+
+## Layout interface for AI / agents
+
+Large models write correct plotting code, but **layout numbers are mostly guesswork** for them. mpltweak turns that part from guessing into writing a file: the **params file is a public JSON format (with a JSON Schema)**, so an agent can generate or edit it directly and `mpltweak apply --write` applies it.
+
+```bash
+mpltweak describe fig1.py -o layout.json   # read: export the current layout (--all-figs exports several figures at once)
+mpltweak apply fig1.py --write --json      # write: apply into the source (with --json all progress output goes to stderr)
+mpltweak check fig1.py --json              # check: layout health check; the exit code is the CI gate
+```
+
+`--json` is for machines: the `style` / `applied` / `changes` / `needs_block` / `pending` fields inside `files[]` tell whether this run landed; the `schema` subcommand prints the JSON Schema of the params file so an agent can validate what it generated.
+
+The table of the four subcommands, exit-code semantics, the read → modify → write → check loop, and the parameter signatures of the four MCP tools: [docs/agent.md](docs/agent.md).
+
+### Also available as an MCP server (optional adapter layer)
+
+**A client that can run shell commands does not need MCP**; MCP targets clients that cannot run shell commands (Claude Desktop and similar). Optional dependency (Python ≥ 3.10): `pip install "mpltweak[mcp]"`, then `mpltweak mcp` starts the stdio server; add to the client config: `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`.
+It exposes a subset of the CLI: `describe_layout` / `check_layout` / `params_schema` / `apply_layout` (`write=False`); `revert`, `--style`, `--verify-fast`, `--strict` and others exist only in the CLI. The actual parameter signatures of the four tools and the best-effort maintenance policy: [docs/agent.md](docs/agent.md).
+
+## How humans and agents split the work
+
+Two common splits: **human drags → agent applies** (you finish dragging in the window and say "apply it"; the AI runs `apply --write`); **agent drafts → human fine-tunes** (the AI lays out a first version → you keep adjusting in the window, the params continue from there → you confirm the write-back).
+
+The rule: **an agent can decide which numbers to change; whether the change is correct is decided by the product** (`check` and the three verification layers return the verdict, and a failing run is rolled back).
+
+The other three collaboration modes (agent self-check / one figure as a template / human drags then agent summarises): [docs/agent.md](docs/agent.md).
+
+```mermaid
+flowchart LR
+    C[".tweak_params/fig1.json"]:::script --> T{{"either path works"}}:::check
+    T -->|let the tool write| W["mpltweak apply --write"]:::win
+    T -->|write it yourself| H(["human / agent edits the script"]):::win
+    H --> V{"tool as judge<br/>check --static (no execution) / check"}:::check
+    V -->|not good enough| H
+    V -->|good enough| Z(["commit"]):::ok
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+```
+
+## Edit numbers in place, or insert a layout block
+
+Take `fig1.py`. **Before** (hand-written numbers, usually uneven):
 
 ```python
 ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
@@ -82,7 +239,7 @@ ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
 ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 ```
 
-**After** (what `mpltweak apply --write` leaves behind):
+**After you drag** (the result of `mpltweak apply --write`):
 
 ```diff
 -ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
@@ -93,194 +250,73 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 +ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
 ```
 
-**This is the first case: the code held literal numbers, so only those numbers moved** — no new lines, no `import`, no dependency introduced.
-Font sizes, legend placement, grid and colorbar work the same way — it rewrites parameters that were **already in your code**.
+The code holds literals, so **only those numbers moved**: no line added, no `import`, no dependency. The same holds for font sizes, legend position, grid and colorbar: what changes is parameters your code already had.
 
-When positions are computed by `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`, **there is no number in the source to edit** — which is common in real scripts. Those figures get a **self-contained adjustment block** instead:
+When the position comes from `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`, there is no number in the source to edit. Such a figure gets a **self-contained layout block** inserted:
 
 ```python
-# ===== 自动布局调整（由调图工具生成，勿手改；重复写回会整体替换）=====
-# 本块由 mpltweak 自动生成于 2026-10-10 10:15（可手动微调，勿删上下两行标记）
+# ===== auto layout (generated) - do not edit inside =====
+# generated by mpltweak on 2026-10-10 16:45 (you may tweak it; keep the two marker lines)
+# axis identity (while laying out): ax0=grid[2, 2, 0, 0], ax1=grid[2, 2, 0, 1], ...
 for _ax, _p in zip(fig.axes, [
-    [0.0480, 0.6550, 0.3000, 0.2150],
-    [0.0480, 0.3700, 0.3000, 0.2150],
-    [0.0480, 0.0850, 0.3000, 0.2150],
-    [0.4550, 0.5600, 0.4300, 0.3100],
-]):
+    [0.0728, 0.5363, 0.4418, 0.4015],
+    [0.5394, 0.5363, 0.4418, 0.4015],
+]):  # ... one position per axis of the 2x2 grid
     _ax.set_position(_p)
-# ===== 自动布局调整结束 =====
+fig.axes[0].title.set_fontsize(12)
+fig.axes[0].grid(False)
+# ===== end auto layout =====
 ```
 
-The block is **self-contained**: no `import`, nothing beyond matplotlib, no change to your logic. Re-writing replaces it wholesale rather than piling up. Both modes have three-layer verification + automatic rollback.
+Those two marker lines are **written into your script**; `grep auto layout` finds the block. The block is **self-contained**: no added `import`, nothing beyond matplotlib, no change to your logic; a repeated write-back **replaces it as a whole**. To force one path only: `--style inplace` (no block is inserted; a field that cannot be written in place fails with `rc=1`) or `--style block` (always inserts a block).
 
-That is the payoff of deterministic rewriting: mpltweak uses AST-based precise targeting + three-layer verification — **making layout results truly land in your code, not just live inside a tool**.
+The per-field three-state rule (① already written in place ② equal to the current source value ③ has a target value, differs from the current one, cannot be written in place), and the boundaries of "zero intrusion" (`describe → apply` straight through pins the whole state into the source; give less to change less) are in [docs/params.md](docs/params.md). The hard constraints on the insertion point (only before the last `savefig` / `show`; `anchor` / `attempts` as measured), a write-back rejected as a whole, and mixing both forms across rounds are in [docs/verify.md](docs/verify.md).
 
-## When not to use it
+### `--style` and JSON fields: did this run land?
 
-Write-back verification **re-runs your whole script on your machine, in your environment** — that is part of
-the mechanism, not an optional step (`--no-verify` can skip it, but that turns off the only safety net).
-So these scripts are out of scope:
-
-| Script trait | Why |
-|---|---|
-| A single run takes minutes or more | Every write-back re-runs it; `--timeout 600` widens the wait, it does not remove it |
-| Loads big data / heavy deps / needs network or credentials | The headless re-run stalls or fails |
-| Needs human input midway (`input()`, interactive choices) | The headless re-run simply blocks |
-| Only meaningful under a specific interactive backend | Verification always uses the headless Agg backend |
-
-For those, stay on the read-only path (`mpltweak describe` / `mpltweak check`, neither writes back),
-or edit the code by hand. The target user is **small-to-medium plotting scripts that run locally**.
-
-## Install
-
-Every command below runs in a **shell** — cmd / PowerShell on Windows, Terminal on macOS / Linux,
-or the **Terminal** pane at the bottom of PyCharm (**not** the Python Console / interactive
-interpreter). `cd` into your script's folder before tuning.
-
-```bash
-pip install mpltweak
-```
-
-## Quick start
-
-### 1 · Your existing script, not a line to change
-
-```python
-# fig1.py — just plain matplotlib
-import matplotlib.pyplot as plt
-import numpy as np
-
-fig = plt.figure(figsize=(10, 8))
-x = np.linspace(0, 1, 200)
-
-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])      # the layout is these numbers
-ax1.plot(x, np.sin(6 * x))
-ax1.set_title('(a)')
-
-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # hand-written numbers are rarely even
-ax2.scatter(np.random.rand(60), np.random.rand(60), s=8)
-
-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-ax3.hist(np.random.randn(300), bins=20)
-
-fig.savefig('fig1.png', dpi=150)
-```
-
-No `import mpltweak`, no hooks, no decorators.
-
-### 2 · Open the tuning window
-
-```bash
-mpltweak fig1.py
-```
-
-In the window: **drag** a panel to move it, drag an **edge / corner** to resize,
-**Ctrl+click** to multi-select → `Ctrl+Shift+L` to left-align / `Ctrl+Shift+V` to distribute,
-**hover text** and press `+` / `-` to resize it, **space** for wireframe mode (fast on heavy
-figures), **Ctrl+F** to trim the white margin. Press **`?`** any time for the key cheat-sheet.
-
-**Close the window when you are done.** Not a single character of your script has changed —
-the params are sitting in `.tweak_params/fig1.json`.
-
-### 3 · See what it intends to change (read-only)
-
-```bash
-mpltweak apply fig1.py
-```
-
-Prints the position and font-size list for every axis. Writes nothing.
-
-### 4 · Write it back
-
-```bash
-mpltweak apply fig1.py --write
-```
-
-```text
-✓ 已原位写回: fig1.py
-  原位修改 4 处: ax0.pos, ax1.pos, ax2.pos, ax3.pos
-  备份: .tweak_params/fig1.tweak.bak
-  ✓ Agg 重跑验证通过
-  ✓ 语义验证通过（目标图状态 == 参数）
-```
-
-It only rewrites the numbers inside your `add_axes([...])` calls; if any verification step
-fails, it rolls back.
-
-### 5 · Re-run and look
-
-```bash
-python fig1.py
-```
-
-### Common cases
-
-| Symptom | What to do |
-|---|---|
-| No window | Run `mpltweak doctor` for a diagnosis |
-| Want to start over | Delete `.tweak_params/fig1.json` (keep it and you continue from last time) |
-| Multi-figure script | Every figure gets a window, **whichever you edit is recorded**; `apply` writes each back |
-| Script loads data / runs long | Try `--timeout 600` first to **widen** the wait. `--no-verify` **skips the re-run check entirely** — that check is the only automatic safety net against writing broken code, so use it only when the script truly cannot be re-run headlessly, and only after committing it to version control |
-| **Dragging feels laggy** | Press **space** for wireframe mode: only borders, axes and text are drawn, **no data artists** (measured on a cartopy map: 494ms → 169ms). Press space again to restore |
-| You edited the code by hand, then reopened | It will **refuse to re-apply** the old params (so your edits are not silently overwritten) and tell you why; add `--force-resume` to resume anyway |
-| The script enables `constrained_layout` / `autolayout` | You get a warning (with the **line number**) when opening the window and when writing back: the layout engine recomputes axes positions on every draw, so dragged/written-back positions get overridden. Turn it off before tweaking (or position the axes you care about with `add_axes([...])` — the engine does not manage those) |
-
-## In-place numbers vs. an inserted block
-
-`apply --write` defaults to `--style auto`: **each figure decides for itself**.
-
-| Case | Result |
-|---|---|
-| The code has editable literals (`add_axes([...])`, `set_title/set_xlabel(fontsize=)`, `tick_params(labelsize=)`, `grid(...)`) | **The numbers are edited in place**; your script's style is untouched |
-| Not a single field can be matched (typically axes created by `plt.subplots()` / `GridSpec`) | That figure **falls back to an inserted block** |
-| Some fields match, some do not (`clim` / `cmap` / `legend` / `spines`, grid-axis positions, colorbar host position) | **Stays in place**; the unmatched fields are **listed one by one** under "not applied in place" (never dropped silently) — use `--style block` if you want them unified |
-
-Force one mode: `--style inplace` (never insert a block; unmatched stays untouched) or
-`--style block` (always a block).
-
-**A file can end up mixed across runs**: numbers edited in place first, then a later run fell back to a
-block. Both are valid, but readers of the code get confused. To truly unify, restore from the backup first
-(`.tweak_params/<script>.tweak.bak` is the pre-write-back source), then write once with `--style block` —
-blocks are replaced wholesale, but a second write-back alone will not undo numbers edited earlier.
-
-## Keys
-
-| Action | Effect |
-|---|---|
-| **`?`** | **Open / close the key cheat-sheet** (in-canvas overlay: Esc closes, L switches language) |
-| Drag a panel / drag an edge or corner | Move / PowerPoint-style resize (opposite edge pinned; aspect-locked axes scale uniformly) |
-| **Ctrl+click** (or Shift+click) | Add / remove from selection; drag on empty space for rubber-band select |
-| **Ctrl+Shift+L/R/T/B/C/M** | Align left / right / top / bottom / centre horizontally / centre vertically |
-| **Ctrl+Shift+H / V** | Distribute horizontally / vertically (ends fixed, equal gaps) |
-| **Ctrl+Z** / **Ctrl+Y** (or Ctrl+Shift+Z) | Undo / redo |
-| Hover text, then `+` / `-` | Font size of title, axis label, ticks, legend, colorbar |
-| **Space** | Wireframe mode (borders and text only, data artists hidden) |
-| **Ctrl+F** | Fit the canvas to its content (trim the white margin; panels keep their pixel size) |
-| **Arrow keys** / Shift+arrows | Move the panel (PPT muscle memory) / fine-tune size around its centre |
-| Drag a colorbar's long edge / thin side / middle | Length / thickness / move the whole bar |
-| Drag the legend | Preview of 8 standard spots, snaps on release |
-| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | Line width / line colour / colormap / grid / spines / linear-log axes |
-| `n` · `e` | Snapping toggle / manual export |
-| Drag the window edge | Change the canvas size (written back as `figsize`) |
+`--style` has two paths. `auto` (default) edits in place where it can and falls back to inserting a layout block where it cannot; `inplace` (explicit) requires in-place edits, and fails with `rc=1` / `applied=false` where it cannot instead of reporting success; `block` always inserts a block.
+Whether things landed is read from `files[]` of `apply --json`: `needs_block`, `pending`, `inplace_pending` / `inplace_needs_block`, `auto_fallback`, `inplace_changes` / `inplace_reason`.
+Per-field meanings and the measured comparison of the three styles (rc / JSON): [docs/params.md](docs/params.md).
 
 ## Workflow
 
 ```mermaid
 flowchart TD
-    A["fig1.py<br/>plain matplotlib, not a line to change"]:::script
-    B(["Live window<br/>drag · align · snap · font size"]):::win
-    C[".tweak_params/fig1.json<br/>params saved silently"]:::script
-    D["AST lookup → rewrite the plotting params"]:::script
-    E{"Three-layer verification"}:::check
-    F(["commit + keep a backup"]):::ok
-    G(["auto rollback, never leaves a broken script"]):::bad
+    A["fig1.py<br/>plain matplotlib, no edits needed"]:::script
+    B(["interactive window<br/>drag · align · snap · font size"]):::win
+    C[".tweak_params/fig1.json<br/>params written quietly, code untouched"]:::script
+    P["read-only preview:<br/>which numbers in place / block or not / refuse or not"]:::check
+    D{"per-field decision"}:::check
+    D0(["【equal】no_change<br/>not one byte touched"]):::ok
+    D1["【in place】replace those numbers<br/>everything else byte-identical"]:::script
+    D2{"is the insertion point legal?<br/>(before the last savefig / show)"}:::check
+    D2b{"can the target object in the block<br/>be proven statically?<br/>(variable name, not fig.axes[i])"}:::check
+    D3["【append】insert a self-contained layout block"]:::script
+    D4["【refuse】not one byte touched<br/>state the reason + print a paste-ready snippet"]:::bad
+    PASTE(["you paste those lines by hand<br/>(replacing placeholders with your variable names)"]):::win
+    E{"verification<br/>default: syntax + re-run + semantic<br/>--verify-fast: ast.parse only"}:::check
+    F(["commit the change + keep a backup"]):::ok
+    G(["roll back to the pre-batch state"]):::bad
+    R(["revert: back to the file before the write-back"]):::ok
 
     A -->|mpltweak fig1.py| B
-    B -->|close window| C
-    C -->|mpltweak apply --write| D
-    D -->|compare| E
-    E -->|passed| F
-    E -->|failed| G
+    B -->|close the window| C
+    C -->|apply (without --write)| P
+    P -->|after you confirm: apply --write| D
+    D -->|target value == current source value| D0
+    D -->|literals exist| D1
+    D -->|none| D2
+    D2 -->|illegal| D4
+    D2 -->|legal| D2b
+    D2b -->|provable| D3
+    D2b -->|not provable| D4
+    D1 --> E
+    D3 --> E
+    E -->|pass| F
+    E -->|fail| G
+    D4 --> PASTE
+    PASTE -.->|run the read-only preview again later| P
+    F -.->|second thoughts| R
 
     classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
     classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
@@ -289,208 +325,127 @@ flowchart TD
     classDef bad fill:#FEF3E2,stroke:#D97706,stroke-width:1.4px,color:#16181D
 ```
 
-From opening the window to `mpltweak apply --write`, not a single character of your script changes
-at any point (including after you close it) — the write-back only happens when you explicitly ask
-for it in step three.
+From opening the window through `mpltweak apply --write`, the script does not change by a single character at any intermediate step (including after the window is closed); the write-back is the action you explicitly approve in step three.
 
-## Three-layer verification
+## Three verification layers
 
-`--write` never edits blindly, and every step is reversible:
+1. **Syntax layer** (`layers.syntax`): after writing to disk, an unconditional `ast.parse` on both paths (in-place and block); a syntax error rolls back to the pre-batch state on the spot.
+2. **Re-run layer** (`layers.rerun`): a headless Agg re-run; a non-zero exit code is then classified as "the script could not run in the first place" versus "the write-back broke it".
+3. **Semantic layer** (`layers.semantic`): after the re-run it dumps the target figure state and compares it field by field against the params (position / font sizes / `grid` / `spines` / `clim` and others); when a field cannot be judged, `verified=null` and `detail` lists the fields that were not judged.
 
-1. **It runs** — the script is re-run headlessly with Agg; a non-zero exit rolls back immediately.
-2. **It did the right thing** — the target figure's state is dumped and compared field by field
-   against the params (position / font size / grid / spines / clim). "Runs, but the layout never
-   reached the target figure" counts as a failure.
-3. **Retry with another anchor** — the `savefig` matching that figure index → main anchor → end of
-   script; only when all of them fail does it roll back.
+If any layer does not pass, the file is rolled back to the pre-batch state; the pre-write original is backed up in `.tweak_params/<script>.tweak.bak`. Per-layer details and how they relate to `--verify-fast` / `--keep-unverified`: [docs/verify.md](docs/verify.md).
 
-**This is the safety net for deterministic rewriting.** The backup lives in `.tweak_params/<script>.tweak.bak` (never scattered into your source tree),
-and a slow script that times out is not treated as a failure — you are simply told to confirm.
+### Speed and gates: `--verify-fast` and `--strict`
 
-### Changed your mind: `mpltweak revert`
+**`--verify-fast` (speed)**: only the `ast.parse` after writing, so it is fast; it does not show that the script runs, nor that the layout landed on the target figure (JSON reports `verify_mode: "fast"`).
+**`--strict` (gate)**: `check --strict` upgrades layout-engine conflicts (`constrained_layout` / `autolayout`) from a note to a problem (`rc=1`); `apply --write --strict` refuses to write back when a conflict exists (add `--allow-layout-conflict` to let it through). The `ok` field plus exit code of `check --json` works as a CI case directly; `check` accepts one script at a time, so batching needs a loop of your own.
+Other details (the boundary of `--no-verify`, the `bbox_inches='tight'` downgrade, `--tol` accepting finite positive numbers only, the `--static` gate, a batch script example): [docs/verify.md](docs/verify.md).
 
-Wrong write-back, or the previous version actually looked better? No need to dig for the backup:
+### Second thoughts: `mpltweak revert`
+
+Wrong write-back, or you liked the earlier version better? No need to dig through backups:
 
 ```bash
-mpltweak revert fig1.py            # preview only: which lines come back (the default; touches nothing)
+mpltweak revert fig1.py            # preview only: which lines would change back (default, code untouched)
 mpltweak revert fig1.py --write    # actually go back to "before the last write-back"
 ```
 
-It uses the same `.tweak_params/<script>.tweak.bak` file that every `apply --write` leaves behind.
-**Revert is itself reversible**: the current version is saved as `<script>.revert.bak` first, so a
-slip can be undone. The restore copies **bytes verbatim** (BOM / line endings / encoding untouched).
+It uses the backup **next to the params file** (by default `.tweak_params/<script>.tweak.bak`, written automatically before every `apply --write`). If the write-back used `--params`, the revert needs the same `--params`, otherwise it reports `[revert] no backup to revert to` (`rc=2`).
+It reverts the **most recent** write-back: the backup is overwritten on each write-back, so after several write-backs a revert no longer reaches the earliest original.
+**The revert itself is reversible**: before overwriting, the current version is saved as `<script>.revert.bak` (also next to the params file), so an accidental revert can be undone.
+Restoring is a **byte-for-byte copy** (BOM / line endings / encoding untouched).
 
-### Slow scripts: `--verify-fast`
+## Execution boundaries: which commands run your script
 
-If the script takes minutes and you just want to see the result:
+`describe` / `check` / opening the window **execute** your script (in a **subprocess**, headless Agg; the exit code and any global state stay inside that subprocess). `apply` only rewrites the AST, unless you ask for **re-run verification** (after `--write` it re-runs once by default; `--verify-fast` only does `ast.parse`).
 
-```bash
-mpltweak apply fig1.py --write --verify-fast
-```
+Exit-code semantics, the effect of a script calling `sys.exit()` itself, and the CI usage of `--strict`: [docs/exec-boundaries.md](docs/exec-boundaries.md).
 
-**What it guarantees**: the source is still valid Python (a broken edit is rolled back on the spot,
-so you never end up with a script that refuses to run).
+## When it does not apply (up front)
 
-**What it does not guarantee** (important): **the script is not re-run** — it does not prove the
-script runs, nor that the layout actually landed on the target figure. Use it for the fast
-iterate-and-look loop, and drop the flag for the real thing. `--json` reports
-`"verify_mode": "fast"` and `"verified": null`, so an agent can tell the result was never re-run.
+Write-back verification re-runs the whole script **on your machine, in your environment**; that is part of the mechanism, not an optional step (`--no-verify` skips it, which amounts to switching off the safety net). So the following scripts are out of scope:
 
-### In CI: `--strict`
+| Script property | Why |
+|---|---|
+| Takes a long time to run once (minutes or more) | every write-back re-runs it; `--timeout 600` only widens the wait, it does not remove it |
+| Reads large data / needs a heavy environment / needs network or credentials | a headless re-run stalls or fails |
+| Needs human input midway (`input()`, interactive choices) | a headless re-run blocks |
+| A figure that is only meaningful under a specific interactive backend | verification always uses the headless Agg backend |
 
-By default `check` reports layout-engine conflicts (`constrained_layout` / `autolayout`) as
-**advisory** — that is normal matplotlib. If your project wants to forbid layouts the engine will
-override, `--strict` turns them into **problems** (exit code 1):
+Such scripts take the read-only route (`mpltweak describe` / `mpltweak check`, neither writes back), or you edit the code by hand.
+Its target users are **small and medium research plotting scripts that run locally**.
 
-```bash
-mpltweak check fig1.py --strict            # layout-engine conflict -> rc=1
-mpltweak apply fig1.py --write --strict    # refuses to write back (override with --allow-layout-conflict)
-```
+## Static study on real plotting code
 
-`check --json` is a natural CI gate (the `ok` field plus the exit code).
+This section reports a **static study run on real plotting code**. The corpus is **10,158 sha256-unique** public plotting scripts from real projects: **6904 records in Zenodo datasets**, **2045 scripts from research plotting repositories on GitHub**, and **1209 files from official project galleries**; many of them are **supplementary material of published papers**.
+The study only does **static** location and rewrite decisions (**it does not execute** the corpus scripts and does **not redistribute** them; per-script URL / licence / sha256 are in the manifest). The harness and per-script conclusions are in `bench/`. Of these, **4,427** are plotting scripts (2,396 statically analysable / 1,940 with no figure / 90 with syntax errors / 1 still timing out under isolated re-scan). The denominators in the tables below come from the **measurable sites** in those scripts.
+
+### 1. In-place edits (numbers edited directly in the source)
+
+| Item | Scripts with a site for this family | Scripts reachable in place | In-place write-backs (combinations) | Pass rate |
+|---|---:|---:|---:|---:|
+| Canvas size `figsize` | 2,256 | 2,256 | 2,247 | **99.6%** |
+| Panel position `pos` | 131 | 94 | 93 | 98.9% |
+| Title font size | 193 | 173 | 165 | 95.4% |
+| Axis label font size x | 181 | 173 | 160 | 92.5% |
+| Axis label font size y | 180 | 171 | 166 | 97.1% |
+| Tick font size x | 189 | 91 | 88 | 96.7% |
+| Tick font size y | 6 | 5 | 4 | not enough samples (n=5) |
+| Grid `grid` | 131 | 124 | 118 | 95.2% |
+| Axis range `xlim` | 401 | 247 | 232 | 93.9% |
+| Axis range `ylim` | 433 | 276 | 261 | 94.6% |
+| **Total** | **4,101** | **3,610** | **3,531** | **97.8%** |
+
+- **Pass rate = in-place write-backs ÷ reachable in place** (not ÷ "the source contains this item").
+- **The totals are sums over families**; different families of the same script are counted once each, so they **are not script counts**.
+- **Broken promises = 0**: no row reports "the tool claims an in-place write-back while the bytes did not change" (within the scope of this static corpus judgement).
+- The cases that did not go in place fall into three groups, with per-script lists in `bench/`: **invalid params refused 37** · **refused because the target object could not be proven 7** · **done by inserting a block 3** (none of them silently drops a change).
+
+### 2. Appended code blocks (items that cannot be expressed in place)
+
+| Item | Blocks | Original text preserved byte for byte | No runtime indexing inside the block | Target value landed |
+|---|---:|---|---|---|
+| Whole corpus this round | 427 | ✓ | 427 / 427 | ✓ |
+
+- Criteria for the block path: original text preserved byte for byte (line endings included) · the block does not use **runtime** locators such as `fig.axes[i]` / `plt.gca()` · it acts on the target object · idempotent · can be `revert`ed.
+- `spines` / `xscale` / `yscale` / `clim` can only go through the block path and **were not part of the in-place judgement this round** (the scan covered the ten in-place families only), so they are **not counted in the table above**.
+
+### 3. What the part below 100% consists of
+
+| Family | In place | Landed by block | Refused, not provable | Invalid params refused |
+|---|---:|---:|---:|---:|
+| `figsize` | 2,247 | 0 | 0 | 0 |
+| `pos` | 93 | 0 | 0 | 0 |
+| Title font size | 165 | 1 | 0 | 1 |
+| Axis label font size x | 160 | 0 | 1 | 11 |
+| Axis label font size y | 166 | 0 | 1 | 0 |
+| Tick font size x | 85 | 2 | 3 | 1 |
+| Tick font size y | 4 | 0 | 1 | 0 |
+| `grid` | 118 | 0 | 1 | 3 |
+| `xlim` | 232 | 0 | 0 | 9 |
+| `ylim` | 261 | 0 | 0 | 12 |
+| **Total** | **3,531** | **3** | **7** | **37** |
+
+- **Landed by block (3 cases) is not a failure**: the change landed, it just took the appended-block path.
+- **Refused, not provable (7 cases) is deliberate**: when it cannot statically decide "which figure / which axis is being changed", it **does not write** (`applied=false`, non-empty `pending`) and prints a paste-ready snippet for a manual edit.
+- **Invalid params refused (37 cases)**: the params derived by the measurement harness from sites crossed the validator's legal boundaries (for example an out-of-range axis index, or duplicate axis names within one figure); refusing them is correct behaviour. **If those 37 are removed from the denominator, the pass rate of axis label x is 160/161 ≈ 99.4%**; that removal must state its own denominator, so both numbers are listed.
+
+> Judgement scope: everything is **static** (AST location and rewrite decisions only; corpus scripts are not executed). Summary: **97.8% of the changes land in place in the source (3,531 / 3,610), and no run claims a change it did not make.**
 
 ## Params file
 
-The params file is a **public format** — edit it by hand, or let an AI / agent generate it, and
-`--write` will still apply it. The top-level `version` field marks the format revision (currently 4;
-older files still load) so the tool can tell how to read older files:
+The params file is a **public format**: you can edit it by hand, or let an AI / agent generate it, and `--write` applies it either way. The top-level `version` marks the format version (currently 4):
 
 ```jsonc
-{
-  "version": 4,
-  "script": "fig1.py",
-  "figsize_px": [1500, 700],             // canvas in logical pixels (null if never resized)
-  "figsize_in": [15.0, 7.0],             // inches written back to figsize
-  "axes": [
-    {
-      "index": 0,                        // = order in fig.axes
-      "pos": [0.048, 0.655, 0.30, 0.215],  // [x0, y0, w, h], figure-normalised
-      "aspect_locked": false,
-      "title_fontsize": 9.0,
-      "label_fontsize": 8.0,
-      "tick_fontsize": 8.0,
-      "grid": false,
-      "spines": { "top": false, "right": false },
-      "xscale": "linear",
-      "yscale": "linear",
-      "is_colorbar": false,
-      "clim": [-2.0, 2.0],
-      "cmap": "RdBu_r",
-      "xlim": [-0.01, 1.01],             // axis limits: recorded only when the script fixes them (never for autoscale)
-      "ylim": [0.0, 10.0],
-      "cell": [1, 2, 0, 1],              // grid identity [nrows, ncols, row, col] (null for hand-placed add_axes)
-      "lines": [ { "index": 0, "linewidth": 1.2, "color": "#0F4D92" } ],
-      "legend": { "loc": "upper right", "fontsize": 8.0 }
-    }
-  ]
-}
+{ "version": 4, "script": "fig1.py",
+  "axes": [ { "index": 0, "pos": [0.048, 0.655, 0.30, 0.215], "title_fontsize": 9.0 } ] }
 ```
 
-## A layout interface for AI agents
-
-An LLM can write correct plotting code, but **the layout numbers are guesswork** — it cannot see
-the figure.
-
-mpltweak turns that guesswork into a file write:
-
-**The params file is public JSON format (with JSON Schema).** AI can generate or edit it directly, without "seeing" the figure. `mpltweak apply --write` commits it to your source **deterministically**: AST lookup + three-layer verification + rollback on failure — **a bad guess can't corrupt your script**.
-
-**Core idea: let the AI own the content; let mpltweak own the layout.**
-
-```jsonc
-// the agent produces this → mpltweak apply fig1.py --write → it lands in your source
-{ "axes": [
-  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
-  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
-] }
-```
-
-**Full read → edit → write → check loop:**
-
-| Command | What it does |
-|---|---|
-| `mpltweak describe <script>` | Export the **current layout** as params JSON, no window (the agent's "read") |
-| `mpltweak schema` | Print the params JSON Schema so an agent can validate what it produced |
-| `mpltweak apply <script> --write --json` | Commit it back to source and emit machine-readable results (`--json` sends all chatter to stderr) |
-| `mpltweak revert <script> [--write]` | Go back to before the last write-back (preview by default; the current version is kept as well) |
-| `mpltweak check <script> --json` | Check without seeing the figure: alignment / size / gaps / fonts / overflow / overlap, plus **text measured at its real rendered size** (out of canvas = problem, texts colliding = advisory) and inconsistent axis limits; layout-engine conflicts get their own column (`--strict` promotes them to problems) |
-
-```bash
-mpltweak describe fig1.py -o layout.json    # read: the layout as it is now
-# ...the agent edits a few numbers in layout.json...
-mpltweak apply fig1.py --write --json       # write: back into source, self-checked
-mpltweak check fig1.py --json               # check: layout health report in JSON
-```
-
-**Why "read" is needed**: for explicit `add_axes([...])` you can just read the source. But a
-`plt.subplots()` grid, the effective default when no `fontsize=` is written, the positions after
-`tight_layout()`, and the true sizes of colorbars and aspect-locked (cartopy) axes — **those numbers
-do not exist in the source**; you have to run it once.
-
-### Also usable from AI clients (MCP)
-
-MCP is an optional extra. With it installed you can attach mpltweak to Claude Desktop / Cursor /
-Claude Code and let the AI call it directly, instead of shelling out:
-
-```bash
-pip install "mpltweak[mcp]"
-mpltweak mcp                    # start the stdio server
-```
-
-Then add this to the client config:
-
-```json
-{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}
-```
-
-Four tools map to the four commands above: `describe_layout` / `check_layout` / `params_schema` /
-`apply_layout` (read-only preview unless `write=true`).
-
-### Let your AI read the manual (skill)
-
-`skills/mpltweak/SKILL.md` in this repo is an **operating manual written for AI assistants**
-(Agent Skills format): the full command set, the ground rules, and the human/agent workflows.
-Feed it to your assistant and it will know how to drive mpltweak — no repeated explaining.
-
-## Splitting the work: human + agent
-
-| Division | How |
-|---|---|
-| **Human drags → agent commits** | You finish dragging, say the word, the agent runs `apply --write` |
-| **Agent drafts → human fine-tunes** | The agent lays it out by rule first → you keep tweaking in the window (params resume) → commit |
-| **Agent self-check** | After plotting, the agent runs `check`: uneven/unaligned/mismatched/overflow/overlap, without seeing the figure |
-| **One figure as a template** | `describe` the good one → change its `script` field → `apply` it to the others, for a consistent paper |
-| **Human drags → agent summarises** | The agent reads the params JSON and explains the change in plain words (good for commit messages or captions) |
-
-The rule of thumb: **taste belongs to you, precision belongs to the agent.**
+**Only fields given explicitly are written**: a field absent from the params is not written back. The field table (`figsize_px` / `figsize_in` / `aspect_locked` / `cell` / `clim` / `cmap` / `lines` / `legend` / `tick_fontsize_y` ...) and the two conventions (`axes[i]` order, colorbar slot axes not taking an index): [docs/params.md](docs/params.md).
 
 ## Development
 
-```bash
-git clone https://github.com/shdbl/mpltweak && cd mpltweak
-pip install -e .
-python tests/test_tweak.py       # interactive core
-python tests/test_events.py      # event paths
-python tests/test_redo.py        # undo / redo
-python tests/test_writeback.py   # AST write-back + three-layer verification
-python tools/crosscheck.py       # environment / API compatibility check
-```
-
-```text
-src/mpltweak/
-├── cli.py          # mpltweak <script> | apply | doctor
-├── launch.py       # run the script → attach windows → save params on close
-├── toolbox.py      # interactive core (the Tweak controller, pure matplotlib events)
-├── params.py       # params JSON spec
-├── apply.py        # change list / write-back entry point
-├── writeback.py    # AST lookup + in-place / block write-back
-└── verify.py       # semantic verification (re-run, compare field by field)
-```
-
-`toolbox.py` also works as an **embedded API** (`from mpltweak.toolbox import gaitu`),
-but the CLI is the intended interface — your scripts should never mention this tool.
+Repository layout: `src/mpltweak/` (`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`). Run the tests: `python tests/test_writeback.py` (AST write-back + three verification layers). The rest (installation, the full test command list, module responsibilities, the embedding API `from mpltweak.toolbox import gaitu`) is in [docs/dev.md](docs/dev.md).
 
 ## License
 

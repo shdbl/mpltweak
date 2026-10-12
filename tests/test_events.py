@@ -360,6 +360,117 @@ check('多图：后改的序号更大（挑"最后改的那张"）',
 check('多图：两张都被判定为改过',
       _rj(pM1) != b1 and _rj(pM2) != b2)
 
+# ---- F1：裸点击不压幽灵撤销步；第一次 Ctrl+Z 与画面一致（说的与做的一致）----
+figF1 = plt.figure(figsize=(8, 6))
+axF1a = figF1.add_axes([0.08, 0.55, 0.40, 0.38])
+axF1b = figF1.add_axes([0.55, 0.55, 0.40, 0.38])
+figF1.canvas.draw()
+twF1 = Tweak(figF1, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_f1.json'), heavy=False)
+twF1.snap = False                                # 关吸附，位移可精确断言
+WF1, HF1 = figF1.canvas.get_width_height()
+
+
+def _pf1(ax, fx, fy):
+    x = ax._position.x0 + ax._position.width * fx
+    y = ax._position.y0 + ax._position.height * fy
+    return x * WF1, y * HF1
+
+
+_bF1b0 = list(_bbox(axF1b))                      # 拖动前
+_x1, _y1 = _pf1(axF1b, 0.5, 0.5)
+send(figF1.canvas, 'button_press_event', _x1, _y1, button=1)
+send(figF1.canvas, 'motion_notify_event', _x1 + 0.05 * WF1, _y1)
+send(figF1.canvas, 'button_release_event', _x1 + 0.05 * WF1, _y1, button=1)
+_bF1b1 = list(_bbox(axF1b))                      # 拖动后
+check('F1 准备：真实拖动确实移动', abs(_bF1b1[0] - _bF1b0[0] - 0.05) < 1e-6,
+      '%.4f -> %.4f' % (_bF1b0[0], _bF1b1[0]))
+_n_after_drag = len(twF1._undo)
+# 裸点击 axF1a（按下即抬起，零位移）
+_x0, _y0 = _pf1(axF1a, 0.5, 0.5)
+send(figF1.canvas, 'button_press_event', _x0, _y0, button=1)
+send(figF1.canvas, 'button_release_event', _x0, _y0, button=1)
+check('F1：裸点击不压幽灵撤销步', len(twF1._undo) == _n_after_drag,
+      'undo %d -> %d' % (_n_after_drag, len(twF1._undo)))
+# 第一次 Ctrl+Z 应真正把 axF1b 移回原位（不再是"谎报撤销但画面没动"）
+send(figF1.canvas, 'key_press_event', _x1, _y1, key='ctrl+z')
+check('F1：第一次 Ctrl+Z 真的回退 axF1b', abs(_bbox(axF1b)[0] - _bF1b0[0]) < 1e-6,
+      '%.4f（期望 %.4f）' % (_bbox(axF1b)[0], _bF1b0[0]))
+
+# ---- F3：悬停 y 轴标签调字号 → 导出 label_fontsize_y（与 verify.py 同口径）----
+figF3 = plt.figure(figsize=(8, 6))
+axF3 = figF3.add_axes([0.1, 0.1, 0.7, 0.7])
+axF3.set_xlabel('xlab', fontsize=10)
+axF3.set_ylabel('ylab', fontsize=10)
+figF3.canvas.draw()
+twF3 = Tweak(figF3, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_f3.json'), heavy=False)
+_yF3 = axF3.yaxis.label.get_window_extent()
+_yx3, _yy3 = (_yF3.x0 + _yF3.x1) / 2, (_yF3.y0 + _yF3.y1) / 2
+send(figF3.canvas, 'key_press_event', _yx3, _yy3, key='+')
+check('F3：悬停 ylabel + 后 ylabel 字号 +1',
+      axF3.yaxis.label.get_fontsize() == 11 and axF3.xaxis.label.get_fontsize() == 10,
+      'x=%s y=%s' % (axF3.xaxis.label.get_fontsize(), axF3.yaxis.label.get_fontsize()))
+twF3.export()
+with open(os.path.join(tempfile.gettempdir(), 'test_f3.json'), encoding='utf-8') as _f:
+    _dF3 = json.load(_f)
+_aF3 = _dF3['axes'][0]
+check('F3：导出 label_fontsize 仍为 x 字号', _aF3.get('label_fontsize') == 10,
+      str(_aF3.get('label_fontsize')))
+check('F3：导出 label_fontsize_y 反映 y 改动', _aF3.get('label_fontsize_y') == 11,
+      str(_aF3.get('label_fontsize_y')))
+
+# ---- F5：叠加层 per-artist 字体 + 英文回退 + 绝不改全局 rcParams ----
+import mpltweak.toolbox as _tb                                   # noqa: E402
+_rc_family_before = matplotlib.rcParams['font.family']
+_props = _tb._ui_fontprops()
+if _tb._ui_cjk_ok():
+    check('F5：有 CJK 字体时叠加层给 per-artist fontproperties',
+          _props is not None, str(_props))
+else:
+    check('F5：无 CJK 字体时 fontproperties 为 None（回退英文）',
+          _props is None, str(_props))
+check('F5：不改全局 rcParams font.family',
+      matplotlib.rcParams['font.family'] == _rc_family_before,
+      str(matplotlib.rcParams['font.family']))
+check('F5：文案按 CJK 可用性双语切换',
+      _tb._u('中文', 'English') == ('中文' if _tb._ui_cjk_ok() else 'English'),
+      _tb._u('中文', 'English'))
+# 反向验证：强制模拟"无 CJK" → 英文回退 + fontprops None（不重跑真实字体探测）
+_old_cjk = _tb._UI_CJK_FONT
+_tb._UI_CJK_FONT = False
+check('F5（反向）：模拟无 CJK → 英文回退',
+      _tb._u('中文', 'English') == 'English', _tb._u('中文', 'English'))
+check('F5（反向）：模拟无 CJK → fontprops None',
+      _tb._ui_fontprops() is None, str(_tb._ui_fontprops()))
+_tb._UI_CJK_FONT = _old_cjk
+
+# ---- T25-#3a：悬停 y 刻度调字号 → 导出 tick_fontsize_y（与 label_fontsize_y 同口径）----
+figT = plt.figure(figsize=(8, 6))
+axT = figT.add_axes([0.1, 0.1, 0.7, 0.7])
+axT.plot([0, 1], [0, 1])
+axT.tick_params(labelsize=10)
+figT.canvas.draw()
+twT = Tweak(figT, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_tick_y.json'), heavy=False)
+_ytT = axT.get_yticklabels()[0]
+_ytbT = _ytT.get_window_extent()
+_ytx, _yty = (_ytbT.x0 + _ytbT.x1) / 2, (_ytbT.y0 + _ytbT.y1) / 2
+send(figT.canvas, 'key_press_event', _ytx, _yty, key='+')
+check('T25-#3a：悬停 y 刻度 + 后 ytick 字号 +1',
+      axT.get_yticklabels()[0].get_fontsize() == 11
+      and axT.get_xticklabels()[0].get_fontsize() == 10,
+      'x=%s y=%s' % (axT.get_xticklabels()[0].get_fontsize(),
+                     axT.get_yticklabels()[0].get_fontsize()))
+twT.export()
+with open(os.path.join(tempfile.gettempdir(), 'test_tick_y.json'), encoding='utf-8') as _f:
+    _dT = json.load(_f)
+_aT = _dT['axes'][0]
+check('T25-#3a：导出 tick_fontsize 仍为 x 字号', _aT.get('tick_fontsize') == 10,
+      str(_aT.get('tick_fontsize')))
+check('T25-#3a：导出 tick_fontsize_y 反映 y 改动', _aT.get('tick_fontsize_y') == 11,
+      str(_aT.get('tick_fontsize_y')))
+
 print('----')
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)

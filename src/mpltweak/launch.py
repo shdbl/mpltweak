@@ -29,6 +29,59 @@ import runpy
 import sys
 import traceback
 
+# P0-1（方案 B，用户已拍板）：无 PyQt5 → Tk 开窗时给一句人话提示装 mpltweak[qt]。
+# 文案优先走 messages.t('backend_tk_hint')（cli-hunter 补中英表）；键缺失时 t()
+# 容错地原样返回 key，这里退回内置兜底，绝不崩、也不污染 --json / MCP 的 stdout。
+_BACKEND_TK_HINT_ZH = ('[launch] 当前是 Tk 后端（交互体验不如 Qt）；'
+                       '想要 Qt 界面：pip install "mpltweak[qt]"')
+_BACKEND_TK_HINT_EN = ('[launch] using the Tk backend (less polished than Qt); '
+                       'for the Qt UI run: pip install "mpltweak[qt]"')
+
+
+def _detect_backend():
+    '''逐个候选后端真建一次 canvas 验证，返回 ``(backend_name, last_err)``。
+    命中 Qt 优先（QtAgg/Qt5Agg/Qt6Agg），都不行才退回 TkAgg —— 方案 B 的判据：
+    PyQt5 可用 → Qt 现行为；不可用 → Tk 开窗（main 里再补 stderr 人话提示）。'''
+    import matplotlib
+    import matplotlib.pyplot as plt
+    err = None
+    for backend in ('QtAgg', 'Qt5Agg', 'Qt6Agg', 'TkAgg'):
+        try:
+            matplotlib.use(backend, force=True)
+            _probe = plt.figure()          # 真建一次，确认能拿到交互 canvas
+            plt.close(_probe)
+            return backend, None
+        except Exception as e:             # noqa: BLE001 - 故意兜所有后端差异
+            err = e
+    return None, err
+
+
+def _backend_tk_hint():
+    '''方案 B 的 stderr 人话提示（PyQt5 不在时用）。'''
+    from . import messages
+    hint = messages.t('backend_tk_hint')
+    if hint == 'backend_tk_hint':
+        hint = (_BACKEND_TK_HINT_ZH if messages.current_lang() == 'zh'
+                else _BACKEND_TK_HINT_EN)
+    return hint
+
+
+def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
+    '''无 PyQt5 → Tk 开窗时向 stderr 打一句人话；返回是否打出。
+
+    dry-run 不开窗不提示；``MPLTWEAK_NO_HINT=1`` 静默。'''
+    environ = os.environ if environ is None else environ
+    if dry_run or environ.get('MPLTWEAK_NO_HINT') == '1':
+        return False
+    if not str(backend_name or '').lower().startswith('tk'):
+        return False
+    hint = _backend_tk_hint()
+    if not hint:
+        return False
+    _out = sys.stderr if stderr is None else stderr
+    _out.write(hint + '\n')
+    return True
+
 
 def _params_path(script, override=None):
     if override:
@@ -105,13 +158,28 @@ def _apply_saved(fig, params):
         if p:
             ax.set_position(p)
             n += 1
+        # F4：续调要恢复三个标题位（loc='left'/'right' 落在 _left_title/_right_title），
+        # 只调 ax.title 会丢真实论文图最常用的 loc='left' 标题字号。
         if a.get('title_fontsize'):
-            ax.title.set_fontsize(a['title_fontsize'])
-        if a.get('label_fontsize'):
-            ax.xaxis.label.set_fontsize(a['label_fontsize'])
-            ax.yaxis.label.set_fontsize(a['label_fontsize'])
-        if a.get('tick_fontsize'):
-            ax.tick_params(labelsize=a['tick_fontsize'])
+            for _t in (getattr(ax, '_left_title', None), ax.title,
+                       getattr(ax, '_right_title', None)):
+                if _t is not None:
+                    _t.set_fontsize(a['title_fontsize'])
+            n += 1
+        # T73（零兼容）：label 字号 x/y 各按自己那一项应用 —— 参数里没写 y 就**不动** y。
+        if a.get('label_fontsize') is not None or a.get('label_fontsize_y') is not None:
+            if a.get('label_fontsize') is not None:
+                ax.xaxis.label.set_fontsize(a['label_fontsize'])
+            if a.get('label_fontsize_y') is not None:
+                ax.yaxis.label.set_fontsize(a['label_fontsize_y'])
+            n += 1
+        # T25-#3a：tick 也按 x/y 各自套用；T73 起不再互相回退。
+        if a.get('tick_fontsize') is not None or a.get('tick_fontsize_y') is not None:
+            if a.get('tick_fontsize') is not None:
+                ax.tick_params(axis='x', labelsize=a['tick_fontsize'])
+            if a.get('tick_fontsize_y') is not None:
+                ax.tick_params(axis='y', labelsize=a['tick_fontsize_y'])
+            n += 1
         if a.get('clim') and _is_colorbar_ax(ax):
             _set_cb_clim(ax, *a['clim'])
             n += 1
@@ -142,9 +210,11 @@ def _apply_saved(fig, params):
         if a.get('grid') is not None:
             ax.grid(bool(a['grid']))
             n += 1
+        # F4：spines / lines / legend 每条成功恢复也计入 n（否则"只调字号"被误判未套用）。
         for k, visible in a.get('spines', {}).items():
             if k in ax.spines:
                 ax.spines[k].set_visible(bool(visible))
+                n += 1
         for line_item in a.get('lines', []):
             j = line_item.get('index')
             lines = getattr(ax, 'lines', [])
@@ -152,14 +222,17 @@ def _apply_saved(fig, params):
                 line = lines[j]
                 if line_item.get('linewidth') is not None:
                     line.set_linewidth(line_item['linewidth'])
+                    n += 1
                 if line_item.get('color') is not None:
                     line.set_color(line_item['color'])
+                    n += 1
         lg = a.get('legend')
         if lg and ax.get_legend() is not None:
             kw = {'loc': lg.get('loc') or 'best'}
             if lg.get('fontsize'):
                 kw['fontsize'] = lg['fontsize']
             ax.legend(**kw)
+            n += 1
     fs = data.get('figsize_in')
     if fs:
         try:
@@ -198,6 +271,15 @@ def doctor():
             tried.append('%s=%s' % (backend, type(e).__name__))
     print('backend      :', matplotlib.get_backend(), '(可用: %s)' % (ok or '无'))
     print('backend 探测 :', ', '.join(tried))
+    # P0-1：doctor 也报"开窗会走哪个后端"——这是无 Qt 环境里唯一披露 Tk 的入口，
+    # 让用户/agent 一眼知道第一次开窗的交互质量。
+    if ok and str(ok).lower().startswith('qt'):
+        _win_be = 'Qt（PyQt5 可用）'
+    elif ok:
+        _win_be = 'Tk（未装 Qt；想要 Qt 界面：pip install "mpltweak[qt]"）'
+    else:
+        _win_be = '无（无法开窗调图，仅 CLI 可用）'
+    print('开窗后端   :', _win_be)
     try:
         from matplotlib.backends import qt_compat
         print('Qt 绑定      :', qt_compat.QtCore.__name__)
@@ -260,16 +342,7 @@ def main(argv=None):
     # 都不行就给一句人话（而不是甩 traceback）。
     import matplotlib
     import matplotlib.pyplot as plt
-    backend_err = None
-    for backend in ('QtAgg', 'Qt5Agg', 'Qt6Agg', 'TkAgg'):
-        try:
-            matplotlib.use(backend, force=True)
-            _probe = plt.figure()          # 真建一次，确认能拿到交互 canvas
-            plt.close(_probe)
-            backend_err = None
-            break
-        except Exception as e:             # noqa: BLE001 - 故意兜所有
-            backend_err = e
+    backend_name, backend_err = _detect_backend()
     if backend_err is not None:
         # 注意：此时**还没有**改过 cwd（chdir 在下面才做），所以无需恢复。
         # 这里曾经写的是 os.chdir(old_cwd)，而 old_cwd 在下面才赋值 →
@@ -284,6 +357,9 @@ def main(argv=None):
             '[launch] 若你只需要命令行用法（describe / check / apply / mcp），\n'
             '         则不需要图形后端，那些命令照常可用。\n')
         return 4
+    # P0-1 方案 B：PyQt5 不在 → Tk 开窗。这里在真正开窗前打一句人话（stderr），
+    # 绝不污染 stdout（--json / MCP 的机器可读输出仍干净）。
+    _emit_backend_hint(backend_name, dry_run=args.dry_run)
 
     # 以脚本所在目录为工作目录（脚本里的相对路径/存图位置才和平时一致），
     # 并把脚本目录加进 sys.path —— runpy.run_path 不像 `python x.py` 那样自动加，

@@ -16,35 +16,36 @@
 </div>
 
 ## 目录
-
 - [它解决什么问题](#它解决什么问题)
 - [演示](#演示)
-- [它到底改了什么](#它到底改了什么)
-- [安装](#安装)
-- [快速开始](#快速开始)
 - [键位速查](#键位速查)
-- [工作流](#工作流)
-- [三层验证](#三层验证)
-- [参数文件](#参数文件)
+- [安装 + 快速开始](#安装--快速开始)
+- [把它当作 skill 用](#把它当作-skill-用给-ai-客户端)
 - [给 AI / agent 的排版接口](#给-ai--agent-的排版接口)
 - [人 + agent 怎么分工](#人--agent-怎么分工)
+- [原位改数字，还是插入调整块](#原位改数字还是插入调整块)
+- [工作流](#工作流)
+- [三层验证](#三层验证)
+- [执行边界：哪些命令会跑你的脚本](#执行边界哪些命令会跑你的脚本)
+- [不适用场景（先说清楚）](#不适用场景先说清楚)
+- [真实绘图代码语料验证](#真实绘图代码语料验证)
+- [参数文件](#参数文件)
 - [开发](#开发)
-
+- [License](#license)
 ## 它解决什么问题
 
-调一张多面板图（multi-panel figure）时，麻烦通常出在排版而不是数据：挪一下子图，
-旁边的轴标签就被挡住；字号放大一点，图例又压到曲线上。而每改一次，都要重跑脚本、再看一遍图。
+调一张多面板图（multi-panel figure）时，麻烦通常出在排版而不是数据：挪一下子图，旁边的轴标签就被挡住；字号放大一点，图例又压到曲线上。而每改一次，都要重跑脚本、再看一遍图。
 
-**如果能像在 PPT 里摆放图片那样直接拖，就不必一遍遍改数字了 —— mpltweak 做的就是这件事。**
+**mpltweak 的做法**：像在 PPT 里摆放图片那样直接拖，拖完把那几个数字写回源码。
 
 | 方式 | 流程 |
 |---|---|
 | **传统方式** | 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改 |
 | **mpltweak** | 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里 |
 
-**核心特性：确定性写回原源码。** AST 精确定位，写回分两种方式：**代码里写的是字面量时，直接改那几个数字**（最干净，不插入任何东西）；**否则插入一个自包含的调整块**（不加 import、不改动你原有的逻辑）。两种方式都自带三层验证（能跑通 / 真的改对了 / 换锚点重试），全失败自动回滚，**绝不会留下改坏的脚本**。
+**写回是确定性的。** AST 精确定位；写回分两种方式：**代码里写的是字面量时，直接改那几个数字**（最干净，不插入任何东西）；**否则插入一个自包含的调整块**（不加 import、不改动你原有的逻辑）。两种方式都过三层验证（语法 / 重跑 / 语义），任一层不过即**回滚到批前状态**，备份留在 `.tweak_params/<脚本名>.tweak.bak`。
 
-**正因为要动源码，才必须做到确定性** —— 这是 mpltweak 的设计前提。
+**要动源码，就必须做到确定性** —— 这是 mpltweak 的设计前提。
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
@@ -52,101 +53,54 @@
 
 <table>
 <tr>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/01_drag_layout.gif" alt="拖动面板 + 吸附参考线"><br>
 <b>拖动 + 边缘吸附</b><br><sub>拖动时给出 ghost 预览与对齐参考线，靠近对齐位置自动贴合</sub></td>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
-<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 一键左对齐 + 垂直均分</sub></td>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/02_multi_align.gif" alt="多选对齐 + 均分"><br>
+<b>多选对齐 / 均分</b><br><sub>Ctrl 加选三个面板 → 左对齐 + 垂直均分</sub></td>
 </tr>
 <tr>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/03_fontsize.gif" alt="悬停改字号"><br>
 <b>悬停改字号</b><br><sub>鼠标悬停标题、轴标签、刻度或图例，按 <code>+</code> / <code>-</code> 直接调</sub></td>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@349eb2f/docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/04_wireframe.gif" alt="cartopy 线条模式"><br>
 <b>线框模式提速（空格）</b><br><sub>cartopy 全球图全量重绘 <b>494ms → 169ms</b>，拖动不再卡顿</sub></td>
 </tr>
 </table>
 
-**完整的 PPT 式操作手势：** 拖动面板、Ctrl 多选、对齐 / 均分（Ctrl+Shift+L/R/T/B/C/M、H/V）、边缘吸附（带参考线）、Ctrl+F 适配画布裁白边、空格切线框模式、悬停改字号、图例吸附 8 个标准位、colorbar 调长度 / 厚度。
+**操作手势（与 PPT 类似）：** 拖动面板、Ctrl 多选、对齐 / 均分（Ctrl+Shift+L/R/T/B/C/M、H/V）、边缘吸附（带参考线）、Ctrl+F 适配画布裁白边、空格切线框模式、悬停改字号、图例吸附 8 个标准位、colorbar 调长度 / 厚度。
 
-**深度支持科研场景：** cartopy 地图、colorbar（位置 / clim / cmap）、多 mappable 精确配对（按接收者变量名 / `fig.colorbar(cs, ax=ax1)` 的显式父轴）、`matplotlib.use('Agg')` 脚本不用改。
+## 键位速查
 
-## 它到底改了什么
-
-以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
-
-```python
-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-```
-
-**你拖完之后**（`mpltweak apply --write` 的结果）：
-
-```diff
--ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-+ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
--ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-+ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
--ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-+ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
-```
-
-**这是第一种情况：代码里写的就是字面量，所以只动了这些数字** —— 没有新增一行、没有加 `import`、没有引入任何依赖。
-字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
-
-如果位置是 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 算出来的，**源码里根本没有数字可改** —— 这在真实脚本里很常见。这种图会改成**插入一个自包含的调整块**：
-
-```python
-# ===== 自动布局调整（由调图工具生成，勿手改；重复写回会整体替换）=====
-# 本块由 mpltweak 自动生成于 2026-10-10 10:15（可手动微调，勿删上下两行标记）
-for _ax, _p in zip(fig.axes, [
-    [0.0480, 0.6550, 0.3000, 0.2150],
-    [0.0480, 0.3700, 0.3000, 0.2150],
-    [0.0480, 0.0850, 0.3000, 0.2150],
-    [0.4550, 0.5600, 0.4300, 0.3100],
-]):
-    _ax.set_position(_p)
-# ===== 自动布局调整结束 =====
-```
-
-块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的任何东西、不改动你原有的逻辑。重复写回会**整体替换**它，不会越积越多。两种方式都有三层验证 + 失败自动回滚兜底。
-
-这就是确定性写回的价值：mpltweak 用 AST 精确定位 + 三层验证，**让排版结果真正落进你的代码里，而不是只存在于工具中**。
-
-## 不适用场景（先说清楚）
-
-写回验证要在**你的机器上、用你的环境把整个脚本重跑一遍**——这是机制的一部分，不是可选步骤
-（`--no-verify` 能跳过，但那等于关掉唯一的安全网）。所以下面这些脚本它帮不上忙：
-
-| 脚本特征 | 为什么 |
+| 操作 | 作用 |
 |---|---|
-| 跑一次要很久（分钟级以上） | 每次写回都要重跑；`--timeout 600` 只是放宽等待，不能免除 |
-| 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
-| 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
-| 需要在特定交互后端才有意义的图 | 验证固定用 Agg 无头后端 |
+| **`?`** | **打开 / 关闭键位帮助页**（画布内浮层：Esc 关闭，L 切换中英文） |
+| 拖面板 / 拖边框、角 | 移动 / PPT 式缩放（对边固定；锁长宽比的轴自动等比） |
+| **Ctrl+点击**（或 Shift+点击） | 多选加选 / 减选；拖空白处橡皮筋框选 |
+| **Ctrl+Shift+L/R/T/B/C/M** | 对齐：左 / 右 / 上 / 下 / 水平居中 / 垂直居中 |
+| **Ctrl+Shift+H / V** | 均分：水平 / 垂直（两端不动，中间等间距） |
+| **Ctrl+Z** / **Ctrl+Y**（或 Ctrl+Shift+Z） | 撤销 / 重做 |
+| 悬停文字后 `+` / `-` | 标题、轴标签、刻度、图例、colorbar 的字号 |
+| **空格** | 线条模式（只留边框与文字，隐藏数据图元） |
+| **Ctrl+F** | 适配画布到内容（裁掉四周白边，子图像素不变） |
+| **方向键** / Shift+方向键 | 移动面板（PPT 习惯）/ 微调尺寸（中心不动） |
+| 拖 colorbar 长轴端点 / 细条边 / 中点 | 调长度 / 调厚度 / 整条平移 |
+| 拖图例 | 8 个标准位预览 + 松手吸附 |
+| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | 线宽 / 线色 / colormap / 网格 / 边框 / 线性对数轴 |
+| `n` · `e` | 吸附开关 / 手动导出 |
+| 拖窗口边缘 | 改画布尺寸（写回 `figsize`） |
 
-这类脚本走只读路线（`mpltweak describe` / `mpltweak check`，都不跑写回），或者手动改代码。
-它的目标用户是**本地跑得动的小中型科研绘图脚本**。
-
-## 安装
-
-下面所有命令都在**终端**里执行 —— Windows 用 cmd / PowerShell，macOS / Linux 用 Terminal，
-在 PyCharm 里则是底部的 **Terminal** 面板（**不是** Python Console / 交互式解释器）。
-调图前先 `cd` 到脚本所在目录。
+## 安装 + 快速开始
 
 ```bash
-pip install mpltweak            # 核心：describe / check / apply / mcp
+pip install mpltweak            # 核心：describe / check / apply（mcp 是可选适配层，见「给 agent 的通道」）
 pip install "mpltweak[qt]"      # 要**开窗拖图**再加这个（装 PyQt5 图形后端）
 ```
 
-**为什么分成两步**：开窗需要一个图形后端（PyQt5，约 100MB），而
-服务器 / headless / 纯 agent 场景只用 `describe` / `check` / `apply` / `mcp`，
-不该为此装一整套 Qt；有些环境本来也已经装了 PySide6 / PyQt6。
-**没装图形后端也能跑 CLI** —— 只是 `mpltweak <脚本>` 会提示你去装哪一个。
+开窗需要一个图形后端（推荐 PyQt5，约 +150MB），所以分成两步 —— 服务器 / headless / 纯 agent 场景只用 `describe` / `check` / `apply`，不该为此装一整套 Qt（有些环境本来也已经装了 PySide6 / PyQt6）。Windows / macOS 的官方 Python 安装包自带 `tkinter`，所以只装 `mpltweak` 一般就能直接开窗，此时用的是 **Tk 后端（交互弱化版）**，不是安装失败、也不是没装好；一个图形后端都没有时开窗 `rc=4` 并给出装哪个的提示。后端探测顺序、`doctor` 输出与常见问题见 [docs/exec-boundaries.md](docs/exec-boundaries.md)。
 
-> 命令不在 PATH 时（例如用 `pip --user` 装的），把本文的 `mpltweak` 换成
-> `python -m mpltweak` 即可，用法完全一样。
+### 窗口后端：Qt（推荐）还是 Tk（默认可用）
 
-## 快速开始
+装 `mpltweak[qt]` 走 Qt（交互最全）；只装核心包时用 Tk（弱化版，能开窗但手势不全）；两个后端都没有时开窗直接 `rc=4`，并提示该装哪一个。
+后端对照表、各平台装法与环境变量见 [docs/exec-boundaries.md](docs/exec-boundaries.md)。
 
 ### 1 · 你原来的脚本，一行都不用改
 
@@ -179,9 +133,10 @@ fig.savefig('fig1.png', dpi=150)
 mpltweak fig1.py
 ```
 
-窗口里：**拖**面板移动、拖**边 / 角**缩放、**Ctrl 加选**多个面板 →
-`Ctrl+Shift+L` 左对齐 / `Ctrl+Shift+V` 垂直均分、鼠标**悬停文字**按 `+` `-` 调字号、
-**空格**切线框（大图提速）、**Ctrl+F** 裁掉白边。按 **`?`** 随时打开键位帮助页。
+> 子命令：`launch` / `apply` / `revert` / `describe` / `check` / `schema` / `mcp` / `doctor`。
+> `mpltweak fig1.py` 与 `mpltweak launch fig1.py` 等价；除此之外，第一个参数一律按**脚本路径**解释。
+
+窗口里：**拖**面板移动、拖**边 / 角**缩放、**Ctrl 加选**多个面板 → `Ctrl+Shift+L` 左对齐 / `Ctrl+Shift+V` 垂直均分、鼠标**悬停文字**按 `+` `-` 调字号、**空格**切线框（大图提速）、**Ctrl+F** 裁掉白边。按 **`?`** 随时打开键位帮助页；键位表与工作流图见 [docs/interaction.md](docs/interaction.md)。
 
 **调完直接关窗。** 此时脚本一个字符都没变，参数落在 `.tweak_params/fig1.json`。
 
@@ -207,7 +162,9 @@ mpltweak apply fig1.py --write
   ✓ 语义验证通过（目标图状态 == 参数）
 ```
 
-代码里写的是字面量时，它只改 `add_axes([...])` 里那几个数字；否则插入一个自包含的调整块。任何一步验证不过就自动回滚。
+上面是**真实一次写回**的输出；其中"重跑 / 语义验证"是在**你的环境**里重跑脚本得到的（跑不起来或语义不符都会回滚，见「三层验证」）。
+
+代码里写的是字面量时，它只改 `add_axes([...]` 里那几个数字；否则插入一个自包含的调整块。任何一步验证不过就自动回滚。
 
 ### 5 · 重跑看图
 
@@ -215,54 +172,115 @@ mpltweak apply fig1.py --write
 python fig1.py
 ```
 
-### 常见情况
+### 如果没反应
 
-| 现象 | 处理 |
-|---|---|
-| 没弹窗 | 运行 `mpltweak doctor` 看诊断 |
-| 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
-| 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
-| 脚本要读数据 / 跑很久 | 先试 `--timeout 600` **放宽**等待。`--no-verify` 会**完全跳过重跑验证**——那是写坏代码时唯一的自动安全网，只在脚本确实无法在无头环境重跑时才用，且用前请确认脚本已在版本控制里 |
-| **拖动特别卡** | 按 **空格** 切线框模式：只画边框、坐标轴和文字，**不渲染数据图元**（cartopy 大图实测 494ms → 169ms），挪完再按一次空格恢复 |
-| 手动改过代码后再开窗 | 会自动**不套用**上次参数（避免静默覆盖你的改动）并给出提示；确要接着上次调，加 `--force-resume` |
-| 脚本里开着 `constrained_layout` / `autolayout` | 开窗与写回时会提示（**带行号**）：布局引擎在每次绘制时重算轴位置，拖拽/写回的位置会被它覆盖。调图前先关掉（或把要精调的轴改成 `add_axes([...])`，引擎不管这类轴） |
+没弹窗、写回后没变化、参数从哪来：先看 [docs/exec-boundaries.md](docs/exec-boundaries.md) 的「如果没反应」（含 `doctor`、`--timeout 600`、`--force-resume`、布局引擎冲突等逐条对照表）。
+
+
+## 把它当作 skill 用（给 AI 客户端）
+
+仓库里的 [`skills/mpltweak/SKILL.md`](skills/mpltweak/SKILL.md) 是写给 AI 的操作手册（Agent Skills 格式）：
+命令、使用铁律、人机协作方式。放进客户端的 skills 目录（如 `~/.dsh/skills/`），或直接把内容贴给 AI 即可。
+
+**它是怎么配合的**：AI 决定这张图要改成什么样（读 `describe` 的输出、改参数文件），
+mpltweak 负责判断"到底改对了没有"（三层验证 + 出错回滚 + `revert`）——**不靠 AI 自己说"我改好了"**。
+所以 mpltweak 本身不含任何 AI 模型，它只提供命令和判断；`--json` 输出的
+`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果。
+
+
+MCP（可选适配层）与 JSON 契约见 [docs/agent.md](docs/agent.md)。
+
+## 给 AI / agent 的排版接口
+
+大模型能写出正确的绘图代码，但**排版数字基本靠猜**。mpltweak 把这部分从"猜"变成"写文件"：**参数文件是公开 JSON 格式（带 JSON Schema）**，agent 直接生成或修改它，`mpltweak apply --write` 负责落实。
+
+```bash
+mpltweak describe fig1.py -o layout.json   # 读：拿到当前排版（--all-figs 一次导出多张图）
+mpltweak apply fig1.py --write --json      # 写：落回源码（--json 时过程信息全走 stderr）
+mpltweak check fig1.py --json              # 查：排版体检，退出码即 CI 门禁
+```
+
+`--json` 给机器读：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
+
+四个子命令的作用表、退出码口径、读 → 改 → 写 → 查回路、以及 MCP 四个工具的参数签名见 [docs/agent.md](docs/agent.md)。
+
+### 也可以接进 AI 客户端（MCP）——**可选适配层**
+
+**能跑 shell 的客户端不需要 MCP**；它面向拿不到 shell 的客户端（如 Claude Desktop）。可选依赖（Python ≥ 3.10）：`pip install "mpltweak[mcp]"`，然后 `mpltweak mcp` 起 stdio server；客户端配置加 `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`。
+它暴露 CLI 的子集：`describe_layout` / `check_layout` / `params_schema` / `apply_layout`（`write=False`）；`revert`、`--style`、`--verify-fast`、`--strict` 等只在 CLI 上。四个工具的实际参数签名与 best-effort 维护策略见 [docs/agent.md](docs/agent.md)。
+
+## 人 + agent 怎么分工
+
+两种常见分工：**人拖 → agent 落盘**（你开窗拖完说一句"落盘"，AI 跑 `apply --write`）；**agent 起草 → 人微调**（先按规则排一版 → 你开窗接着调，参数会续上 → 确认落盘）。
+
+原则：**"改哪个数字"可以交给 agent，"改完对不对"由产品判定**（`check` 与三层验证给出结论，失败回滚）。
+
+其余三种协作方式（agent 自检 / 一张图当模板 / 人拖完 agent 总结）见 [docs/agent.md](docs/agent.md)。
+
+
+```mermaid
+flowchart LR
+    C[".tweak_params/fig1.json"]:::script --> T{{"两条路都行"}}:::check
+    T -->|让工具写| W["mpltweak apply --write"]:::win
+    T -->|自己写| H(["人 / agent 直接编辑脚本"]):::win
+    H --> V{"工具当裁判<br/>check --static（不执行）/ check"}:::check
+    V -->|没达标| H
+    V -->|达标| Z(["提交"]):::ok
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+```
 
 ## 原位改数字，还是插入调整块
 
-`apply --write` 默认 `--style auto`：**每张图各自决定**，规则如下。
+以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
 
-| 这张图的情况 | 结果 |
-|---|---|
-| 代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`） | **原位改那几个数字**，脚本风格不变 |
-| 一个字段都改不到（典型：位置来自 `plt.subplots()` / `GridSpec` 的网格轴） | 整张图**退到插入调整块** |
-| 有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置） | **保持原位**，改不到的字段进"未原位应用"清单**逐条列出**（不静默丢），需要时用 `--style block` 统一 |
+```python
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+```
 
-想强制统一：`--style inplace`（一处都不插块，改不了的保持原样）或 `--style block`（一律插块）。
+**你拖完之后**（`mpltweak apply --write` 的结果）：
 
-**跨轮可能混用**：先原位改过数字，后来某轮因为"一个字段都没落地"退成了块，文件里就会同时
-存在两种形态。两者都有效，但读代码的人容易困惑。要彻底统一，先从备份恢复（
-`.tweak_params/<脚本>.tweak.bak` 是写回前的原文），再用 `--style block` 写一次——
-块是整体替换的，单靠再写一次并不会把之前原位改掉的数字改回去。
+```diff
+-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
++ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
+-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
++ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
+-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
++ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
+```
 
-## 键位速查
+代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
 
-| 操作 | 作用 |
-|---|---|
-| **`?`** | **打开 / 关闭键位帮助页**（画布内浮层：Esc 关闭，L 切换中英文） |
-| 拖面板 / 拖边框、角 | 移动 / PPT 式缩放（对边固定；锁长宽比的轴自动等比） |
-| **Ctrl+点击**（或 Shift+点击） | 多选加选 / 减选；拖空白处橡皮筋框选 |
-| **Ctrl+Shift+L/R/T/B/C/M** | 对齐：左 / 右 / 上 / 下 / 水平居中 / 垂直居中 |
-| **Ctrl+Shift+H / V** | 均分：水平 / 垂直（两端不动，中间等间距） |
-| **Ctrl+Z** / **Ctrl+Y**（或 Ctrl+Shift+Z） | 撤销 / 重做 |
-| 悬停文字后 `+` / `-` | 标题、轴标签、刻度、图例、colorbar 的字号 |
-| **空格** | 线条模式（只留边框与文字，隐藏数据图元） |
-| **Ctrl+F** | 适配画布到内容（裁掉四周白边，子图像素不变） |
-| **方向键** / Shift+方向键 | 移动面板（PPT 习惯）/ 微调尺寸（中心不动） |
-| 拖 colorbar 长轴端点 / 细条边 / 中点 | 调长度 / 调厚度 / 整条平移 |
-| 拖图例 | 8 个标准位预览 + 松手吸附 |
-| `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | 线宽 / 线色 / colormap / 网格 / 边框 / 线性对数轴 |
-| `n` · `e` | 吸附开关 / 手动导出 |
-| 拖窗口边缘 | 改画布尺寸（写回 `figsize`） |
+位置来自 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**：
+
+```python
+# ===== auto layout (generated) - do not edit inside =====
+# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
+# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，…
+for _ax, _p in zip(fig.axes, [
+    [0.0728, 0.5363, 0.4418, 0.4015],
+    [0.5394, 0.5363, 0.4418, 0.4015],
+]):  # …网格四轴各自一段位置
+    _ax.set_position(_p)
+fig.axes[0].title.set_fontsize(12)
+fig.axes[0].grid(False)
+# ===== end auto layout =====
+```
+
+上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
+
+逐字段三态判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了）、"零侵入"的边界（`describe → apply` 直通会把整份状态钉进源码；想少改就少给）见 [docs/params.md](docs/params.md)；插入点硬约束（只允许在最后一个 `savefig` / `show` 之前，`anchor` / `attempts` 实测）、写回被整体拒绝与跨轮混用见 [docs/verify.md](docs/verify.md)。
+
+### `--style` 与 JSON 字段：这次到底落没落地
+
+`--style` 有两条路。`auto`（默认）能原位改就原位，改不了就退到插入调整块；`inplace`（显式）要求原位，改不了就 `rc=1` / `applied=false`，不假装都改好；`block` 一律插块。
+判读落地情况看 `apply --json` 的 `files[]`：`needs_block`、`pending`、`inplace_pending` / `inplace_needs_block`、`auto_fallback`、`inplace_changes` / `inplace_reason`。
+逐字段含义与三种风格的实测对照（rc / JSON）见 [docs/params.md](docs/params.md)。
 
 ## 工作流
 
@@ -271,17 +289,38 @@ flowchart TD
     A["fig1.py<br/>纯 matplotlib，一行都不用改"]:::script
     B(["交互窗口<br/>拖 · 对齐 · 吸附 · 调字号"]):::win
     C[".tweak_params/fig1.json<br/>参数静默落盘，代码没动"]:::script
-    D["AST 定位 → 原位改写画图参数"]:::script
-    E{"三层验证"}:::check
+    P["只读预览：<br/>原位改哪几个数字 / 要不要插块 / 会不会拒绝"]:::check
+    D{"逐字段判定"}:::check
+    D0(["【等值】no_change<br/>一个字节都不动"]):::ok
+    D1["【原位】只替换那几个数字<br/>其余逐字节不变"]:::script
+    D2{"插入点合规吗？<br/>（在最后一个 savefig / show 之前）"}:::check
+    D2b{"块里的目标对象<br/>能静态证明吗？<br/>（用变量名，不用 fig.axes[i]）"}:::check
+    D3["【追加】插入自包含调整块"]:::script
+    D4["【拒绝】一个字节都不动<br/>说明原因 + 打印可粘贴片段"]:::bad
+    PASTE(["你手动粘贴那几行<br/>（把占位符换成自己的变量名）"]):::win
+    E{"验证<br/>默认：语法 + 重跑 + 语义<br/>--verify-fast：只 ast.parse"}:::check
     F(["提交改动 + 留备份"]):::ok
-    G(["自动回滚，绝不留下改坏的脚本"]):::bad
+    G(["自动回滚到批前状态"]):::bad
+    R(["revert：回到写回前的原件"]):::ok
 
     A -->|mpltweak fig1.py| B
     B -->|关窗| C
-    C -->|mpltweak apply --write| D
-    D -->|自动比对| E
+    C -->|apply（不带 --write）| P
+    P -->|你确认后 apply --write| D
+    D -->|目标值 == 源码现值| D0
+    D -->|有字面量| D1
+    D -->|没有| D2
+    D2 -->|不合规| D4
+    D2 -->|合规| D2b
+    D2b -->|能证明| D3
+    D2b -->|证不出| D4
+    D1 --> E
+    D3 --> E
     E -->|通过| F
     E -->|失败| G
+    D4 --> PASTE
+    PASTE -.->|回头再跑一次只读预览复核| P
+    F -.->|后悔了| R
 
     classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
     classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
@@ -295,22 +334,17 @@ flowchart TD
 
 ## 三层验证
 
-`--write` 不是"盲改"，每一步都可回滚：
+1. **语法层**（`layers.syntax`）：写盘后无条件 `ast.parse`，原位与块两条路径都做；语法错误当场回滚到批前状态。
+2. **重跑层**（`layers.rerun`）：用 Agg 无头重跑；退出码非 0 时区分"脚本本身跑不通"与"写回把它改坏了"。
+3. **语义层**（`layers.semantic`）：重跑后 dump 目标图状态，与参数里的位置 / 字号 / `grid` / `spines` / `clim` 等逐字段比对；判定不了时 `verified=null`，`detail` 里列出未判定字段。
 
-1. **能跑通** —— 改完用 Agg 无头重跑，退出码非 0 直接回滚；
-2. **改对了** —— 重跑后 dump 目标图状态，与参数里的位置 / 字号 / grid / spines / clim
-   逐项比对；"跑通了但布局没落到目标图"会被判失败；
-3. **换锚点重试** —— 图号对应的 `savefig` → 主锚点 → 脚本尾，全部失败才回滚。
+任一层不过即回滚到批前状态；写回前的原文备份在 `.tweak_params/<脚本>.tweak.bak`。逐层细节与 `--verify-fast` / `--keep-unverified` 的关系见 [docs/verify.md](docs/verify.md)。
 
-**这是确定性写回的保障机制。** 备份写在 `.tweak_params/<脚本>.tweak.bak`（不散落到代码目录）；
-并发跑两个 `apply --write` 时，各自还会多留一份带 pid 的副本（`.tweak.<pid>.bak`），
-避免它们互相覆盖那唯一的恢复点；同一个脚本的写回用 `<脚本>.apply.lock` 串行化，
-所以两处改动不会"凭空消失"。
-慢脚本超时不会被误判为失败，只提示手动确认。
+### 加速与门禁：`--verify-fast` 与 `--strict`
 
-写回是**原子替换**（先写临时文件再 `os.replace`），所以脚本不会出现"改到一半"的状态；
-代价是**文件 inode 会变**：如果你用硬链接指向这个脚本，替换后链接仍指向旧内容。
-软链接不受影响，文件权限位会被保留。
+**`--verify-fast`（加速）**：只做写盘后的 `ast.parse`，所以快；它不证明脚本能跑通、也不证明布局真的落到目标图上（JSON 里 `verify_mode: "fast"`）。
+**`--strict`（门禁）**：`check --strict` 把布局引擎冲突（`constrained_layout` / `autolayout`）从提示升级为问题（`rc=1`）；`apply --write --strict` 遇到冲突拒绝写回（要放行加 `--allow-layout-conflict`）。`check --json` 的 `ok` 字段 + 退出码可直接当 CI 用例；`check` 一次只接受一个脚本，批量要自己循环。
+其余细节（`--no-verify` 的边界、`bbox_inches='tight'` 的降级、`--tol` 只收有限正数、`--static` 静态门禁、批量脚本示例）见 [docs/verify.md](docs/verify.md)。
 
 ### 后悔了：`mpltweak revert`
 
@@ -321,179 +355,128 @@ mpltweak revert fig1.py            # 只预览：会改回哪几行（默认，�
 mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
 ```
 
-它用的就是 `.tweak_params/<脚本>.tweak.bak` 那份备份（每次 `apply --write` 之前自动留的）。
-**revert 自身也可逆**：覆盖前会把当前版本另存为 `<脚本>.revert.bak`，所以手滑了还能再回去。
+它用的就是**参数文件旁边**那份备份（默认 `.tweak_params/<脚本>.tweak.bak`，每次
+`apply --write` 之前自动留的）。写回时若用了 `--params`，回退也要带上同一个 `--params`，
+否则会报 `[revert] 还没有可回退的备份`（`rc=2`）。
+回退的是**最近一次**写回 —— 备份每次写回都被覆盖，反复写回后再 revert 回不到最早的原文。
+**revert 自身也可逆**：覆盖前会把当前版本另存为 `<脚本>.revert.bak`（也在参数文件旁边），
+所以手滑了还能再回去。
 恢复是**字节级原样复制**（BOM / 换行 / 编码都不动）。
 
-### 慢脚本：`--verify-fast`（快速档）
+## 执行边界：哪些命令会跑你的脚本
 
-脚本要跑几分钟、你只是想先看一眼结果，可以用快速档：
+`describe` / `check` / 开窗会**执行**你的脚本（都在**子进程**里、Agg 无头；退出码与全局状态都留在子进程内）；`apply` 只做 AST 改写，除非你要求**重跑验证**（`--write` 后默认重跑一次，`--verify-fast` 只做 `ast.parse`）。
 
-```bash
-mpltweak apply fig1.py --write --verify-fast
-```
+退出码语义、脚本自己 `sys.exit()` 的影响、`--strict` 的 CI 用法，见 [docs/exec-boundaries.md](docs/exec-boundaries.md)。
 
-**它保证什么**：源码仍然是合法 Python（写坏了当场回滚，不会留下跑不起来的脚本）。
+## 不适用场景（先说清楚）
 
-**它不保证什么**（重要）：**没有重跑脚本** —— 不保证脚本能跑通，也不保证布局真的落到目标图上。
-所以它只适合"先快速落实、马上自己跑一遍看图"的迭代过程；正式落实请去掉这个开关。
-`--json` 里会如实标 `"verify_mode": "fast"`、`"verified": null`，agent 一眼能看出来这份结果没经过重跑。
+写回验证要在**你的机器上、用你的环境把整个脚本重跑一遍**——这是机制的一部分，不是可选步骤
+（`--no-verify` 能跳过，但那等于关掉唯一的安全网）。所以下面这些脚本它帮不上忙：
 
-### 接进 CI：`--strict`
+| 脚本特征 | 为什么 |
+|---|---|
+| 跑一次要很久（分钟级以上） | 每次写回都要重跑；`--timeout 600` 只是放宽等待，不能免除 |
+| 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
+| 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
+| 需要在特定交互后端才有意义的图 | 验证固定用 Agg 无头后端 |
 
-`check` 默认把布局引擎冲突（`constrained_layout` / `autolayout`）当**提示** —— 那是 matplotlib 的正常写法。
-如果你的项目要求"别用会被引擎覆盖的布局方式"，加 `--strict` 让它变成**问题**（退出码 1）：
+这类脚本走只读路线（`mpltweak describe` / `mpltweak check`，都不跑写回），或者手动改代码。
+它的目标用户是**本地跑得动的小中型科研绘图脚本**。
 
-```bash
-mpltweak check fig1.py --strict            # 有布局引擎冲突就 rc=1
-mpltweak apply fig1.py --write --strict    # 有冲突时拒绝写回（要放行加 --allow-layout-conflict）
-```
+## 真实绘图代码语料验证
 
-`check --json` 也是天然的 CI 用例（`ok` 字段 + 退出码）：
+本节是**用真实绘图代码跑出来的静态验证**。语料是 **10,158 份 sha256 唯一**的公开绘图脚本，来自真实项目：**Zenodo 数据集记录 6904 份**、
+**GitHub 上的科研绘图仓库 2045 份**、若干项目的**官方 gallery 1209 份** —— 其中大量脚本是**不同论文的补充材料**。
+实测只做**静态**定位与改写判定（**不执行**语料脚本，也**不再分发**；逐脚本的 URL / 许可 / sha256 在 manifest 里），
+脚手架与逐脚本结论在 `bench/`。其中 **4,427 份**是绘图脚本（可静态分析 2,396 / 无图 1,940 / 语法错 90 /
+1 份隔离重扫仍超时），下表的分母都来自这些脚本里的**可测站点**。
 
-```bash
-mpltweak check figures/*.py --json | jq -e '.ok'    # 有问题就非 0 退出
-```
+### 一、原位修改（直接改源码里的数字）
+
+| 可调项 | 该族有站点的脚本 | 可原位到达的脚本 | 真原位写回（组合） | 通过率 |
+|---|---:|---:|---:|---:|
+| 画布尺寸 `figsize` | 2,256 | 2,256 | 2,247 | **99.6%** |
+| 面板位置 `pos` | 131 | 94 | 93 | 98.9% |
+| 标题字号 | 193 | 173 | 165 | 95.4% |
+| 轴标签字号 x | 181 | 173 | 160 | 92.5% |
+| 轴标签字号 y | 180 | 171 | 166 | 97.1% |
+| 刻度字号 x | 189 | 91 | 88 | 96.7% |
+| 刻度字号 y | 6 | 5 | 4 | 样本不足（n=5） |
+| 网格 `grid` | 131 | 124 | 118 | 95.2% |
+| 轴范围 `xlim` | 401 | 247 | 232 | 93.9% |
+| 轴范围 `ylim` | 433 | 276 | 261 | 94.6% |
+| **合计** | **4,101** | **3,610** | **3,531** | **97.8%** |
+
+- **通过率 = 真原位写回 ÷ 可原位到达**（不是 ÷"源码里有这一项"）。
+- **合计是各族的和**，同一脚本的不同族会各计一次，**不等于脚本数**。
+- **承诺违约 = 0**：没有任何一行出现"工具声称原位写回、字节却没变"（本次语料静态判定范围内）。
+- 没走成原位的分三类，逐脚本清单在 `bench/`：**参数非法被拒 37** · **证不出目标对象而拒绝落地 7** ·
+  **改为追加块完成 3**（都不是静默丢改动）。
+
+### 二、追加代码块（原位表达不了的改动）
+
+有些排版项在源码里**没有可替换的字面量**：典型是 `plt.subplots()` 网格轴的位置，以及
+`spines`（边框）、`xscale` / `yscale`（轴类型）、`clim`（色标范围）。这类项**改不了数字**，
+mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最后一个 `savefig` / `show` 之前）
+追加一段**自包含的调整块**，块首尾各有一行显式标记（`# ===== auto layout (generated) ...` /
+`# ===== end auto layout =====`），`revert` 可以整块移除。
+
+这一节验证的就是**这些块到底可不可靠**：
+
+| 判据 | 含义 | 本次全库（分母 = 走了块通道的脚本） |
+|---|---|---|
+| 块数 | 静态扫描里**真的插入了调整块**的脚本数 | **427** |
+| 原文逐字节保留 | 块**以外**的原文一个字节不变（含行尾） | **427 / 427** |
+| 不用运行期定位 | 块内不出现 `fig.axes[i]` / `plt.gca()` / `plt.gcf()` 这类**运行时才知道指向谁**的写法 | **427 / 427** |
+| 作用到目标对象 | 块里的目标表达式**静态可证**（用变量名，或可枚举的 `plt.figure(n).axes[k]`） | **427 / 427** |
+| 幂等 / 可撤销 | 再写一次不会重复插入；`revert` 能回到原件 | ✓ |
+
+- **427 是"块通道的规模"**（脚本级）：全库 4,427 份绘图脚本里，有 427 份的改动走了插入块这条路。
+  它**不是**下面第三节里那个 **3**（"本来能原位、工具却退了块"）—— 那个是**组合级**的能力缺口计数，两者口径不同。
+- 本次**没有**对 427 个块做逐族拆分（即：多少块来自网格轴位置、多少来自 `spines` 等），报告里只给总量与判据通过率。
+- 块通道**不参与第一张表（原位）的分母**：本次扫描的原位判定只覆盖那 10 个族；上面这些只能插块的项，
+  **只在这一节里被验证**。
+
+### 三、没到 100% 的那部分是什么
+
+| 族 | 真原位 | 改为块落地 | 证不出而拒绝 | 参数非法被拒 |
+|---|---:|---:|---:|---:|
+| `figsize` | 2,247 | 0 | 0 | 0 |
+| `pos` | 93 | 0 | 0 | 0 |
+| 标题字号 | 165 | 1 | 0 | 1 |
+| 轴标签字号 x | 160 | 0 | 1 | 11 |
+| 轴标签字号 y | 166 | 0 | 1 | 0 |
+| 刻度字号 x | 85 | 2 | 3 | 1 |
+| 刻度字号 y | 4 | 0 | 1 | 0 |
+| `grid` | 118 | 0 | 1 | 3 |
+| `xlim` | 232 | 0 | 0 | 9 |
+| `ylim` | 261 | 0 | 0 | 12 |
+| **合计** | **3,531** | **3** | **7** | **37** |
+
+- **改为块落地（3 例）不是失败**：改动落地了，只是走了追加块那条路。
+- **证不出而拒绝（7 例）是刻意的**：静态判不出"改的是哪张图 / 哪条轴"就**不写盘**（`applied=false`、`pending` 非空），
+  并打印可粘贴的手改片段。
+- **参数非法被拒（37 例）**：测量脚手架按站点推出的参数越过了工具校验器的合法边界（例：轴序号越界、同图重名轴），
+  工具拒绝是正确行为。**若把这 37 例从分母剔除，轴标签 x 的通过率是 160/161 ≈ 99.4%** ——
+  这种剔法必须写明口径，所以两个数都列出来。
+
+> 判定口径：全部为**静态层**（只做 AST 定位与改写判定，不执行语料脚本）。汇总结论：**97.8% 的改动原位落进源码（3,531 / 3,610），且没有一次"声称改了却没改"。**
 
 ## 参数文件
 
-参数文件是**公开格式** —— 可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。
-顶层 `version` 字段标记格式版本（当前为 4；旧版文件照读），工具据此判断跨版本兼容性：
+参数文件是**公开格式**，可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。顶层 `version` 标记格式版本（当前为 4）：
 
 ```jsonc
-{
-  "version": 4,
-  "script": "fig1.py",
-  "figsize_px": [1500, 700],             // 画布逻辑像素（未 resize 为 null）
-  "figsize_in": [15.0, 7.0],             // 写回 figsize 的英寸数
-  "axes": [
-    {
-      "index": 0,                        // = fig.axes 顺序
-      "pos": [0.048, 0.655, 0.30, 0.215],  // [x0, y0, w, h]，figure 归一化坐标
-      "aspect_locked": false,
-      "title_fontsize": 9.0,
-      "label_fontsize": 8.0,
-      "tick_fontsize": 8.0,
-      "grid": false,
-      "spines": { "top": false, "right": false },
-      "xscale": "linear",
-      "yscale": "linear",
-      "is_colorbar": false,
-      "clim": [-2.0, 2.0],
-      "xlim": [-0.01, 1.01],             // 轴范围：只在脚本**显式固定**过时才记（autoscale 不记）
-      "ylim": [0.0, 10.0],
-      "cell": [1, 2, 0, 1],              // 网格身份 [行数, 列数, 起始行, 起始列]（手工 add_axes 为 null）
-      "cmap": "RdBu_r",
-      "lines": [ { "index": 0, "linewidth": 1.2, "color": "#0F4D92" } ],
-      "legend": { "loc": "upper right", "fontsize": 8.0 }
-    }
-  ]
-}
+{ "version": 4, "script": "fig1.py",
+  "axes": [ { "index": 0, "pos": [0.048, 0.655, 0.30, 0.215], "title_fontsize": 9.0 } ] }
 ```
 
-## 给 AI / agent 的排版接口
-
-大模型能写出正确的绘图代码，但**排版数字基本靠猜** —— 它看不到那张图。
-
-mpltweak 把这部分从"猜"变成"写文件"：
-
-**参数文件是公开 JSON 格式（带 JSON Schema）**，AI 可以直接生成或修改它，不需要"看懂"图。`mpltweak apply --write` 负责确定性落实：AST 定位 + 三层验证 + 失败回滚，**写错了也不会把你的脚本改坏**。
-
-**核心理念：让 AI 管内容，让 mpltweak 管排版。**
-
-```jsonc
-// agent 产出这个 → mpltweak apply fig1.py --write → 落进你的源码
-{ "axes": [
-  { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
-  { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
-    "title_fontsize": 9.5, "legend": { "loc": "upper right" } }
-] }
-```
-
-**完整的读 → 改 → 写 → 查回路：**
-
-| 命令 | 作用 |
-|---|---|
-| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"） |
-| `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
-| `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr） |
-| `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
-| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突单独一栏（`--strict` 可升级为问题） |
-
-```bash
-mpltweak describe fig1.py -o layout.json    # 读：拿到现在的排版
-# ...agent 改 layout.json 里的几个数字...
-mpltweak apply fig1.py --write --json       # 写：落回源码并自检
-mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
-```
-
-**为什么需要"读"**：`add_axes([...])` 这种明写的位置，读源码就够了；但 `plt.subplots()` 的网格、
-没写 `fontsize=` 时实际生效的默认值、`tight_layout()` 之后的位置、colorbar 与 cartopy 锁定后的
-真实尺寸 —— 这些**源码里没有数字**，得跑一遍才知道。
-
-### 也可以接进 AI 客户端（MCP）
-
-MCP 是可选依赖，装上之后能把 mpltweak 挂进 Claude Desktop / Cursor / Claude Code 等客户端，
-让 AI 在对话里直接调（不用敲 shell）。它要求 Python ≥ 3.10：
-
-```bash
-pip install "mpltweak[mcp]"
-mpltweak mcp                    # 启动 stdio server
-```
-
-客户端配置加一段：
-
-```json
-{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}
-```
-
-四个工具与上面四个命令一一对应：`describe_layout` / `check_layout` / `params_schema` /
-`apply_layout`（默认只读预览，`write=true` 才改代码）。
-
-### 让 AI 直接读这份手册（skill）
-
-仓库里的 `skills/mpltweak/SKILL.md` 是一份**写给 AI 的操作手册**（Agent Skills 格式）：
-完整的命令、使用铁律、以及几种人机协作方式。想让自己的 AI 助手学会用 mpltweak，
-把这份文件喂给它就行 —— 不用你每次解释一遍怎么用。
-
-## 人 + agent 怎么分工
-
-| 分工 | 怎么做 |
-|---|---|
-| **人拖 → agent 落盘** | 你开窗拖完，说一句"落盘"，AI 跑 `apply --write` |
-| **agent 起草 → 人微调** | 让 AI 按规则先排一版 → 你开窗接着调（参数会续上）→ 确认落盘 |
-| **agent 自检** | AI 画完图跑 `check`：不看图也能发现不齐 / 不等大 / 间距不均 / 字号不一 / 越界 / 重叠 |
-| **一张图当模板** | `describe` 排好的那张 → 改 `script` 字段 → `apply` 到其它脚本，统一整篇论文的排版 |
-| **人拖完，agent 总结** | AI 读参数 JSON，用大白话说明改了什么（可当 commit message 或图注） |
-
-原则很简单：**"好不好看"归你，"精确落实"归它。**
+**只写显式给出的字段**：参数里没写的字段不会写回。字段表（`figsize_px` / `figsize_in` / `aspect_locked` / `cell` / `clim` / `cmap` / `lines` / `legend` / `tick_fontsize_y` …）与两条约定（`axes[i]` 顺序、colorbar 槽轴不占序号）见 [docs/params.md](docs/params.md)。
 
 ## 开发
 
-```bash
-git clone https://github.com/shdbl/mpltweak && cd mpltweak
-pip install -e .
-python tests/test_tweak.py       # 交互内核
-python tests/test_events.py      # 事件路径
-python tests/test_redo.py        # 撤销 / 重做
-python tests/test_writeback.py   # AST 写回 + 三层验证
-python tools/crosscheck.py       # 环境 / API 兼容性自检
-```
-
-```text
-src/mpltweak/
-├── cli.py          # mpltweak <脚本> | apply | doctor
-├── launch.py       # 跑脚本 → 挂窗口 → 关窗存参数
-├── toolbox.py      # 交互内核（Tweak 控制器，纯 matplotlib 事件）
-├── params.py       # 参数 JSON 规范
-├── apply.py        # 改动清单 / 写回入口
-├── writeback.py    # AST 定位 + 原位 / 块写回
-└── verify.py       # 语义验证（重跑后逐项比对）
-```
-
-`toolbox.py` 也可作**嵌入 API**（`from mpltweak.toolbox import gaitu`），
-但主推 CLI —— 用户脚本里不该出现本工具的任何痕迹。
+仓库结构：`src/mpltweak/`（`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`）。跑测试：`python tests/test_writeback.py`（AST 写回 + 三层验证）。其余（安装、全部测试命令、模块职责、嵌入 API `from mpltweak.toolbox import gaitu`）见 [docs/dev.md](docs/dev.md)。
 
 ## License
 

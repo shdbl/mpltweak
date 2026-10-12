@@ -24,6 +24,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.environ['MPLTWEAK_LANG'] = 'zh'
 PY = sys.executable
 
+# GBK 控制台兜底（T13/T15）：CI 是 UTF-8 永远绿，本地 cp936 上一次 UnicodeEncodeError
+# 就把整个套件从 ALL PASS 变成 rc=1 的假红。两层：① 输出流 errors='replace'；
+# ② 进 print 前先清洗（_gbk_safe）。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors='replace')
+    except (AttributeError, ValueError, OSError):
+        pass          # 被重定向成不支持 reconfigure 的对象时忽略即可
+
+
+def _gbk_safe(s):
+    """把字符串清洗成"当前输出流编得出来"的形式（U+FFFD 之类换成 ?）。"""
+    s = str(s)
+    enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+    try:
+        return s.encode(enc, 'replace').decode(enc, 'replace')
+    except (LookupError, UnicodeDecodeError):
+        return s.encode('ascii', 'backslashreplace').decode('ascii')
+
+
 HEAD = "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
 
 TIDY = HEAD + """
@@ -88,6 +108,18 @@ ax.text(-0.45, -0.30, 'way outside the canvas', transform=ax.transAxes, fontsize
 fig.savefig('to.png', dpi=60)
 """
 
+# 与 TEXT_OUT 的**唯一差别**是 bbox_inches='tight'：tight 会按内容把画布撑大，
+# 框外的文字不会真的被裁掉 → 期望降级为提示（CH-4）。
+# 0.1.8 对这个脚本报 8 条 error、rc=1（与上面那条逐字相同），README 推荐的
+# `check --json` CI 配方在正常项目上于是永远红。
+TEXT_OUT_TIGHT = HEAD + """
+fig = plt.figure(figsize=(6, 4))
+ax = fig.add_axes([0.10, 0.10, 0.80, 0.80])
+ax.plot([1, 2, 3])
+ax.text(-0.45, -0.30, 'way outside the canvas', transform=ax.transAxes, fontsize=12)
+fig.savefig('tot.png', dpi=60, bbox_inches='tight')
+"""
+
 # 超长刻度标签挤在小图上：相邻标签互相吃掉一半宽度 → 期望 warn
 TICK_CROWD = HEAD + """
 fig = plt.figure(figsize=(4, 3))
@@ -143,8 +175,9 @@ _fails = []
 
 
 def check(cond, label, extra=''):
-    print('%s %s%s' % ('  OK  ' if cond else ' FAIL ', label,
-                       '' if cond else '   ' + str(extra)))
+    # 输出前清洗：extra 里可能混进子进程乱码（U+FFFD）→ GBK 控制台下 print 会崩（T13/T15）
+    print('%s %s%s' % ('  OK  ' if cond else ' FAIL ', _gbk_safe(label),
+                       '' if cond else '   ' + _gbk_safe(extra)))
     if not cond:
         _fails.append(label)
 
@@ -358,6 +391,73 @@ def main():
               '第三方 helper 仍会被报（已知的保守启发式边界）',
               json.loads(out).get('layout_engine'))
 
+        print('\u00a77d 布局引擎：裸名 / 关键字 / set_layout_engine 形式（T11 / E15）')
+        # 0.1.8 只认 `xxx.yyy(constrained_layout=True)`：`from matplotlib.pyplot
+        # import subplots` 后直接 `subplots(layout='constrained')`、
+        # `fig.set_layout_engine('tight')`、`set_layout_engine(layout='constrained')`
+        # 全都扫不到 → 写回的位置被布局引擎吃掉却一句提示都没有。
+        # 反向验证：把 layoutwarn.scan_source 里 T11 新增的规则删掉 → 本段 FAIL。
+        from mpltweak import layoutwarn as _lw
+        _e15 = {
+            "裸名 subplots(layout='constrained')":
+                HEAD + "from matplotlib.pyplot import subplots\n"
+                       "fig, axes = subplots(1, 2, layout='constrained')\n",
+            "裸名 figure(constrained_layout=True)":
+                HEAD + "from matplotlib.pyplot import figure\n"
+                       "fig = figure(constrained_layout=True)\n",
+            "关键字 set_layout_engine(layout='compressed')":
+                HEAD + "fig = plt.figure()\n"
+                       "fig.set_layout_engine(layout='compressed')\n",
+            "位置 set_layout_engine('tight')（每次绘制重跑 → autolayout）":
+                HEAD + "fig = plt.figure()\nfig.set_layout_engine('tight')\n",
+            "layout='tight'（TightLayoutEngine）":
+                HEAD + "fig, axes = plt.subplots(1, 2, layout='tight')\n",
+            "rcParams 下标赋值 figure.autolayout":
+                HEAD + "plt.rcParams['figure.autolayout'] = True\n",
+            "rcParams 下标赋值 constrained_layout.use":
+                HEAD + "plt.rcParams['figure.constrained_layout.use'] = True\n",
+        }
+        for _name, _src in _e15.items():
+            _found = _lw.scan_source(_src)
+            check(len(_found) >= 1 and all(f.get('line') for f in _found),
+                  'E15 检出：%s' % _name, _found)
+        # 不能回退成假阳性：非白名单的裸名 helper 与关闭引擎都不算冲突
+        _neg = {
+            "用户自己的 save_plot(constrained_layout=True)":
+                HEAD + "def save_plot(**kw):\n    pass\n"
+                       "save_plot(constrained_layout=True)\n",
+            "用户自己的 show_it(layout='constrained')":
+                HEAD + "def show_it(**kw):\n    pass\n"
+                       "show_it(layout='constrained')\n",
+            "关掉布局引擎 set_layout_engine(None)":
+                HEAD + "fig = plt.figure()\nfig.set_layout_engine(None)\n",
+            "layout='none'（不启用引擎）":
+                HEAD + "fig, axes = plt.subplots(1, 2, layout='none')\n",
+            "变量布局参数（静态扫不到，已知边界）":
+                HEAD + "fig, axes = plt.subplots(1, 2, layout=LAYOUT)\n",
+        }
+        for _name, _src in _neg.items():
+            check(_lw.scan_source(_src) == [],
+                  'E15 不误报（假阳性回归）：%s' % _name,
+                  _lw.scan_source(_src))
+        # 端到端：CLI 也要真的报出来（kind/行号/文案三件套）
+        e15 = os.path.join(tmp, 'e15_bare.py')
+        with open(e15, 'w', encoding='utf-8') as f:
+            f.write(HEAD + "from matplotlib.pyplot import subplots\n"
+                           "fig, axes = subplots(1, 2, figsize=(6, 3), "
+                           "layout='constrained')\n"
+                           "axes[0].plot([1, 2, 3])\n"
+                           "fig.savefig('e15.png', dpi=60)\n")
+        rc, out, err = run('check', e15, '--json')
+        d15 = json.loads(out).get('layout_engine') or []
+        # HEAD 占 1-3 行 → `layout='constrained'` 在第 5 行
+        check(len(d15) == 1 and d15[0].get('kind') == 'constrained'
+              and d15[0].get('line') == 5,
+              'E15 端到端：裸名 subplots(layout=...) 被 check 报出（带行号）', d15)
+        rc, out, err = run('check', e15, env={'MPLTWEAK_LANG': 'zh'})
+        check('布局引擎' in out and '第 5 行' in out,
+              'E15 端到端：人读输出指到第 5 行', repr(out[-200:]))
+
         print('\u00a79b 视图外的刻度不能算"超出画布"（假阳性回归）')
         # 独立审阅实测：figsize=(6,2.5) + subplots_adjust(top=0.98) +
         # set_ylim(0.85,4.15) 时 ax.yaxis.get_major_ticks() 里含视图区间外的刻度
@@ -389,6 +489,85 @@ def main():
               (rc, [p['rule'] for p in d['problems']]))
         check(d['layout_engine'] and d['problems'][0].get('msg'),
               '原始冲突信息仍然保留在 layout_engine 里', d['layout_engine'])
+
+        print('§11 CH-4：bbox_inches=tight 的图不再误报 text_out_of_canvas')
+        tgt = os.path.join(tmp, 'textout_tight.py')
+        with open(tgt, 'w', encoding='utf-8') as f:
+            f.write(TEXT_OUT_TIGHT)
+        rc, out, err = run('check', tgt, '--json')
+        d = json.loads(out)
+        check(d.get('tight_bbox') is True, '识别出 tight 口径', d.get('tight_bbox'))
+        check(not [p for p in d['problems'] if p['rule'] == 'text_out_of_canvas'],
+              '越界文字不再进 problems（0.1.8 是 8 条 error）',
+              [p['rule'] for p in d['problems']])
+        _dw = [w for w in d['warnings'] if w['rule'] == 'text_out_of_canvas']
+        check(_dw and all(w.get('downgraded') == 'tight_bbox' for w in _dw),
+              '降级成 warning 且标明 downgraded', _dw[:1])
+        check(rc == 0, 'rc=0（README 的 CI 配方不再恒红）', rc)
+        rc, out, err = run('check', tgt, '--json', '--no-tight')
+        d2 = json.loads(out)
+        check('text_out_of_canvas' in [p['rule'] for p in d2['problems']],
+              '--no-tight 回到 0.1.8 口径（error）',
+              [p['rule'] for p in d2['problems']])
+        check(rc == 1, '--no-tight → rc=1（这是"真的会被裁"的旧口径）', rc)
+        # 反向保护：不做 tight 的同类脚本**仍然**是 error —— 这条修复不许把规则整体放过
+        rc, out, err = run('check', tout, '--json')
+        check(json.loads(out).get('tight_bbox') is False
+              and 'text_out_of_canvas' in [p['rule'] for p in json.loads(out)['problems']],
+              '非 tight 脚本不受影响（仍然 error）', json.loads(out).get('tight_bbox'))
+
+        print('§12 A4：check --static 完全不执行脚本，并明说没检查什么')
+        marker = os.path.join(tmp, 'STATIC_RAN.txt')
+        sst = os.path.join(tmp, 'static.py')
+        with open(sst, 'w', encoding='utf-8') as f:
+            f.write(CONSTRAINED + 'open(%r, "w").write("ran")\n' % marker)
+        rc, out, err = run('check', sst, '--static', '--json')
+        d = json.loads(out)
+        check(d.get('static') is True, '输出标了 static', sorted(d)[:6])
+        check(not os.path.exists(marker), '脚本**真的没有被执行**（marker 文件不存在）')
+        check(len(d.get('layout_engine') or []) == 1,
+              '静态也能报出布局引擎冲突', d.get('layout_engine'))
+        check(bool(d.get('note')) and '--static' in d['note'],
+              'note 明说"没执行、这些都没查"', str(d.get('note'))[:60])
+        check(len(d.get('not_checked') or []) >= 5,
+              'not_checked 列出没检查的规则', d.get('not_checked'))
+        check(d.get('ok') is True and rc == 0, '静态干净 → ok/rc=0', (d.get('ok'), rc))
+        rc, out, err = run('check', sst, '--static', '--strict')
+        check(rc == 1, '--static --strict + 冲突 → rc=1', rc)
+        _bad = os.path.join(tmp, 'badsyntax.py')
+        with open(_bad, 'w', encoding='utf-8') as f:
+            f.write('import matplotlib\nx = (1,\n')
+        rc, out, err = run('check', _bad, '--static', '--json')
+        check(rc == 2 and json.loads(out).get('error_code') == 'syntax_error',
+              '语法错误 → rc=2 + syntax_error（"跑不起来"）', rc)
+
+        print('§13 CH-3：--tol 只收有限正数（不再吐 Infinity / 静默关掉检查）')
+        for _t in ('inf', '-inf', 'nan', '0', '-1'):
+            rc, out, err = run('check', paths['tidy'], '--json', '--tol', _t)
+            check(rc == 2, '--tol %s → rc=2（用法错误）' % _t, rc)
+            check('Infinity' not in out and 'NaN' not in out,
+                  '--tol %s 的 stdout 不含非法 JSON 字面量' % _t, out[:120])
+            # 关键区分：**参数层**拒绝（stdout 干净、用法进 stderr）还是
+            # 落到 analyze 的兜底（stdout 是 internal_error 的 JSON）。
+            # 只断言 rc 会让"把 type=_tol_arg 改回 float"的反向验证漏网 —— 那条路
+            # 也恰好返回 2（ValueError 被顶层 guard 兜成 internal_error）。
+            check(out.strip() == '' and 'error_code' not in out,
+                  '--tol %s → 参数层拒绝（不是 internal_error JSON）' % _t,
+                  out[:120])
+        rc, out, err = run('check', paths['tidy'], '--json', '--tol', '0.02')
+        check(rc == 0 and json.loads(out)['tol'] == 0.02, '合法 tol 照常工作', rc)
+
+        print('§14 CH-12：机器可读的 msg 也跟随语言（--lang 进了 check/describe）')
+        rc, out, err = run('check', paths['over'], '--json', '--lang', 'en')
+        _msgs = [p['msg'] for p in json.loads(out)['problems']]
+        check(bool(_msgs) and all(ord(c) < 128 for c in ''.join(_msgs)),
+              '--lang en → problems[].msg 全 ASCII', _msgs[:2])
+        rc, out, err = run('check', paths['over'], '--json', '--lang', 'zh')
+        _msgs_zh = [p['msg'] for p in json.loads(out)['problems']]
+        check(any(ord(c) > 127 for c in ''.join(_msgs_zh)),
+              '--lang zh → 中文（默认行为不变）', _msgs_zh[:1])
+        rc, out, err = run('describe', paths['tidy'], '--lang', 'en')
+        check(rc == 0, 'describe 也接受 --lang（SKILL.md 一直列着它）', rc)
     except Exception as e:                                        # noqa: BLE001
         check(False, '测试执行', e)
     finally:

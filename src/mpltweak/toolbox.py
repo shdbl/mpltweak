@@ -84,6 +84,15 @@ def _info(*args, **kwargs):
     '''关键运行状态（heavy 判定 / blit 降级）：安静模式下**也要**打印——
     这两条直接决定"卡不卡"，必须让用户/agent 看得见。'''
     print(*args, **kwargs)
+
+
+# TODO(i18n): 这两条终端提示待 cli-hunter 补进 messages.py 中英表（本模块只用常量兜底）。
+_DOUBLE_OPEN_HINT = ('[mpltweak] 参数未保存：%s 已被 pid=%s 的新窗口接管，本窗口的'
+                     '改动不会落盘。补救：关闭新窗口后重试，或按 e 手动导出到别的'
+                     '路径。')
+_FIG_LEGEND_HINT = ('[mpltweak] 提示：fig.legend()（图级图例）不挂在任何子图上，'
+                    '本工具箱的图例拖拽/循环按子图定位，无法接管它——该图例不会被'
+                    '调整，其余功能正常。')
 LEGEND_LOCS = ['upper right', 'upper center', 'upper left', 'center left',
                'lower left', 'lower center', 'lower right', 'center right']  # 8 个标准位   # 图例六个标准位
 _LOC_CODES = {0: 'best', 1: 'upper right', 2: 'upper left', 3: 'lower left',
@@ -212,21 +221,51 @@ _HELP_LANG_BTNS = []       # 语言按钮命中矩形（像素坐标）
 _HELP_FIG = None
 
 
+_CJK_FONT_CANDIDATES = ('Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
+                        'Noto Sans CJK SC', 'Source Han Sans SC',
+                        'WenQuanYi Micro Hei', 'SimHei', 'DengXian')
+_UI_FONT_CANDIDATES = _CJK_FONT_CANDIDATES + ('Segoe UI', 'Helvetica Neue', 'Arial')
+_UI_CJK_FONT = None      # 缓存：None=未探测；False=无 CJK；字符串=命中的 CJK 字体名
+
+
 def _pick_ui_font():
     '''跨平台可用字体探测：Windows 雅黑 → macOS PingFang → Linux Noto，
-    都没有就回退 Segoe/Helvetica/Arial；全没有返回 None（matplotlib 默认）。'''
+    都没有就回退 Segoe/Helvetica/Arial；全没有返回 None（matplotlib 默认）。
+    顺带缓存"有无 CJK 字体"（叠加层据此决定用中文还是回退英文）。'''
+    global _UI_CJK_FONT
     try:
         from matplotlib import font_manager as _fm
         _avail = {f.name for f in _fm.fontManager.ttflist}
-        for _cand in ('Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB',
-                      'Noto Sans CJK SC', 'Source Han Sans SC',
-                      'WenQuanYi Micro Hei', 'SimHei', 'DengXian',
-                      'Segoe UI', 'Helvetica Neue', 'Arial'):
+        _cjk = next((c for c in _CJK_FONT_CANDIDATES if c in _avail), None)
+        _UI_CJK_FONT = _cjk if _cjk else False
+        for _cand in _UI_FONT_CANDIDATES:
             if _cand in _avail:
                 return _cand
     except Exception:                        # noqa: BLE001
         pass
     return None
+
+
+def _ui_cjk_ok():
+    '''系统是否有可用 CJK 字体（叠加层用中文还是回退英文的唯一判据）。'''
+    global _UI_CJK_FONT
+    if _UI_CJK_FONT is None:
+        _pick_ui_font()
+    return bool(_UI_CJK_FONT)
+
+
+def _ui_fontprops():
+    '''per-artist 叠加层字体（**绝不改全局 rcParams**，零侵入）。
+    无 CJK 字体返回 None → 调用方回退英文，避免豆腐块 + Glyph 警告刷屏。'''
+    if not _ui_cjk_ok():
+        return None
+    from matplotlib.font_manager import FontProperties
+    return FontProperties(family=_UI_CJK_FONT)
+
+
+def _u(zh, en):
+    '''叠加层文案双语：无 CJK 字体时回退英文。'''
+    return en if not _ui_cjk_ok() else zh
 
 
 def _text_w(r, s, fs, font, dpi=110.0):
@@ -404,6 +443,10 @@ def _fill_help_fig(fig, lang):
             return
         except Exception:                    # noqa: BLE001
             fig.clear()
+    # F5：内联渲染兜底（无预渲染 PNG）时，无 CJK 字体就把语言切英文，
+    # 否则中文标题/说明会豆腐块 + Glyph 警告刷屏（PNG 路径不受影响，字已烤进图）。
+    if not _ui_cjk_ok() and lang == 'zh':
+        lang = 'en'
     _render_help(fig, lang, _pick_ui_font())
 
 
@@ -792,6 +835,13 @@ def _fixed_lim(ax, which):
 
 def _set_bbox(ax, box):
     ax.set_position((box[0], box[1], box[2], box[3]))
+
+
+def _same_box(a, b, tol=1e-9):
+    '''两个位置盒（[x0,y0,w,h] 或 [x0,y0,x1,y1]）是否相等（含浮点容差）。'''
+    if a is None or b is None or len(a) != len(b):
+        return False
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
 
 
 def _nearest(v, cands, tol):
@@ -1210,12 +1260,18 @@ class Tweak:
         self._toast_art = None
         self._toast_timer = None
         try:
+            # F5：叠加层（状态栏 + toast）给 per-artist 字体，绝不碰全局 rcParams。
+            # 无 CJK 字体时 _ui_fontprops() 返回 None（默认 DejaVu），此时文案层
+            # 已用 _u() 回退英文，所以这里传 None 也不会豆腐块。
+            _uprops = _ui_fontprops()
             self._status = fig.text(0.012, 0.004, '', fontsize=8, color='0.35',
                                     ha='left', va='bottom',
-                                    transform=fig.transFigure, zorder=6000)
+                                    transform=fig.transFigure, zorder=6000,
+                                    fontproperties=_uprops)
             self._toast_art = fig.text(0.5, 0.012, '', fontsize=9, color='0.18',
                                        ha='center', va='bottom',
-                                       transform=fig.transFigure, zorder=6000)
+                                       transform=fig.transFigure, zorder=6000,
+                                       fontproperties=_uprops)
             self._toast_art.set_visible(False)
         except Exception:                    # noqa: BLE001 - 无头/特殊后端兜底
             self._status = self._toast_art = None
@@ -1223,13 +1279,7 @@ class Tweak:
         self._ax = None
         self._target = None
         self._drag = False
-        self._drag_cb_clim = False                # 兼容旧属性引用（clim 拖拽已移除）
-        self._clim_ax = None
-        self._clim_side = None
-        self._clim0 = None
-        self._clim_box_px = None
-        self._clim_orientation = None
-        self._cb_hint_on = False               # 是否正显示 clim 端点悬停提示
+        self._cb_hint_on = False               # 是否正显示 colorbar 端点悬停提示
         self._drag_leg = False
         self._leg = None
         self._press_xy = (0, 0)
@@ -1319,18 +1369,36 @@ class Tweak:
 
     # ---------- 初始化 ----------
     def _init_legends(self):
-        '''记录每个有图例的轴的 handles/labels 与当前 loc，供循环/拖拽/导出。'''
+        '''记录每个有图例的轴的 handles/labels 与当前 loc，供循环/拖拽/导出。
+
+        T25-#2c：handles 必须从**图例自身内容**取（legend.legend_handles +
+        get_texts()），而不是 ax.get_legend_handles_labels()——后者返回"轴上全部
+        带 label 的图元"，ax.legend(handles=[l1,l3]) 这种刻意排除的图元会被加回来，
+        一拖图例就变成全量图元。
+        '''
+        _ax_legends = set()
         for ax in self.fig.axes:
             leg = ax.get_legend()
             if leg is None:
                 continue
-            handles, labels = ax.get_legend_handles_labels()
+            _ax_legends.add(id(leg))
+            handles = list(getattr(leg, 'legend_handles', None) or [])
+            labels = [t.get_text() for t in leg.get_texts()]
+            if not handles:                     # 老 matplotlib 无 legend_handles → 兜底
+                handles, labels = ax.get_legend_handles_labels()
             self.leg_state[id(ax)] = {
                 'handles': handles, 'labels': labels,
                 'loc': _loc_name(getattr(leg, '_loc', 'best')),
                 'anchor': None,
                 'props': _legend_props(leg),      # 重建时要保留的原属性（列数等）
             }
+        # fig.legend() 不挂在任何 ax 上：本工具箱的图例拖拽/循环按子图定位，
+        # 无法接管——明确提示而不是静默忽略（T25-#2c）。
+        for _leg in getattr(self.fig, 'legends', []):
+            if id(_leg) not in _ax_legends:
+                sys.stderr.write(_FIG_LEGEND_HINT + '\n')
+                sys.stderr.flush()
+                break
 
     def _is_heavy(self):
         try:
@@ -1474,7 +1542,9 @@ class Tweak:
                 self._warned_blit = True
                 # 标题栏标红提示：降级后拖拽会卡
                 try:
-                    self._toast('blit 不可用：已降级为节流重绘（重图下会卡）')
+                    self._toast(_u('blit 不可用：已降级为节流重绘（重图下会卡）',
+                                   'blit unavailable: throttled redraw (slow on '
+                                   'heavy figures)'))
                 except Exception:
                     pass
                 self._set_title_hint(None)
@@ -2004,9 +2074,11 @@ class Tweak:
             _info('[mpltweak] fit: 内容已贴边，无需适配（%dx%d）' % (W, H), flush=True)
             return
         self._push_undo()
-        # 3) 改画布
+        # 3) 改画布：NW/NH 是 figsize×fig.dpi 的像素，换算英寸要用图自己的 dpi
+        #    （T25-#1：原先 /100.0 只在 dpi==100 时成立，dpi=200 会算小一半）。
         try:
-            self.fig.set_size_inches(NW / 100.0, NH / 100.0)
+            _dpi = float(self.fig.dpi) or 100.0
+            self.fig.set_size_inches(NW / _dpi, NH / _dpi)
             self._fig_px = (NW, NH)
         except Exception:
             import traceback as _tb
@@ -2056,23 +2128,23 @@ class Tweak:
                 continue
             an = self._axis_name(it['id'])
             if p.get('pos') != it.get('pos'):
-                out.append('移动 ' + an)
+                out.append(_u('移动', 'move') + ' ' + an)
             if p.get('title') != it.get('title'):
-                out.append('调字号 ' + an)
+                out.append(_u('调字号', 'font') + ' ' + an)
             if p.get('xlabel') != it.get('xlabel') or p.get('ylabel') != it.get('ylabel'):
-                out.append('调轴标 ' + an)
+                out.append(_u('调轴标', 'label') + ' ' + an)
             if p.get('clim') != it.get('clim'):
-                out.append('调色标 ' + an)
+                out.append(_u('调色标', 'clim') + ' ' + an)
             if p.get('grid') != it.get('grid'):
-                out.append('网格 ' + an)
+                out.append(_u('网格', 'grid') + ' ' + an)
             if p.get('spines') != it.get('spines'):
-                out.append('边框 ' + an)
+                out.append(_u('边框', 'spines') + ' ' + an)
             if p.get('xscale') != it.get('xscale') or p.get('yscale') != it.get('yscale'):
-                out.append('比例尺 ' + an)
+                out.append(_u('比例尺', 'scale') + ' ' + an)
             if p.get('lines') != it.get('lines'):
-                out.append('线条 ' + an)
+                out.append(_u('线条', 'lines') + ' ' + an)
         if prev.get('figsize') != cur.get('figsize'):
-            out.append('画布尺寸')
+            out.append(_u('画布尺寸', 'canvas size'))
         seen, uniq = set(), []
         for s in out:
             if s not in seen:
@@ -2086,8 +2158,10 @@ class Tweak:
             return
         try:
             self._status.set_text(
-                '选中 %d | 吸附 %s | 可撤 %d / 可重做 %d'
-                % (len(self._selected), '开' if self.snap else '关',
+                _u('选中 %d | 吸附 %s | 可撤 %d / 可重做 %d',
+                   'Sel %d | snap %s | undo %d / redo %d')
+                % (len(self._selected),
+                   _u('开', 'on') if self.snap else _u('关', 'off'),
                    len(self._undo), len(self._redo)))
         except Exception:                    # noqa: BLE001
             pass
@@ -2130,24 +2204,47 @@ class Tweak:
         # 快照附带操作名（diff 上一快照），撤销/重做时能告诉用户"撤的是什么"。
         _new = self._snapshot()
         _prev = self._undo[-1] if self._undo else None
-        _name = self._diff_name(_prev, _new) if _prev is not None else '调整'
+        _name = self._diff_name(_prev, _new) if _prev is not None else _u('调整', 'adjust')
         # 状态没变就不占一步撤销：典型是"裸点击"（面板上按下即抬起，没拖动）——
         # 原先照样压栈并清空 redo，于是第一次 Ctrl+Z 看起来没反应、Ctrl+Y 也失效
         # （t2-B4 / t6-M10）。edit_clock / edit_seq 也要一起跳过，否则"哪张图改过"
         # 会被裸点击误标。
         if _prev is not None and not _name:
             return
+        # F1：按下时无法知道"本次是否会真动"，先压栈、把可回滚的副作用都记下；
+        # 释放时若零位移，_pop_ghost_undo 用这些快照把这一步原样撤掉。
+        self._prepush_seq = self.edit_seq
+        self._prepush_redo = list(self._redo)
         self._edit_clock[0] += 1
         self.edit_seq = self._edit_clock[0]
-        _new['_name'] = _name or '调整'
+        _new['_name'] = _name or _u('调整', 'adjust')
         self._undo.append(_new)
         if len(self._undo) > 60:
             self._undo.pop(0)
+        self._press_pushed = True             # 本次按下确实压了栈（回滚的判据）
         self._redo.clear()
         # L4：任何非 nudge 操作入 undo 都打断"方向键微调合并"（seal），否则 0.6s 内
         # "拖一下→按方向键"会被错误合并进前一次 nudge 的 undo 条目。nudge 流程里
         # 本方法调用后立刻重建 seal（_nudge_seal_t=now），不受此重置影响。
         self._nudge_seal = None
+        self._update_status()
+
+    def _pop_ghost_undo(self):
+        '''零位移操作（裸点击）按下时压了一个幽灵撤销步 → 释放时撤掉并回滚副作用。
+
+        只在"本次按下确实压过栈"（_press_pushed）时才弹——绝不误弹更早的真实操作
+        （_push_undo 早退、或按键类操作压栈都不在 _on_press 语境里设这个标记）；
+        同时回滚 edit_clock/edit_seq 与 _redo.clear()，保证"哪张图改过"不被误标。'''
+        if not getattr(self, '_press_pushed', False):
+            return
+        self._press_pushed = False
+        if not self._undo:
+            return
+        self._undo.pop()
+        if self._edit_clock[0] > 0:
+            self._edit_clock[0] -= 1
+        self.edit_seq = getattr(self, '_prepush_seq', self._edit_clock[0])
+        self._redo[:] = getattr(self, '_prepush_redo', [])
         self._update_status()
 
     def _push_undo_sealed(self, key):
@@ -2164,30 +2261,30 @@ class Tweak:
     def _undo_once(self):
         if not self._undo:
             _log('[mpltweak] 没有可撤销的操作', flush=True)
-            self._toast('没有可撤销的操作')
+            self._toast(_u('没有可撤销的操作', 'Nothing to undo'))
             return
         _s = self._undo[-1]
         _cur = self._snapshot()                # 操作后的当前状态
         self._redo.append(_cur)
         self._restore_snap(self._undo.pop())
         # 操作名现算：diff(弹出快照, 当前) = 这次撤销回退的变化
-        _n = self._diff_name(_s, _cur) or (_s.get('_name') or '调整')
+        _n = self._diff_name(_s, _cur) or (_s.get('_name') or _u('调整', 'adjust'))
         _log('[mpltweak] 撤销：%s（剩 %d 步）' % (_n, len(self._undo)), flush=True)
-        self._toast('已撤销：%s' % _n)
+        self._toast(_u('已撤销：', 'Undone: ') + _n)
         self._update_status()
 
     def _redo_once(self):
         if not self._redo:
             _log('[mpltweak] 没有可重做的操作', flush=True)
-            self._toast('没有可重做的操作')
+            self._toast(_u('没有可重做的操作', 'Nothing to redo'))
             return
         _s = self._redo[-1]
         _cur = self._snapshot()                # 撤销后的当前状态
         self._undo.append(_cur)
         self._restore_snap(self._redo.pop())
-        _n = self._diff_name(_cur, _s) or (_s.get('_name') or '调整')
+        _n = self._diff_name(_cur, _s) or (_s.get('_name') or _u('调整', 'adjust'))
         _log('[mpltweak] 重做：%s' % _n, flush=True)
-        self._toast('已重做：%s' % _n)
+        self._toast(_u('已重做：', 'Redone: ') + _n)
         self._update_status()
 
     # ---------- 多选（PPT 式） ----------
@@ -2411,23 +2508,13 @@ class Tweak:
             idx, box[0], box[1], box[2], box[3],
             round(box[2] * X), round(box[3] * Y))
 
-    @staticmethod
-    def _fmt_clim(clim):
-        if clim is None:
-            return 'clim [?]'
-        return 'clim [%.4g, %.4g]' % tuple(clim)
-
-    def _update_cb_clim_drag(self, x, y):        # noqa: D401 - 已随 Alt+clim 移除
-        return
-
-    def _finish_cb_clim_drag(self):             # noqa: D401 - 已随 Alt+clim 移除
-        return
-
     def _on_press(self, event):
         X, Y = self.fig.bbox.size
         # 右键：暂不响应（曾打印坐标框调试、会污染 stdout，已移除；将来可放右键菜单）
         if event.button != 1:
             return
+        # F1：每次按下先复位"本次是否压了 undo 栈"标记，供释放时判零位移回滚。
+        self._press_pushed = False
         # 左键
         # 1) 图例拖拽
         ax_leg, leg = self._legend_at(event.x, event.y)
@@ -2718,15 +2805,16 @@ class Tweak:
             return
         # hover：边框/角 → 变换光标提示（PPT 手感）
         ax_h, hd = _hit_handle(self.fig, event.x, event.y)
-        # colorbar 长轴端点：普通拖=调长度、Alt+拖=改 clim。
-        # 改 clim 要按 Alt 是"隐藏功能"，不给提示没人猜得到 → 悬停即说清。
+        # colorbar 长轴端点：普通拖 = 调长度；Alt+拖 = 中心对称缩放。
+        # （Alt+拖改 clim 已按用户要求移除，提示必须与实际手感一致，别说谎。）
         ax_cb, _cb_side = _hit_cb_endpoint(self.fig, event.x, event.y)
         if ax_cb is not None:
             horiz = _cb_orientation(ax_cb) == 'horizontal'
             ax_h, hd = ax_cb, ('left' if horiz else 'top')
             self._set_title_hint(
-                'Alt+拖%s端 = 改 clim %s ｜ 普通拖 = 调长度（%s）'
-                % ('左/右' if horiz else '下/上', self._fmt_clim(_clim_of(ax_cb)),
+                _u('拖%s端 = 调长度（Alt = 中心对称缩放）｜ %s',
+                   'Drag %s end = length (Alt = center-anchor scale) | %s')
+                % ('左/右' if horiz else '下/上',
                    self._hint_box(self.fig.axes.index(ax_cb),
                                   _bbox(ax_cb))))
             self._cb_hint_on = True
@@ -2793,12 +2881,17 @@ class Tweak:
             return
         if self._multi_drag:
             self._multi_drag = False
+            _moved = False
+            if self._drag_ax is not None and self._drag_ax_origin is not None:
+                _moved = not _same_box(self._drag_ax_origin, _bbox(self._drag_ax))
             self._drag_ax = None
             self._drag_ax_origin = None
             self._multi_origin = {}
             self._rebuild_selection_artists()
             self._set_title_hint(None)
             self._refresh(moved=True)         # 面板真落位：全量重绘
+            if not _moved:                     # F1：多选裸点击不留幽灵撤销步
+                self._pop_ghost_undo()
             return
         if self._band_active:
             self._finish_band()
@@ -2807,7 +2900,9 @@ class Tweak:
         if self._drag_resize:
             self._drag_resize = False
             ax = self._rs_ax
+            _moved = False
             if ax is not None and self._rs_target is not None:
+                _moved = not _same_box(self._rs_origin, self._rs_target)
                 if self.heavy:
                     _set_bbox(ax, [self._rs_target[0], self._rs_target[1],
                                    self._rs_target[2] - self._rs_target[0],
@@ -2823,10 +2918,13 @@ class Tweak:
             self._rebuild_selection_artists()     # 蓝框落到最终位置
             self._set_title_hint(None)
             self._refresh(moved=True)
+            if not _moved:                     # F1：缩放手柄裸点击不留幽灵撤销步
+                self._pop_ghost_undo()
             return
         if not self._drag:
             return
         self._drag = False
+        _moved = not _same_box(self._origin, self._target)
         if self.heavy:
             _set_bbox(self._ax, self._target)
             self._remove_ghost()
@@ -2838,6 +2936,8 @@ class Tweak:
         self._rebuild_selection_artists()         # 蓝框落到最终位置
         self._set_title_hint(None)
         self._refresh(moved=True)
+        if not _moved:                         # F1：裸点击不留幽灵撤销步
+            self._pop_ghost_undo()
 
     def _as_colorbar(self, ax):
         '''判断轴是不是 colorbar 轴，是则返回自身（多信号判定，见 _is_colorbar_ax）。'''
@@ -3394,7 +3494,8 @@ class Tweak:
         if key == 'n':
             self.snap = not self.snap
             _log('[mpltweak] 吸附=%s' % self.snap, flush=True)
-            self._toast('吸附 %s' % ('开' if self.snap else '关'))
+            self._toast(_u('吸附', 'Snap') + ' '
+                        + (_u('开', 'on') if self.snap else _u('关', 'off')))
             self._update_status()
             self.fig.canvas.draw_idle()
             return
@@ -3431,11 +3532,18 @@ class Tweak:
         if self._lock_path is not None:
             try:
                 with open(self._lock_path, 'r', encoding='utf-8') as f:
-                    if f.read().strip() != str(os.getpid()):
-                        _log('[mpltweak] 跳过导出：会话已被新窗口接管', flush=True)
-                        return
+                    _owner = f.read().strip()
             except OSError:
-                pass
+                _owner = None
+            if _owner is not None and _owner != str(os.getpid()):
+                # T25-#2a：被新窗口接管 → 绝不能静默 return（改了十分钟零提示零保存）。
+                # 走 stderr（不污染 stdout/--json）+ 窗口内 toast，并给补救。
+                _msg = _DOUBLE_OPEN_HINT % (path or self.export_path, _owner)
+                sys.stderr.write(_msg + '\n')
+                sys.stderr.flush()
+                self._toast(_u('参数未保存：已被新窗口接管（见终端）',
+                               'Params not saved: window taken over (see terminal)'))
+                return
         p = path or self.export_path
         axes = []
         for i, ax in enumerate(self.fig.axes):
@@ -3444,9 +3552,14 @@ class Tweak:
                 # colorbar 刻度走 y 轴（竖条）
                 tls = list(ax.get_yticklabels()) or list(ax.get_xticklabels())
                 tick_fs = tls[0].get_fontsize() if tls else None
+                tick_fs_y = tick_fs
             else:
                 tick_fs = (ax.get_xticklabels()[0].get_fontsize()
                            if ax.get_xticklabels() else None)
+                # T25-#3a：y 刻度字号也要采（与 label_fontsize_y 同口径），
+                # 否则悬停 y 刻度调字号被静默丢弃。
+                tick_fs_y = (ax.get_yticklabels()[0].get_fontsize()
+                             if ax.get_yticklabels() else None)
             item = {
                 'index': i,
                 'pos': [round(x0, 4), round(y0, 4), round(w, 4), round(h, 4)],
@@ -3454,7 +3567,12 @@ class Tweak:
                 # 三个标题位都有文字的取最大那个（真实论文图常用 loc='left'）
                 'title_fontsize': _title_fs(ax),
                 'label_fontsize': ax.xaxis.label.get_fontsize(),
+                # F3：悬停 y 轴标签调字号走的是 yaxis.label，导出侧必须对齐
+                # verify._state 的 label_fontsize_y 口径（否则 y 改动被静默丢弃、
+                # 写回后被写成 xlabel 字号）。
+                'label_fontsize_y': ax.yaxis.label.get_fontsize(),
                 'tick_fontsize': tick_fs,
+                'tick_fontsize_y': tick_fs_y,
                 # 落实时要靠这个标记决定"要不要先解除 locator/box_aspect"
                 'is_colorbar': bool(_is_colorbar_ax(ax)),
                 'clim': list(_clim_of(ax)) if _clim_of(ax) is not None else None,
@@ -3504,11 +3622,14 @@ class Tweak:
             'script': os.path.basename(sys.argv[0]) if sys.argv else '',
             # 画布逻辑像素尺寸（Qt get_width_height 返回逻辑 px，与显示器缩放无关）
             'figsize_px': list(self._fig_px) if self._fig_px else None,
-            # 写回 figsize 的英寸数：按 100dpi 逻辑口径换算（无头 savefig dpi=100 一致）。
-            # 不用 fig.dpi——高 DPI 显示器上 Qt 会把 fig.dpi 放大到 200，px/dpi 会算小一半。
-            'figsize_in': ([round(self._fig_px[0] / 100.0, 2),
-                            round(self._fig_px[1] / 100.0, 2)]
-                           if self._fig_px else None),
+            # T25-#1：figsize_in 用图的权威逻辑尺寸 fig.get_size_inches()——
+            # 它只反映"图声明多大"，与 dpi / 屏幕缩放无关。原先这里写 `_fig_px/100.0`，
+            # 只在 dpi==100 时成立；dpi=200 的图（figsize=(6,4)）_fig_px=1200×800，
+            # 会导出 figsize_in=[12,8]，apply --write 把源码真的改成 figsize=(12,8)
+            # （放大 2 倍）。offscreen 实测 QtAgg 不会改 fig.dpi，所以那条"高 DPI 下
+            # Qt 会把 fig.dpi 放大到 200、px/dpi 算小一半"的旧注释是错的，别信回去。
+            'figsize_in': [round(float(x), 2)
+                           for x in self.fig.get_size_inches()],
             'axes': axes,
             # 多图脚本写回定位用：调的是第几张图 / 脚本共几张图（None = 未知/旧文件）
             'fig_index': self.fig_index,

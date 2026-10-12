@@ -6,6 +6,11 @@
 * **备份在哪**：每次 `apply --write` 都会先 `_make_backup()`，在
   ``.tweak_params/<脚本名>.tweak.bak`` 留一份**写回前**的原文（并发时另有带 pid 的
   副本）。revert 就是把它拿回来 —— 不需要额外机制，这个备份一直存在。
+* **可逆的范围要说清楚（RC-7）**：默认只回退**最近一次**写回 —— 固定名备份代表
+  "上一次写回之前的原文"，所以 `apply` 跑过 N 次之后，默认 revert 只能回到第
+  N 次之前的中间状态，**不是**最初的原文。要回到**最早**那次写回之前，用
+  `--first`（它读的是 pid 备份里最早的一份；0.1.9 起 `_prune_backups` 会永久
+  保留那一份，不会再被裁掉）。
 * **默认只预览**：与 `apply` 一致，`revert` 不加 `--write` 只打印"会改回什么"，
   一个字节都不动。要真回退必须显式 `--write`。
 * **revert 自身也可逆**：覆盖前先把当前文件另存为
@@ -24,6 +29,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import os
+import re
 import shutil
 import sys
 
@@ -34,9 +40,38 @@ MAX_DIFF_LINES = 20          # 预览里最多列这么多行差异（够看出�
 
 
 def backup_path(script: str, params_path: str = None) -> str:
-    """回退用的备份路径（与 writeback 共用同一套命名，别各写一份）。"""
+    """回退用的备份路径（与 writeback 共用同一套命名，别各写一份）。
+
+    锚点是**脚本**而不是参数文件：`--params` 可以指向任何地方，备份却始终属于这个
+    脚本（RC-10）。"""
     pp = params_path or params.params_path(script)
     return writeback._backup_path(script, pp)
+
+
+def legacy_backup_path(script: str, params_path: str) -> str:
+    """0.1.8 的旧定位（备份在 `--params` 旁边）—— 只在主位置找不到时才试。"""
+    return writeback._backup_path_legacy(script, params_path)
+
+
+def oldest_backup(script: str, params_path: str = None):
+    """**最早**一份 pid 备份的路径（没有则 None）—— ``--first`` 用。
+
+    固定名备份只代表"最近一次写回之前"，反复 apply 之后原件就找不回来了。
+    ``_prune_backups`` 从 0.1.9 起永久保留最早那一份，这里把它找出来，
+    让"回到最初的原文"成为一条可执行的命令（RC-7）。
+    """
+    pp = params_path or params.params_path(script)
+    d = writeback._backup_dir(script, pp)
+    stem = os.path.splitext(os.path.basename(script))[0]
+    pat = re.compile(r'^%s\.tweak\.(\d+)\.bak$' % re.escape(stem))
+    try:
+        files = [os.path.join(d, n) for n in os.listdir(d) if pat.match(n)]
+    except OSError:
+        return None
+    if not files:
+        return None
+    files.sort(key=lambda p: (os.path.getmtime(p), p))
+    return files[0]
 
 
 def _read_text(path: str) -> str:
@@ -73,8 +108,11 @@ def _atomic_restore(script: str, backup: str) -> None:
 
 
 def _snapshot_current(script: str, params_path: str) -> str:
-    """回退前给当前文件留一份（revert 自身可逆），返回路径。"""
-    d = os.path.dirname(os.path.abspath(params_path))
+    """回退前给当前文件留一份（revert 自身可逆），返回路径。
+
+    与 backup_path 同一套定位（脚本旁的 `.tweak_params`），否则 `--params` 一换
+    就找不到自己刚写的那份留档。"""
+    d = writeback._backup_dir(script, params_path)
     stem = os.path.splitext(os.path.basename(script))[0]
     dst = os.path.join(d, stem + '.revert.bak')
     shutil.copy2(script, dst)
@@ -98,6 +136,9 @@ def main(argv=None) -> int:
     ap.add_argument('--params', default=None, help='参数文件（默认 .tweak_params/<脚本>.json）')
     ap.add_argument('--write', action='store_true',
                     help='真的回退（不加这个只预览，不动代码）')
+    ap.add_argument('--first', action='store_true',
+                    help='回到**最早**那次写回之前（读最早一份 pid 备份）——'
+                         '默认只回退最近一次写回')
     ap.add_argument('--json', action='store_true', help='机器可读输出')
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -109,6 +150,32 @@ def main(argv=None) -> int:
         return 2
     params_path = params.params_path(script, args.params)
     backup = backup_path(script, params_path)
+    if args.first:
+        _first = oldest_backup(script, params_path)
+        if not _first:
+            # T41（high）：**不许**静默回落到固定名备份 —— 那份只代表"最近一次
+            # apply --write 之前"，回落到它会报 `first: true` 却给出中间态
+            # （长路径下 pid 副本写不出来时就是这个现场，语料复核 A/B 实测：
+            #  深目录 pid 路径 261 > MAX_PATH → 副本 0 个 → --first 回不到原件）。
+            _d = writeback._backup_dir(script, params_path)
+            _m = ('没有可用的 pid 备份（%s 下没有 `<脚本名>.tweak.<pid>.bak`）：'
+                  '无法回到**最早**状态。\n'
+                  '  · 常见原因：备份目录路径过长（Windows MAX_PATH 260），'
+                  'pid 副本没写出来 —— 本次写回会给出相应 warning。\n'
+                  '  · 固定名备份只能回到"最近一次 apply --write 之前"，'
+                  '不要拿它当 --first 用；确实只想回退最近一次，请去掉 --first。'
+                  % _d)
+            if args.json:
+                _msg.fail_json('no_first_backup', _m)
+            sys.stderr.write('[revert] %s\n' % _m)
+            return 2
+        backup = _first
+    if not os.path.exists(backup):
+        # RC-10 兼容：0.1.8 用 `--params X` 写回时备份落在 X 旁边（新版落在脚本旁）。
+        # 主位置找不到就再试一次旧位置，别让用户以为"没法回退"。
+        _legacy = legacy_backup_path(script, params_path)
+        if _legacy != backup and os.path.exists(_legacy):
+            backup = _legacy
 
     def _out(payload, human_lines, rc=0):
         if args.json:
@@ -145,12 +212,18 @@ def main(argv=None) -> int:
         'backup_time': _rel_time(backup),
         'ok': True,
         'changed': True,
+        # 键保持稳定（agent 不该因为"有没有差异"拿到不同形状的 payload）；
+        # first：这次用的是不是"最早那份"备份（RC-7 的可逆范围要说清楚）。
+        'first': bool(args.first),
         'diff': {'added': added, 'removed': removed},
         'lines': show,
         'written': False,
     }
     human = ['回退预览：%s  ←  %s（备份于 %s）'
              % (os.path.basename(script), backup, _rel_time(backup)),
+             '  可逆范围：本次用的是%s备份 —— revert 默认只能回退**最近一次**'
+             '写回，反复 apply 过的脚本要回到最早那次之前加 --first'
+             % ('最早一份' if args.first else '最近一次'),
              # added = unified_diff(current → backup) 的 '+' 行 = **会被恢复**的行；
              # removed = '-' 行 = 会被删掉的行。这两个参数曾经写反：块写回后
              # 当前 40 行 / 备份 9 行时打印成"将改回 31 行、去掉 0 行"（独立审阅 F3）。

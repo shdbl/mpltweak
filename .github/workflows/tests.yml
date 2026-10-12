@@ -56,6 +56,53 @@ jobs:
           python -m pip install "pytest>=7.0"
           python -m pytest -q
 
+      # 0.1.9 新增：**CI 过去从不构建发行物** —— 打包缺件 / sdist 混进构建元数据
+      # 这类问题只有到发版那一刻才会暴露（CH-11 的 `src/mpltweak.egg-info` 就是这么
+      # 漏出去的，而修好 MANIFEST.in 之后也没有任何地方能证明它真的生效）。
+      # 这里只做最便宜的一件事：能构建 + wheel 里有包 + sdist 不带 egg-info + 打印体积。
+      # 只在 3.12 上跑（建包与解释器版本无关，不必乘 4）。
+      - name: Build wheel + sdist (assert the sdist carries no build metadata)
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install build
+          # 默认**隔离**构建：顺带验证 pyproject 的 build-system.requires 真能解析
+          python -m build --outdir dist
+          python - <<'PY'
+          import glob
+          import os
+          import sys
+          import tarfile
+          import zipfile
+
+          for p in sorted(glob.glob('dist/*')):
+              print('%-46s %9.1f KiB'
+                    % (os.path.basename(p), os.path.getsize(p) / 1024.0))
+
+          whl = sorted(glob.glob('dist/*.whl'))
+          sdist = sorted(glob.glob('dist/*.tar.gz'))
+          assert whl, 'no wheel built'
+          assert sdist, 'no sdist built'
+          names = zipfile.ZipFile(whl[0]).namelist()
+          for want in ('mpltweak/__init__.py', 'mpltweak/toolbox.py'):
+              assert want in names, 'wheel is missing %s' % want
+          print('wheel OK: %d entries' % len(names))
+
+          tn = tarfile.open(sdist[0]).getnames()
+          # 精确到"陈旧元数据文件"而不是"任何含 egg-info 的条目"：setuptools 的
+          # sdist **强制**带上 `src/mpltweak.egg-info/SOURCES.txt`（它就是 manifest
+          # 本身，MANIFEST.in 的 prune/exclude 都删不掉，实测过）。CH-11 真正要挡的
+          # 是下面这 5 个会被误当"项目内容"的文件。
+          STALE = ('PKG-INFO', 'requires.txt', 'top_level.txt',
+                   'dependency_links.txt', 'entry_points.txt')
+          bad = [n for n in tn if 'egg-info' in n and os.path.basename(n) in STALE]
+          if bad:
+              print('ERROR: the sdist carries stale build metadata (CH-11 regression):')
+              for n in bad:
+                  print('  ' + n)
+              sys.exit(1)
+          print('sdist OK: %d entries, no stale egg-info metadata' % len(tn))
+          PY
+
       - name: Smoke-test the CLI
         run: |
           mpltweak --help

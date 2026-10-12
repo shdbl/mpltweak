@@ -1,0 +1,19 @@
+# MANIFEST.in —— sdist 内容控制
+#
+# CH-11：0.1.8 的 sdist 里混进了 7 个构建元数据条目
+#   src/mpltweak.egg-info/{PKG-INFO,SOURCES.txt,dependency_links.txt,
+#                          entry_points.txt,requires.txt,top_level.txt}
+#   + setuptools 自动生成的 setup.cfg
+# 这是 setuptools 的默认行为：build 先生成 egg-info，再把它一起收进 sdist ——
+# **即使从干净的 git 检出构建也一样**（实测：只复制 `git ls-files` 的文件后
+# 复现同样的 43 项 sdist）。
+#
+# pyproject.toml 表达不了 sdist 的排除规则（setuptools 只认 MANIFEST.in），
+# 所以这里用最小的 MANIFEST.in 收口。`prune` 之后残留的两项是 setuptools
+# sdist 格式**强制包含**的、且 `exclude` 也删不掉（实测）：
+#   * src/mpltweak.egg-info/SOURCES.txt —— 它就是 manifest 本身；
+#   * setup.cfg —— 没有 setup.py 时由 sdist 命令自动写出，供解包后重建环境用。
+# wheel 侧本来就是干净的（15 个模块 + 2 张帮助图 + dist-info），不需要动。
+prune src/mpltweak.egg-info
+global-exclude *.py[cod]
+global-exclude __pycache__/*

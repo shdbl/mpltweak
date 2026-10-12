@@ -16,6 +16,17 @@
 2. 报出来的信息必须能指到**行号**，用户才知道去哪儿改；
 3. 已知边界：动态构造的布局参数（``**kwargs``、变量、拼出来的 rcParams 键）扫不到 ——
    这条边界写进 README 的"已知限制"，不假装全能。
+
+**识别范围（T11 / E15 扩过的一批）**：``plt.subplots(..., layout='constrained')``、
+``constrained_layout=True``、``autolayout=True``、``fig.set_constrained_layout(True)``、
+``fig.set_layout_engine('constrained'|'compressed'|'tight')``（**位置参数与
+`layout=` 关键字两种写法**）、``plt.rc('figure', autolayout=True)``、
+``rcParams['figure.constrained_layout.use' | 'figure.autolayout'] = True``、
+``rcParams.update({...})`` / ``rc_context({...})``；以及**裸名**形式的
+``subplots(...)``/``figure(...)``/``Figure(...)``/``subplot_mosaic(...)``
+（白名单，见 ``BARE_LAYOUT_FUNCS``）。``'tight'`` 归 autolayout 类：
+TightLayoutEngine 在每次绘制时重跑 tight_layout，与 ``figure.autolayout`` 等价；
+``set_layout_engine(None)``（关掉引擎）不报。
 """
 
 from __future__ import annotations
@@ -28,8 +39,17 @@ from typing import Any, Dict, List
 #   2) rcParams['figure.autolayout']（等价于每次绘制都跑一次 tight_layout）
 CONSTRAINED_KEYS = ('figure.constrained_layout.use',)
 AUTOLAYOUT_KEYS = ('figure.autolayout',)
-# layout= 参数里这两个都交给"约束布局"引擎（compressed 是它的紧凑变体）
+# layout= 参数里这两个都交给"约束布局"引擎（compressed 是它的紧凑变体）；
+# 'tight' 是 TightLayoutEngine —— 它在**每次绘制**时重跑 tight_layout，
+# 与 rcParams['figure.autolayout'] 等价（都覆盖手动位置），归 autolayout 类。
 CONSTRAINED_VALUES = ('constrained', 'compressed')
+TIGHT_VALUES = ('tight',)
+# 裸名调用（`subplots(...)` 而不写 `plt.subplots(...)`）里只有这些**已知的
+# matplotlib 工厂**才带 layout=/constrained_layout= 语义。
+# 用白名单是为了不误报用户自己的 helper（`save_plot(constrained_layout=True)`）——
+# 那是 0.1.8 修过的假阳性（独立审阅 C5），别回退。
+# 属性调用（`mylib.save_plot(...)`）无法这样鉴别，仍按保守启发式报（已知边界）。
+BARE_LAYOUT_FUNCS = ('subplots', 'figure', 'Figure', 'subplot_mosaic')
 
 KIND_CONSTRAINED = 'constrained'
 KIND_AUTOLAYOUT = 'autolayout'
@@ -100,15 +120,25 @@ def scan_source(src: str) -> List[Dict[str, Any]]:
             # plt.subplots(2, 2, layout='constrained') / fig, ax = plt.subplots(
             #     constrained_layout=True) / plt.rc('figure', autolayout=True)
             #
-            # 关键词规则**只认 `xxx.yyy(...)` 形式**（callee 是 Attribute）：
-            # `constrained_layout=True` 是个很普通的关键词名，用户自己的
-            # `save_plot(constrained_layout=True)` 那种 helper 不该被误报成
-            # "你的布局引擎会覆盖位置"（独立审阅 C5）。
-            # 代价：`mylib.save_plot(constrained_layout=True)` 仍会被报 ——
-            # 那是"保守启发式"的已知边界，写在 docstring 里。
+            # 关键词规则按 callee 分两档（T11 / E15）：
+            #   * 属性调用 `xxx.yyy(...)`：认（这是最常见的形状）；
+            #   * **裸名调用**：只认 BARE_LAYOUT_FUNCS 白名单里的 matplotlib 工厂
+            #     （`from matplotlib.pyplot import subplots` 后直接 `subplots(
+            #     layout='constrained')` 过去完全扫不到）。
+            #     白名单是必要的：`constrained_layout=True` 是个很普通的关键词名，
+            #     用户自己的 `save_plot(constrained_layout=True)` 不该被误报成
+            #     "你的布局引擎会覆盖位置"（独立审阅 C5 修过的假阳性，别回退）。
+            #     代价：`mylib.save_plot(constrained_layout=True)` 仍会被报 ——
+            #     那是"保守启发式"的已知边界，写在 docstring 里。
             _attr_callee = isinstance(node.func, ast.Attribute)
+            _bare_ok = getattr(node.func, 'id', None) in BARE_LAYOUT_FUNCS
+            _kw_ok = _attr_callee or _bare_ok
+            # `set_layout_engine` 由下面专门的规则处理（它的实参是**引擎名**，
+            # 不是通用的 layout= kwarg），这里先排除，免得同一行报两次。
+            _is_set_le = (isinstance(node.func, ast.Attribute)
+                          and node.func.attr == 'set_layout_engine')
             for kw in node.keywords:
-                if not _attr_callee:
+                if not _kw_ok or _is_set_le:
                     continue
                 if kw.arg == 'constrained_layout' and _is_true(kw.value):
                     add(KIND_CONSTRAINED, kw.value.lineno,
@@ -120,17 +150,33 @@ def scan_source(src: str) -> List[Dict[str, Any]]:
                     if v in CONSTRAINED_VALUES:
                         add(KIND_CONSTRAINED, kw.value.lineno,
                             "layout='%s'" % v)
+                    elif v in TIGHT_VALUES:
+                        add(KIND_AUTOLAYOUT, kw.value.lineno,
+                            "layout='%s'" % v)
             fn = node.func
             if isinstance(fn, ast.Attribute):
                 if (fn.attr == 'set_constrained_layout' and node.args
                         and _is_true(node.args[0])):
                     add(KIND_CONSTRAINED, node.lineno,
                         '.set_constrained_layout(True)')
-                if (fn.attr == 'set_layout_engine' and node.args):
-                    v = _const_str(node.args[0])
-                    if v in CONSTRAINED_VALUES:
-                        add(KIND_CONSTRAINED, node.lineno,
-                            ".set_layout_engine('%s')" % v)
+                if fn.attr == 'set_layout_engine':
+                    # 位置参数与关键字 `layout=` 两种写法都认（E15）。
+                    # 'constrained'/'compressed' → 约束布局；'tight' → 自动布局
+                    # （TightLayoutEngine 每次绘制重跑）；None / 'none' /
+                    # 变量 → 不报（关掉引擎不该被当成冲突）。
+                    _vals = list(node.args)
+                    _vals += [kw.value for kw in node.keywords
+                              if kw.arg == 'layout']
+                    if _vals:
+                        v = _const_str(_vals[0])
+                        if v in CONSTRAINED_VALUES:
+                            add(KIND_CONSTRAINED,
+                                getattr(_vals[0], 'lineno', node.lineno),
+                                ".set_layout_engine('%s')" % v)
+                        elif v in TIGHT_VALUES:
+                            add(KIND_AUTOLAYOUT,
+                                getattr(_vals[0], 'lineno', node.lineno),
+                                ".set_layout_engine('%s')" % v)
             # plt.rcParams.update({...}) / matplotlib.rc_context({...})
             for arg in list(node.args) + [kw.value for kw in node.keywords]:
                 for key, val in _dict_items(arg):

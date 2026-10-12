@@ -34,6 +34,26 @@ os.environ['MPLTWEAK_LANG'] = 'zh'
 PY = sys.executable
 FIX = os.path.join(ROOT, 'tests', 'fixtures', 'synth_script.py')
 
+# GBK 控制台兜底（T13/T15）：CI 是 UTF-8 永远绿，本地 cp936 上一次 UnicodeEncodeError
+# 就把整个套件从 ALL PASS 变成 rc=1 的假红（T13 实测：detail 里混进 U+FFFD）。
+# 两层：① 输出流 errors='replace' 兜底；② 进 print 前先清洗（_gbk_safe）。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors='replace')
+    except (AttributeError, ValueError, OSError):
+        pass          # 被重定向成不支持 reconfigure 的对象时忽略即可
+
+
+def _gbk_safe(s):
+    """把字符串清洗成"当前输出流编得出来"的形式（U+FFFD 之类换成 ?）。"""
+    s = str(s)
+    enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+    try:
+        return s.encode(enc, 'replace').decode(enc, 'replace')
+    except (LookupError, UnicodeDecodeError):
+        return s.encode('ascii', 'backslashreplace').decode('ascii')
+
+
 # 版本号一律引用 SCHEMA_VERSION，别写字面量 —— schema 升到 4 时这里曾经硬编码 3 而挂掉
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 from mpltweak import params as _params                            # noqa: E402
@@ -42,8 +62,9 @@ _fails = []
 
 
 def check(cond, label, extra=''):
-    print('%s %s%s' % ('  OK  ' if cond else ' FAIL ', label,
-                       '' if cond else '   ' + str(extra)))
+    # 输出前清洗：extra 里可能混进子进程乱码（U+FFFD）→ GBK 控制台下 print 会崩（T13/T15）
+    print('%s %s%s' % ('  OK  ' if cond else ' FAIL ', _gbk_safe(label),
+                       '' if cond else '   ' + _gbk_safe(extra)))
     if not cond:
         _fails.append(label)
 
@@ -169,8 +190,15 @@ def main():
         props = s['properties']['axes']['items']['properties']
         check('pos' in props and 'grid' in props and 'legend' in props,
               'axis 属性齐全', sorted(props)[:5])
-        check(s.get('additionalProperties') is True,
-              'additionalProperties=True（未知键忽略的兼容约定）')
+        # CH-5 修法（0.1.9）：顶层 additionalProperties 由 True 收紧成 False，
+        # 并把 `describe --all-figs` 的 {n_figs, figures} 写进 schema ——
+        # 否则 schema 校验不了自己的产物（嵌套 axes 静默假通过）。
+        check(s.get('additionalProperties') is False,
+              'additionalProperties=False（顶层收紧，schema 校验自己的产物）')
+        check('figures' in s['properties'],
+              '--all-figs 的 figures 在 schema 里', sorted(s['properties'])[:8])
+        check(s['properties']['axes']['items'].get('additionalProperties') is True,
+              'axis 层仍宽松（未知轴字段继续被忽略）')
         try:
             import jsonschema
             jsonschema.validate(json.loads(full), s)
@@ -406,10 +434,13 @@ def main():
             'sys.exit(boom(["--json"]))\n'
         ) % os.path.join(ROOT, 'src')
         _r = subprocess.run([PY, '-c', _code], capture_output=True)
-        _out = (_r.stdout or b'').decode('utf-8', 'replace')
-        _errs = (_r.stderr or b'').decode('utf-8', 'replace')
-        check(_r.returncode == 1, '退出码 1（不是被 NameError 带走）',
-              _r.returncode)
+        # 冲突解法：退出码取**合并后实测**值（集成树 rc=2；基线 0.1.8 是 1）——
+        # T8 统一退出码矩阵后 internal_error 归 2，引擎副本缺该改动才写 1。
+        # 解码器取 incoming 的 _dec()（T13 的候选编码解码，避免 U+FFFD 进 print）。
+        _out = _dec(_r.stdout)
+        _errs = _dec(_r.stderr)
+        check(_r.returncode == 2,
+              '退出码 2 = "跑不起来"（不是被 NameError 带走）', _r.returncode)
         try:
             _d = json.loads(_out)
             check(_d.get('ok') is False
@@ -450,6 +481,21 @@ def main():
         check(len(conf) >= 1 and 'constrained_layout' in conf[0],
               'JSON 的 layout_conflicts 带出了冲突', conf)
 
+        # 幂等回归（0.1.9 E1/E5 的修法）：同一份参数再跑一次，写出来的块与磁盘上
+        # 的完全一致（只差说明行里的生成时间）→ 必须 no_change，人读输出不得再说
+        # "已写回"（旧行为：又写一遍 + 再报一次 ok）。
+        rc, out, err = run('apply', s11, '--write', '--json')
+        _r11b = json.loads(out)['files'][0]
+        check(_r11b.get('reason') == 'no_change',
+              '重复 apply = no_change（幂等，不再重复落盘）', _r11b.get('reason'))
+        check(_r11b.get('applied') is False,
+              '重复 apply 不落盘（applied=False）', _r11b.get('applied'))
+
+        # 人读输出的冲突提示：先把脚本复原（否则第二次是 no_change，按设计不报冲突 ——
+        # "没落地就没冲突可言"），再跑一次真实写回。
+        with open(s11, 'w', encoding='utf-8') as f:
+            f.write(CLAYOUT)
+        os.utime(os.path.join(pdir11, 'fig.json'), None)
         rc, out, err = run('apply', s11, '--write')
         check('[!]' in out and 'constrained_layout' in out,
               '人读输出也提示了（带行号）', out[-500:])
@@ -595,6 +641,321 @@ def main():
     finally:
         if tmp14:
             shutil.rmtree(tmp14, ignore_errors=True)
+
+    print('§15 执行边界（A1/A2）：sys.exit() 的脚本不能把 describe --all-figs 打空')
+    # 0.1.8：collect_all 缺 except SystemExit → `describe --all-figs` 对 sys.exit(0)
+    # 的脚本 rc=0 且 **stdout 零字节**；sys.exit(3) → rc=3、SystemExit(7) → rc=7
+    # （都不在文档退出码矩阵里）。MCP 的 describe_layout(all_figs=True) 更会把
+    # server 进程直接带走（见 test_mcp 的同源用例）。
+    tmp15 = None
+    try:
+        tmp15 = tempfile.mkdtemp(prefix='mpltweak_exit_')
+        _head = ("import matplotlib\nmatplotlib.use('Agg')\n"
+                 "import matplotlib.pyplot as plt\n"
+                 "fig = plt.figure(figsize=(4, 3))\n"
+                 "ax = fig.add_axes([0.15, 0.15, 0.7, 0.7])\n"
+                 "ax.plot([1, 2], [1, 2])\n"
+                 "ax.set_title('t')\n")
+        for _name, _tail in (('exit0.py', 'import sys\nsys.exit(0)\n'),
+                             ('exit3.py', 'import sys\nsys.exit(3)\n'),
+                             ('sexit7.py', 'raise SystemExit(7)\n')):
+            _p = os.path.join(tmp15, _name)
+            with open(_p, 'w', encoding='utf-8') as f:
+                f.write(_head + _tail)
+            rc, out, err = run('describe', _p, '--all-figs')
+            check(rc == 0, '%s → rc=0（退出码不被脚本顶掉）' % _name, rc)
+            try:
+                _d = json.loads(out)
+                _ok = (_d.get('n_figs') == 1 and len(_d.get('figures') or []) == 1)
+            except Exception as _e:                              # noqa: BLE001
+                _d, _ok = None, False
+                check(False, '%s → stdout 可解析 JSON' % _name, _e)
+            else:
+                check(_ok, '%s → 输出完整的 figures 包装' % _name, _d)
+            rc1, out1, _ = run('describe', _p)
+            check(rc1 == 0 and json.loads(out1).get('version'),
+                  '%s → 单图路径同样正常（行为一致）' % _name, rc1)
+    except Exception as _e:                                      # noqa: BLE001
+        check(False, '§15 执行', _e)
+    finally:
+        if tmp15:
+            shutil.rmtree(tmp15, ignore_errors=True)
+
+    print('§16 执行边界（A1/A3）：同一进程连查多个脚本不再互相污染')
+    # 0.1.8：check/describe/MCP 都在**工具自己的进程**里 runpy 跑用户脚本 →
+    # sys.path 不回收（同一个脚本的判定随调用历史翻转）、sys.modules 陈旧
+    # （改了 helper 仍读旧值）、rcParams 串味（12.0 → 26.4，污染值会被 apply 写进源码）。
+    # 0.1.9 把执行挪进子进程；这里从库层面钉住"三路都不串味"。
+    tmp16 = None
+    try:
+        tmp16 = tempfile.mkdtemp(prefix='mpltweak_iso_')
+        _a = os.path.join(tmp16, 'A')
+        _b = os.path.join(tmp16, 'B')
+        os.makedirs(_a)
+        os.makedirs(_b)
+        with open(os.path.join(_a, 'only_a.py'), 'w', encoding='utf-8') as f:
+            f.write('VALUE = "from-A"\n')
+        _head = ("import matplotlib\nmatplotlib.use('Agg')\n"
+                 "import matplotlib.pyplot as plt\n"
+                 "fig = plt.figure(figsize=(4, 3))\n"
+                 "ax = fig.add_axes([0.15, 0.15, 0.7, 0.7])\n"
+                 "ax.plot([1, 2], [1, 2])\n")
+        _bscript = os.path.join(_b, 'leak_b.py')
+        with open(_bscript, 'w', encoding='utf-8') as f:
+            f.write(_head + "import only_a\nax.set_title(only_a.VALUE)\n")
+        _polluter = os.path.join(tmp16, 'polluter.py')
+        with open(_polluter, 'w', encoding='utf-8') as f:
+            f.write(_head + 'matplotlib.rcParams["font.size"] = 22\n')
+        _clean = os.path.join(tmp16, 'clean.py')
+        with open(_clean, 'w', encoding='utf-8') as f:
+            f.write(_head + 'ax.set_title("t")\n')
+        _driver = '''
+import os, sys
+sys.path.insert(0, "@SRC@")
+os.environ["MPLBACKEND"] = "Agg"
+from mpltweak import verify
+path_before = list(sys.path)
+mods_before = set(sys.modules)
+B, A, POLL, CLEAN = r"@B@", r"@A@", r"@POLL@", r"@CLEAN@"
+err_b = verify.collect_isolated(B)[1]
+verify.collect_isolated(A)
+err_b2 = verify.collect_isolated(B)[1]
+s1 = verify.collect_isolated(CLEAN)[0]
+verify.collect_isolated(POLL)
+s3 = verify.collect_isolated(CLEAN)[0]
+def title(s):
+    return (s or {}).get("axes", [{}])[0].get("title_fontsize")
+leftover = sorted(k for k in sys.modules if k not in mods_before
+                  and not k.startswith("_") and k != "string")
+print("RESULT " + "|".join([
+    str("ModuleNotFoundError" in (err_b or "")),
+    str("ModuleNotFoundError" in (err_b2 or "")),
+    str(sys.path == path_before),
+    repr(leftover),
+    str(title(s1) == title(s3))]))
+'''.replace('@SRC@', os.path.join(ROOT, 'src')).replace('@B@', _bscript) \
+   .replace('@A@', _a).replace('@POLL@', _polluter).replace('@CLEAN@', _clean)
+        _r = subprocess.run([PY, '-c', _driver], capture_output=True,
+                            env=dict(os.environ, MPLBACKEND='Agg'))
+        _out = (_r.stdout or b'').decode('utf-8', 'replace')
+        _line = [l for l in _out.splitlines() if l.startswith('RESULT ')]
+        if not _line:
+            check(False, '隔离驱动跑通', _out[-300:] + (_r.stderr or b'')[-300:].decode('utf-8', 'replace'))
+        else:
+            _f = _line[0][len('RESULT '):].split('|')
+            check(_f[0] == 'True', 'B 第一次：ModuleNotFoundError（B 目录没有 only_a）', _f)
+            check(_f[1] == 'True',
+                  '跑过 A 之后同一个 B **仍然** ModuleNotFoundError（判定不翻转）',
+                  _f)
+            check(_f[2] == 'True', 'sys.path 采集后原样还原', _f)
+            check(_f[3] == '[]', 'sys.modules 没有新增用户脚本的模块', _f)
+            check(_f[4] == 'True',
+                  'rcParams 不串味：污染脚本前后 clean 的字号一致（12.0）', _f)
+    except Exception as _e:                                      # noqa: BLE001
+        check(False, '§16 执行', _e)
+    finally:
+        if tmp16:
+            shutil.rmtree(tmp16, ignore_errors=True)
+
+    print('§17 退出码矩阵（CH-6）：describe 的失败码与 check/apply 一致')
+    _missing = os.path.join(tempfile.gettempdir(), 'mpltweak_definitely_missing.py')
+    rc, out, err = run('describe', _missing)
+    check(rc == 2, 'describe 找不到脚本 → rc=2（0.1.8 是 1）', rc)
+    try:
+        check(json.loads(out).get('error_code') == 'file_not_found',
+              '结构化 JSON 仍给 error_code', out[:120])
+    except Exception as _e:                                      # noqa: BLE001
+        check(False, 'describe 失败仍给 JSON', _e)
+    rc, out, err = run('check', _missing)
+    check(rc == 2, 'check 找不到脚本 → rc=2（两边一致）', rc)
+
+    print('§18 CH-9：schema 不再忽略参数（--help / 未知参数）')
+    rc, out, err = run('schema')
+    check(rc == 0 and json.loads(out).get('$schema'), 'schema 本身照常输出', rc)
+    rc, out, err = run('schema', '--help')
+    # 语言可能中英（CI 是 en、本地是 zh）——这里只断言"给的是用法、不是 JSON"
+    check(rc == 0 and 'mpltweak schema' in (out + err)
+          and not out.strip().startswith('{'),
+          '--help → 用法，而不是原样吐 JSON', (rc, out[:60]))
+    rc, out, err = run('schema', '--bogus', 'extra.py')
+    check(rc == 2, '未知参数 → rc=2（0.1.8：rc=0 且照常吐 JSON）', rc)
+    check(out.strip() == '', 'stdout 干净（错误走 stderr）', repr(out[:60]))
+    rc, out, err = run('schema', '--compact')
+    check(rc == 0 and json.loads(out).get('title'),
+          '--compact 仍然可用', rc)
+
+    print('§19 T26：describe 的图元字段（cmap / legend / lines）')
+    # 0.1.8：白名单里 `lines` 硬编码 `[]`（图里明明有线却报"没有线"），cmap/legend
+    # 压根没有键 —— 而 schema 里它们都是正式属性。这里钉住三件事：
+    #   ① 采集侧真给值时，describe 要原样搬运（stub state 单测）；
+    #   ② 采集侧没给（旧 state）时，三个键**不能出现**（不是空数组假字段）；
+    #   ③ 端到端：带 colorbar / 带自定义 legend / 普通折线三种脚本都过 schema。
+    from mpltweak.describe import _to_params
+    _stub_base = {'index': 0, 'pos': [0.1, 0.1, 0.8, 0.8], 'grid': True,
+                  'spines': {}, 'xscale': 'linear', 'yscale': 'linear'}
+    _old = _to_params({'axes': [dict(_stub_base)]}, 'x.py')['axes'][0]
+    check(not any(k in _old for k in ('cmap', 'legend', 'lines')),
+          '旧 state（采集侧没给）→ 三个键都不出现（不是 lines: [] 假字段）',
+          sorted(k for k in _old if k in ('cmap', 'legend', 'lines')))
+    _stub = dict(_stub_base, _cmap='viridis',
+                 _legend={'labels': ['a'], 'n_handles': 1, 'fontsize': 8.0},
+                 _lines=[{'index': 0, 'linewidth': 2.5, 'color': '#d62728'}])
+    _new = _to_params({'axes': [_stub]}, 'x.py')['axes'][0]
+    check(_new.get('cmap') == 'viridis'
+          and _new.get('legend') == {'labels': ['a'], 'n_handles': 1,
+                                     'fontsize': 8.0}
+          and _new.get('lines') == [{'index': 0, 'linewidth': 2.5,
+                                     'color': '#d62728'}],
+          '新 state → 三个键被原样搬运', {k: _new.get(k) for k in
+                                         ('cmap', 'legend', 'lines')})
+
+    try:
+        import jsonschema                                              # noqa: F401
+        _have_js = True
+    except ImportError:                    # CI 只装 matplotlib/numpy/mcp
+        _have_js = False
+    rc, out, err = run('schema')
+    _schema = json.loads(out)
+    _HEAD = ("import matplotlib\nmatplotlib.use('Agg')\n"
+             "import matplotlib.pyplot as plt\n")
+    _CASES = {
+        'colorbar': _HEAD + (
+            'fig, ax = plt.subplots(figsize=(6, 4))\n'
+            'im = ax.imshow([[1, 2], [3, 4]], cmap="viridis")\n'
+            'fig.colorbar(im, ax=ax)\n'
+            'ax.plot([1, 2, 3], linewidth=2.5, color="#d62728")\n'),
+        'legend': _HEAD + (
+            'fig, ax = plt.subplots(figsize=(6, 4))\n'
+            'ax.plot([1, 2, 3], label="alpha")\n'
+            'ax.plot([3, 2, 1], label="beta")\n'
+            'ax.plot([2, 2, 2], linestyle="--")\n'
+            'ax.legend(loc="upper left", fontsize=9)\n'),
+        'plain': _HEAD + (
+            'fig, ax = plt.subplots(figsize=(6, 4))\n'
+            'ax.plot([1, 2, 3], linewidth=1.0)\n'),
+    }
+    _tmp19 = tempfile.mkdtemp(prefix='mpltweak_t26_')
+    try:
+        _got = {}
+        for _name, _body in _CASES.items():
+            _p = os.path.join(_tmp19, _name + '.py')
+            with open(_p, 'w', encoding='utf-8') as f:
+                f.write(_body + 'fig.savefig("o.png")\n')
+            rc, out, err = run('describe', _p)
+            _d = json.loads(out)
+            _got[_name] = _d
+            check(rc == 0 and _d['axes'], '%s：describe 正常' % _name, rc)
+            if _have_js:
+                try:
+                    jsonschema.validate(_d, _schema)
+                    check(True, '%s：产物通过 mpltweak schema' % _name)
+                except Exception as _e:                                # noqa: BLE001
+                    check(False, '%s：产物通过 mpltweak schema' % _name, _e)
+            else:
+                check(True, '%s：（未装 jsonschema，跳过真校验）' % _name)
+        _cb = _got['colorbar']['axes'][0]
+        check(_cb.get('cmap') == 'viridis',
+              'colorbar 图：ax0 采到 cmap=viridis', _cb.get('cmap'))
+        check(_cb.get('lines') and _cb['lines'][0].get('index') == 0
+              and _cb['lines'][0].get('linewidth') == 2.5
+              and _cb['lines'][0].get('color') == '#d62728',
+              'colorbar 图：lines 是真实线（index/linewidth/color 齐全，不再恒 []）',
+              _cb.get('lines'))
+        _lg = _got['legend']['axes'][0].get('legend') or {}
+        # 关键：用**图例自身内容**。ax.get_legend_handles_labels() 会把没进图例的
+        # 第三条（无 label 的虚线）也算进来（GUI 侧 #2c 同款坑）。
+        check(_lg.get('labels') == ['alpha', 'beta'] and _lg.get('n_handles') == 2,
+              'legend 图：条目文本/句柄数来自图例自身（无 label 的线不进图例）', _lg)
+        check(_lg.get('fontsize') == 9.0 and _lg.get('loc') == 'upper left',
+              'legend 图：字号与标准位名也采到', _lg)
+        _pl = _got['plain']['axes'][0]
+        check(_pl.get('lines') and len(_pl['lines']) == 1
+              and _pl['lines'][0].get('color') == '#1f77b4',
+              '普通折线图：lines 有 1 项、颜色归一成 #rrggbb', _pl.get('lines'))
+        check('cmap' not in _pl and 'legend' not in _pl,
+              '没有图像/图例的轴：这两键不出现（不是 null 占位）', sorted(_pl))
+        rc, out, err = run('describe', os.path.join(_tmp19, 'legend.py'),
+                           '--all-figs')
+        if _have_js:
+            try:
+                jsonschema.validate(json.loads(out), _schema)
+                check(True, '--all-figs 产物同样通过 schema')
+            except Exception as _e:                                    # noqa: BLE001
+                check(False, '--all-figs 产物同样通过 schema', _e)
+    except Exception as _e:                                            # noqa: BLE001
+        check(False, '§19 执行', _e)
+    finally:
+        shutil.rmtree(_tmp19, ignore_errors=True)
+
+    print('§20 T26/T25：字号 x/y 分列（tick_fontsize_y）与 compare 的独立口径')
+    # 背景：GUI 导出侧从 0.1.9 起分列输出 tick_fontsize(x) / tick_fontsize_y(y)，
+    # 写回侧由引擎线分列落地。语义比对**必须**逐字段回比 —— 只比 x 的话，
+    # "只改了 y 刻度字号"这件事在验证里完全隐形（假通过）。
+    from mpltweak import verify as _verify
+    _tmp20 = tempfile.mkdtemp(prefix='mpltweak_t26y_')
+    try:
+        _p20 = os.path.join(_tmp20, 'y.py')
+        with open(_p20, 'w', encoding='utf-8') as f:
+            f.write("import matplotlib\nmatplotlib.use('Agg')\n"
+                    "import matplotlib.pyplot as plt\n"
+                    "fig, ax = plt.subplots(figsize=(6, 4))\n"
+                    "ax.plot([1, 2, 3])\n"
+                    "ax.tick_params(axis='x', labelsize=9)\n"
+                    "ax.tick_params(axis='y', labelsize=13)\n"
+                    "ax.set_xlabel('X', fontsize=8)\n"
+                    "ax.set_ylabel('Y', fontsize=15)\n"
+                    "fig.savefig('o.png')\n")
+        rc, out, err = run('describe', _p20)
+        _a20 = json.loads(out)['axes'][0]
+        check(_a20.get('tick_fontsize') == 9.0
+              and _a20.get('tick_fontsize_y') == 13.0,
+              'describe 采集 x/y 刻度字号（9 / 13，不再只有 x）',
+              (_a20.get('tick_fontsize'), _a20.get('tick_fontsize_y')))
+        check(_a20.get('label_fontsize') == 8.0
+              and _a20.get('label_fontsize_y') == 15.0,
+              'describe 采集 x/y 轴标签字号（8 / 15）',
+              (_a20.get('label_fontsize'), _a20.get('label_fontsize_y')))
+
+        def _mk(idx=0, **kw):
+            base = {'index': idx, 'pos': [0.1, 0.1, 0.8, 0.8],
+                    'xscale': 'linear', 'yscale': 'linear', 'grid': True,
+                    'spines': {}, 'cell': None}
+            base.update(kw)
+            return base
+        check(_verify.compare([_mk(tick_fontsize=9, tick_fontsize_y=12)],
+                              [_mk(tick_fontsize=9, tick_fontsize_y=13)]),
+              '只改 y 刻度字号（x 相同）→ compare 必须报出 tick_fontsize_y',
+              _verify.compare([_mk(tick_fontsize=9, tick_fontsize_y=12)],
+                              [_mk(tick_fontsize=9, tick_fontsize_y=13)]))
+        check(not _verify.compare([_mk(tick_fontsize=9, tick_fontsize_y=13)],
+                                  [_mk(tick_fontsize=9, tick_fontsize_y=13)]),
+              'x/y 都对 → 不报')
+        # T73（零兼容）：参数里**没带** label_fontsize_y → **只按 x 比** ——
+        # 不再拿实测的 y 当合法值（旧口径会让"只改了 y"在语义验证里完全隐形）。
+        check(_verify.compare([_mk(label_fontsize=15)],
+                              [_mk(label_fontsize=8, label_fontsize_y=15)]),
+              'T73（零兼容）：参数没带 label_fontsize_y → 只按 x 比（x 不同必须报）')
+        check(_verify.compare([_mk(label_fontsize=8, label_fontsize_y=20)],
+                              [_mk(label_fontsize=8, label_fontsize_y=15)]),
+              '新参数带 label_fontsize_y：y 独立比（不同 → 报）')
+        check(_verify.compare([_mk(label_fontsize=20, label_fontsize_y=15)],
+                              [_mk(label_fontsize=8, label_fontsize_y=15)]),
+              '新参数带 label_fontsize_y：x 独立比（不同 → 报）')
+
+        # 端到端（真起子进程重跑脚本 + 逐字段回比）：参数说 y=12、脚本实际 13
+        _data20 = {'version': _params.SCHEMA_VERSION,
+                   'script': os.path.basename(_p20), 'figsize_in': [6.0, 4.0],
+                   'axes': [_mk(tick_fontsize=9, tick_fontsize_y=12,
+                                label_fontsize=8, label_fontsize_y=15,
+                                pos=[0.125, 0.11, 0.775, 0.77], grid=False)]}
+        _sok, _detail = _verify.verify_semantic(_p20, _data20)
+        check(_sok is False and 'tick_fontsize_y' in (_detail or ''),
+              '语义验证端到端覆盖 tick_fontsize_y（不再假通过）',
+              (_sok, _detail))
+    except Exception as _e:                                            # noqa: BLE001
+        check(False, '§20 执行', _e)
+    finally:
+        shutil.rmtree(_tmp20, ignore_errors=True)
 
     print()
     if _fails:

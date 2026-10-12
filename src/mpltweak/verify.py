@@ -22,13 +22,17 @@ mpltweak.verify —— 语义验证：写回后重跑脚本，dump **目标图�
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import runpy
 import subprocess
 import sys
+import tempfile
 import threading
 from typing import Any, Dict, List, Optional, Tuple
+
+from . import messages as _msg
 
 POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
 FS_TOL = 0.51         # 字号容差（磅）
@@ -144,6 +148,194 @@ def _collect_texts(fig, axes_items) -> Tuple[List[Dict], str]:
     return out, ''
 
 
+# ---------------------------------------------------------------------------
+# T26：图元级状态（cmap / legend / lines）
+#
+# 为什么要在**这里**采：describe 的产物是 `_state()` 的白名单搬运 —— 采集侧不给，
+# describe 就永远拿不到，只能硬编码一个假的 `lines: []`（0.1.8 就是这样）。
+#
+# 口径与 GUI（``toolbox._snapshot``）对齐，字段名/取值风格一致，免得同一个参数
+# 文件在"开窗存的"与"describe 导出的"之间出现两套格式：
+#   * ``_cmap``   —— 该轴上有 mappable 时给 colormap 名（imshow / pcolormesh /
+#                    contourf 分别注册在 ax.images / ax.collections，统一扫一遍）；
+#   * ``_lines``  —— ``ax.get_lines()`` 每根线一项 {index, linewidth, color}，
+#                    color 归一成 '#rrggbb'（与 toolbox 的导出格式一致）；
+#   * ``_legend`` —— **从图例对象自己身上取**（``get_texts()`` / ``legend_handles``）。
+#                    不用 ``ax.get_legend_handles_labels()``：那个会把"图里所有带
+#                    label 的图元"都算进来，与用户看到的图例内容不是一回事
+#                    （GUI 侧刚抓到同款坑：拖动后把手刻意排除的图元又冒出来了）。
+#
+# 三条纪律：
+#   1. **不额外 draw** —— 全部是反射式读取，沿用现有采集时机；
+#   2. **取不到就不写键** —— 绝不写 None / 空壳（消费者要能区分"没有"与"没采到"）；
+#   3. **绝不参与比对** —— ``compare()`` 不读这三个字段（把 cmap/lines/legend 纳入
+#      语义比对是下一批的事，本轮只采集与输出）。
+# ---------------------------------------------------------------------------
+_LEGEND_LOC_NAMES = ('best', 'upper right', 'upper left', 'lower left',
+                     'lower right', 'right', 'center left', 'center right',
+                     'lower center', 'upper center', 'center')
+
+
+def _line_width(line) -> Optional[float]:
+    """线的粗细（取不到给 None）。"""
+    try:
+        v = line.get_linewidth()
+    except (AttributeError, ValueError, TypeError):
+        return None
+    if isinstance(v, (tuple, list)):
+        v = v[0] if v else None
+    try:
+        return round(float(v), 4)
+    except (TypeError, ValueError):
+        return None
+
+
+def _line_color(line) -> Optional[str]:
+    """线的颜色 → ``'#rrggbb'``（取不到给 None）。
+
+    统一成十六进制字符串：JSON 里可以直接比较，也能原样喂给 ``set_color('#rrggbb')``；
+    numpy 数组/元组直接 json.dump 会失败（与 toolbox._line_color 同一理由）。
+    """
+    import matplotlib.colors as mcolors
+    for getter in ('get_color', 'get_edgecolor'):
+        fn = getattr(line, getter, None)
+        if fn is None:
+            continue
+        try:
+            v = fn()
+        except (AttributeError, ValueError, TypeError):
+            continue
+        if isinstance(v, str):
+            if not mcolors.is_color_like(v):
+                continue
+            try:
+                return mcolors.to_hex(v, keep_alpha=False)
+            except (ValueError, TypeError):
+                continue
+        if isinstance(v, (tuple, list)) and len(v) in (3, 4):
+            try:
+                return mcolors.to_hex([float(x) for x in v[:3]],
+                                      keep_alpha=False)
+            except (ValueError, TypeError):
+                continue
+        # numpy 数组（imshow 之类给的 RGBA 数组）：显式转 list 再试一次
+        try:
+            vals = [float(x) for x in v[:3]]
+        except (TypeError, ValueError, IndexError):
+            continue
+        try:
+            return mcolors.to_hex(vals, keep_alpha=False)
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _lines_state(ax) -> Optional[List[Dict[str, Any]]]:
+    """``ax.get_lines()`` → ``[{index, linewidth, color}, ...]``（取不到给 None）。"""
+    try:
+        lines = list(ax.get_lines())
+    except (AttributeError, ValueError, TypeError):
+        return None
+    out = []
+    for j, line in enumerate(lines):
+        item = {'index': j, 'linewidth': _line_width(line)}
+        color = _line_color(line)
+        if color:
+            item['color'] = color
+        out.append(item)
+    return out
+
+
+def _legend_state(ax) -> Optional[Dict[str, Any]]:
+    """图例的**实际内容**（取不到给 None）。
+
+    给的是"用户在图上看到的那些条目"：``labels``（文字）+ ``n_handles``（句柄数）
+    + 能取到就带 ``fontsize`` / ``loc``。
+
+    ``loc`` 只在能解析成 matplotlib 标准位名时才写；**不写 ``anchor``** ——
+    GUI 侧的 ``anchor`` 是"用户拖到哪"的会话状态，verify 这里根本无从得知，
+    硬填 bbox_to_anchor 会把它变成另一个含义（宁缺勿假）。
+    """
+    get_legend = getattr(ax, 'get_legend', None)
+    if get_legend is None:
+        return None
+    try:
+        leg = get_legend()
+    except (AttributeError, ValueError, TypeError):
+        return None
+    if leg is None:
+        return None
+    out: Dict[str, Any] = {}
+    labels: List[str] = []
+    try:
+        labels = [t.get_text() for t in leg.get_texts()]
+    except (AttributeError, ValueError, TypeError):
+        labels = []
+    out['labels'] = labels
+    handles = getattr(leg, 'legend_handles', None)
+    if handles is None:                       # matplotlib < 3.7 的旧名
+        handles = getattr(leg, 'legendHandles', None)
+    try:
+        out['n_handles'] = len(handles) if handles is not None else len(labels)
+    except TypeError:
+        out['n_handles'] = len(labels)
+    if labels:
+        try:
+            fs = labels and leg.get_texts()[0].get_fontsize()
+            if fs is not None:
+                out['fontsize'] = round(float(fs), 4)
+        except (AttributeError, ValueError, TypeError, IndexError):
+            pass
+    loc = None
+    for getter in ('get_loc', '_get_loc'):    # 公开名优先，私名兜底
+        fn = getattr(leg, getter, None)
+        if fn is None:
+            continue
+        try:
+            loc = fn()
+        except (AttributeError, ValueError, TypeError):
+            loc = None
+        if loc is not None:
+            break
+    if isinstance(loc, int) and 0 <= loc < len(_LEGEND_LOC_NAMES):
+        out['loc'] = _LEGEND_LOC_NAMES[loc]
+    elif isinstance(loc, str):
+        out['loc'] = loc
+    return out
+
+
+def _artist_state(ax) -> Dict[str, Any]:
+    """图元级状态（cmap / legend / lines）：取不到的项**不写键**（见本节开头）。"""
+    out: Dict[str, Any] = {}
+    # --- cmap：imshow / pcolormesh → ax.images；contourf → ax.collections；
+    #     colorbar 槽轴的图元也在同样的两个容器里 ---
+    for pool in (getattr(ax, 'images', None), getattr(ax, 'collections', None)):
+        if not pool:
+            continue
+        for artist in pool:
+            get_cmap = getattr(artist, 'get_cmap', None)
+            if get_cmap is None:
+                continue
+            try:
+                name = getattr(get_cmap(), 'name', None)
+            except (AttributeError, ValueError, TypeError):
+                continue
+            if name:
+                out['_cmap'] = name
+                break
+        if '_cmap' in out:
+            break
+    # --- lines ---
+    lines = _lines_state(ax)
+    if lines is not None:
+        out['_lines'] = lines
+    # --- legend ---
+    legend = _legend_state(ax)
+    if legend is not None:
+        out['_legend'] = legend
+    return out
+
+
 def _state(fig, with_text: bool = False) -> Dict[str, Any]:
     """抽取图形的可比对状态（口径同 toolbox.export）。"""
     from .toolbox import _bbox, _clim_of, _title_fs
@@ -163,6 +355,13 @@ def _state(fig, with_text: bool = False) -> Dict[str, Any]:
         tls = ax.get_xticklabels()
         if tls:
             item['tick_fontsize'] = tls[0].get_fontsize()
+        # T75b：y 刻度字号**独立采集**（与 label_fontsize_y 同构）。
+        # T73 之后"参数没写 y 就一个字节都不动 y"，比对侧要能真的判 y 侧；
+        # 不采的话 `tick_fontsize_y` 只有一个期望值、没有实际值 —— 那正是
+        # "没比却说通过"的来源。
+        yls = ax.get_yticklabels()
+        if yls:
+            item['tick_fontsize_y'] = yls[0].get_fontsize()
         try:
             from .toolbox import _is_colorbar_ax
             item['is_colorbar'] = bool(_is_colorbar_ax(ax))
@@ -207,6 +406,9 @@ def _state(fig, with_text: bool = False) -> Dict[str, Any]:
             # 显式写 None：compare 需要区分"这个轴不是网格轴"与"没采到"
             _g = ident.get('grid')
             item['cell'] = list(_g) if _g else None
+        # T26：图元级状态（cmap / legend / lines）。取不到的项**不写键** ——
+        # describe 过去硬编码 `lines: []`，图里明明有线却报"没有线"，那是假字段。
+        item.update(_artist_state(ax))
         axes.append(item)
     try:
         px = list(fig.canvas.get_width_height())
@@ -267,67 +469,52 @@ def _fd_restore(saved):
         pass
 
 
-def collect_all(script: str, with_text: bool = False
-                ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
-    """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
-
-    与 collect 同一套拦截口径（plt.show / plt.close / matplotlib.use /
-    switch_backend 全拦掉，cwd 切到脚本目录），只是把每张图都抽出来，
-    每张附加 fig_index（0-based，顺序同 plt.get_fignums()）与 n_figs。
-    """
+# ---------------------------------------------------------------------------
+# A3：进程全局状态的快照 / 还原
+#
+# sys.path / sys.modules / matplotlib rcParams 都是**进程级**状态，而 MCP server
+# 与"把 verify 当库用"的调用方是长驻的 —— 不回收就会跨界污染（CH-2，T6 独立复现）：
+#   * sys.path 留着上一个脚本的目录 → B 脚本能 import 到只存在于 A 目录的模块，
+#     同一个脚本的判定随调用历史翻转（先失败、后成功）；
+#   * sys.modules 留着旧模块 → 改了 helper 之后仍读旧值（1 vs 干净的 2）；
+#   * rcParams 串味 → 量出的字号是上一个脚本的值（12.0 → 26.4），而这份数值会被
+#     `apply --write` 如实写进用户源码。
+# A1 把用户脚本挪进子进程之后，CLI / MCP 路径上已经是双保险；但库嵌入场景
+# （直接调 verify.collect）只有这一层，所以两层都要有。
+# ---------------------------------------------------------------------------
+def _snapshot_process_state() -> Dict[str, Any]:
     import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    plt.switch_backend('Agg')
+    return {'path': list(sys.path),
+            'modules': set(sys.modules),
+            'rc': dict(matplotlib.rcParams)}
 
-    real = (plt.show, plt.close, matplotlib.use, plt.switch_backend)
-    plt.show = lambda *a, **k: None
-    plt.close = lambda *a, **k: None
-    matplotlib.use = lambda *a, **k: None
-    plt.switch_backend = lambda *a, **k: None
-    # 脚本自己的 print 绝不能污染调用方的 stdout —— MCP server 正是用 stdout 传
-    # JSON-RPC，混进一行 "savefig done" 就会让客户端解析失败。一律改道 stderr。
-    _real_stdout = sys.stdout
-    sys.stdout = sys.stderr
-    _fd_saved = _fd_to_stderr()     # fd 层也接过去：脚本 os.write(1,...) 拦得住
-    d = os.path.dirname(os.path.abspath(script))
-    _CHDIR_LOCK.acquire()          # cwd 是进程级全局状态，见 _CHDIR_LOCK 处说明
-    old = os.getcwd()
-    os.chdir(d)
-    if d not in sys.path:
-        sys.path.insert(0, d)
+
+def _restore_process_state(snap: Dict[str, Any]) -> None:
+    """把快照还原（只做"删掉新增的 / 改回改动的"，不动调用方自己的状态）。"""
+    import matplotlib
     try:
-        runpy.run_path(script, run_name='__main__')
-        nums = plt.get_fignums()
-        if not nums:
-            return None, '脚本没有留下任何图（可能存完图就 close 了）'
-        out = []
-        for _k, _num in enumerate(nums):
-            _st = _state(plt.figure(_num), with_text=with_text)
-            _st['fig_index'] = _k
-            _st['n_figs'] = len(nums)
-            out.append(_st)
-        return out, ''
-    except Exception as e:                       # noqa: BLE001
-        return None, '%s: %s' % (type(e).__name__, e)
-    finally:
-        plt.show, plt.close, matplotlib.use, plt.switch_backend = real
+        sys.path[:] = snap['path']
+    except (TypeError, ValueError):
+        pass
+    for name in [k for k in sys.modules if k not in snap['modules']]:
+        del sys.modules[name]
+    rc = matplotlib.rcParams
+    changed = {k: v for k, v in snap['rc'].items() if k in rc and rc[k] != v}
+    if changed:
         try:
-            plt.close('all')            # 先做可能打印的清理，再恢复 stdout
-        except Exception:                        # noqa: BLE001
+            rc.update(changed)
+        except (KeyError, ValueError, TypeError):
+            # 个别键在当前 matplotlib 上是只读/已弃用的：尽力还原，不为它崩掉采集
             pass
-        _fd_restore(_fd_saved)
-        sys.stdout = _real_stdout
-        os.chdir(old)
-        _CHDIR_LOCK.release()
 
 
-def collect(script: str, fig_index: Optional[int] = None,
-            with_text: bool = False) -> Tuple[Optional[Dict], str]:
-    """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
+@contextlib.contextmanager
+def _collect_session(script: str):
+    """一次"跑用户脚本"的进程状态边界：cwd / sys.stdout / fd1 / 全局状态。
 
-    与 launch 一样拦掉 plt.show / plt.close / matplotlib.use / switch_backend，
-    并以脚本所在目录为 cwd（脚本里的相对路径/存图位置才和平时一致）。
+    进块之前摆好拦截（plt.show / plt.close / matplotlib.use / switch_backend
+    全拦掉，cwd 切到脚本目录），出块时**无论成功失败**都还原 —— 包括 A3 的
+    sys.path / sys.modules / rcParams 快照。yield 出 ``pyplot`` 给调用方用。
     """
     import matplotlib
     matplotlib.use('Agg')
@@ -344,56 +531,15 @@ def collect(script: str, fig_index: Optional[int] = None,
     _real_stdout = sys.stdout
     sys.stdout = sys.stderr
     _fd_saved = _fd_to_stderr()     # fd 层也接过去：脚本 os.write(1,...) 拦得住
+    snap = _snapshot_process_state()
     d = os.path.dirname(os.path.abspath(script))
     _CHDIR_LOCK.acquire()          # cwd 是进程级全局状态，见 _CHDIR_LOCK 处说明
     old = os.getcwd()
     os.chdir(d)
-    if d not in sys.path:
-        sys.path.insert(0, d)
     try:
-        runpy.run_path(script, run_name='__main__')
-        nums = plt.get_fignums()
-        if not nums:
-            return None, '脚本没有留下任何图（可能存完图就 close 了）'
-        # 越界必须报错，不能静默返回最后一张：调用方（agent）会拿到"另一张图"的
-        # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
-        # 负值（含 verify 子进程约定的 -1）表示"最后一张"，不是越界。
-        # 越界只针对 >= 0 的序号：静默返回最后一张会让调用方拿到另一张图的
-        # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
-        if isinstance(fig_index, int) and fig_index >= 0 \
-                and not (0 <= fig_index < len(nums)):
-            return None, ('第 %d 张图不存在（脚本共留下 %d 张）；'
-                          '请用 0..%d 之间的序号，或用 --all-figs 全部导出'
-                          % (fig_index, len(nums), len(nums) - 1))
-        idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
-               else len(nums) - 1)
-        st = _state(plt.figure(nums[idx]), with_text=with_text)
-        # 必须自报家门：产物会被直接喂回 apply，而 apply 在没有 fig_index 时
-        # 只能按第 0 张处理 → 参数会落到错的图上（多图脚本的 agent 闭环曾 100% 中招）。
-        st['fig_index'] = idx
-        st['n_figs'] = len(nums)
-        return st, ''
-    except SystemExit:
-        # 脚本自己 sys.exit()：不算采集失败 —— 图还挂在 Gcf 上，继续往下取。
-        # 原先只捕 Exception，SystemExit 会直接穿出去：CLI 退出码被顶成脚本的
-        # 退出码，而 --json 下 stdout 一个字节都没有（t3-#9 / t6）。
-        try:
-            nums = plt.get_fignums()
-        except Exception:                        # noqa: BLE001
-            nums = []
-        if not nums:
-            return None, '脚本 sys.exit 退出，且没有留下任何图'
-        idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
-               else len(nums) - 1)
-        if not (0 <= idx < len(nums)):
-            return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
-                          % (fig_index, len(nums)))
-        st = _state(plt.figure(nums[idx]), with_text=with_text)
-        st['fig_index'] = idx
-        st['n_figs'] = len(nums)
-        return st, ''
-    except Exception as e:                       # noqa: BLE001
-        return None, '%s: %s' % (type(e).__name__, e)
+        if d not in sys.path:
+            sys.path.insert(0, d)
+        yield plt
     finally:
         plt.show, plt.close, matplotlib.use, plt.switch_backend = real
         try:
@@ -404,6 +550,202 @@ def collect(script: str, fig_index: Optional[int] = None,
         sys.stdout = _real_stdout
         os.chdir(old)
         _CHDIR_LOCK.release()
+        _restore_process_state(snap)
+
+
+def _states_of_all_figs(plt, with_text: bool, exited: bool = False
+                        ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+    """把所有 figure 采成状态列表（``collect_all`` 的正常 / SystemExit 两条路共用）。"""
+    try:
+        nums = list(plt.get_fignums())
+        if not nums:
+            return None, ('脚本 sys.exit 退出，且没有留下任何图' if exited
+                          else '脚本没有留下任何图（可能存完图就 close 了）')
+        out = []
+        for k, num in enumerate(nums):
+            st = _state(plt.figure(num), with_text=with_text)
+            st['fig_index'] = k
+            st['n_figs'] = len(nums)
+            out.append(st)
+        return out, ''
+    except Exception as e:                       # noqa: BLE001 采集失败要给人话，不是裸栈
+        return None, '%s: %s' % (type(e).__name__, e)
+
+
+def _state_of_one_fig(plt, fig_index, with_text: bool, exited: bool = False
+                      ) -> Tuple[Optional[Dict], str]:
+    """取目标图状态（``collect`` 的正常 / SystemExit 两条路共用）。"""
+    try:
+        nums = list(plt.get_fignums())
+    except Exception as e:                       # noqa: BLE001
+        return None, '%s: %s' % (type(e).__name__, e)
+    if not nums:
+        return None, ('脚本 sys.exit 退出，且没有留下任何图' if exited
+                      else '脚本没有留下任何图（可能存完图就 close 了）')
+    # 越界必须报错，不能静默返回最后一张：调用方（agent）会拿到"另一张图"的
+    # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
+    # 负值（含 verify 子进程约定的 -1）表示"最后一张"，不是越界。
+    if not exited and isinstance(fig_index, int) and fig_index >= 0 \
+            and not (0 <= fig_index < len(nums)):
+        return None, ('第 %d 张图不存在（脚本共留下 %d 张）；'
+                      '请用 0..%d 之间的序号，或用 --all-figs 全部导出'
+                      % (fig_index, len(nums), len(nums) - 1))
+    idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
+           else len(nums) - 1)
+    if exited and not (0 <= idx < len(nums)):
+        return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
+                      % (fig_index, len(nums)))
+    st = _state(plt.figure(nums[idx]), with_text=with_text)
+    # 必须自报家门：产物会被直接喂回 apply，而 apply 在没有 fig_index 时
+    # 只能按第 0 张处理 → 参数会落到错的图上（多图脚本的 agent 闭环曾 100% 中招）。
+    st['fig_index'] = idx
+    st['n_figs'] = len(nums)
+    return st, ''
+
+
+def collect_all(script: str, with_text: bool = False
+                ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+    """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
+
+    与 collect 同一套拦截口径（plt.show / plt.close / matplotlib.use /
+    switch_backend 全拦掉，cwd 切到脚本目录），只是把每张图都抽出来，
+    每张附加 fig_index（0-based，顺序同 plt.get_fignums()）与 n_figs。
+
+    注意：这是**同进程**执行（副作用由 ``_collect_session`` 的快照兜底）。
+    CLI / MCP 走的是 ``collect_isolated`` —— 进程级边界，见那里的说明。
+    """
+    with _collect_session(script) as plt:
+        exited = False
+        try:
+            runpy.run_path(script, run_name='__main__')
+        except SystemExit:
+            # 脚本自己 sys.exit()：图还挂在 Gcf 上，继续往下取（A2 / CH-1）。
+            # 0.1.8 只给 collect 加了这条分支，collect_all 漏了 —— 于是
+            # `describe --all-figs` 对 sys.exit(0) 的脚本零输出（rc=0 却什么都没打），
+            # MCP 的 describe_layout(all_figs=True) 更会把 server 进程直接带走
+            # （SystemExit 穿过 anyio TaskGroup → BaseExceptionGroup([SystemExit(0)])）。
+            exited = True
+        except Exception as e:                       # noqa: BLE001
+            return None, '%s: %s' % (type(e).__name__, e)
+        return _states_of_all_figs(plt, with_text, exited=exited)
+
+
+def collect(script: str, fig_index: Optional[int] = None,
+            with_text: bool = False) -> Tuple[Optional[Dict], str]:
+    """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
+
+    与 launch 一样拦掉 plt.show / plt.close / matplotlib.use / switch_backend，
+    并以脚本所在目录为 cwd（脚本里的相对路径/存图位置才和平时一致）。
+
+    CLI / MCP 用 ``collect_isolated``（子进程）；这里的同进程版本留给
+    已经在子进程里的调用方（``verify.py main`` 自己）与库嵌入场景。
+    """
+    with _collect_session(script) as plt:
+        exited = False
+        try:
+            runpy.run_path(script, run_name='__main__')
+        except SystemExit:
+            # 脚本自己 sys.exit()：不算采集失败 —— 图还挂在 Gcf 上，继续往下取。
+            # 原先只捕 Exception，SystemExit 会直接穿出去：CLI 退出码被顶成脚本的
+            # 退出码，而 --json 下 stdout 一个字节都没有（t3-#9 / t6）。
+            exited = True
+        except Exception as e:                       # noqa: BLE001
+            return None, '%s: %s' % (type(e).__name__, e)
+        return _state_of_one_fig(plt, fig_index, with_text, exited=exited)
+
+
+# ---------------------------------------------------------------------------
+# A1：把用户脚本的执行挪进**子进程**
+# ---------------------------------------------------------------------------
+ISOLATED_TIMEOUT = 600      # 秒；子进程采集的默认超时（可用 MPLTWEAK_TIMEOUT 放宽）
+
+
+def _isolated_timeout() -> float:
+    raw = os.environ.get('MPLTWEAK_TIMEOUT')
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return float(ISOLATED_TIMEOUT)
+
+
+def _child_env() -> Dict[str, str]:
+    """子进程环境：继承 + 保证"没 pip install -e 的 dev 检出"也能 import 本包。"""
+    env = dict(os.environ, MPLBACKEND='Agg')
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parts = [p for p in (env.get('PYTHONPATH') or '').split(os.pathsep) if p]
+    if root not in parts:
+        parts.insert(0, root)
+    env['PYTHONPATH'] = os.pathsep.join(parts)
+    return env
+
+
+def collect_isolated(script: str, fig_index: Optional[int] = None,
+                     with_text: bool = False, all_figs: bool = False,
+                     python: Optional[str] = None,
+                     timeout: Optional[float] = None
+                     ) -> Tuple[Optional[Any], str]:
+    """A1：在**独立子进程**里执行用户脚本并采集状态。
+
+    返回契约与 ``collect`` / ``collect_all`` 完全一致：成功给
+    ``(state, '')`` 或 ``(states, '')``，失败给 ``(None, err)``。
+
+    为什么必须是"进程边界"而不是"跑完再清理"：清理只能覆盖**已知**的那几项全局
+    状态，而脚本还能注册 atexit、起线程、monkeypatch 模块、往 sys.modules 里塞东西、
+    甚至 ``os._exit()``。CLI / MCP server 都是**一次命令跑多个脚本**的场景，
+    子进程是唯一能一次性解决全部污染、并让 MCP server 不被 `sys.exit()` 带走的边界
+    （apply 的验证链早就是这么做的）。
+    """
+    python = python or sys.executable
+    timeout = timeout if timeout is not None else _isolated_timeout()
+    fd, out_path = tempfile.mkstemp(prefix='mpltweak_state_', suffix='.json')
+    os.close(fd)
+    cmd = [python, '-m', 'mpltweak.verify', os.path.abspath(script), out_path,
+           '--envelope']
+    if all_figs:
+        cmd.append('--all-figs')
+    if with_text:
+        cmd.append('--text')
+    if isinstance(fig_index, int):
+        cmd += ['--fig', str(fig_index)]
+    try:
+        # stdout 丢弃（子进程内部已把 fd1 接到 stderr，脚本的 print 仍能被用户看到），
+        # stderr 继承：脚本报错/打印照旧出现在终端，和同进程时代的行为一致。
+        proc = subprocess.run(cmd, env=_child_env(), stdout=subprocess.DEVNULL,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _unlink(out_path)
+        return None, _msg.t('collect_timeout', sec=int(timeout))
+    except OSError as e:
+        _unlink(out_path)
+        return None, str(e)
+    try:
+        with open(out_path, 'r', encoding='utf-8') as f:
+            env = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, _msg.t('collect_bad_state', err=e) if isinstance(
+            e, ValueError) else _msg.t('collect_no_state', rc=proc.returncode)
+    finally:
+        _unlink(out_path)
+    if not env.get('ok'):
+        return None, env.get('error') or _msg.t('collect_no_state',
+                                                rc=proc.returncode)
+    if all_figs:
+        return env.get('states') or [], ''
+    state = env.get('state')
+    if state is None:
+        return None, _msg.t('collect_no_state', rc=proc.returncode)
+    return state, ''
+
+
+def _unlink(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
 
 
 def _r(v):
@@ -420,7 +762,11 @@ def _r(v):
 
 def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             pos_tol: float = POS_TOL,
-            fields_by_axis: Optional[Dict[int, set]] = None) -> List[str]:
+            fields_by_axis: Optional[Dict[int, set]] = None,
+            unjudged: Optional[List[str]] = None) -> List[str]:
+    # T75b：`unjudged` 是**出参**（纯增量，默认 None = 旧行为不变）：
+    # 调用方传一个 list 进来，这里把"**参数里请求了、但实际值取不到/比不了**"
+    # 的字段名塞进去 —— 禁止"没比却说通过"。
     """参数（期望）与目标图实测状态比对，返回不一致明细（空 = 一致）。
 
     fields_by_axis：{轴序号: {字段名, ...}} 时，每轴只比对列出的字段（原位写回
@@ -443,26 +789,47 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
         if fields is None or 'pos' in fields:
             if not locked and ep and ap and any(abs(x - y) > pos_tol for x, y in zip(ep, ap)):
                 bad.append('ax%d 位置 %s≠%s' % (i, _r(ep), _r(ap)))
-        for key in ('title_fontsize', 'tick_fontsize'):
+        # T75b：字号按 **x/y 各自独立** 比对 —— `tick_fontsize` 是 x 刻度、
+        # `tick_fontsize_y` 是 y 刻度；参数里带了哪个就比哪个。
+        for key in ('title_fontsize', 'tick_fontsize', 'tick_fontsize_y'):
             if fields is not None and key not in fields:
                 continue
             ev, av = e.get(key), a.get(key)
-            if ev is None or av is None:
+            if ev is None:
+                continue
+            if av is None:
+                if unjudged is not None:
+                    unjudged.append('ax%d.%s' % (i, key))
                 continue
             if abs(float(ev) - float(av)) > FS_TOL:
                 bad.append('ax%d %s %s≠%s' % (i, key, ev, av))
-        # label_fontsize：x/y 任一等于参数即通过（原位写回可能只找到 set_xlabel 或
-        # 只找到 set_ylabel；脚本 x/y 字号可能本来就不同——只比 x 会漏检 y 异值）
-        if fields is None or 'label_fontsize' in fields:
-            ev = e.get('label_fontsize')
-            if ev is not None:
-                avx, avy = a.get('label_fontsize'), a.get('label_fontsize_y')
-                if (avx is not None and abs(float(ev) - float(avx)) <= FS_TOL) \
-                        or (avy is not None and abs(float(ev) - float(avy)) <= FS_TOL):
-                    pass
-                elif avx is not None or avy is not None:
-                    bad.append('ax%d label_fontsize %s≠%s/%s'
-                               % (i, ev, avx, avy))
+        # label_fontsize：x/y 任一等于参数即通过（原位写回可能只找到 set_xlabel 或
+        # 只找到 set_ylabel）。T73（零兼容）：**参数里没写 y 时不再拿 x 的值当 y 的
+        # 合法值** —— 只按 x 比（带 y 的文件仍走原口径，正常流程零变化）。
+        # label_fontsize（x 侧）：**只比 x**。T73 之后"参数没写 y 就一个字节都不动
+        # y"，所以**绝不能再拿 x 的请求值去当 y 的期望**（那是被 T73 删掉的兼容
+        # 回退在比对层的镜像：x 没落地、只要 y 恰好等于 x 的请求值就会"通过"）。
+        if fields is None or 'label_fontsize' in fields:
+            ev = e.get('label_fontsize')
+            if ev is not None:
+                avx = a.get('label_fontsize')
+                if avx is None:
+                    if unjudged is not None:
+                        unjudged.append('ax%d.label_fontsize' % i)
+                elif abs(float(ev) - float(avx)) > FS_TOL:
+                    bad.append('ax%d label_fontsize %s≠%s' % (i, ev, avx))
+        # label_fontsize_y（y 侧）：**参数里带了才比**，比的是 y 自己的期望值。
+        # 带了 y 却不比 = "没比却说通过" —— T75b 要消灭的正是这个。
+        if fields is None or 'label_fontsize_y' in fields:
+            evy = e.get('label_fontsize_y')
+            if evy is not None:
+                avy = a.get('label_fontsize_y')
+                if avy is None:
+                    if unjudged is not None:
+                        unjudged.append('ax%d.label_fontsize_y' % i)
+                elif abs(float(evy) - float(avy)) > FS_TOL:
+                    bad.append('ax%d label_fontsize_y %s≠%s'
+                               % (i, evy, avy))
         if (fields is None or 'grid' in fields) \
                 and e.get('grid') is not None \
                 and bool(e['grid']) != bool(a.get('grid')):
@@ -551,8 +918,9 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
             actual = json.load(f)
     except Exception as e:                       # noqa: BLE001
         return None, '读取状态失败: %s' % e
+    unjudged: List[str] = []
     bad = compare(data.get('axes') or [], actual.get('axes') or [],
-                  fields_by_axis=fields_by_axis)
+                  fields_by_axis=fields_by_axis, unjudged=unjudged)
     # figsize 也必须比对：它同样会被写回，而"改到另一张图"恰恰在这条线上最容易
     # 静默通过（块路径的 edit_figsize 曾不传 fig_index，见 t1-A / t6-M1）。
     # 只在这次确实原位改了 figsize 时才比 —— 否则参数里的目标值本来就与当前
@@ -562,25 +930,100 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         if ev_fs and av_fs and any(abs(float(a) - float(b)) > 0.01
                                    for a, b in zip(ev_fs, av_fs)):
             bad.append('figsize %s≠%s' % (_r(ev_fs), _r(av_fs)))
-    return (not bad), ('; '.join(bad[:4]) if bad else '')
+    # T75b：已请求但**判不了**的字段必须如实列出来（不许"没比却说通过"）。
+    # 注意 ok 仍然只由 bad 决定：判不了 ≠ 判失败。
+    _uj = ''
+    if unjudged:
+        _uj = '未判定字段（已请求但比不了）: %s' % ', '.join(
+            sorted(set(unjudged))[:8])
+    if bad:
+        return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
+    return True, _uj
+
+
+_USAGE = ('用法: python -m mpltweak.verify <script> <out.json> [fig_index] '
+          '[--fig N] [--all-figs] [--text] [--envelope]\n')
+
+
+def _int_or_none(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def main(argv=None) -> int:
+    """子进程驱动（A1）：把图状态 dump 成 JSON，让父进程读。
+
+    两种输出模式：
+
+    * **旧模式**（不给 ``--envelope``，``verify_semantic`` 在用）：成功时把状态
+      本身写进 ``out``；失败**不写文件** + 退出码 3 —— 这个契约不能动，
+      写回引擎的"取不到状态 → 不否决"判定依赖它。
+    * **信封模式**（``--envelope``，``collect_isolated`` 在用）：**永远**写一个
+      ``{"ok": bool, "error": str, ...}``，父进程据此拿失败原因（子进程的 stderr
+      混着用户脚本自己的 print，没法拿来解析）。
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) < 2:
-        sys.stderr.write('用法: python -m mpltweak.verify <script> <out.json> [fig_index]\n')
+    pos = []
+    all_figs = with_text = envelope = False
+    fig: Optional[int] = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--all-figs':
+            all_figs = True
+        elif a == '--text':
+            with_text = True
+        elif a == '--envelope':
+            envelope = True
+        elif a == '--fig':
+            i += 1
+            if i >= len(argv):
+                sys.stderr.write(_USAGE)
+                return 2
+            fig = _int_or_none(argv[i])
+        elif a.startswith('--'):
+            sys.stderr.write(_USAGE)
+            return 2
+        else:
+            pos.append(a)
+        i += 1
+    if len(pos) < 2:
+        sys.stderr.write(_USAGE)
         return 2
-    script, out = argv[0], argv[1]
-    try:
-        idx: Optional[int] = int(argv[2])
-    except (IndexError, ValueError):
-        idx = None
-    state, err = collect(script, idx)
-    if state is None:
+    script, out = pos[0], pos[1]
+    if fig is None and len(pos) > 2:
+        fig = _int_or_none(pos[2])
+
+    if all_figs:
+        states, err = collect_all(script, with_text=with_text)
+        state = None
+    else:
+        state, err = collect(script, fig, with_text=with_text)
+        states = None
+    ok = not err
+
+    if envelope:
+        payload = {'ok': ok, 'error': '' if ok else err, 'all_figs': all_figs}
+        if ok:
+            if all_figs:
+                payload['states'] = states
+            else:
+                payload['state'] = state
+        try:
+            with open(out, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False)
+        except OSError as e:
+            sys.stderr.write('[verify] %s\n' % e)
+            return 3
+        return 0 if ok else 3
+
+    if not ok:
         sys.stderr.write('[verify] %s\n' % err)
         return 3
     with open(out, 'w', encoding='utf-8') as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+        json.dump(states if all_figs else state, f, ensure_ascii=False, indent=2)
     return 0
 
 

@@ -73,6 +73,38 @@ pytest -q -k test_writeback     # just the write-back engine
   succeeded" into `rc=1` + `UnicodeEncodeError`, *after* the file was already written.
   `messages.py` says this in a comment; now it is enforced.
 
+  **Every new message key — and every reworded template — must go through this ratchet.** Add it to the
+  tables in `src/mpltweak/messages.py` (zh **and** en; `MPLTWEAK_LANG=en` is a supported path) and run
+
+  ```bash
+  python tests/test_hygiene.py        # GBK-encodable + the ratchets
+  pytest -q -k hygiene
+  ```
+
+  The usual offenders are characters outside cp936: box drawing, emoji, `→` / `✓`, en/em dashes and
+  CJK punctuation such as `「」`. Prefer ASCII or plain Chinese. The JSON path has the same trap for the
+  *other* reason (UTF-8 consumers): emit through `messages.emit_json` (fd-level UTF-8) instead of
+  `print()`.
+
+### Every fix needs a negative test (reverse verification)
+
+A fix is only accepted together with a test that would have **failed before it**. The cheap and
+reliable way: flip the implementation back to the old behaviour on a scratch copy and confirm the new
+assertion trips. A regression test that passes on both the old and the new code proves nothing.
+
+Two examples from the 0.1.9 batch:
+
+- the write-back engine must stop inserting a block when the params already equal the source
+  (`--style auto` → `no_change`). Before the fix, the "clean round-trip" scenario rewrote the user's
+  file, so the test asserts the **sha256 is unchanged** — revert the guard in `writeback.py` and it must
+  go red;
+- the adjustment block must carry the marker the code actually writes, so the write-back suite should
+  grep the rewritten source for `# ===== auto layout (generated) - do not edit inside =====`
+  (`fig1.py` must **not** contain the legacy Chinese marker).
+
+Put the reverse check in the PR description ("reverting `writeback.py:<line>` makes
+`test_writeback.py::<case>` fail"), so a reviewer can reproduce it with one command.
+
 ### Adding a suite
 
 Adding a test file means touching four places — CI, both test wrappers and the docs:
@@ -81,6 +113,11 @@ Adding a test file means touching four places — CI, both test wrappers and the
 2. the `for t in ...` loop in `.github/workflows/tests.yml`;
 3. `SUITES` in `tests/test_suites.py`;
 4. the list above, plus the handbook section that describes the suites.
+
+Four places, and the suite must run in **both** language environments (`MPLTWEAK_LANG=zh` pinned inside
+the suite, `MPLTWEAK_LANG=en pytest -q` in CI) — otherwise it passes locally and turns CI red. If what
+you added is a *source* module rather than a suite, the other registries are the module list pinned by
+`tests/test_hygiene.py` and, if it becomes an extra, `pyproject.toml`.
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose
@@ -125,6 +162,12 @@ a try on a real script of your own.
   scripts, colorbar axes that snap back to an automatic position, dpi assumptions).
 - Match the surrounding style. There's no enforced linter, but the codebase is
   mostly 4-space indented with comments in Chinese; English comments are fine too.
+- Reference the audit finding id (`E1`, `CH-4`, `F3`, `RC-8`, …) in the PR and in the CHANGELOG entry,
+  and update `CHANGELOG.md` under the **unreleased** section — the ids are how the release notes stay
+  traceable back to the evidence.
+- If your change alters user-visible behaviour, update **both** `README.md` and `README.en.md`; if it
+  alters what the tool *executes* or *writes to disk*, update the "execution boundary" section in both
+  as well.
 
 ## Reporting bugs
 
