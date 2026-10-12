@@ -378,7 +378,28 @@ Its target users are **small and medium research plotting scripts that run local
 ## Static study on real plotting code
 
 This section reports a **static study run on real plotting code**. The corpus is **10,158 sha256-unique** public plotting scripts from real projects: **6904 records in Zenodo datasets**, **2045 scripts from research plotting repositories on GitHub**, and **1209 files from official project galleries**; many of them are **supplementary material of published papers**.
-The study only does **static** location and rewrite decisions (**it does not execute** the corpus scripts and does **not redistribute** them; per-script URL / licence / sha256 are in the manifest). The harness and per-script conclusions are in `bench/`. Of these, **4,427** are plotting scripts (2,396 statically analysable / 1,940 with no figure / 90 with syntax errors / 1 still timing out under isolated re-scan). The denominators in the tables below come from the **measurable sites** in those scripts.
+The study only does **static** location and rewrite decisions (**it does not execute** the corpus scripts and does **not redistribute** them). The per-script URL / licence / sha256 are in [`bench/manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/bench/manifest.jsonl); the harness and the per-script conclusions are in the [`bench` branch](https://github.com/shdbl/mpltweak/tree/bench) (the verdict files are sanitised: judgement fields only, no script text). Of these, **4,427** are plotting scripts (2,396 statically analysable / 1,940 with no figure / 90 with syntax errors / 1 still timing out under isolated re-scan). The denominators in the tables below come from the **measurable sites** in those scripts.
+
+### Where the corpus comes from (reproducible)
+
+| Source | Count (measured in `manifest.jsonl`) |
+|---|---:|
+| Zenodo dataset records (`.py` files in paper supplementary material) | **6,904** |
+| GitHub research-plotting repositories (61 repo names) | **2,045** |
+| Official / project galleries | **1,209** |
+| **Total** | **10,158** |
+
+Selection and de-duplication: **`.py` files only, made unique by sha256** (a script that appears in
+several places is kept once) — the merge stage saw **10,168** raw files and kept **10,158** after
+sha256-uniquing (10 byte-identical duplicates dropped; source `corpus_union/_logs/build_summary.json`:
+`copied=10168 / unique_sha=10158`, `sha_mismatch=0 / size_mismatch=0 / undecodable=0`). An earlier
+cross-stage merge additionally skipped **`dup_cross_stage = 1469`** records whose sha256 was already
+seen (the same script caught by both the GitHub and the Zenodo stage). **The corpus itself is kept
+locally, read-only, and is not redistributed** — only the manifest (path / source / URL / licence /
+sha256 / size) and the **sanitised per-script verdicts** are published. To check how a given script was
+judged, fetch it yourself with the `sha256` / `url` from the manifest. Everything lives in the
+[`bench` branch](https://github.com/shdbl/mpltweak/tree/bench): `manifest.jsonl`, `verdicts/*.jsonl` (per-script verdicts),
+`harness/` (scaffolding) and `tools/` (the two table generators plus the sanitisation self-check).
 
 ### 1. In-place edits (numbers edited directly in the source)
 
@@ -399,7 +420,7 @@ The study only does **static** location and rewrite decisions (**it does not exe
 - **Pass rate = in-place write-backs ÷ reachable in place** (not ÷ "the source contains this item").
 - **The totals are sums over families**; different families of the same script are counted once each, so they **are not script counts**.
 - **Broken promises = 0**: no row reports "the tool claims an in-place write-back while the bytes did not change" (within the scope of this static corpus judgement).
-- The cases that did not go in place fall into three groups, with per-script lists in `bench/`: **invalid params refused 37** · **refused because the target object could not be proven 7** · **done by inserting a block 3** (none of them silently drops a change).
+- The cases that did not go in place fall into three groups, with per-script lists in the [`bench` branch](https://github.com/shdbl/mpltweak/tree/bench): **invalid params refused 37** · **refused because the target object could not be proven 7** · **done by inserting a block 3** (none of them silently drops a change).
 
 ### 2. Appended code blocks (items that cannot be expressed in place)
 
