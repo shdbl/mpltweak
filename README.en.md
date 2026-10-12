@@ -415,7 +415,7 @@ judged, fetch it yourself with the `sha256` / `url` from the manifest. Everythin
 | Title font size | 193 | 173 | 165 | 95.4% |
 | Axis label font size x | 181 | 173 | 160 | 92.5% |
 | Axis label font size y | 180 | 171 | 166 | 97.1% |
-| Tick font size x | 189 | 91 | 88 | 96.7% |
+| Tick font size x | 189 | 91 | 85 | 93.4% |
 | Tick font size y | 6 | 5 | 4 | not enough samples (n=5) |
 | Grid `grid` | 131 | 124 | 118 | 95.2% |
 | Axis range `xlim` | 401 | 247 | 232 | 93.9% |
