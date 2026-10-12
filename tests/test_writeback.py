@@ -3238,14 +3238,25 @@ check('64e 无 pid 副本 → revert --first 失败（rc≠0 + no_first_backup�
                                          _oo64f[-200:]))
 shutil.rmtree(_d64e, ignore_errors=True)
 
-# 64f 长路径缓解：`\\?\` 前缀 helper 的行为（Windows 上 ≥240 字符才加）
-_p64f = 'C:\\' + 'x' * 250 + '\\f.py'
-check('64f `_long_path` 给超长绝对路径加 \\\\?\\ 前缀（短路径不变）',
-      writeback._long_path(r'C:\a\b.txt') == os.path.abspath(r'C:\a\b.txt')
-      and (os.name != 'nt'
-           or writeback._long_path(_p64f) == '\\\\?\\' + os.path.abspath(_p64f)),
-      'short=%r long=%r' % (writeback._long_path(r'C:\a\b.txt'),
-                            writeback._long_path(_p64f)[:60]))
+# 64f 长路径缓解：`\\?\` 前缀 helper 的行为。
+# **平台显式**：`\\?\` 是 Windows 专属机制，POSIX 上 `_long_path` 的契约是**恒等**返回。
+# 旧写法在 POSIX 上做 `os.path.abspath(r'C:\a\b.txt')` —— POSIX 不把 `C:\…` 当绝对路径，
+# 会返回 `<cwd>/C:\a\b.txt`，于是断言**在 Linux 上恒假**（就是这类"平台敏感路径假设"）。
+if os.name == 'nt':
+    _p64f = 'C:\\' + 'x' * 250 + '\\f.py'
+    check('64f [Windows] `_long_path` 给超长绝对路径加 \\\\?\\ 前缀（短路径不变）',
+          writeback._long_path(r'C:\a\b.txt') == os.path.abspath(r'C:\a\b.txt')
+          and writeback._long_path(_p64f) == '\\\\?\\' + os.path.abspath(_p64f),
+          'short=%r long=%r' % (writeback._long_path(r'C:\a\b.txt'),
+                                writeback._long_path(_p64f)[:60]))
+else:
+    # POSIX：`_long_path` 必须**原样返回**（不做前缀、不做 abspath）——这才是两个平台都成立的契约。
+    _p64f = '/tmp/' + 'x' * 250 + '/f.py'
+    check('64f [POSIX] `_long_path` 恒等返回（不做 `\\\\?\\` 前缀）',
+          writeback._long_path('/a/b.txt') == '/a/b.txt'
+          and writeback._long_path(_p64f) == _p64f,
+          'short=%r long=%r' % (writeback._long_path('/a/b.txt'),
+                                writeback._long_path(_p64f)[:60]))
 
 
 # ---- 65. T42：subplots(2,3) 静默丢块专属字段（Bug5 blocker）/ auto 写坏却报 no_change（Bug3）----
