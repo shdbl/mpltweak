@@ -112,16 +112,13 @@
 - **覆盖 4,427 / 4,427**
 - **块 427 / 427**（块内不用运行期下标）
 
-## [0.1.9] — 2026-10-12（详细修复台账；用户可感知变化见上方 `## 0.1.9`）
+## 0.1.9 · 详细修复台账（技术细节）
 
-> **本节是发布前草稿**：四条修复线（引擎 T7/T11/T12/T15、CLI-MCP-执行边界 T8/T13、GUI T9）已完成
-> 并合入集成副本 `mpltweak-fix018`（分支 `fix019`，25 文件 +4445/−537，零冲突）。
-> **版本号 0.1.9、日期 2026-10-12**（`pyproject.toml` + `src/mpltweak/__init__.py` 同步），
-> 发布前确认 CI 结论为绿。
+> 四条修复线：写回引擎（T7/T11/T12/T15）、CLI-MCP-执行边界（T8/T13）、GUI（T9）。
+> 版本号 0.1.9、日期 2026-10-12；CI 四版本全绿。
 >
 > 依据：三条审计线（写回引擎 E1–E15 / CLI-MCP CH-1–CH-12 / GUI F1–F5）+ 推广实测（P0/P1）
-> + L0 语料压测（合并后复测 812 个真实脚本，`corpus018/harness/l0_report_merged.md`；
-> 0.1.8 基线在 `l0_report.md`，那次 751 个脚本）。
+> + L0 语料压测（合并后复测 812 个真实脚本；0.1.8 基线那次 751 个脚本）。
 >
 > **这一版的主题是"该收手的时候要收手"**：0.1.8 在语料上「干净往返 / 幂等 / 可逆」三项**全灭
 > （各 0/27）**，根因是同一条 —— 参数与源码完全一致时它仍然插块改源码（E1；第二波的 L0-1..L0-4
@@ -129,24 +126,23 @@
 
 ### 这一版用户能感知到的变化（可直接用进 release notes）
 
-三条都实测过、都能独立复现（原始记录在 `audit_018/promo/`）：
+三条都实测过、都能独立复现：
 
 1. **`os._exit()` 的脚本不再带走 MCP server。**
    0.1.8：脚本里 `os._exit(3)` → 整个 MCP server 一起死掉，客户端后续调用全部无响应
    （实测：后续写 stdin 直接 `Errno 22`、server 进程以 3 退出）；**0.1.9**：同一个脚本 → 返回结构化的
    `{"ok": false, "error_code": "collect_failed", "error": "collect failed: …"}`，
-   **server 继续可用**（`t29_mcp3.txt`）。
+   **server 继续可用**（已实测）。
    CLI 侧同理：0.1.8 `describe <该脚本> --all-figs` = `rc=3` + **stdout 0 字节**（静默空输出），
-   0.1.9 = `rc=2` + 明确的 `[describe] 采集失败: …`（`t29_mcp_checks.txt`）。
+   0.1.9 = `rc=2` + 明确的 `[describe] 采集失败: …`（已实测）。
 2. **MCP 跨调用不再串味。**
    在同一个长驻 MCP 会话里，先采集一个把 `plt.rcParams["font.size"] = 30` 的脚本，再采集一个普通脚本：
    0.1.8 采到 `title_fontsize = 36.0`（= 12×30/10，上一个调用的 `rcParams` 泄漏进来了），
-   **0.1.9** 采到 `title_fontsize = 12.0`，与该脚本用 CLI 干净采集的结果**逐字相同**（连 `pos` 一致）
-   （`t29_mcp2.txt`）。
+   **0.1.9** 采到 `title_fontsize = 12.0`，与该脚本用 CLI 干净采集的结果**逐字相同**（连 `pos` 一致，已实测）。
 3. **MCP `apply_layout` 的 `wrote` 如实报。**
    0.1.9 实测：`write=false` → `wrote=false`、脚本 `sha256` 不变；`write=true` → `wrote=true`、
    `sha256` 变（退块写入 `[0.2000, 0.2000, 0.6000, 0.6000]`）；`requested_write` 单列一个字段表示
-   "你请求写了吗"（`t29_mcp3.txt`）。这条修的是 CH-7 报的"`wrote: true` 与实际不符"。
+   "你请求写了吗"（已实测）。这条修的是 CH-7 报的"`wrote: true` 与实际不符"。
 
 ### 修复 · 写回引擎
 
@@ -157,13 +153,13 @@
   修后全量复测（812 脚本）：M3 251/0、M5 27/0、M6 27/0。
   这条的最后一段尾巴（源码里没有写法的字段"等值也退块"）在**第三波 T15** 里收尾：判据改成逐字段
   三态以后，`pos` 等值 + `title_fontsize` / `spines` / `grid` / `xscale` / `figsize` 等值全部
-  `no_change`、不插块、字节不变（`audit_018/promo/t16_verify.log`；反向对照见 T15 条目）。
+  `no_change`、不插块、字节不变（已实测；反向对照见 T15 条目）。
 - **E2（高）** 参数缺 `grid` 键被按默认 `false` 补齐 → 把用户脚本里的 `ax.grid(True)` 改成
   `False`（会改变出图结果）→ 现在只有参数里**显式**出现 `grid` 才写回。
   *为什么*：静默改变用户的图，比报错严重得多。
 - **E3（高）** `--style block` 写盘后验证抛异常**不回滚**：脚本被留在半成品状态、命令却报失败 →
   现在任何验证异常都触发备份恢复。*为什么*："永不留下坏脚本"是核心承诺，这里曾有破口
-  （物证 `scen/p4_xlim_含null/fig.py`）。
+  （已有真实用例）。
 - **E4（高）** 带 colorbar 的脚本 `fraction` 伪字段永远算"真改动" → `auto` 永不退块、用户要的
   位置改动被**静默丢弃**且 `rc=0`。*为什么*：静默丢改动 = 用户以为调好了，回头图没变。
 - **E5（中）** 干净往返把 `fraction=0.15` 写成 `0.0410769`（永不 `no_change`）→
@@ -191,7 +187,7 @@
   **两者要区分开**：同一实测里 `sys.exit(3)` 的脚本在 0.1.8 的 **MCP 路径下仍存活**（只有 CLI 路径被带走）
   —— 因为 `sys.exit()` 抛的是可被捕获的 `SystemExit`，`os._exit()` 直接结束进程。
   → 捕获后返回结构化失败（与 `collect` 共用 helper）。0.1.9 实测：两种脚本都返回结构化结果
-  （`n_figs=1`）、server 存活（`audit_018/promo/t29_mcp2.txt`、`t29_mcp3.txt`）。
+  （`n_figs=1`）、server 存活（已实测）。
 - **CH-2（高）** MCP 长驻进程的跨调用状态污染：`sys.path` 泄漏能让**同一个脚本的判定翻转**、
   `sys.modules` 缓存不失效、matplotlib `rcParams` 串味后**可能被写进用户源码** →
   **check / describe / MCP 改为子进程执行**（复用 `verify.py` 的 main driver，扩 `--all-figs`）；
@@ -203,8 +199,7 @@
   `rc=1`）→ 识别 `savefig(bbox_inches=...)` 后降级为 warning（`--json` 里 `tight_bbox: true`、
   该条 `downgraded: "tight_bbox"`），另加 `--no-tight` 按旧口径严判。
   *为什么*：README 推荐的 CI 配方在存量正常项目上会永远红，用户最后只能把这条检查关掉。
-  实测：同一段越界文字，无 tight → `rc=1` / `error`，有 tight → `rc=0` / `warn`
-  （`audit_018/promo/t14_verify.log`）。
+  实测：同一段越界文字，无 tight → `rc=1` / `error`，有 tight → `rc=0` / `warn`（已实测）。
 - **CH-5（中）** `schema` 校验不了本工具自己的产物：`xscale` enum 缺 `symlog/logit` 等取值；
   顶层放开 `additionalProperties` 时，`--all-figs` 的嵌套形态
   （`{version, script, n_figs, figures:[…]}`）不在规范里 → **嵌套静默假通过** → 补齐 `SCALE_ENUM`、
@@ -214,24 +209,21 @@
   `describe --all-figs`（嵌套）的产物都通过 jsonschema 校验；把嵌套 `figures[0].axes[0].xscale`
   改成 `bogus_scale` → 报 `'bogus_scale' is not one of ['linear', 'log', 'symlog', 'logit',
   'asinh', 'function', 'functionlog', None]`；塞一个顶层未知键 → 报
-  `Additional properties are not allowed ('hello' was unexpected)`
-  （`audit_018/promo/t27_schema.log`、`t27_validate.txt`）。
+  `Additional properties are not allowed ('hello' was unexpected)`（已实测）。
 - **CH-6（中）** 退出码矩阵不一致（`describe`=1 / `check`,`apply`=2 / internal=1 / 未知=3）→
   `describe` 已并入 `rc=2`（脚本不存在 / 采集失败），并把**实测矩阵**写进 README（中英各一节）。
   **残差（未统一，待定契约，属 B 堆）**：同一个"脚本找不到"，**顶层路径**（`mpltweak <脚本>`，含
   `launch`，消息都是 `[launch] 找不到脚本: …`）返回 **`rc=3`**，而子命令 `describe`/`check`/`apply`/
   `revert`（`[xxx] 找不到脚本: …`）返回 **`rc=2`**；顶层的未知 flag 也是 `rc=3`
   （`[launch] 需要脚本路径，或用 --doctor 做环境自检`）而不是 argparse 惯用的 2 —— 本轮**只改文档、
-  不改代码**（统一会动到顶层入口的兼容性，需先定契约）。实测矩阵：
-  `audit_018/promo/t28_exit_matrix.txt`。
+  不改代码**（统一会动到顶层入口的兼容性，需先定契约）。实测矩阵见 README。
 - **CH-7（中）** MCP `apply_layout` 的 `wrote: true` 与实际不符 → 如实报。
 - **CH-8（低-中）** MCP 错误语义两套（业务错误 `isError=false`；异常错误 `isError=true` 却
   **丢失原因**）→ **统一为 payload 内的 `error_code` / `error`**：实测两类都是 `isError=false`，
   业务错误 `apply_layout(<不存在的脚本>)` → `{"ok": false, "error_code": "file_not_found",
   "error": "script not found: …"}`；异常错误 `describe_layout(<抛异常的脚本>)` →
   `{"ok": false, "error_code": "collect_failed", "error": "collect failed: RuntimeError: …"}`
-  —— 机器可判（`error_code` 稳定）+ 人可读（`error` 带原始原因）都在 payload 里
-  （`audit_018/promo/t29_mcp2.txt`）。
+  —— 机器可判（`error_code` 稳定）+ 人可读（`error` 带原始原因）都在 payload 里（已实测）。
 - **CH-9（低）** `schema` 忽略所有参数（`--help` / 未知 flag 都原样输出 JSON 且 `rc=0`）→
   正常参数解析。
 - **CH-10（低）** MCP `serverInfo.version` 是空串 → 填真实版本。
@@ -239,16 +231,14 @@
   `prune src/mpltweak.egg-info`，把 **egg-info 相关 8 项压到 3 项**（A/B 构建实测：0.1.8 基线 43 条目
   → 合并树 39 条目）。**仍会进 sdist 的三项**：`setup.cfg`、`src/mpltweak.egg-info/`、
   `src/mpltweak.egg-info/SOURCES.txt` —— 这三项由 setuptools 在构建期自己生成，MANIFEST 的 `prune`
-  排不掉（`MANIFEST.in` 自己的注释也承认这一点）。证据：`audit_018/promo/t27_sdist_ab.txt`、
-  `t27_mcp_sdist.txt`。
+  排不掉（`MANIFEST.in` 自己的注释也承认这一点）。已实测。
 - **CH-12（低）** `check` 的人读文案曾硬编码中文 → 0.1.9 起 `--lang {auto,zh,en}`
   （`apply` / `describe` / `check` 与顶层入口都有；`revert` / `schema` / `doctor` 没有这个开关）以及
   环境变量 `MPLTWEAK_LANG=en` 都能切英文（实测 `check <脚本> --lang en` →
   `checked 1 axes, tolerance 0.010`，`MPLTWEAK_LANG=en` 同效）。
   **边界要说清**：`--json` 的**结构**一直可解析，但**默认语言下 `msg` / `warnings` 字段仍是中文**
   —— 要全英文得 `--json --lang en`（实测该组合 stdout 无中文，单独 `--json` 则含中文）；
-  MCP 工具返回的就是同一份 JSON 文本，同理。
-  证据：`audit_018/promo/t29_lang.txt`、`t28_cand.txt`。
+  MCP 工具返回的就是同一份 JSON 文本，同理（已实测）。
 - **A4（新增能力）** `check --static`：只做 AST 扫描 + 布局引擎冲突检测、**完全不执行**脚本 ——
   给"脚本跑起来有副作用"和 CI 场景一条静态通道。
 
@@ -279,8 +269,7 @@
 - **RC-8** **只改画布尺寸不可表达（0.1.8 的行为，已修）**：参数里没有 `axes` 就 `NO_AXES` 早退
   （0.1.8 实测 `{"figsize_in":[8,6]}` → `rc=1 / reason=no_axes` / 脚本未改）→ 改成
   `if not axes and not figsize_in:` 才早退，并让 `figsize` 走原位改写。修后实测：`rc=0`、
-  `style=inplace`、`changes=["figsize"]`，`plt.subplots(figsize=(6, 4))` → `(10, 6)`
-  （`audit_018/promo/t14_verify.log`）。
+  `style=inplace`、`changes=["figsize"]`，`plt.subplots(figsize=(6, 4))` → `(10, 6)`（已实测）。
   *为什么*：论文型绘图脚本里 **89.5%** 只有"画布尺寸"这一个可静态构造的目标。
 - **RC-9** `changes=[]` 但脚本确实被改（`rc=0 / reason=ok / style=block / changes=[]`，sha 已变）→
   补块摘要字段，agent 才能看出"写了什么"。
@@ -343,8 +332,7 @@
   *为什么*：静默丢改动 = 用户以为调好了、回头图没变；"报成功"比"报错"更糟。
   实测 B 情形（figsize 可原位 + pos 写不了）：`rc=0 / style=block / applied=true / auto_fallback=true
   / inplace_changes=["figsize"] / inplace_pending=["ax0.pos"]`，块落地后回读 `pos` 与目标一致；
-  同一份参数加 `--style inplace`：`rc=1 / applied=false / needs_block=true / pending=["ax0.pos"]`
-  （`audit_018/promo/t16_verify.log`）。
+  同一份参数加 `--style inplace`：`rc=1 / applied=false / needs_block=true / pending=["ax0.pos"]`（已实测）。
 - **不该退块时退块 → 等值也插块（E1 的最后一段尾巴）**：源码里没有任何能决定该字段的写法时
   （`title_fontsize` / `label_fontsize`（含 `_y`）/ `tick_fontsize` / `spines` / `grid` /
   `xscale`、`yscale`），参数值等于实际值也曾经一律退块插 12 行 → 新增**默认值等价证明**
@@ -355,17 +343,16 @@
   `scale` 看 `scale`）就**放弃证明**、退回保守退块。
   *为什么*：写回的门槛是"值与现值真的不同"，不是"源码里有没有写出这个字段"。
   实测六种等值情形全部 `no_change` + 字节不变 + 不插块；反向对照 `title_fontsize=20.0` /
-  `tick_fontsize=7.0` / `spines={'top': False}` 仍退块并把值落到图上（`audit_018/promo/t16_verify.log`）。
+  `tick_fontsize=7.0` / `spines={'top': False}` 仍退块并把值落到图上（已实测）。
 - **`apply --json` 新增三个字段**：`pending`（这次还没落地的字段）、`inplace_pending` /
   `inplace_needs_block`（原位那一趟为什么退块）；`needs_block` 的语义收紧为"**这次 apply 之后**是否
   仍有字段没落地"。*为什么*：agent 需要能判读"原位为什么没成"，而不是只靠 `style=block` 反推。
 - **`--verify-fast` 的诚实边界**：它不重跑脚本，因此证明不了"某字段与源码现值相等"；源码里没有可比
   写法时（典型 `plt.subplots()` 的网格轴位置由 subplotspec + 边距算出）只能**保守退块**。
   实测：12 个真实语料脚本按 agent 主路径（`describe` 原样导出 → `apply --write --verify-fast`）
-  抽样，能跑起来的 **7/7 仍插块**（`audit_018/engine-hunter/fix018/t15_agent_path.txt`）；同一路径
+  抽样，能跑起来的 **7/7 仍插块**（已实测）；同一路径
   不加 `--verify-fast` 即 `no_change`（本地 A/B：同一个 12 行 `plt.subplots(2, 2)` 脚本，加它 →
-  `style=block` 且块 31 行，不加 → `reason=no_change / applied=false`，
-  `audit_018/promo/t16_probe2.log`）。README（中/英）「给 AI / agent 的排版接口」已写明：
+  `style=block` 且块 31 行，不加 → `reason=no_change / applied=false`）。README（中/英）「给 AI / agent 的排版接口」已写明：
   **agent 路径建议不要加 `--verify-fast`**。
 - **`set_position` 证明缺口（M3 最后一条 fail）**：`cax` 在函数里用 `fig.colorbar(..., cax=cbar_ax)`
   创建时，静态建图区间圈不到它（0.1.8 同样失败）→ `_pos_literal_equal` 新增 (d) 路径：从
@@ -391,14 +378,13 @@
 - **刻度字号 x/y 分列**：`tick_fontsize`（x）与 `tick_fontsize_y`（y）分开采集与写回，与
   `label_fontsize_y` 同款；源码里已有 `axis='x'/'y'` 时各改各的，只有一个 `labelsize=` 时两字段一起
   退块（块里分两行写）。实测：`tick_fontsize_y` 11 → 14 时源码 `axis="y"` 那行原位改成 `labelsize=14`。
-  证据：`audit_018/promo/t32_probe.log`。
 
 - **多图逐张写回不再把后续参数误判为过期**：一次 `apply --write` 会把该脚本的多份参数文件
   （主文件 + `<stem>.fig<k>.json`）逐张落实，而每落地一张就要改写一次脚本 —— 旧判据拿"**此刻的**脚本
   mtime"去比下一份参数文件，于是只要第一张的写回超过 1.0s 的容差，第 2 张就必然被判 `stale` 跳过，
   理由还是"脚本在参数保存之后被修改过"（与事实相反）。现在基准取**本批次开始时刻**（只反映用户自己的
   手改），并在落地成功后刷新该批参数的 mtime；真正过期的参数**仍然会被拦下**（`reason=stale`）。
-  实测（`audit_018/promo/t33_stale.log`）：单图写回 **16.3s**（>1.0s 的"时间炸弹"前提成立）→ 一次
+  实测：单图写回 **16.3s**（>1.0s 的"时间炸弹"前提成立）→ 一次
   `apply` 两份参数**都** `reason=ok` / `applied=true` / `layers` 三层全绿；把第 2 份参数打桩成比脚本
   旧 10s → 仍然 `reason=stale` / `applied=false`（拦得住）。
 
@@ -411,7 +397,7 @@
   `None`（＝**未设置**，与既有的 `grid` 同一先例），下游一律用 `is not None` 判"有目标值"；**块渲染器
   也只写确实需要落地的字段**（等值字段不再插块）。⇒ **不再改动你没有指定的刻度设置**，源码里明写的
   `log` 不会被默认值覆盖。
-  实测（`audit_018/promo/t40_probe.log`）：源码 `ax.set_xscale("log")` + 参数**只给 `pos`**（与现值一致）
+  实测：源码 `ax.set_xscale("log")` + 参数**只给 `pos`**（与现值一致）
   → `reason=no_change` / `style=inplace` / `applied=false` / `block_lines=0` / `changes=[]`、`ok=true`、
   **`sha256` 不变**、源码里没有调整块。
   （一条边界：参数文件里**显式**写了 `xscale: "linear"` 的 —— 例如轴改成 log **之前**存下的老参数文件
@@ -420,7 +406,7 @@
   会连着改同一个脚本好几遍，而备份是**固定名** → 第二遍就把备份覆盖成"已经改过一次"的中间态，于是
   `revert` 只回到「原件 + 第一段调整块」，**不是**跑 `apply` 之前那一份。现在**批次内首份备份沿循环
   透传**（与"同一次 apply 内 inplace→block 复用备份"同一机制），备份 = 真正的批前原件。
-  实测（`audit_018/promo/t40_probe.log`，带两份参数的 2 图脚本）：批前
+  实测（带两份参数的 2 图脚本）：批前
   `sha256=bb1edee7…` → 一次 `apply` 逐张写回两份（都 `applied=true`）后 `sha256=498dbd45…`（已变）→
   `revert --write` 后 `sha256=bb1edee7…` **== 批前原件 ✓**；备份文件本身也等于批前原件。
 
@@ -435,7 +421,7 @@
   本轮按合并后的代码复核并更新：**`launch` 已实现为显式子命令**（`mpltweak launch fig1.py` ≡
   `mpltweak fig1.py`，实测 `--dry-run` `rc=0`）；0.1.8 上它不存在（会被当成"打开名为 `launch`
   的脚本"，`rc=3`）——README 两种写法的行为都写清楚了。块标记串 / `--static` / `--tol` /
-  子进程隔离也都在合并代码上逐条复跑（`audit_018/promo/t14_verify.log`、`t14_verify2.log`）。
+  子进程隔离也都在合并代码上逐条复跑（已实测）。
 - **P0-5** README（中/英）新增「执行边界」一节：哪些命令会执行你的脚本、副作用清单
   （文件 / 网络 / 缓存 / cwd / 导入路径 / `rcParams`）、同一脚本会被重复执行、**不是沙箱**、
   以及 `check --static` 这条不执行的通道。
@@ -464,7 +450,7 @@
 - 七套件 `ALL PASS` + `pytest -q` 全绿，并额外跑一遍 **`MPLTWEAK_LANG=en pytest -q`**
   （0.1.8 的 CI 红正是"本地 zh 绿、CI en 红"）。
 - **每条修复配一条反向验证**：把修复改回旧写法，对应用例必须失败。
-- L0 语料在修复版上全量重跑（812 个真实脚本，`l0_report_merged.md`）：**M3 干净往返 251 pass /
+- L0 语料在修复版上全量重跑（812 个真实脚本）：**M3 干净往返 251 pass /
   0 fail、M5 幂等 27/0、M6 可逆 27/0**（0.1.8 基线：0/27、0/27、26/1）；M4 定向改写 23/4 = 85.2%，
   4 条如实标注为脚手架判据口径下的"结构上够不到"；M1 可解析 809/3（3 条是语料侧的 Colab `!pip`
   非 Python 文件）。覆盖率按受众分列（gallery vs 论文配套代码）并写进 README。
@@ -477,7 +463,6 @@
 - 第三波（T15）自测：`tests/test_writeback.py` **225 PASS / 0 FAIL**（新增 §53a–§53j 共 17 条，
   含"等值不插块"的六种字段与 `--style inplace` 明确失败）；反向验证 R-A / R-B / R-C 全 PASS
   （把判据改回旧写法，对应用例必须失败）。本轮文档改动在合并后的代码上逐条复跑，
-  证据见 `audit_018/promo/t16_verify.log`、`t16_probe2.log`。
 - 宽兜底棘轮（`tests/test_hygiene.py`）只许降不许升；新模块必须登记。
 
 ### 发布提醒（照旧，重要）
@@ -494,7 +479,6 @@
 > `check` 按**真实渲染尺寸**查文字，并修掉了 `--json` 输出编码与元组/带符号写法
 > 原位写回等 6 个真 bug。测试：七套件 + `pytest -q` 25 项全绿（GBK 与 UTF-8 环境各跑一遍），
 > 12 项反向验证全部命中；两个模型家族的独立只读审阅共 10 条发现全部修复。
-
 
 ### 修复
 - **`--json` 成功路径的 stdout 不是 UTF-8**：`check` / `describe` / `apply --json` / `schema`
