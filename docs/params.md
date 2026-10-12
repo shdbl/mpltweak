@@ -17,7 +17,7 @@
       "title_fontsize": 9.0,
       "label_fontsize": 8.0,
       "tick_fontsize": 8.0,
-      "tick_fontsize_y": 8.0,            // y 刻度字号（不带这个键则 y 沿用 tick_fontsize）
+      "tick_fontsize_y": 8.0,            // y 刻度字号（**没写这个键 ⇒ y 一个字节都不动**，T73 零兼容）
       "grid": false,
       "spines": { "top": false, "right": false },
       "xscale": "linear",
@@ -56,8 +56,6 @@
 | `auto_fallback` | 这次是否由 `auto` 自动退到块模式 |
 | `inplace_changes` / `inplace_reason` | 原位那一趟真正改到的字段 / 落位结果（`best_effort` = 有字段没能原位落地） |
 
-实测（同一份 `plt.subplots(2, 2)` 脚本、目标 `pos=[0.2, 0.2, 0.6, 0.6]`，源码里没有位置字面量）：
-
 | 命令 | rc | 结果 |
 |---|---|---|
 | `apply --write --verify-fast --json`（`auto`） | 0 | `style=block / applied=true / auto_fallback=true / inplace_pending=["ax0.pos"]`；回读 `pos=[0.2, 0.2, 0.6, 0.6]`（**真的落地了**） |
@@ -87,8 +85,6 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 -ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 +ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
 ```
-
-代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
 
 位置来自 `plt.subplots` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**：
 
@@ -188,8 +184,7 @@ fig.axes[0].grid(False)
 
 **3. `label_fontsize_y`：y 轴标签字号可以单独给。**
 
-参数里带 `label_fontsize_y` 时只改 y 轴标签字号，x 轴沿用 `label_fontsize`；不带则两轴同值
-（老参数文件行为不变），`changes` 只报真正变了的那个。字段已进 `mpltweak schema`。
+参数里带 `label_fontsize_y` 时只改 y 轴标签字号（x 由 `label_fontsize` 决定）；**没写 `label_fontsize_y` 时 y 一个字节都不动**（T73 零兼容，见 CHANGELOG「修复 · y 侧字号」），`changes` 只报真正变了的那个。字段已进 `mpltweak schema`。
 （`describe` 导出时若 y 与 x 同值就不单列这个键 —— 想单独改 y，自己加上即可。）
 
 **4. `describe --all-figs` 的产物是“一套图”，不能直接喂回 `apply --params`。**
@@ -207,40 +202,8 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 
 与 `label_fontsize_y` 同款：`tick_fontsize` 管 x 刻度、`tick_fontsize_y` 管 y 刻度。源码里本来就有
 `tick_params(axis='y', labelsize=…)` 时**各改各的**（原位）；只有一个 `labelsize=`（一次管两边）时两个
-字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。不带 `tick_fontsize_y` 时 y 沿用 x
-（老参数文件行为不变）。字段已进 `mpltweak schema`。
+字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。**没写 `tick_fontsize_y` 时 y 一个字节都不动**（T73 零兼容）。字段已进 `mpltweak schema`。
 实测（`audit_018/promo/t32_probe.log`）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
-把 `tick_fontsize_y` 改成 14 → `inplace_changes=["ax0.tick_fontsize_y"]`，源码
-`ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。
-
-- `plt.subplots(2, 2)` / `add_subplot(...)` 建出来的轴**也算数**，按它们在 `fig.axes` 里的先后编号
-  （`cell` 字段告诉你它是网格的哪一格 `[行数, 列数, 起始行, 起始列]`）；
-- colorbar 的槽轴（`fig.colorbar(...)` 自动建的 `cax`）**剔除**，不占序号；它的位置按设计
-  **不支持**原位改写（该项 `is_colorbar: true`）；
-- 按"代码里 `add_axes` 的顺序"编号会错位：实测在混用脚本（如 gallery 的 `artists.py`）上写回会对不上
-  轴、语义验证失败并回滚（本次发行前实测）；
-- 最稳的用法是**先让工具自己写一份，再只改你要动的字段**：
-  `mpltweak describe fig1.py -o .tweak_params/fig1.json`。注意 `-o` 的**目录必须先存在**，否则报
-  `FileNotFoundError`（默认路径 `.tweak_params/` 工具已经帮你建好了）。
-
-实测：`rc=0`、`style=inplace`、`changes=["figsize"]`，脚本里的 `plt.subplots(figsize=(6, 4))`
-被改成 `(10, 6)`（本次发行前实测）。而 `figsize=(w,h)` 恰好是论文型绘图脚本里
-**最常见**的可静态构造目标（只算确实绘图：89.5%）。
-
-`describe --all-figs` 导出的是**嵌套**结构：单图状态在 `figures[i]` 里，顶层没有 `axes`
-（顶层键是 `version` / `script` / `n_figs` / `figures`）。直接
-`mpltweak apply <脚本> --params all-figs.json --write` 会以 **`rc=1 / reason=no_axes`** 明确失败
-——**不静默、脚本一个字节都不改**（`writeback.py` 里有对应的 NO_AXES 早退）。原因是 `apply` 的
-`--all-figs` 语义是“循环出图时**统一应用**”，它读的输入仍是**单图**状态。
-实测（本次发行前实测）：喂嵌套文件 → `rc=1 / ok=false / reason=no_axes /
-applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <脚本> --fig 0 -o one.json`）加
-`--all-figs` 喂回则 `rc=0`。要落实多图就**逐图导出、逐图 apply**（`--fig N`）。
-
-与 `label_fontsize_y` 同款：`tick_fontsize` 管 x 刻度、`tick_fontsize_y` 管 y 刻度。源码里本来就有
-`tick_params(axis='y', labelsize=…)` 时**各改各的**（原位）；只有一个 `labelsize=`（一次管两边）时两个
-字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。不带 `tick_fontsize_y` 时 y 沿用 x
-（老参数文件行为不变）。字段已进 `mpltweak schema`。
-实测（本次发行前实测）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
 把 `tick_fontsize_y` 改成 14 → `inplace_changes=["ax0.tick_fontsize_y"]`，源码
 `ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。
 
