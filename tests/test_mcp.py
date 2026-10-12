@@ -12,6 +12,8 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -86,12 +88,62 @@ async def run():
             d = json.loads(r.content[0].text)
             check(str(d.get('$schema', '')).startswith('http'),
                   '$schema 是 draft-07', d.get('$schema'))
-            r = await session.call_tool('apply_layout',
-                                        {'script': FIX, 'write': False})
-            d = json.loads(r.content[0].text)
-            check(d.get('exit_code') in (0, 1) and 'output' in d,
-                  '只读预览可用', d.get('exit_code'))
-            check(d.get('wrote') is False, '预览不改代码', d.get('wrote'))
+            # 只读预览走 `.tweak_params/<脚本名>.json`（apply_layout 不接受 --params）。
+            # 夹具旁边那份参数文件是 **git-ignored 的机器本地产物**（.gitignore:23）：
+            #   · CI 全新检出 ⇒ 根本没有它 ⇒ 预览拿不到参数，exit_code=2；
+            #   · 本地旧检出 ⇒ 可能是旧规范（version=3，当前 SCHEMA_VERSION=4）⇒ bad_params，exit_code=2。
+            # 两种情况都不是"预览坏了"，但旧写法把夹具的那份文件当成既成事实 ⇒ 本机与 CI 都红。
+            # 现在改为**在临时目录里用 describe 现造一份当前规范的参数**再预览。
+            d5 = tempfile.mkdtemp(prefix='mpltweak_mcp5_')
+            try:
+                s5 = os.path.join(d5, 'synth_script.py')
+                shutil.copy2(FIX, s5)
+                p5 = os.path.join(d5, '.tweak_params', 'synth_script.json')
+                os.makedirs(os.path.dirname(p5), exist_ok=True)
+                env5 = dict(os.environ, PYTHONPATH=os.path.join(ROOT, 'src'),
+                            MPLBACKEND='Agg')
+                pr = subprocess.run([PY, '-m', 'mpltweak.cli', 'describe', s5,
+                                     '-o', p5], cwd=d5, env=env5,
+                                    capture_output=True)
+                check(pr.returncode == 0 and os.path.exists(p5),
+                      '为只读预览现造参数（describe 写 version=%d）'
+                      % _params.SCHEMA_VERSION, pr.returncode)
+                r = await session.call_tool('apply_layout',
+                                            {'script': s5, 'write': False})
+                d = json.loads(r.content[0].text)
+                check(d.get('exit_code') in (0, 1) and 'output' in d,
+                      '只读预览可用', d.get('exit_code'))
+                check(d.get('wrote') is False, '预览不改代码', d.get('wrote'))
+
+                # 判别用例：参数文件是**旧规范**时，只读预览同样拒绝（T61 的行为变更：
+                # 参数非法与走不走写分支无关）。断言机器可读字段，不依赖人读文案。
+                d5b = tempfile.mkdtemp(prefix='mpltweak_mcp5b_')
+                try:
+                    s5b = os.path.join(d5b, 'synth_script.py')
+                    shutil.copy2(FIX, s5b)
+                    p5b = os.path.join(d5b, '.tweak_params', 'synth_script.json')
+                    os.makedirs(os.path.dirname(p5b), exist_ok=True)
+                    with open(p5b, 'w', encoding='utf-8') as f:
+                        json.dump({'version': 3, 'script': 'synth_script.py',
+                                   'axes': [{'index': 0}]}, f)
+                    r = await session.call_tool('apply_layout',
+                                                {'script': s5b, 'write': False})
+                    d = json.loads(r.content[0].text)
+                    check(d.get('ok') is False and d.get('exit_code') == 2,
+                          '旧规范参数 -> 只读预览 exit_code=2', d.get('exit_code'))
+                    check(d.get('wrote') is False, '拒绝时 wrote 仍为 False',
+                          d.get('wrote'))
+                    rj = subprocess.run([PY, '-m', 'mpltweak.cli', 'apply', s5b,
+                                         '--json'], cwd=d5b, env=env5,
+                                        capture_output=True)
+                    fj = json.loads(rj.stdout.decode('utf-8'))['files'][0]
+                    check(fj.get('reason') == 'bad_params' and rj.returncode == 2,
+                          '旧规范参数的机器可读原因 = bad_params / rc=2',
+                          (fj.get('reason'), rj.returncode))
+                finally:
+                    shutil.rmtree(d5b, ignore_errors=True)
+            finally:
+                shutil.rmtree(d5, ignore_errors=True)
 
             print('§6 stdout 隔离（脚本 print 不能污染 JSON-RPC）')
             # fixtures 里的脚本会 print('savefig done')；若污染 stdout，
@@ -168,7 +220,6 @@ async def run():
                 check(str(d.get('error', '')).isascii(),
                       '机器可读 error 是稳定英文（不随语言变）', d.get('error'))
             finally:
-                import shutil
                 shutil.rmtree(tmp, ignore_errors=True)
 
 
