@@ -24,6 +24,10 @@ jobs:
       # 测试全程无头，只用 Agg。开窗那部分（Qt）不参与 CI ——
       # 源码里 Qt 的 import 都在函数内部，模块顶层不碰 Qt。
       MPLBACKEND: Agg
+      # Windows runner 的 Python 默认 stdout 是 cp1252，编不了中文测试名
+      # （test_tweak 的「近边吸附」等在 cp1252 下直接 UnicodeEncodeError）。
+      # 显式 UTF-8，与本地验证环境（longxia + PYTHONIOENCODING=utf-8）一致。
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
