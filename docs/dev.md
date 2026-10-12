@@ -1,11 +1,4 @@
-
----
-
-## 开发（原文：仓库结构 / 测试 / 嵌入 API）
-
-> 由 T81 从 `README_v2.md` 新建搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。
-
-## 开发
+# 开发
 
 ```bash
 git clone https://github.com/shdbl/mpltweak && cd mpltweak
@@ -30,3 +23,9 @@ src/mpltweak/
 
 `toolbox.py` 也可作**嵌入 API**（`from mpltweak.toolbox import gaitu`），
 但主推 CLI —— 用户脚本里不该出现本工具的任何痕迹。
+
+---
+仓库结构：`src/mpltweak/`（`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`）。跑测试：`python tests/test_writeback.py`（AST 写回 + 三层验证）。
+安装与全部测试命令、模块职责、嵌入 API（`from mpltweak.toolbox import gaitu`）与自检脚本见 [docs/dev.md](docs/dev.md)。
+
+> 由 T81 从 `README_v2.md` 新建搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。

@@ -1,8 +1,4 @@
-# 参数文件（规范）
-
-> 本文件是 [README](../README.md) 的展开版，内容自 README 搬出；命令、参数、退出码与实测数值与原文一致。
-
-## 参数文件
+# 参数文件
 
 参数文件是**公开格式** —— 可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。
 顶层 `version` 字段标记格式版本（当前为 4；旧版文件照读），工具据此判断跨版本兼容性：
@@ -39,7 +35,132 @@
 }
 ```
 
-### 必须遵守的约定
+## `--style` 与 JSON 字段：这次到底落没落地
+
+三种风格现在共用同一个**逐字段三态**判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、
+原位写不了）：
+
+| 风格 | 遇到第 ③ 类字段时 |
+|---|---|
+| `auto`（默认） | 退到插入调整块，把该字段**落地**（不静默丢），并在 JSON 里留档说明原位那一趟为什么退块 |
+| `inplace`（显式） | **明确失败**：`rc=1`、`applied=false`，并打印 `[!] 这些字段代码里没有可改的写法、本次**没能落地**：ax0.pos`（不会 `rc=0` 假装都改好） |
+| `block` | 一律插块 |
+
+`apply --json` 的 `files[]` 里与此相关的字段（agent 可直接判读）：
+
+| 字段 | 含义 |
+|---|---|
+| `needs_block` | **这次 apply 之后**是否仍有字段没落地（哪怕这次退过块，只要都落地了就是 `false`） |
+| `pending` | 这次仍然没落地的字段清单（如 `["ax0.pos"]`） |
+| `inplace_pending` / `inplace_needs_block` | **原位那一趟**为什么退块：原位阶段写不了哪些字段、是否因此退块 |
+| `auto_fallback` | 这次是否由 `auto` 自动退到块模式 |
+| `inplace_changes` / `inplace_reason` | 原位那一趟真正改到的字段 / 落位结果（`best_effort` = 有字段没能原位落地） |
+
+实测（同一份 `plt.subplots(2, 2)` 脚本、目标 `pos=[0.2, 0.2, 0.6, 0.6]`，源码里没有位置字面量）：
+
+| 命令 | rc | 结果 |
+|---|---|---|
+| `apply --write --verify-fast --json`（`auto`） | 0 | `style=block / applied=true / auto_fallback=true / inplace_pending=["ax0.pos"]`；回读 `pos=[0.2, 0.2, 0.6, 0.6]`（**真的落地了**） |
+| 同上再加 `--style inplace` | 1 | `applied=false / needs_block=true / pending=["ax0.pos"]`，外加上面那句人话失败原因 |
+| 同上再加 `--style block` | 0 | 一律插块（即使能原位改） |
+
+实测（同一份 `plt.subplots(2, 2)` 脚本、目标 `pos=[0.2, 0.2, 0.6, 0.6]`，源码里没有位置字面量；
+`audit_018/promo/t16_verify.log`）：
+
+## 原位改数字，还是插入调整块
+
+以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
+
+```python
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+```
+
+**你拖完之后**（`mpltweak apply --write` 的结果）：
+
+```diff
+-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
++ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
+-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
++ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
+-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
++ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
+```
+
+代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
+
+位置来自 `plt.subplots` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**：
+
+```python
+# ===== auto layout (generated) - do not edit inside =====
+# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
+# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，ax2=网格[2, 2, 1, 0]，ax3=网格[2, 2, 1, 1]
+for _ax, _p in zip(fig.axes, [
+    [0.0728, 0.5363, 0.4418, 0.4015],
+    [0.5394, 0.5363, 0.4418, 0.4015],
+    [0.0728, 0.0645, 0.4418, 0.4015],
+    [0.5394, 0.0645, 0.4418, 0.4015],
+]):
+    _ax.set_position(_p)
+fig.axes[0].title.set_fontsize(12)
+fig.axes[0].grid(False)
+# ===== end auto layout =====
+```
+
+上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
+
+逐字段三态判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了）、"零侵入"的边界（`describe → apply` 直通会把整份状态钉进源码；想少改就少给）见 [docs/params.md](docs/params.md)；插入点硬约束（只允许在最后一个 `savefig` / `show` 之前，`anchor` / `attempts` 实测）、写回被整体拒绝与跨轮混用见 [docs/verify.md](docs/verify.md)。
+
+**这是第一种情况：代码里写的就是字面量，所以只动了这些数字** —— 没有新增一行、没有加 `import`、没有引入任何依赖。
+字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
+
+如果位置是 `plt.subplots` / `plt.subplot(1,2,n)` / `GridSpec` 算出来的，**源码里根本没有数字可改** —— 这在真实脚本里很常见。这种图会改成**插入一个自包含的调整块**：
+
+> 上面那两行 `# ===== auto layout (generated) - do not edit inside =====` … `# ===== end auto layout =====` 是**真的写进你脚本的**，不是示意图；想在自己脚本里找这个块，`grep auto layout` 就能定位。
+
+块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的任何东西、不改动你原有的逻辑。重复写回会**整体替换**它，不会越积越多。两种方式都有三层验证 + 失败自动回滚兜底。
+
+`apply --write` 默认 `--style auto`，**每张图各自决定**：代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`）就**原位改那几个数字**；一个字段都改不到（典型：位置来自 `plt.subplots` / `GridSpec` 的网格轴）就整张图**退到插入调整块**；有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置）走**逐字段三态**判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了），存在第 ③ 类字段就退块并把它**落地**、同时进"未原位应用"清单逐条列出，不静默丢。想强制统一：`--style inplace`（一处都不插块；遇到写不了的字段**明确失败** `rc=1`，不假装改好）或 `--style block`（一律插块）。
+
+**"零侵入"的边界**（第一次写回容易踩的点）：
+
+- **平时**：不加 `import`、不在脚本里留工具痕迹、不生成副文件；开窗只写参数文件。
+- **写回才会改代码**（`apply --write` 是你主动要求的动作）。`describe` 导出的是**当时各轴的实测状态**，直通写回会把整份状态钉进源码：实测一个 8 行的 `plt.subplots(2, 2)` 脚本被插进 30+ 行块，连"当时恰好等于默认值"的字段也一并写死。
+- **想少改就少给**：参数里**没有显式给出**的字段不会写回（缺 `grid` 不再被当成 `false` 补上）；`describe → apply` 直通前先看一眼 `git diff`，或先跑只读预览 `mpltweak apply fig1.py`（**不执行**脚本）。
+- **等值也可能插块**：退块判据是逐字段三态（①已原位落地 ②与源码现值相等 ③有目标值但原位写不了），只有第 ③ 类才退块并把值落地，同时进"未原位应用"清单，不静默丢。
+- 逐字段细节与这一批的实测日志（等值不插块 / 反向对照 / `--verify-fast` 更保守 / `sys.exit` 影响）见 [docs/params.md](docs/params.md)。
+
+写回 = AST 精确定位 + 三层验证；改动落在你的源码里。
+
+`apply --write` 默认 `--style auto`：**每张图各自决定**，规则如下。
+
+| 这张图的情况 | 结果 |
+|---|---|
+| 代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`） | **原位改那几个数字**，脚本风格不变 |
+| 一个字段都改不到（典型：位置来自 `plt.subplots` / `GridSpec` 的网格轴） | 整张图**退到插入调整块** |
+| 有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置） | **逐字段三态**：①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了。存在第 ③ 类字段 → 整张图**退到插入块**并把它**落地**（改不到的字段同时进"未原位应用"清单逐条列出，不静默丢）；只出现 ①② → `no_change`，一个字节都不动（实测：`pos` 等值 + `title_fontsize` 等值 → 不改源码） |
+
+想强制统一：`--style inplace`（一处都不插块；遇到写不了的字段**明确失败** `rc=1`，不假装改好）或
+`--style block`（一律插块）。判据与字段语义见下一节。
+
+**块的插入点有硬约束**：脚本里有 `savefig` / `show` 时，调整块**只允许插在最后一个 `savefig` / `show`
+之前** —— 插在它后面等于"你调的布局根本没进图"，而这正是最难发现的一类事故。行内复合语句
+（如 `if flag: fig.savefig("o.png")`）会把插入点**提升到那条语句之前**；找不到合规插入点就**拒绝写回**
+（`reason=fail`、脚本一个字节都不动），不会再出现"报成功、你的 PNG 却没变"。实测
+（`audit_018/promo/t32_probe.log`）：`if flag: fig.savefig("o.png")` 在第 76 行时，块落在第 9–75 行、
+`anchor="before"`、`attempts=[{"anchor": "before", "line": 9, "ok": true, "semantic": true}]`。
+
+**写回还可能被整体拒绝**：写盘后工具会**无条件**做一次 `ast.parse`（原位与块两条路径都做），语法只要
+被写坏就**当场回滚**；重跑失败时会进一步判别"我们写坏了"还是"脚本本来就跑不通"（缺数据 / 依赖 /
+需要 GUI）——**后者默认也回滚 + 明确失败**。详见「三层验证」。
+
+**跨轮可能混用**：先原位改过数字，后来某轮因为"一个字段都没落地"退成了块，文件里就会同时
+存在两种形态。两者都有效，但读代码的人容易困惑。要统一，先从备份恢复（
+`.tweak_params/<脚本>.tweak.bak` 是写回前的原文），再用 `--style block` 写一次——
+块是整体替换的，单靠再写一次并不会把之前原位改掉的数字改回去。
+
+## 必须遵守的约定
 
 **1. `axes[i]` 的序号 = `fig.axes` 的顺序，不是"代码里 `add_axes` 出现的顺序"。**
 
@@ -125,40 +246,8 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 
 ---
 参数文件的字段含义与两条约定（`axes[i]` 顺序、colorbar 槽轴不占序号）见 [docs/params.md](docs/params.md)。
-## `--style` 与 JSON 字段（原文）
 
-> 以下内容原样取自 `README_v2.md`（T80 瘦身时从主 README 搬入，未改一字）。
-
-### `--style` 与 JSON 字段：这次到底落没落地
-
-三种风格现在共用同一个**逐字段三态**判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、
-原位写不了）：
-
-| 风格 | 遇到第 ③ 类字段时 |
-|---|---|
-| `auto`（默认） | 退到插入调整块，把该字段**落地**（不静默丢），并在 JSON 里留档说明原位那一趟为什么退块 |
-| `inplace`（显式） | **明确失败**：`rc=1`、`applied=false`，并打印 `[!] 这些字段代码里没有可改的写法、本次**没能落地**：ax0.pos`（不会 `rc=0` 假装都改好） |
-| `block` | 一律插块 |
-
-`apply --json` 的 `files[]` 里与此相关的字段（agent 可直接判读）：
-
-| 字段 | 含义 |
-|---|---|
-| `needs_block` | **这次 apply 之后**是否仍有字段没落地（哪怕这次退过块，只要都落地了就是 `false`） |
-| `pending` | 这次仍然没落地的字段清单（如 `["ax0.pos"]`） |
-| `inplace_pending` / `inplace_needs_block` | **原位那一趟**为什么退块：原位阶段写不了哪些字段、是否因此退块 |
-| `auto_fallback` | 这次是否由 `auto` 自动退到块模式 |
-| `inplace_changes` / `inplace_reason` | 原位那一趟真正改到的字段 / 落位结果（`best_effort` = 有字段没能原位落地） |
-
-实测（同一份 `plt.subplots(2, 2)` 脚本、目标 `pos=[0.2, 0.2, 0.6, 0.6]`，源码里没有位置字面量）：
-
-| 命令 | rc | 结果 |
-|---|---|---|
-| `apply --write --verify-fast --json`（`auto`） | 0 | `style=block / applied=true / auto_fallback=true / inplace_pending=["ax0.pos"]`；回读 `pos=[0.2, 0.2, 0.6, 0.6]`（**真的落地了**） |
-| 同上再加 `--style inplace` | 1 | `applied=false / needs_block=true / pending=["ax0.pos"]`，外加上面那句人话失败原因 |
-| 同上再加 `--style block` | 0 | 一律插块（即使能原位改） |
-
-### 附：「零侵入」边界的实测证据（从主 README 搬入）
+## 附：「零侵入」边界的实测证据
 
 **"零侵入"要说清楚边界**，否则第一次写回会意外：
 
@@ -186,93 +275,3 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 - 写回前先 `mpltweak apply fig1.py`（只读预览，**不会执行**脚本）或 `git diff` 看一眼。
 
 这就是确定性写回的价值：mpltweak 用 AST 精确定位 + 三层验证，**让排版结果真正落进你的代码里，而不是只存在于工具中**。
-
----
-
-## 参数文件（原文：字段示例）
-
-> 由 T81 从 `README_v2.md` 搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。
-
-## 给 AI / agent 的排版接口
-
-大模型能写出正确的绘图代码，但**排版数字基本靠猜**。mpltweak 把这部分从"猜"变成"写文件"：**参数文件是公开 JSON 格式（带 JSON Schema）**，agent 直接生成或修改它，`mpltweak apply --write` 负责落实。
-
-```bash
-mpltweak describe fig1.py -o layout.json   # 读：拿到当前排版
-mpltweak apply fig1.py --write --json      # 写：落回源码（--json 时过程信息全走 stderr）
-mpltweak check fig1.py --json              # 查：排版体检，退出码即 CI 门禁
-```
-
-`--json` 给机器读：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
-
-四个子命令的作用表、退出码口径、读 → 改 → 写 → 查回路、以及 MCP 四个工具的参数签名见 [docs/agent.md](docs/agent.md)。
-
-### 也可以接进 AI 客户端（MCP）——**可选适配层**
-
-**能跑 shell 的客户端不需要 MCP**；它面向拿不到 shell 的客户端（如 Claude Desktop）。可选依赖（Python ≥ 3.10）：`pip install "mpltweak[mcp]"`，然后 `mpltweak mcp` 起 stdio server；客户端配置加 `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`。
-它暴露 CLI 的子集：`describe_layout` / `check_layout` / `params_schema` / `apply_layout`（`write=False`）；`revert`、`--style`、`--verify-fast`、`--strict` 等只在 CLI 上。四个工具的实际参数签名、`--params` 路径不支持的说明与 best-effort 维护策略见 [docs/agent.md](docs/agent.md)。
-
-### 让 AI 直接读这份手册（skill）
-
-仓库里的 `skills/mpltweak/SKILL.md` 是写给 AI 的操作手册（Agent Skills 格式），含命令、使用铁律与人机协作方式；把它喂给 AI 助手即可，不必每次解释用法。
-
----
-
-## 原位改数字 / 插入调整块：逐字段三态与零侵入边界（原文）
-
-## 原位改数字，还是插入调整块
-
-以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
-
-```python
-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-```
-
-**你拖完之后**（`mpltweak apply --write` 的结果）：
-
-```diff
--ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-+ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
--ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-+ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
--ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-+ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
-```
-
-**这是第一种情况：代码里写的就是字面量，所以只动了这些数字** —— 没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
-
-如果位置是 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 算出来的，**源码里根本没有数字可改** —— 这在真实脚本里很常见。这种图会改成**插入一个自包含的调整块**：
-
-```python
-# ===== auto layout (generated) - do not edit inside =====
-# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
-# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，ax2=网格[2, 2, 1, 0]，ax3=网格[2, 2, 1, 1]
-for _ax, _p in zip(fig.axes, [
-    [0.0728, 0.5363, 0.4418, 0.4015],
-    [0.5394, 0.5363, 0.4418, 0.4015],
-    [0.0728, 0.0645, 0.4418, 0.4015],
-    [0.5394, 0.0645, 0.4418, 0.4015],
-]):
-    _ax.set_position(_p)
-fig.axes[0].title.set_fontsize(12)
-fig.axes[0].grid(False)
-# ===== end auto layout =====
-```
-
-> 上面那两行 `# ===== auto layout (generated) - do not edit inside =====` … `# ===== end auto layout =====` 是**真的写进你脚本的**，不是示意图；想在自己脚本里找这个块，`grep auto layout` 就能定位。
-
-块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的任何东西、不改动你原有的逻辑。重复写回会**整体替换**它，不会越积越多。两种方式都有三层验证 + 失败自动回滚兜底。
-
-`apply --write` 默认 `--style auto`，**每张图各自决定**：代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`）就**原位改那几个数字**；一个字段都改不到（典型：位置来自 `plt.subplots()` / `GridSpec` 的网格轴）就整张图**退到插入调整块**；有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置）走**逐字段三态**判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了），存在第 ③ 类字段就退块并把它**落地**、同时进"未原位应用"清单逐条列出，不静默丢。想强制统一：`--style inplace`（一处都不插块；遇到写不了的字段**明确失败** `rc=1`，不假装改好）或 `--style block`（一律插块）。
-
-**"零侵入"的边界**（第一次写回容易踩的点）：
-
-- **平时**：不加 `import`、不在脚本里留工具痕迹、不生成副文件；开窗只写参数文件。
-- **写回才会改代码**（`apply --write` 是你主动要求的动作）。`describe` 导出的是**当时各轴的实测状态**，直通写回会把整份状态钉进源码：实测一个 8 行的 `plt.subplots(2, 2)` 脚本被插进 30+ 行块，连"当时恰好等于默认值"的字段也一并写死。
-- **想少改就少给**：参数里**没有显式给出**的字段不会写回（缺 `grid` 不再被当成 `false` 补上）；`describe → apply` 直通前先看一眼 `git diff`，或先跑只读预览 `mpltweak apply fig1.py`（**不执行**脚本）。
-- **等值也可能插块**：退块判据是逐字段三态（①已原位落地 ②与源码现值相等 ③有目标值但原位写不了），只有第 ③ 类才退块并把值落地，同时进"未原位应用"清单，不静默丢。
-- 逐字段细节与这一批的实测日志（等值不插块 / 反向对照 / `--verify-fast` 更保守 / `sys.exit()` 影响）见 [docs/params.md](docs/params.md)。
-
-写回 = AST 精确定位 + 三层验证；改动落在你的源码里。

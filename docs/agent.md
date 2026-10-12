@@ -1,8 +1,4 @@
-# 给 AI / agent 的排版接口（展开版）
-
-> 本文件是 [README](../README.md) 的展开版，内容自 README 搬出；命令、参数、退出码与实测数值与原文一致。
-
-## 给 AI / agent 的排版接口
+# 给 AI / agent 的排版接口
 
 大模型能写出正确的绘图代码，但**排版数字基本靠猜** —— 它看不到那张图。
 
@@ -17,7 +13,7 @@ mpltweak 把这部分从"猜"变成"写文件"：
 - **命令行是主路径**：只要调用方**能跑命令**（人或 agent —— Claude Code / Codex / Cursor / DSH 这类都行），
   用下面三条就够，不需要任何额外配置：
 
-  ```bash
+```bash
   mpltweak describe fig1.py -o layout.json   # 读：拿到当前排版
   mpltweak apply fig1.py --write --json      # 写：落回源码（--json 时过程信息全走 stderr）
   mpltweak check fig1.py --json              # 查：排版体检，退出码即 CI 门禁
@@ -54,12 +50,12 @@ mpltweak apply fig1.py --write --json       # 写：落回源码并自检
 mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 ```
 
-**为什么需要"读"**：`add_axes([...])` 这种明写的位置，读源码就够了；但 `plt.subplots()` 的网格、
-没写 `fontsize=` 时实际生效的默认值、`tight_layout()` 之后的位置、colorbar 与 cartopy 锁定后的
+**为什么需要"读"**：`add_axes([...])` 这种明写的位置，读源码就够了；但 `plt.subplots` 的网格、
+没写 `fontsize=` 时实际生效的默认值、`tight_layout` 之后的位置、colorbar 与 cartopy 锁定后的
 真实尺寸 —— 这些**源码里没有数字**，得跑一遍才知道。
 
 **agent 路径建议不要加 `--verify-fast`**：它只检查语法、**不重跑脚本**，因此证明不了"某个字段
-与源码现值相等"。当源码里没有可比写法时（典型：`plt.subplots()` 的网格轴位置由 subplotspec + 边距
+与源码现值相等"。当源码里没有可比写法时（典型：`plt.subplots` 的网格轴位置由 subplotspec + 边距
 算出），工具只能**保守退块**。实测：拿 12 个真实语料脚本走 `describe` 原样导出 → `apply --write
 --verify-fast`，能跑起来的 **7/7 都插了调整块**（`audit_018/engine-hunter/fix018/t15_agent_path.txt`）；
 同一条路径**去掉 `--verify-fast`** 就是 `reason=no_change`、一个字节不动（本地 A/B：同一份
@@ -67,7 +63,15 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 `audit_018/promo/t16_probe2.log`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
-### 也可以接进 AI 客户端（MCP）——**可选适配层**
+> 由 T81 从 `README_v2.md` 搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。
+
+大模型能写出正确的绘图代码，但**排版数字基本靠猜**。mpltweak 把这部分从"猜"变成"写文件"：**参数文件是公开 JSON 格式（带 JSON Schema）**，agent 直接生成或修改它，`mpltweak apply --write` 负责落实。
+
+`--json` 给机器读：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
+
+四个子命令的作用表、退出码口径、读 → 改 → 写 → 查回路、以及 MCP 四个工具的参数签名见 [docs/agent.md](docs/agent.md)。
+
+## 也可以接进 AI 客户端（MCP）——**可选适配层**
 
 **先看这句**：只要你的客户端 / agent **能跑 shell**，直接用上面的命令行就够了，**不必配置 MCP**。
 MCP 面向的是**拿不到 shell 的客户端**（Claude Desktop 这类，AI 只能在对话里调工具）。
@@ -98,7 +102,10 @@ mpltweak mcp                    # 启动 stdio server
 `--strict`、`--no-text`、`--static`、`apply --all-figs`、`--lang`。MCP 按 **best-effort** 维护；
 四个工具里的用户脚本同样跑在**独立子进程**（写文件 / 联网等副作用照旧真实发生）。
 
-### 让 AI 直接读这份手册（skill）
+**能跑 shell 的客户端不需要 MCP**；它面向拿不到 shell 的客户端（如 Claude Desktop）。可选依赖（Python ≥ 3.10）：`pip install "mpltweak[mcp]"`，然后 `mpltweak mcp` 起 stdio server；客户端配置加 `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`。
+它暴露 CLI 的子集：`describe_layout` / `check_layout` / `params_schema` / `apply_layout`（`write=False`）；`revert`、`--style`、`--verify-fast`、`--strict` 等只在 CLI 上。四个工具的实际参数签名、`--params` 路径不支持的说明与 best-effort 维护策略见 [docs/agent.md](docs/agent.md)。
+
+## 让 AI 直接读这份手册（skill）
 
 仓库里的 `skills/mpltweak/SKILL.md` 是一份**写给 AI 的操作手册**（Agent Skills 格式）：
 命令、使用铁律、以及几种人机协作方式。想让自己的 AI 助手学会用 mpltweak，
@@ -110,6 +117,9 @@ mpltweak mcp                    # 启动 stdio server
 **读 → 改 → 写 → 查：四个子命令各管一段。**
 --verify-fast`，能跑起来的 **7/7 都插了调整块**（本次发行前实测）；
 `plt.subplots(2, 2)` 脚本，加它 → `style=block` 且块 31 行，不加 → `reason=no_change / applied=false`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
+
+仓库里的 `skills/mpltweak/SKILL.md` 是写给 AI 的操作手册（Agent Skills 格式），含命令、使用铁律与人机协作方式；把它喂给 AI 助手即可，不必每次解释用法。
+
 ## 人 + agent 怎么分工
 
 | 分工 | 怎么做 |
@@ -121,49 +131,3 @@ mpltweak mcp                    # 启动 stdio server
 | **人拖完，agent 总结** | AI 读参数 JSON，用大白话说明改了什么（可当 commit message 或图注） |
 
 原则很简单：**"好不好看"归你，"精确落实"归它。**
-
-## 开发
-
-```bash
-git clone https://github.com/shdbl/mpltweak && cd mpltweak
-pip install -e .
-python tests/test_tweak.py       # 交互内核
-python tests/test_events.py      # 事件路径
-python tests/test_redo.py        # 撤销 / 重做
-python tests/test_writeback.py   # AST 写回 + 三层验证
-python tools/crosscheck.py       # 环境 / API 兼容性自检
-```
-
-```text
-src/mpltweak/
-├── cli.py          # mpltweak <脚本> | apply | doctor
-├── launch.py       # 跑脚本 → 挂窗口 → 关窗存参数
-├── toolbox.py      # 交互内核（Tweak 控制器，纯 matplotlib 事件）
-├── params.py       # 参数 JSON 规范
-├── apply.py        # 改动清单 / 写回入口
-├── writeback.py    # AST 定位 + 原位 / 块写回
-└── verify.py       # 语义验证（重跑后逐项比对）
-```
-
-`toolbox.py` 也可作**嵌入 API**（`from mpltweak.toolbox import gaitu`），
-但主推 CLI —— 用户脚本里不该出现本工具的任何痕迹。
-
----
-仓库结构：`src/mpltweak/`（`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`）。跑测试：`python tests/test_writeback.py`（AST 写回 + 三层验证）。
-安装与全部测试命令、模块职责、嵌入 API（`from mpltweak.toolbox import gaitu`）与自检脚本见 [docs/dev.md](docs/dev.md)。
-## MCP 适配层（原文）
-
-> 以下内容原样取自 `README_v2.md`（T80 瘦身时从主 README 搬入，未改一字）。
-
----
-
-## 让 AI 直接读手册（skill，原文）
-
----
-
-## 给 AI / agent 的排版接口（原文）
-
-> 由 T81 从 `README_v2.md` 搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。
-
-## 人 + agent 怎么分工（原文：五种协作方式）
-
