@@ -63,14 +63,6 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 `audit_018/promo/t16_probe2.log`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
-> 由 T81 从 `README_v2.md` 搬入；搬入时只清掉了营销腔，命令 / 参数 / 字段 / 数字未改。
-
-大模型能写出正确的绘图代码，但**排版数字基本靠猜**。mpltweak 把这部分从"猜"变成"写文件"：**参数文件是公开 JSON 格式（带 JSON Schema）**，agent 直接生成或修改它，`mpltweak apply --write` 负责落实。
-
-`--json` 给机器读：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
-
-四个子命令的作用表、退出码口径、读 → 改 → 写 → 查回路、以及 MCP 四个工具的参数签名见 [docs/agent.md](docs/agent.md)。
-
 ## 也可以接进 AI 客户端（MCP）——**可选适配层**
 
 **先看这句**：只要你的客户端 / agent **能跑 shell**，直接用上面的命令行就够了，**不必配置 MCP**。
@@ -102,23 +94,11 @@ mpltweak mcp                    # 启动 stdio server
 `--strict`、`--no-text`、`--static`、`apply --all-figs`、`--lang`。MCP 按 **best-effort** 维护；
 四个工具里的用户脚本同样跑在**独立子进程**（写文件 / 联网等副作用照旧真实发生）。
 
-**能跑 shell 的客户端不需要 MCP**；它面向拿不到 shell 的客户端（如 Claude Desktop）。可选依赖（Python ≥ 3.10）：`pip install "mpltweak[mcp]"`，然后 `mpltweak mcp` 起 stdio server；客户端配置加 `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`。
-它暴露 CLI 的子集：`describe_layout` / `check_layout` / `params_schema` / `apply_layout`（`write=False`）；`revert`、`--style`、`--verify-fast`、`--strict` 等只在 CLI 上。四个工具的实际参数签名、`--params` 路径不支持的说明与 best-effort 维护策略见 [docs/agent.md](docs/agent.md)。
-
 ## 让 AI 直接读这份手册（skill）
 
 仓库里的 `skills/mpltweak/SKILL.md` 是一份**写给 AI 的操作手册**（Agent Skills 格式）：
 命令、使用铁律、以及几种人机协作方式。想让自己的 AI 助手学会用 mpltweak，
 把这份文件喂给它就行 —— 不用你每次解释一遍怎么用。
-**参数文件是公开 JSON 格式（带 JSON Schema）**，AI 可以直接生成或修改它，不需要"看懂"图。`mpltweak apply --write` 负责确定性落实：AST 定位 + 三层验证 + 失败回滚；**参数写错会在验证层被拦下并回滚**，不会停在坏状态。
-**分工：内容与图元由你的代码（或 agent）决定；mpltweak 只负责排版数字的读写。**
-  **核心子集**包成 stdio 工具，按 **best-effort** 维护；定位、功能与验收口径都以 CLI 为准。
-  **能跑命令的客户端不需要 MCP**；确需接客户端时看本节的「也可以接进 AI 客户端（MCP）」。
-**读 → 改 → 写 → 查：四个子命令各管一段。**
---verify-fast`，能跑起来的 **7/7 都插了调整块**（本次发行前实测）；
-`plt.subplots(2, 2)` 脚本，加它 → `style=block` 且块 31 行，不加 → `reason=no_change / applied=false`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
-
-仓库里的 `skills/mpltweak/SKILL.md` 是写给 AI 的操作手册（Agent Skills 格式），含命令、使用铁律与人机协作方式；把它喂给 AI 助手即可，不必每次解释用法。
 
 ## 人 + agent 怎么分工
 

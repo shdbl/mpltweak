@@ -106,29 +106,6 @@ fig.axes[0].grid(False)
 
 上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
 
-逐字段三态判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了）、"零侵入"的边界（`describe → apply` 直通会把整份状态钉进源码；想少改就少给）见 [docs/params.md](docs/params.md)；插入点硬约束（只允许在最后一个 `savefig` / `show` 之前，`anchor` / `attempts` 实测）、写回被整体拒绝与跨轮混用见 [docs/verify.md](docs/verify.md)。
-
-**这是第一种情况：代码里写的就是字面量，所以只动了这些数字** —— 没有新增一行、没有加 `import`、没有引入任何依赖。
-字号、图例位置、网格、colorbar 同理 —— 改的都是你代码里**原本就有的**参数。
-
-如果位置是 `plt.subplots` / `plt.subplot(1,2,n)` / `GridSpec` 算出来的，**源码里根本没有数字可改** —— 这在真实脚本里很常见。这种图会改成**插入一个自包含的调整块**：
-
-> 上面那两行 `# ===== auto layout (generated) - do not edit inside =====` … `# ===== end auto layout =====` 是**真的写进你脚本的**，不是示意图；想在自己脚本里找这个块，`grep auto layout` 就能定位。
-
-块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的任何东西、不改动你原有的逻辑。重复写回会**整体替换**它，不会越积越多。两种方式都有三层验证 + 失败自动回滚兜底。
-
-`apply --write` 默认 `--style auto`，**每张图各自决定**：代码里有可改的字面量（`add_axes([...])`、`set_title/set_xlabel(fontsize=)`、`tick_params(labelsize=)`、`grid(...)`）就**原位改那几个数字**；一个字段都改不到（典型：位置来自 `plt.subplots` / `GridSpec` 的网格轴）就整张图**退到插入调整块**；有的字段能原位改、有的不能（`clim` / `cmap` / `legend` / `spines`、网格轴位置、colorbar 宿主轴位置）走**逐字段三态**判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了），存在第 ③ 类字段就退块并把它**落地**、同时进"未原位应用"清单逐条列出，不静默丢。想强制统一：`--style inplace`（一处都不插块；遇到写不了的字段**明确失败** `rc=1`，不假装改好）或 `--style block`（一律插块）。
-
-**"零侵入"的边界**（第一次写回容易踩的点）：
-
-- **平时**：不加 `import`、不在脚本里留工具痕迹、不生成副文件；开窗只写参数文件。
-- **写回才会改代码**（`apply --write` 是你主动要求的动作）。`describe` 导出的是**当时各轴的实测状态**，直通写回会把整份状态钉进源码：实测一个 8 行的 `plt.subplots(2, 2)` 脚本被插进 30+ 行块，连"当时恰好等于默认值"的字段也一并写死。
-- **想少改就少给**：参数里**没有显式给出**的字段不会写回（缺 `grid` 不再被当成 `false` 补上）；`describe → apply` 直通前先看一眼 `git diff`，或先跑只读预览 `mpltweak apply fig1.py`（**不执行**脚本）。
-- **等值也可能插块**：退块判据是逐字段三态（①已原位落地 ②与源码现值相等 ③有目标值但原位写不了），只有第 ③ 类才退块并把值落地，同时进"未原位应用"清单，不静默丢。
-- 逐字段细节与这一批的实测日志（等值不插块 / 反向对照 / `--verify-fast` 更保守 / `sys.exit` 影响）见 [docs/params.md](docs/params.md)。
-
-写回 = AST 精确定位 + 三层验证；改动落在你的源码里。
-
 `apply --write` 默认 `--style auto`：**每张图各自决定**，规则如下。
 
 | 这张图的情况 | 结果 |
@@ -208,7 +185,6 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 `ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。
 
 ---
-参数文件的字段含义与两条约定（`axes[i]` 顺序、colorbar 槽轴不占序号）见 [docs/params.md](docs/params.md)。
 
 ## 附：「零侵入」边界的实测证据
 

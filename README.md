@@ -409,7 +409,7 @@ mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
 
 筛选与去重口径：**只要 `.py`，并按 sha256 唯一化**（同一份脚本在多处出现只留一份）——
 合并阶段原始记录 **10,168** 份，sha256 唯一化后 **10,158** 份（丢 10 份完全相同的重复；
-出处 `corpus_union/_logs/build_summary.json`：`copied=10168 / unique_sha=10158`，
+本地构建日志（`corpus_union/_logs/build_summary.json`，未随仓库发布）记为 `copied=10168 / unique_sha=10158`，
 `sha_mismatch=0 / size_mismatch=0 / undecodable=0`）；更早一次跨阶段合并另有
 **`dup_cross_stage = 1469`** 条命中同一 sha 的记录被跳过（同一脚本在 GitHub / Zenodo 两个阶段都抓到）。
 **语料本体保存在本地只读、不再分发**，仅公开清单（`manifest.jsonl`：路径 / 来源 / URL / 许可 /

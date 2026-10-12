@@ -8,12 +8,18 @@ on:
 
 jobs:
   test:
-    name: py${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: py${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows 上的 run 步骤统一用 Git Bash，保持与 Linux 相同的 bash 语法
+    # （set -e 循环 / heredoc / `|| true` 都能跑）。
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12']
+        os: [ubuntu-latest, windows-latest]
     env:
       # 测试全程无头，只用 Agg。开窗那部分（Qt）不参与 CI ——
       # 源码里 Qt 的 import 都在函数内部，模块顶层不碰 Qt。

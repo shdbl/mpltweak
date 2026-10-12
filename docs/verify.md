@@ -115,11 +115,6 @@ sys.exit(1 if bad else 0)
 
 CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**不执行脚本**，见「执行边界」）。
 
----
-**`--verify-fast`（加速）**：只做写盘后的 `ast.parse`，所以快；它不证明脚本能跑通、也不证明布局真的落到目标图上（JSON 里 `verify_mode: "fast"`）。
-**`--strict`（门禁）**：`check --strict` 把布局引擎冲突（`constrained_layout` / `autolayout`）从提示升级为问题（`rc=1`）；`apply --write --strict` 遇到冲突拒绝写回（要放行加 `--allow-layout-conflict`）。`check --json` 的 `ok` 字段 + 退出码可直接当 CI 用例；`check` 一次只接受一个脚本，批量要自己循环。
-其余细节（`--no-verify` 的边界、`bbox_inches='tight'` 的降级、`--tol` 只收有限正数、`--static` 静态门禁、批量脚本示例）见 [docs/verify.md](docs/verify.md)。
-
 ## 调整块的插入点硬约束与"写回被整体拒绝"
 
 **块的插入点有硬约束**：脚本里有 `savefig` / `show` 时，调整块**只允许插在最后一个 `savefig` / `show`
@@ -165,12 +160,3 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
   `grid(False)`）。
 - 写回前先 `mpltweak apply fig1.py`（只读预览，**不会执行**脚本）或 `git diff` 看一眼。
 
-## 实测适配面（L0 压测）
-
-> 方法与判据保留如下；**具体数字与结论已随语料口径更新下线**。
-
-- L0 六项：M1 可解析 / M2 参数可构造 / M3 干净往返（参数 == 源码现值）/ M4 定向改写 / M5 幂等（同参数第二次）/ M6 可逆（`revert` 回原件）。
-- 判定口径：只做**静态**判定（不执行语料脚本）。"干净往返 / 幂等 / 可逆"用的是**只含代码里确有写法**的字段（`pos` / `figsize`）的脚手架参数，**不能读成"任何参数都不会改源码"**。
-- 把 `describe` 导出的参数整份直通写回时：值与现值一致、且源码里有可比的写法 ⇒ `no_change`、字节不变；源码里没有写法的字段不会因为等值而插块（逐字段三态判据）。
-
-> **当前语料口径与结果见主 README 的「真实绘图代码语料验证」一节（及 `bench` 分支）。**

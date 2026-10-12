@@ -65,9 +65,10 @@ AxisItem::
 版本历史
 --------
 v1/v2：早期内部形态（未公开）。
-v3：当前公开版本——引入 ``is_colorbar``：落实 colorbar 位置/clim 前必须先
+v3：引入 ``is_colorbar``：落实 colorbar 位置/clim 前必须先
     ``set_axes_locator(None)`` + ``set_box_aspect(None)``，否则 matplotlib 每次重绘
     会用 ``_ColorbarAxesLocator`` + ``_box_aspect=20`` 把位置/宽度重置回自动值。
+v4（当前公开版本）：AxisItem 增加可选的 ``xlim`` / ``ylim``（各 2 个数或 null）。
 
 兼容约定（读方必须遵守）
 ------------------------

@@ -396,7 +396,7 @@ The study only does **static** location and rewrite decisions (**it does not exe
 
 Selection and de-duplication: **`.py` files only, made unique by sha256** (a script that appears in
 several places is kept once) — the merge stage saw **10,168** raw files and kept **10,158** after
-sha256-uniquing (10 byte-identical duplicates dropped; source `corpus_union/_logs/build_summary.json`:
+sha256-uniquing (10 byte-identical duplicates dropped; local build log `corpus_union/_logs/build_summary.json`, not published with the repo:
 `copied=10168 / unique_sha=10158`, `sha_mismatch=0 / size_mismatch=0 / undecodable=0`). An earlier
 cross-stage merge additionally skipped **`dup_cross_stage = 1469`** records whose sha256 was already
 seen (the same script caught by both the GitHub and the Zenodo stage). **The corpus itself is kept
