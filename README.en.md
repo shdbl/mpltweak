@@ -378,7 +378,7 @@ Its target users are **small and medium research plotting scripts that run local
 ## Static study on real plotting code
 
 <div align="center">
-<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e221258/docs/accuracy_study.zh.png" width="900" alt="static study: per-family in-place write-back rate">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e221258/docs/accuracy_study.en.png" width="900" alt="static study: per-family in-place write-back rate">
 </div>
 
 
