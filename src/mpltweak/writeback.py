@@ -2312,12 +2312,52 @@ def _rollback_note(backup, script, expect=None):
         if _now is not None and _now != expect:
             return ('检测到脚本在验证期间被外部修改，已跳过自动回滚以免抹掉你的改动；'
                     '备份在 %s' % backup)
+    d = os.path.dirname(os.path.abspath(script)) or '.'
     try:
-        shutil.copy2(backup, script)
+        _mode = os.stat(script).st_mode & 0o7777
+    except OSError:
+        _mode = None
+    fd, tmp = tempfile.mkstemp(prefix='.mpltweak-', suffix='.tmp', dir=d)
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            with open(backup, 'rb') as _b:
+                shutil.copyfileobj(_b, f)
+            f.flush()
+            os.fsync(f.fileno())               # 先落盘，再替换
+        if _mode is not None:
+            try:
+                os.chmod(tmp, _mode)
+            except OSError:
+                pass
+        os.replace(tmp, script)
         return '已回滚'
     except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
         return ('回滚也失败了（%s: %s）—— 脚本目前是改坏的状态，'
                 '备份在 %s，请手动恢复' % (type(e).__name__, e, backup))
+
+
+def _guard_external_edit(script, src):
+    """src 读取之后、落盘之前：若磁盘上的脚本已被外部（编辑器）改过，拒绝写盘。
+
+    返回 None = 可以写；返回 str = 拒绝原因（直接可写进结论的 err）。
+
+    为什么必须有：`apply --write` 的 src 在流程**开头**读一次，之后最长要等
+    （重跑验证的）300 秒才落盘 —— 期间用户在编辑器里保存一次，落盘就会把
+    他的改动**静默覆盖**。回滚路径早有 expect 检测（_rollback_note），正向
+    写盘路径过去反而没有，两侧不对称（外部评审确认）。
+    """
+    try:
+        _cur, _ = params.read_text(script)
+    except (OSError, UnicodeDecodeError):
+        return None          # 读不了就当没改过，真写不进去会由写盘异常兜底
+    if _cur != src:
+        return ('脚本在读取之后被外部修改（编辑器保存？），已拒绝写盘以免覆盖你的改动；'
+                '当前内容保留在磁盘上')
+    return None
 
 
 def _scale_literal(tree, nm, field):
@@ -2812,6 +2852,10 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         res['err'] = '备份失败: %s' % e
         return res
     res['backup'] = backup
+    _guard = _guard_external_edit(script, src)
+    if _guard:
+        res['err'] = _guard
+        return res
     try:
         _atomic_write(script, in_src, encoding=encoding)
     except OSError as e:
@@ -2870,7 +2914,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         # T23：三层验证各自的状态（rerun 这一层就是"重跑"）
         res['layers'] = dict(res.get('layers') or {}, rerun=vok)
         if vok is True and semantic:
-            if covered:
+            if covered or figsize_edited:
                 # 原位覆盖了字段 → 语义只比对被覆盖的字段。**每个轴**都要在
                 # fields_by_axis 里有条目（未覆盖的轴给空集 = 什么都不比）——
                 # 否则 compare 会把没列出的轴当"全字段比对"，colorbar 等未覆盖
@@ -4539,6 +4583,10 @@ def writeback(script, data, params_path, verify=True, python=None,
                                 % _se)
                     last_sem = last_err
                     continue
+                _guard = _guard_external_edit(script, src)
+                if _guard:
+                    res['err'] = _guard
+                    return res
                 _atomic_write(script, content, encoding=_src_enc)
             except OSError as e:
                 res['err'] = '写文件失败: %s（%s）' % (

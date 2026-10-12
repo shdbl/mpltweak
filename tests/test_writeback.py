@@ -4683,6 +4683,56 @@ check('84② 对照：参数覆盖全部被绑定轴 ⇒ 允许原位写（appli
                                            _f84b.get('pending')))
 shutil.rmtree(_d84b, ignore_errors=True)
 
+# =====================================================================
+# §85 figsize-only 原位写回：covered 为空也必须跑语义验证（figsize 比对）
+# =====================================================================
+# 复现：plt.subplots(figsize=...) 网格轴 → 原位路径没有任何轴字段可覆盖
+# （covered 空）→ 修复前语义层被跳过（semantic=None），figsize 比对不可达；
+# 修复后 `if covered or figsize_edited:` → verify_semantic 照跑，figsize 落地
+# 到目标图才通过（writeback.py:2873 / verify.py:928）。
+_d85 = os.path.join(_TMPROOT, 'case_85')
+os.makedirs(_d85, exist_ok=True)
+_s85 = os.path.join(_d85, 'fig85.py')
+open(_s85, 'w', encoding='utf-8', newline='').write(
+    'import matplotlib.pyplot as plt\n'
+    'import numpy as np\n'
+    'fig, ax = plt.subplots(figsize=(10, 3))\n'
+    'ax.plot(np.linspace(0, 1, 50))\n'
+    'fig.savefig("out85.png")\n')
+_p85 = os.path.join(_d85, 'params85.json')
+_data85 = {'fig_index': 0, 'figsize_in': [7.0, 3.5], 'axes': []}
+open(_p85, 'w', encoding='utf-8').write(json.dumps(_data85))
+_r85 = writeback.writeback(_s85, _data85, _p85, verify=True, semantic=True,
+                           style='inplace', timeout=120)
+check('85① figsize-only（covered 空）⇒ 语义层照跑且通过（semantic is True，不再是 None）',
+      _r85.get('semantic') is True,
+      'reason=%r semantic=%r verified=%r err=%r' % (_r85.get('reason'),
+                                                    _r85.get('semantic'),
+                                                    _r85.get('verified'),
+                                                    _r85.get('err')))
+check('85② 原位写回生效：源码里的 figsize 变成目标值',
+      'figsize=(7' in read(_s85),
+      str([l.strip() for l in read(_s85).splitlines() if 'figsize' in l][:2]))
+shutil.rmtree(_d85, ignore_errors=True)
+
+# =====================================================================
+# §86 写盘前二次确认：src 读取后外部改过脚本 ⇒ 拒绝落盘（不覆盖用户改动）
+# =====================================================================
+_d86 = os.path.join(_TMPROOT, 'case_86')
+os.makedirs(_d86, exist_ok=True)
+_s86 = os.path.join(_d86, 'fig86.py')
+_orig86 = ('import matplotlib.pyplot as plt\n'
+           'fig, ax = plt.subplots(figsize=(6, 4))\n'
+           'fig.savefig("out86.png")\n')
+open(_s86, 'w', encoding='utf-8', newline='').write(_orig86)
+_g86 = writeback._guard_external_edit(_s86, _orig86)
+check('86① 磁盘未变 ⇒ 放行（返回 None）', _g86 is None, repr(_g86))
+open(_s86, 'w', encoding='utf-8', newline='').write(_orig86 + '# 用户此刻保存了新行\n')
+_g86b = writeback._guard_external_edit(_s86, _orig86)
+check('86② 磁盘与 src 不一致（编辑器保存过）⇒ 拒绝写盘（返回原因）',
+      isinstance(_g86b, str) and '外部修改' in _g86b, repr(_g86b))
+shutil.rmtree(_d86, ignore_errors=True)
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)
 

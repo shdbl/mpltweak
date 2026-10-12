@@ -95,12 +95,12 @@ pip install mpltweak            # 核心：describe / check / apply（mcp 是可
 pip install "mpltweak[qt]"      # 要**开窗拖图**再加这个（装 PyQt5 图形后端）
 ```
 
-开窗需要一个图形后端（推荐 PyQt5，约 +150MB），所以分成两步 —— 服务器 / headless / 纯 agent 场景只用 `describe` / `check` / `apply`，不该为此装一整套 Qt（有些环境本来也已经装了 PySide6 / PyQt6）。Windows / macOS 的官方 Python 安装包自带 `tkinter`，所以只装 `mpltweak` 一般就能直接开窗，此时用的是 **Tk 后端（交互弱化版）**，不是安装失败、也不是没装好；一个图形后端都没有时开窗 `rc=4` 并给出装哪个的提示。后端探测顺序、`doctor` 输出与常见问题见 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md)。
+开窗需要一个图形后端（推荐 PyQt5，约 +150MB），所以分成两步 —— 服务器 / headless / 纯 agent 场景只用 `describe` / `check` / `apply`，不该为此装一整套 Qt（有些环境本来也已经装了 PySide6 / PyQt6）。Windows / macOS 的官方 Python 安装包自带 `tkinter`，所以只装 `mpltweak` 一般就能直接开窗，此时用的是 **Tk 后端（交互弱化版）**，不是安装失败、也不是没装好；一个图形后端都没有时开窗 `rc=4` 并给出装哪个的提示。后端对照、探测顺序与常见问题见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)，命令执行边界见 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md)。
 
 ### 窗口后端：Qt（推荐）还是 Tk（默认可用）
 
 装 `mpltweak[qt]` 走 Qt（交互最全）；只装核心包时用 Tk（弱化版，能开窗但手势不全）；两个后端都没有时开窗直接 `rc=4`，并提示该装哪一个。
-后端对照表、各平台装法与环境变量见 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md)。
+后端对照表、各平台装法与探测顺序见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
 
 ### 1 · 你原来的脚本，一行都不用改
 
@@ -174,7 +174,7 @@ python fig1.py
 
 ### 如果没反应
 
-没弹窗、写回后没变化、参数从哪来：先看 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) 的「如果没反应」（含 `doctor`、`--timeout 600`、`--force-resume`、布局引擎冲突等逐条对照表）。
+没弹窗、写回后没变化、参数从哪来：先看 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) 的「如果没反应」（含 `doctor`、`--timeout 600`、`--force-resume`、布局引擎冲突等逐条对照表）。
 
 
 ## 把它当作 skill 用（给 AI 客户端）
