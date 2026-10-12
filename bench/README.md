@@ -15,10 +15,10 @@
 筛选与去重口径：
 
 - **只要 `.py`**，并按 **sha256 唯一化**：同一份脚本在多处出现只留一份。合并阶段原始记录 **10,168** 份，
-  sha256 唯一化后 **10,158** 份（丢 10 份完全相同的重复）。出处 `corpus_union/_logs/build_summary.json`：
+  sha256 唯一化后 **10,158** 份（丢 10 份完全相同的重复）。本地构建日志（`corpus_union/_logs/build_summary.json`，未随仓库发布）：
   `copied=10168`、`unique_sha=10158`、`dup_groups` 10 组 × 2、`sha_mismatch=0 / size_mismatch=0 /
   undecodable=0`。
-- 更早一次跨阶段合并（`corpus_big` 阶段，`corpus_big/_logs/merge_summary.json`）另有
+- 更早一次跨阶段合并（`corpus_big` 阶段的本地日志 `corpus_big/_logs/merge_summary.json`，同样未随仓库发布）另有
   `dup_cross_stage = 1469` 条命中同一 sha 的记录被跳过（同一脚本在 GitHub / Zenodo 两个阶段都抓到）。
 - **许可与 URL 逐份记录**在 `manifest.jsonl`；**语料本体保存在本地只读，不再分发**。
 - 本次是**静态研究**：不执行语料脚本，只读源码做定位 / 改写判定。
