@@ -20,10 +20,10 @@
 - [演示](#演示)
 - [键位速查](#键位速查)
 - [安装 + 快速开始](#安装--快速开始)
+- [原位改数字，还是插入调整块](#原位改数字还是插入调整块)
 - [把它当作 skill 用](#把它当作-skill-用给-ai-客户端)
 - [给 AI / agent 的排版接口](#给-ai--agent-的排版接口)
 - [人 + agent 怎么分工](#人--agent-怎么分工)
-- [原位改数字，还是插入调整块](#原位改数字还是插入调整块)
 - [工作流](#工作流)
 - [三层验证](#三层验证)
 - [执行边界：哪些命令会跑你的脚本](#执行边界哪些命令会跑你的脚本)
@@ -176,6 +176,54 @@ python fig1.py
 
 没弹窗、写回后没变化、参数从哪来：先看 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) 的「如果没反应」（含 `doctor`、`--timeout 600`、`--force-resume`、布局引擎冲突等逐条对照表）。
 
+## 原位改数字，还是插入调整块
+
+以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
+
+```python
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
+ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
+```
+
+**你拖完之后**（`mpltweak apply --write` 的结果）：
+
+```diff
+-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
++ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
+-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
++ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
+-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
++ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
+```
+
+代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
+
+位置来自 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**：
+
+```python
+# ===== auto layout (generated) - do not edit inside =====
+# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
+# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，…
+for _ax, _p in zip(fig.axes, [
+    [0.0728, 0.5363, 0.4418, 0.4015],
+    [0.5394, 0.5363, 0.4418, 0.4015],
+]):  # …网格四轴各自一段位置
+    _ax.set_position(_p)
+fig.axes[0].title.set_fontsize(12)
+fig.axes[0].grid(False)
+# ===== end auto layout =====
+```
+
+上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
+
+逐字段三态判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了）、"零侵入"的边界（`describe → apply` 直通会把整份状态钉进源码；想少改就少给）见 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)；插入点硬约束（只允许在最后一个 `savefig` / `show` 之前，`anchor` / `attempts` 实测）、写回被整体拒绝与跨轮混用见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md)。
+
+### `--style` 与 JSON 字段：这次到底落没落地
+
+`--style` 有两条路。`auto`（默认）能原位改就原位，改不了就退到插入调整块；`inplace`（显式）要求原位，改不了就 `rc=1` / `applied=false`，不假装都改好；`block` 一律插块。
+判读落地情况看 `apply --json` 的 `files[]`：`needs_block`、`pending`、`inplace_pending` / `inplace_needs_block`、`auto_fallback`、`inplace_changes` / `inplace_reason`。
+逐字段含义与三种风格的实测对照（rc / JSON）见 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)。
 
 ## 把它当作 skill 用（给 AI 客户端）
 
@@ -232,55 +280,6 @@ flowchart LR
     classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
     classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
 ```
-
-## 原位改数字，还是插入调整块
-
-以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
-
-```python
-ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-```
-
-**你拖完之后**（`mpltweak apply --write` 的结果）：
-
-```diff
--ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
-+ax1 = fig.add_axes([0.08, 0.655, 0.300, 0.215])
--ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])
-+ax2 = fig.add_axes([0.08, 0.380, 0.300, 0.215])
--ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
-+ax3 = fig.add_axes([0.08, 0.085, 0.300, 0.215])
-```
-
-代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
-
-位置来自 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**：
-
-```python
-# ===== auto layout (generated) - do not edit inside =====
-# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
-# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，…
-for _ax, _p in zip(fig.axes, [
-    [0.0728, 0.5363, 0.4418, 0.4015],
-    [0.5394, 0.5363, 0.4418, 0.4015],
-]):  # …网格四轴各自一段位置
-    _ax.set_position(_p)
-fig.axes[0].title.set_fontsize(12)
-fig.axes[0].grid(False)
-# ===== end auto layout =====
-```
-
-上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
-
-逐字段三态判据（①已原位落地 ②与源码现值相等 ③有目标值、与现值不同、原位写不了）、"零侵入"的边界（`describe → apply` 直通会把整份状态钉进源码；想少改就少给）见 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)；插入点硬约束（只允许在最后一个 `savefig` / `show` 之前，`anchor` / `attempts` 实测）、写回被整体拒绝与跨轮混用见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md)。
-
-### `--style` 与 JSON 字段：这次到底落没落地
-
-`--style` 有两条路。`auto`（默认）能原位改就原位，改不了就退到插入调整块；`inplace`（显式）要求原位，改不了就 `rc=1` / `applied=false`，不假装都改好；`block` 一律插块。
-判读落地情况看 `apply --json` 的 `files[]`：`needs_block`、`pending`、`inplace_pending` / `inplace_needs_block`、`auto_fallback`、`inplace_changes` / `inplace_reason`。
-逐字段含义与三种风格的实测对照（rc / JSON）见 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)。
 
 ## 工作流
 
