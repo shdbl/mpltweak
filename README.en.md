@@ -377,6 +377,11 @@ Its target users are **small and medium research plotting scripts that run local
 
 ## Static study on real plotting code
 
+<div align="center">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@en/docs/accuracy_study.zh.png" width="900" alt="static study: per-family in-place write-back rate">
+</div>
+
+
 This section reports a **static study run on real plotting code**. The corpus is **10,158 sha256-unique** public plotting scripts from real projects: **6904 records in Zenodo datasets**, **2045 scripts from research plotting repositories on GitHub**, and **1209 files from official project galleries**; many of them are **supplementary material of published papers**.
 The study only does **static** location and rewrite decisions (**it does not execute** the corpus scripts and does **not redistribute** them). The per-script URL / licence / sha256 are in [`bench/manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/bench/manifest.jsonl); the harness and the per-script conclusions are in the [`bench` branch](https://github.com/shdbl/mpltweak/tree/bench) (the verdict files are sanitised: judgement fields only, no script text). Of these, **4,427** are plotting scripts (2,396 statically analysable / 1,940 with no figure / 90 with syntax errors / 1 still timing out under isolated re-scan). The denominators in the tables below come from the **measurable sites** in those scripts.
 

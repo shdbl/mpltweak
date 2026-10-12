@@ -386,6 +386,11 @@ mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
 
 ## 真实绘图代码语料验证
 
+<div align="center">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@zh/docs/accuracy_study.zh.png" width="900" alt="static study: per-family in-place write-back rate">
+</div>
+
+
 本节是**用真实绘图代码跑出来的静态验证**。语料是 **10,158 份 sha256 唯一**的公开绘图脚本，来自真实项目：**Zenodo 数据集记录 6904 份**、
 **GitHub 上的科研绘图仓库 2045 份**、若干项目的**官方 gallery 1209 份** —— 其中大量脚本是**不同论文的补充材料**。
 实测只做**静态**定位与改写判定（**不执行**语料脚本，也**不再分发**）；**逐脚本的 URL / 许可 / sha256 在
