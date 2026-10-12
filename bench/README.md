@@ -1,0 +1,73 @@
+# `bench` —— 「真实绘图代码语料验证」的可复核材料
+
+这个分支只放**方法、清单与判定结果**，用来复核 README 里那张表（10,158 份脚本 / 97.8% / 承诺违约 0）。
+**语料本体（脚本正文）不在这里、也不随仓库分发** —— 见「5. 脱敏」。
+
+## 1. 语料怎么来的
+
+| 来源 | 份数（`manifest.jsonl` 实测） |
+|---|---:|
+| Zenodo 数据集记录（论文补充材料里的 `.py`） | **6,904** |
+| GitHub 科研绘图仓库（61 个仓库名，如 `github-sunpy` / `github-statsmodels` / `github-metpy` …） | **2,045** |
+| 官方 / 项目自带 gallery（matplotlib-gallery、scikit-image、scikit-learn、pyart …） | **1,209** |
+| **合计** | **10,158** |
+
+筛选与去重口径：
+
+- **只要 `.py`**，并按 **sha256 唯一化**：同一份脚本在多处出现只留一份。合并阶段原始记录 **10,168** 份，
+  sha256 唯一化后 **10,158** 份（丢 10 份完全相同的重复）。出处 `corpus_union/_logs/build_summary.json`：
+  `copied=10168`、`unique_sha=10158`、`dup_groups` 10 组 × 2、`sha_mismatch=0 / size_mismatch=0 /
+  undecodable=0`。
+- 更早一次跨阶段合并（`corpus_big` 阶段，`corpus_big/_logs/merge_summary.json`）另有
+  `dup_cross_stage = 1469` 条命中同一 sha 的记录被跳过（同一脚本在 GitHub / Zenodo 两个阶段都抓到）。
+- **许可与 URL 逐份记录**在 `manifest.jsonl`；**语料本体保存在本地只读，不再分发**。
+- 本次是**静态研究**：不执行语料脚本，只读源码做定位 / 改写判定。
+
+## 2. 目录
+
+```
+manifest.jsonl            10,158 行：path / source / url / license / sha256 / size（+ corpus / plot 标志）
+verdicts/scan_full.jsonl  3,980 行：主扫描的逐脚本判定（**已脱敏**）
+verdicts/scan_rest.jsonl    447 行：补扫（首扫出错 / 超时的脚本重扫）的逐脚本判定（**已脱敏**）
+verdicts/README.md        字段字典（每个判定字段的含义）+ 脱敏白名单
+tools/_cu_static_table.py 主表（原位写回 10 族 + 通过率 + 承诺违约）生成脚本
+tools/_cu_why_not100.py   逐族「为什么没到 100%」分类脚本（A–E 五类）
+tools/sanitize_verdicts.py 判定文件脱敏脚本（白名单，可重跑）
+tools/check_no_corpus_text.py 脱敏自检脚本（扫语料正文特征，应为 0）
+harness/                  脚手架脚本（提取 / 静态扫描 / 字段族实验 / 分母口径 / 排障）
+```
+
+## 3. 怎么复算两张表
+
+```bash
+# 主表：每族 = 有站点 / 可达 / 真原位 / 退块 / 拒绝 / 承诺违约 / 通过率
+python tools/_cu_static_table.py
+
+# 逐族「为什么没到 100%」：A 真原位 · B 改块落地 · C 证不出而拒绝 · D 参数非法被拒 · E 其它未落地
+python tools/_cu_why_not100.py verdicts/scan_full.jsonl
+
+# 脱敏自检（应全部为 0）
+python tools/check_no_corpus_text.py .
+```
+
+两个工具的默认输入已指向本分支的 `verdicts/`。
+
+## 4. 判定的可信度边界
+
+- **只做静态判定**：不执行脚本，所以「能跑通」这类运行期结论不在本次范围内。
+- **分母分三层**：`有站点`（源码里确实有这一项的字面量）⊃ `可达`（静态寻址模型判可达）⊃ `真原位`
+  （工具申报原位 **且** 字节确实变了）。通过率 = 真原位 ÷ 可达。
+- **承诺违约 = 0** 的含义是：没有任何一行出现「工具声称原位写回、字节却没变」。这是本次研究要证伪的
+  那种失败模式（`tools/_cu_static_table.py` 里 `viol` 计数器）。
+- 没走成原位的分三类：参数非法被拒 / 证不出目标对象而拒绝落地 / 改为追加块完成（都不是静默丢改动），
+  逐脚本清单可由 `tools/_cu_why_not100.py` 复算。
+
+## 5. 脱敏（红线）
+
+`verdicts/*.jsonl` 是**白名单投影**：只保留判定字段，**整份源码正文（`after_text`）与含源码行的 diff
+（`block.diff_head`）一律剔除**，`block` 只留 `start_line` / `end_line`。白名单写在
+`tools/sanitize_verdicts.py`，可用 `tools/check_no_corpus_text.py` 自查（本分支提交前实测命中数 = 0，
+见仓库外报告 `audit_018/bench_publish.md` 的逐字记录）。
+
+许可证信息逐份保留在 `manifest.jsonl`，但**脚本正文不再分发**；想复核「某个脚本被怎么判的」，用
+`manifest.jsonl` 里的 `sha256` / `url` / `license` 自行获取原文即可。
