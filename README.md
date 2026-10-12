@@ -387,7 +387,7 @@ mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
 ## 真实绘图代码语料验证
 
 <div align="center">
-<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@zh/docs/accuracy_study.zh.png" width="900" alt="static study: per-family in-place write-back rate">
+<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e221258/docs/accuracy_study.zh.png" width="900" alt="static study: per-family in-place write-back rate">
 </div>
 
 
