@@ -11,7 +11,7 @@
 [![License](https://img.shields.io/badge/license-MIT-2F6FEB?style=flat-square)](LICENSE)
 [![Tests](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml/badge.svg)](https://github.com/shdbl/mpltweak/actions/workflows/tests.yml)
 
-[中文](README.md) | **English**
+[中文](https://github.com/shdbl/mpltweak/blob/main/README.md) | **English**
 
 Docs linked from this file (`docs/*.md`) are currently written in Chinese.
 
@@ -98,12 +98,12 @@ pip install mpltweak            # core: describe / check / apply (mcp is an opti
 pip install "mpltweak[qt]"      # add this if you want to **drag figures in a window** (installs the PyQt5 backend)
 ```
 
-Opening a window needs a graphics backend (PyQt5 recommended, about +150MB), hence the two steps: server / headless / agent-only use cases only need `describe` / `check` / `apply` and should not install a whole Qt stack for it (some environments already ship PySide6 / PyQt6). The official Python installers for Windows / macOS bundle `tkinter`, so `pip install mpltweak` alone usually opens a window; in that case it uses the **Tk backend (reduced interaction)**, which is neither an installation failure nor a broken install. With no backend at all, opening the window exits with `rc=4` and prints which one to install. Backend probing order, `doctor` output and common problems: [docs/exec-boundaries.md](docs/exec-boundaries.md).
+Opening a window needs a graphics backend (PyQt5 recommended, about +150MB), hence the two steps: server / headless / agent-only use cases only need `describe` / `check` / `apply` and should not install a whole Qt stack for it (some environments already ship PySide6 / PyQt6). The official Python installers for Windows / macOS bundle `tkinter`, so `pip install mpltweak` alone usually opens a window; in that case it uses the **Tk backend (reduced interaction)**, which is neither an installation failure nor a broken install. With no backend at all, opening the window exits with `rc=4` and prints which one to install. Backend probing order, `doctor` output and common problems: [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
 
 ### Window backend: Qt (recommended) or Tk (default)
 
 `mpltweak[qt]` gives Qt (richest interaction); with only the core package you get Tk (reduced: it opens a window, but some gestures are missing); with neither backend, opening a window exits with `rc=4` and prints which one to install.
-Backend comparison table, per-platform installs and environment variables: [docs/exec-boundaries.md](docs/exec-boundaries.md).
+Backend comparison table, per-platform installs and environment variables: [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
 
 ### 1 · Your existing script, unchanged
 
@@ -139,7 +139,7 @@ mpltweak fig1.py
 > Subcommands: `launch` / `apply` / `revert` / `describe` / `check` / `schema` / `mcp` / `doctor`.
 > `mpltweak fig1.py` and `mpltweak launch fig1.py` are equivalent; apart from that, the first argument is always interpreted as a **script path**.
 
-In the window: **drag** panels to move them, drag **edges / corners** to resize, **Ctrl-click** to select several panels → `Ctrl+Shift+L` left align / `Ctrl+Shift+V` vertical distribute, **hover text** and press `+` `-` to change font size, **space** for wireframe (faster on heavy figures), **Ctrl+F** to trim margins. Press **`?`** at any time for the key help page; the key table and workflow diagram are in [docs/interaction.md](docs/interaction.md).
+In the window: **drag** panels to move them, drag **edges / corners** to resize, **Ctrl-click** to select several panels → `Ctrl+Shift+L` left align / `Ctrl+Shift+V` vertical distribute, **hover text** and press `+` `-` to change font size, **space** for wireframe (faster on heavy figures), **Ctrl+F** to trim margins. Press **`?`** at any time for the key help page; the key table and workflow diagram are in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
 
 **Close the window when you are done.** The script has not changed by a single character at this point; the params land in `.tweak_params/fig1.json`.
 
@@ -177,15 +177,15 @@ python fig1.py
 
 ### If nothing happens
 
-No window, no change after write-back, or wondering where the params come from: see "If nothing happens" in [docs/exec-boundaries.md](docs/exec-boundaries.md) (a per-symptom table covering `doctor`, `--timeout 600`, `--force-resume`, layout-engine conflicts and more).
+No window, no change after write-back, or wondering where the params come from: see "If nothing happens" in [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) (a per-symptom table covering `doctor`, `--timeout 600`, `--force-resume`, layout-engine conflicts and more).
 
 ## Using it as a skill (for AI clients)
 
-[`skills/mpltweak/SKILL.md`](skills/mpltweak/SKILL.md) in this repository is an operating manual written for AI (Agent Skills format): the commands, the rules, and the human-machine workflow. Drop it into your client's skills directory (for example `~/.dsh/skills/`), or paste its content to the AI.
+[`skills/mpltweak/SKILL.md`](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) in this repository is an operating manual written for AI (Agent Skills format): the commands, the rules, and the human-machine workflow. Drop it into your client's skills directory (for example `~/.dsh/skills/`), or paste its content to the AI.
 
 **How the two sides fit together**: the AI decides what the figure should look like (reading the output of `describe`, editing the params file), and mpltweak decides **whether the change actually landed** (three verification layers + rollback on error + `revert`) — it does not rely on the AI saying "I fixed it". mpltweak itself contains no AI model; it provides commands and a verdict. The `--json` output carries `ok` / `reason` / `changes` / `pending` for the AI to read.
 
-MCP (the optional adapter layer) and the JSON contract: [docs/agent.md](docs/agent.md).
+MCP (the optional adapter layer) and the JSON contract: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
 ## Layout interface for AI / agents
 
@@ -199,12 +199,12 @@ mpltweak check fig1.py --json              # check: layout health check; the exi
 
 `--json` is for machines: the `style` / `applied` / `changes` / `needs_block` / `pending` fields inside `files[]` tell whether this run landed; the `schema` subcommand prints the JSON Schema of the params file so an agent can validate what it generated.
 
-The table of the four subcommands, exit-code semantics, the read → modify → write → check loop, and the parameter signatures of the four MCP tools: [docs/agent.md](docs/agent.md).
+The table of the four subcommands, exit-code semantics, the read → modify → write → check loop, and the parameter signatures of the four MCP tools: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
 ### Also available as an MCP server (optional adapter layer)
 
 **A client that can run shell commands does not need MCP**; MCP targets clients that cannot run shell commands (Claude Desktop and similar). Optional dependency (Python ≥ 3.10): `pip install "mpltweak[mcp]"`, then `mpltweak mcp` starts the stdio server; add to the client config: `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`.
-It exposes a subset of the CLI: `describe_layout` / `check_layout` / `params_schema` / `apply_layout` (`write=False`); `revert`, `--style`, `--verify-fast`, `--strict` and others exist only in the CLI. The actual parameter signatures of the four tools and the best-effort maintenance policy: [docs/agent.md](docs/agent.md).
+It exposes a subset of the CLI: `describe_layout` / `check_layout` / `params_schema` / `apply_layout` (`write=False`); `revert`, `--style`, `--verify-fast`, `--strict` and others exist only in the CLI. The actual parameter signatures of the four tools and the best-effort maintenance policy: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
 ## How humans and agents split the work
 
@@ -212,7 +212,7 @@ Two common splits: **human drags → agent applies** (you finish dragging in the
 
 The rule: **an agent can decide which numbers to change; whether the change is correct is decided by the product** (`check` and the three verification layers return the verdict, and a failing run is rolled back).
 
-The other three collaboration modes (agent self-check / one figure as a template / human drags then agent summarises): [docs/agent.md](docs/agent.md).
+The other three collaboration modes (agent self-check / one figure as a template / human drags then agent summarises): [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
 ```mermaid
 flowchart LR
@@ -270,13 +270,13 @@ fig.axes[0].grid(False)
 
 Those two marker lines are **written into your script**; `grep auto layout` finds the block. The block is **self-contained**: no added `import`, nothing beyond matplotlib, no change to your logic; a repeated write-back **replaces it as a whole**. To force one path only: `--style inplace` (no block is inserted; a field that cannot be written in place fails with `rc=1`) or `--style block` (always inserts a block).
 
-The per-field three-state rule (① already written in place ② equal to the current source value ③ has a target value, differs from the current one, cannot be written in place), and the boundaries of "zero intrusion" (`describe → apply` straight through pins the whole state into the source; give less to change less) are in [docs/params.md](docs/params.md). The hard constraints on the insertion point (only before the last `savefig` / `show`; `anchor` / `attempts` as measured), a write-back rejected as a whole, and mixing both forms across rounds are in [docs/verify.md](docs/verify.md).
+The per-field three-state rule (① already written in place ② equal to the current source value ③ has a target value, differs from the current one, cannot be written in place), and the boundaries of "zero intrusion" (`describe → apply` straight through pins the whole state into the source; give less to change less) are in [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md). The hard constraints on the insertion point (only before the last `savefig` / `show`; `anchor` / `attempts` as measured), a write-back rejected as a whole, and mixing both forms across rounds are in [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
 
 ### `--style` and JSON fields: did this run land?
 
 `--style` has two paths. `auto` (default) edits in place where it can and falls back to inserting a layout block where it cannot; `inplace` (explicit) requires in-place edits, and fails with `rc=1` / `applied=false` where it cannot instead of reporting success; `block` always inserts a block.
 Whether things landed is read from `files[]` of `apply --json`: `needs_block`, `pending`, `inplace_pending` / `inplace_needs_block`, `auto_fallback`, `inplace_changes` / `inplace_reason`.
-Per-field meanings and the measured comparison of the three styles (rc / JSON): [docs/params.md](docs/params.md).
+Per-field meanings and the measured comparison of the three styles (rc / JSON): [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
 
 ## Workflow
 
@@ -333,13 +333,13 @@ From opening the window through `mpltweak apply --write`, the script does not ch
 2. **Re-run layer** (`layers.rerun`): a headless Agg re-run; a non-zero exit code is then classified as "the script could not run in the first place" versus "the write-back broke it".
 3. **Semantic layer** (`layers.semantic`): after the re-run it dumps the target figure state and compares it field by field against the params (position / font sizes / `grid` / `spines` / `clim` and others); when a field cannot be judged, `verified=null` and `detail` lists the fields that were not judged.
 
-If any layer does not pass, the file is rolled back to the pre-batch state; the pre-write original is backed up in `.tweak_params/<script>.tweak.bak`. Per-layer details and how they relate to `--verify-fast` / `--keep-unverified`: [docs/verify.md](docs/verify.md).
+If any layer does not pass, the file is rolled back to the pre-batch state; the pre-write original is backed up in `.tweak_params/<script>.tweak.bak`. Per-layer details and how they relate to `--verify-fast` / `--keep-unverified`: [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
 
 ### Speed and gates: `--verify-fast` and `--strict`
 
 **`--verify-fast` (speed)**: only the `ast.parse` after writing, so it is fast; it does not show that the script runs, nor that the layout landed on the target figure (JSON reports `verify_mode: "fast"`).
 **`--strict` (gate)**: `check --strict` upgrades layout-engine conflicts (`constrained_layout` / `autolayout`) from a note to a problem (`rc=1`); `apply --write --strict` refuses to write back when a conflict exists (add `--allow-layout-conflict` to let it through). The `ok` field plus exit code of `check --json` works as a CI case directly; `check` accepts one script at a time, so batching needs a loop of your own.
-Other details (the boundary of `--no-verify`, the `bbox_inches='tight'` downgrade, `--tol` accepting finite positive numbers only, the `--static` gate, a batch script example): [docs/verify.md](docs/verify.md).
+Other details (the boundary of `--no-verify`, the `bbox_inches='tight'` downgrade, `--tol` accepting finite positive numbers only, the `--static` gate, a batch script example): [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
 
 ### Second thoughts: `mpltweak revert`
 
@@ -359,7 +359,7 @@ Restoring is a **byte-for-byte copy** (BOM / line endings / encoding untouched).
 
 `describe` / `check` / opening the window **execute** your script (in a **subprocess**, headless Agg; the exit code and any global state stay inside that subprocess). `apply` only rewrites the AST, unless you ask for **re-run verification** (after `--write` it re-runs once by default; `--verify-fast` only does `ast.parse`).
 
-Exit-code semantics, the effect of a script calling `sys.exit()` itself, and the CI usage of `--strict`: [docs/exec-boundaries.md](docs/exec-boundaries.md).
+Exit-code semantics, the effect of a script calling `sys.exit()` itself, and the CI usage of `--strict`: [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
 
 ## When it does not apply (up front)
 
@@ -441,11 +441,11 @@ The params file is a **public format**: you can edit it by hand, or let an AI / 
   "axes": [ { "index": 0, "pos": [0.048, 0.655, 0.30, 0.215], "title_fontsize": 9.0 } ] }
 ```
 
-**Only fields given explicitly are written**: a field absent from the params is not written back. The field table (`figsize_px` / `figsize_in` / `aspect_locked` / `cell` / `clim` / `cmap` / `lines` / `legend` / `tick_fontsize_y` ...) and the two conventions (`axes[i]` order, colorbar slot axes not taking an index): [docs/params.md](docs/params.md).
+**Only fields given explicitly are written**: a field absent from the params is not written back. The field table (`figsize_px` / `figsize_in` / `aspect_locked` / `cell` / `clim` / `cmap` / `lines` / `legend` / `tick_fontsize_y` ...) and the two conventions (`axes[i]` order, colorbar slot axes not taking an index): [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
 
 ## Development
 
-Repository layout: `src/mpltweak/` (`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`). Run the tests: `python tests/test_writeback.py` (AST write-back + three verification layers). The rest (installation, the full test command list, module responsibilities, the embedding API `from mpltweak.toolbox import gaitu`) is in [docs/dev.md](docs/dev.md).
+Repository layout: `src/mpltweak/` (`cli.py` / `launch.py` / `toolbox.py` / `params.py` / `apply.py` / `writeback.py` / `verify.py`). Run the tests: `python tests/test_writeback.py` (AST write-back + three verification layers). The rest (installation, the full test command list, module responsibilities, the embedding API `from mpltweak.toolbox import gaitu`) is in [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md).
 
 ## License
 
