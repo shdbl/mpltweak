@@ -27,8 +27,7 @@
 
 ```
 manifest.jsonl            10,158 行：path / source / url / license / sha256 / size（+ corpus / plot 标志）
-verdicts/scan_full.jsonl  3,980 行：主扫描的逐脚本判定（**已脱敏**）
-verdicts/scan_rest.jsonl    447 行：补扫（首扫出错 / 超时的脚本重扫）的逐脚本判定（**已脱敏**）
+verdicts/scan_full.jsonl   4,427 行：逐脚本判定（**已脱敏**；覆盖 README 主表的全部 4,427 个输入脚本）
 verdicts/README.md        字段字典（每个判定字段的含义）+ 脱敏白名单
 tools/_cu_static_table.py 主表（原位写回 10 族 + 通过率 + 承诺违约）生成脚本
 tools/_cu_why_not100.py   逐族「为什么没到 100%」分类脚本（A–E 五类）
@@ -52,8 +51,15 @@ python tools/check_no_corpus_text.py .
 
 两个工具的默认输入已指向本分支的 `verdicts/`。
 
+补扫已并入主文件：`scan_rest.jsonl` 不再单独发布（同一批最终判定的补扫部分已合并进
+`scan_full.jsonl`）；两个复算工具读不到 `scan_rest.jsonl` 时会自动跳过，输出即为全量。
+
 ## 4. 判定的可信度边界
 
+- **判定数据与源码版本**：`verdicts/scan_full.jsonl` 的逐脚本判定来自 **0.1.9 数字口径冻结提交
+  `e28a608`** 之后的最终静态扫描（4,427 份输入全覆盖），真原位 **3,531 / 3,610 = 97.8%**、承诺违约 **0**，
+  与 README 主表同一批数据；更早的 t69 扫描（宽松口径 3,534 / tick 88 = 96.7%）已被
+  「T73：没写 y 侧键就不动 y」修复后的重新扫描取代，不再对外发布。
 - **只做静态判定**：不执行脚本，所以「能跑通」这类运行期结论不在本次范围内。
 - **分母分三层**：`有站点`（源码里确实有这一项的字面量）⊃ `可达`（静态寻址模型判可达）⊃ `真原位`
   （工具申报原位 **且** 字节确实变了）。通过率 = 真原位 ÷ 可达。
@@ -66,8 +72,8 @@ python tools/check_no_corpus_text.py .
 
 `verdicts/*.jsonl` 是**白名单投影**：只保留判定字段，**整份源码正文（`after_text`）与含源码行的 diff
 （`block.diff_head`）一律剔除**，`block` 只留 `start_line` / `end_line`。白名单写在
-`tools/sanitize_verdicts.py`，可用 `tools/check_no_corpus_text.py` 自查（本分支提交前实测命中数 = 0，
-见仓库外报告 `audit_018/bench_publish.md` 的逐字记录）。
+`tools/sanitize_verdicts.py`，可用 `tools/check_no_corpus_text.py` 自查（本分支提交前实测
+JSONL/JSON 命中数 = 0，可在本地复跑验证）。
 
 许可证信息逐份保留在 `manifest.jsonl`，但**脚本正文不再分发**；想复核「某个脚本被怎么判的」，用
 `manifest.jsonl` 里的 `sha256` / `url` / `license` 自行获取原文即可。

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """船长自算静态层主表（S1）：路径诚实性 + 能力缺口 + 承诺违约。
-数据：cli-hunter 的 scan_full.jsonl / scan_rest.jsonl（静态扫描，不执行脚本）。
+数据：verdicts/ 下的 scan_full.jsonl（静态扫描，不执行脚本；scan_rest 若存在会自动并入）。
 用法：python _cu_static_table.py
 """
 import collections
@@ -10,7 +10,8 @@ import os
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.normpath(os.path.join(HERE, '..', 'verdicts'))
 # 输入 = 本分支 verdicts/ 下**已脱敏**的逐脚本判定（源扫描由 harness/ 的脚手架产生）
-SRCS = [os.path.join(OUT, 'scan_full.jsonl'), os.path.join(OUT, 'scan_rest.jsonl')]
+SRCS = [os.path.join(OUT, f) for f in ('scan_full.jsonl', 'scan_rest.jsonl')
+        if os.path.exists(os.path.join(OUT, f))]
 FAMS = ['figsize_in', 'pos', 'title_fontsize', 'label_fontsize', 'label_fontsize_y',
         'tick_fontsize', 'tick_fontsize_y', 'grid', 'xlim', 'ylim']
 CN = {'figsize_in': '画布尺寸 figsize', 'pos': '面板位置 pos', 'title_fontsize': '标题字号',

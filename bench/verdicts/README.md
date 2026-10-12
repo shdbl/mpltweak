@@ -37,8 +37,8 @@
 
 只保留上面这些键；**剔除**：
 
-- `after_text` —— 整份写回后源码正文（最长 2,154 字符，实测 3,168 + 410 条）；
+- `after_text` —— 整份写回后源码正文（实测 3,578 条）；
 - `block.diff_head` —— diff 头里逐行打印了源码（`-ax2 = fig.add_axes((0.25, …))` / `+ax2 = …`），
-  实测 1,132 + 155 条；只保留 `start_line` / `end_line`。
+  实测 427 条；只保留 `start_line` / `end_line`。
 
 白名单实现在 `../tools/sanitize_verdicts.py`，自查脚本 `../tools/check_no_corpus_text.py`。
