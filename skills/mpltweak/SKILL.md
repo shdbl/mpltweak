@@ -20,17 +20,57 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 5. **落实必须是纯 matplotlib**：`set_position` / `legend(loc=, fontsize=)` / `set_title(fontsize=)` / `tick_params(labelsize=)` / `figsize=`；不得引入本工具的任何符号。
 6. `.tweak_params/` 是临时产物；落实完成后问用户是否清理。
 
+## 开工第一步：确认环境（缺了就装，但先问用户）
+
+**先自检**（输出里有一行「开窗后端」）：
+```bash
+mpltweak doctor
+```
+> 自检一律用 `mpltweak doctor`。**没有 `mpltweak --version` 这个命令** —— 传 `--version` 会被当成"要开窗"，反而报脚本路径缺失。
+
+**命令不存在（`command not found` / `不是内部或外部命令`）⇒ 先问，再装**：
+1. 先用一句人话告诉用户："这台机器上还没装 mpltweak，需要装一下才能用。"
+2. **只做排版 / 体检 / 写回**（`describe` / `check` / `apply` / `mcp`，不需要图形界面）：
+   ```bash
+   pip install mpltweak
+   ```
+3. **要开窗拖图**（用户说"开交互调图 / 我要拖一下"）：再装 Qt 后端，**多约 150MB**：
+   ```bash
+   pip install "mpltweak[qt]"
+   ```
+   不装也能开窗：Windows / macOS 自带 `tkinter`，会**自动退回 Tk 弱化版**（功能可用、交互弱一些），stderr 会打一句提示。
+4. **装之前必须得到用户同意**（要下载、占磁盘），不要不吭声就装。
+
+**开窗失败或退化时，用人话转述（不要把诊断码原样丢给用户）**：
+- **开窗 `rc=4`** = 两个图形后端都拿不到（典型：Linux 服务器没装 `python3-tk`）。转述成："这台机器现在没有能画窗口的组件。**只做排版 / 体检 / 写回完全不受影响**；要开窗的话，我可以装 `mpltweak[qt]`（约 150MB），或者让系统装 `python3-tk` —— 你想怎么办？"
+- **看到 Tk 弱化版提示**（stderr 的人话）= 没装 Qt，自动用了备选方案。转述成："窗口能开，但用的是简化版交互。想要完整体验，我可以装 `mpltweak[qt]`（约 150MB），要装吗？"
+- **禁止**把 `rc=4`、「图形后端」、「Qt 绑定」这类词直接抛给非技术用户 —— 一句话说清"缺什么 / 要不要装 / 不装会怎样"。
+
+## 先说一句"要等多久"，别静默等待
+
+`describe` / `check` / `apply`（含 `--write`）**都会在独立子进程里重跑一遍用户的脚本**（无头 Agg 后端）；
+其中 **`apply --write` 为了验证写回结果，默认还会再重跑一次**，**默认超时 300 秒**（`--timeout 秒` 可调）。
+
+所以任何一步动手前，先用一句人话给预期：
+
+> "接下来我会跑一遍你的脚本做验证，通常几十秒，慢的脚本可能几分钟。"
+
+用户看到的是"卡住了"，不是"在干活"。脚本明显很慢（读大数据、画地图）时，提前把 `--timeout` 调大并告诉用户"这一步会久一点"。
+
 ## 命令速查
 
 | 命令 | 作用 |
 |---|---|
 | `mpltweak <脚本.py>` | **开窗调图**（主用法）。`--fig N` 只挂第 N 张；`--params X` 改参数位置 |
+| `mpltweak launch <脚本.py>` | 同上，**显式子命令**写法（脚本名容易和子命令撞、或批处理里想写明白时用） |
 | `mpltweak apply <脚本.py>` | 只读预览：列出会改哪些数字，**不动代码** |
 | `mpltweak apply <脚本.py> --write` | **原位写回**（备份 + 三层验证 + 失败自动回滚） |
 | `mpltweak apply <脚本.py>`（默认 `--style auto`） | 每张图各自决定：代码里有数字就原位改，改不了（如 `plt.subplots` 网格位置）自动改用插入调整块 |
 | `mpltweak apply <脚本.py> --style inplace` | 强制只用原位改数字；**写不了的字段会让命令明确失败**（`rc=1`，JSON 的 `pending` 列出字段），不会静默“保持原样” |
 | `mpltweak apply <脚本.py> --snippet` | 输出可粘贴片段（你要手动按用户风格落实时用） |
 | `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr） |
+| `mpltweak revert <脚本.py>` | **预览回退**：打印会改回什么，**一个字节都不动** |
+| `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**最近一次 `apply --write` 之前**的字节；`--first` 回到**最早**那次写回之前 |
 | `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，不能直接喂回 `apply --params`，见「口径与默认值」）；`-o 文件` 写文件；`--compact` 紧凑 |
 | `mpltweak check <脚本.py>` | **排版体检**：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠。`--json` 机器可读，退出码 1 = 有问题 |
 | `mpltweak check <脚本.py> --static` | 只做 AST 解析 + 布局引擎冲突扫描，**不执行脚本**（脚本有副作用 / CI 里先查一眼时用；代价是不量真实渲染尺寸，`--static` 通过 ≠ 图没问题） |
@@ -38,7 +78,12 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
 | `mpltweak doctor` | 环境自检（后端 / Qt 绑定 / matplotlib 版本） |
 
-其他选项：`--all-figs`（循环出图时统一应用，默认只改参数记录的那张）、`--timeout 秒`、`--python 解释器`、`--lang zh|en`（界面语言，默认跟随系统）、`--force`（脚本比参数新时仍强行套用；默认跳过以免覆盖手改）。
+其他选项：`--all-figs`（循环出图时统一应用，默认只改参数记录的那张）、`--timeout 秒`（**默认 300**；`apply --write` 就是用它在子进程里重跑脚本做验证，脚本很慢就调大）、`--python 解释器`、`--lang zh|en`（界面语言，默认跟随系统）、`--force`（脚本比参数新时仍强行套用；默认跳过以免覆盖手改）。
+
+**备份与回退（成对记）**：每次 `apply --write` 都会先把脚本原文备份到
+`<脚本目录>/.tweak_params/<脚本名>.tweak.bak`（**固定名、会被下一次写回覆盖** ⇒ 默认 `revert` 只能回到"最近一次写回之前"；要回到**最早**那次写回之前用 `--first`）。
+`revert --write` 覆盖前会把当前文件另存为 `<脚本目录>/.tweak_params/<脚本名>.revert.bak`（**所以 revert 自身也可逆** —— 手滑了还能再回去）。
+恢复是**逐字节**的（BOM / CRLF / GBK 脚本原样回来）。写回前的变化清单先用不带 `--write` 的 `revert` 预览给用户过目。
 
 `--no-verify` / `--no-semantic` 会跳过验证 —— **那是写坏代码时唯一的自动安全网，一般不要用**；脚本确实无法无头重跑时才考虑，且用前先确认脚本已在版本控制里。
 
@@ -55,7 +100,8 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
    启动器会打印：脚本名 / 共几张图 / 正在调哪张 / 参数写到哪 / 续调了几项。
 2. **开窗前提醒用户**：窗口里请**切英文输入法** —— 中文 IME 打开时 `c/s/g/x/y` 等字母快捷键会被吞掉直接上屏。
 3. 用户关窗后，读启动器输出，**向用户复述改了哪些**（位置 / 字号 / 图例），并说明"**还没写进代码，等你确认**"。
-4. 用户确认 → `apply --write` → **重跑脚本出 PNG，用 show_image 给用户看** → 问是否清理 `.tweak_params/`。
+4. 用户确认 →（**先说一句**"接下来我会跑一遍你的脚本做验证，几十秒到几分钟"）→ `apply --write` → **重跑脚本出 PNG，用 show_image 给用户看** → 问是否清理 `.tweak_params/`。
+   用户改主意了：`mpltweak revert <脚本.py> --write` 可回退到这次写回之前（先不带 `--write` 跑一遍看预览，再问用户确认）。
 
 ### B. 你直接排（用户不在场 / 要批量统一）
 
@@ -65,6 +111,9 @@ mpltweak describe <脚本.py> -o layout.json    # 读：现在的排版
 # 存成 <脚本目录>/.tweak_params/<脚本名>.json
 mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 ```
+
+`apply --write` 这步会**重跑脚本验证写回结果**（默认超时 300 秒）—— 动手前先给用户一句"要跑一遍脚本，几十秒到几分钟"。
+要撤销刚才的写回：`mpltweak revert <脚本.py> --write`（先不带 `--write` 预览）。
 
 适合：把**一张排好的图当模板**套到其他脚本（改 `script` 字段即可）、批量统一整篇论文的排版。
 
