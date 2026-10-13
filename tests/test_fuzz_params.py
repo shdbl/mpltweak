@@ -37,8 +37,15 @@ import shutil
 import subprocess
 import sys
 
-import hypothesis
-from hypothesis import HealthCheck, given, settings, strategies as st
+try:
+    # 可选依赖：装了 hypothesis 就是**真货**；没装则由 `_hypothesis_shim` 提供只服务
+    # "装饰函数/拼配置"的最小替身 —— 于是本套件在"CI step 6 不装 hypothesis"时也能
+    # import 成功，**mutation 与 e2e 两部分照常全跑**，只有 A/B/C 三条 property 被
+    # `_HAS_HYPOTHESIS` 挡掉并打印明确原因（不静默、不算失败）。
+    from _hypothesis_shim import (HAS_HYPOTHESIS as _HAS_HYPOTHESIS, st,
+                                  given, settings, HealthCheck)
+except ImportError:                                          # noqa: BLE001
+    _HAS_HYPOTHESIS = False
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -483,27 +490,38 @@ def run_e2e():
 
 # ---------------------------------------------------------------------------
 def main():
+    # A/B/C 三条 property 需要 hypothesis（可选依赖）。装了就跑；没装则**明确打印
+    # 跳过原因**，而不是让缺依赖变成"测试失败"（CI step 6 按设计只装 pytest，
+    # 见 tests/_hypothesis_shim.py）。下面 D（mutation）与 E（e2e）不依赖它，照跑。
+    _hyp_on = _HAS_HYPOTHESIS
+    if not _hyp_on:
+        print('SKIP | hypothesis 未安装 → A/B/C 三条 property 不执行；'
+              'mutation 与 e2e 两部分照常执行（装上 hypothesis 即跑全部）')
+
     print('A. 任意 JSON 结构 fuzz：validate_errors/validate 永不抛异常')
-    try:
-        test_any_json_never_crashes()
-        check('任意输入不崩', True)
-    except Exception as e:                       # noqa: BLE001
-        check('任意输入不崩', False, _gbk_safe(str(e))[:500])
+    if _hyp_on:
+        try:
+            test_any_json_never_crashes()
+            check('任意输入不崩', True)
+        except Exception as e:                       # noqa: BLE001
+            check('任意输入不崩', False, _gbk_safe(str(e))[:500])
 
     print('B. validate = 硬错误前缀 + 只追加已知软问题（软/硬严格区分）')
-    try:
-        test_validate_is_errors_prefix_plus_soft()
-        check('validate 是 errors 前缀 + 已知软问题', True)
-    except Exception as e:                       # noqa: BLE001
-        check('validate 是 errors 前缀 + 已知软问题', False,
-              _gbk_safe(str(e))[:500])
+    if _hyp_on:
+        try:
+            test_validate_is_errors_prefix_plus_soft()
+            check('validate 是 errors 前缀 + 已知软问题', True)
+        except Exception as e:                       # noqa: BLE001
+            check('validate 是 errors 前缀 + 已知软问题', False,
+                  _gbk_safe(str(e))[:500])
 
     print('C. 合法参数生成器 fuzz：validate_errors 必为空（合法不误伤）')
-    try:
-        test_legal_params_never_hard_rejected()
-        check('合法参数无硬错误', True)
-    except Exception as e:                       # noqa: BLE001
-        check('合法参数无硬错误', False, _gbk_safe(str(e))[:500])
+    if _hyp_on:
+        try:
+            test_legal_params_never_hard_rejected()
+            check('合法参数无硬错误', True)
+        except Exception as e:                       # noqa: BLE001
+            check('合法参数无硬错误', False, _gbk_safe(str(e))[:500])
 
     run_mutations()
 

@@ -63,7 +63,10 @@ jobs:
       - name: pytest report + hygiene ratchet
         if: matrix.python-version == '3.12'
         run: |
-          python -m pip install "pytest>=7.0"
+          # hypothesis 是 3 个 property 套件的依赖（test_fuzz_events / test_fuzz_params /
+          # test_property_writeback）。**必须装**：否则它们只会打印 SKIP，property 在 CI
+          # 里永远不跑（缺依赖时套件仍能 import 并跑完确定性断言，见 tests/_hypothesis_shim.py）。
+          python -m pip install "pytest>=7.0" "hypothesis>=6.0"
           python -m pytest -q
 
       # 0.1.9 新增：**CI 过去从不构建发行物** —— 打包缺件 / sdist 混进构建元数据
