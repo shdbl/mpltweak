@@ -18,23 +18,27 @@ Docs linked from this file (`docs/*.md`) are currently written in Chinese.
 </div>
 
 ## Contents
+
 - [What problem it solves](#what-problem-it-solves)
 - [Demo](#demo)
-- [Key map](#key-map)
+- [5-minute quick start](#5-minute-quick-start)
 - [Install + quick start](#install--quick-start)
-- [Edit numbers in place, or insert a layout block](#edit-numbers-in-place-or-insert-a-layout-block)
-- [Using it as a skill (for AI clients)](#using-it-as-a-skill-for-ai-clients)
-- [Layout interface for AI / agents](#layout-interface-for-ai--agents)
-- [How humans and agents split the work](#how-humans-and-agents-split-the-work)
+- [Using it with AI and agents](#using-it-with-ai-and-agents)
 - [Workflow](#workflow)
+- [Is it reliable?](#is-it-reliable)
+
+<details><summary><b>Advanced & detailed docs</b> (click to expand)</summary>
+
+- [Key map](#key-map)
+- [Edit numbers in place, or insert a layout block](#edit-numbers-in-place-or-insert-a-layout-block)
 - [Three verification layers](#three-verification-layers)
 - [Execution boundaries: which commands run your script](#execution-boundaries-which-commands-run-your-script)
 - [When it does not apply (up front)](#when-it-does-not-apply-up-front)
-- [Static study on real plotting code](#static-study-on-real-plotting-code)
 - [Params file](#params-file)
 - [Development](#development)
 - [License](#license)
 
+</details>
 ## What problem it solves
 
 When you lay out a multi-panel figure, the trouble is usually the layout rather than the data: move one subplot and the neighbouring axis label is covered; increase a font size a little and the legend overlaps a curve. And every change means re-running the script and looking at the figure again.
@@ -46,11 +50,13 @@ When you lay out a multi-panel figure, the trouble is usually the layout rather 
 | **Traditional** | change a number → re-run the script → wait tens of seconds → look at the PNG → still wrong → change again |
 | **mpltweak** | open the window → drag into place → `mpltweak apply --write` → those numbers are back in the code |
 
-**Writing back is deterministic.** AST-based location; write-back takes one of two forms: **when the code holds literals, those numbers are edited directly** (no insertion of any kind); **otherwise a self-contained layout block is inserted** (no added import, no change to your own logic). Both forms go through three verification layers (syntax / re-run / semantic); if any layer does not pass, the file is **rolled back to the pre-batch state**, with the backup left in `.tweak_params/<script>.tweak.bak`.
+**Writing back is deterministic.** AST-based location; write-back takes one of two forms: **when the code holds literals, those numbers are edited directly** (no insertion of any kind); **otherwise a self-contained layout block is inserted** (no added import, no change to your own logic). Both forms go through three verification layers (syntax / re-run / semantic); if any layer does not pass, the file is **rolled back by default** (`--keep-unverified` keeps the write-back, and then you must check it yourself), with the backup left in `.tweak_params/<script>.tweak.bak`.
 
 **Changing source code requires determinism**; that is the premise mpltweak is built on.
 
 **It only handles style and position; it does not invent content**: text, data and graphics are still decided by your code.
+
+> If you write figures with AI (have an agent read the layout, propose a plan, write back), go to [Using it with AI and agents](#using-it-with-ai-and-agents).
 
 ## Demo
 
@@ -70,6 +76,21 @@ When you lay out a multi-panel figure, the trouble is usually the layout rather 
 </table>
 
 **Gestures (similar to PowerPoint):** drag panels, Ctrl multi-select, align / distribute (Ctrl+Shift+L/R/T/B/C/M, H/V), edge snapping (with guides), Ctrl+F fit canvas and trim margins, space bar for wireframe mode, hover to change font size, legend snapping to 8 standard positions, colorbar length / thickness.
+
+## 5-minute quick start
+
+You do not have to read this README to use it; go through the steps below once and you will see the result. `fig1.py` is the example script from step 1 of "Install + quick start" further down — **save that code block as `fig1.py` first**, then:
+
+| Step | Command | What you will see |
+|---|---|---|
+| **1 · Install** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | the core package plus the graphics backend needed to open a window; command-line-only use (`describe` / `check` / `apply`) skips the second line |
+| **2 · Open the window and drag** | `mpltweak fig1.py` | the layout window: **drag** panels, drag **edges / corners** to resize, **hover text** and press `+` / `-` for font size, **space** for wireframe speed, **Ctrl+F** to trim margins; press **`?`** for the full key map |
+| **3 · Close the window** | —— | the script has **not changed by a single character**; the params land in `.tweak_params/fig1.json` (open the window again to keep adjusting) |
+| **4 · See what it intends to change** | `mpltweak apply fig1.py` | a per-axis list of positions and font sizes, plus whether it will **edit a number / insert a layout block / refuse**; read-only: it does not execute the script and writes no file |
+| **5 · Write back** | `mpltweak apply fig1.py --write` | only those few numbers change (**the "numbers only" case**: a real sample is in step 4 of "Install + quick start"; see the paragraph below) |
+| **6 · Re-run and look** | `python fig1.py` | the figure looks the way you dragged it; not happy? `mpltweak revert fig1.py --write` goes back to before the write-back (without `--write` it is a preview) |
+
+A sample of **one real write-back** is in step 4 of "Install + quick start" below — that is the "numbers only" case: how many axes and how many edits you actually see depends on your script, and if the script has fields the source does not mention (line width / colour, say), it appends one self-contained layout block at the end of the file, says so in the output, and prints the backup path.
 
 ## Key map
 
@@ -158,14 +179,22 @@ mpltweak apply fig1.py --write
 ```
 
 ```text
-✓ written back in place: fig1.py
-  4 in-place edits: ax0.pos, ax1.pos, ax2.pos, ax3.pos
+  正在验证（子进程重跑脚本，最长 300s；不想等可加 --no-verify）
+[OK] Written back in place: fig1.py
+  3 in-place edits: ax0.pos, ax1.pos, ax2.pos
   backup: .tweak_params/fig1.tweak.bak
-  ✓ Agg re-run verification passed
-  ✓ semantic verification passed (target figure state == params)
+  [OK] Agg re-run check passed
+  [OK] Semantic check passed (target figure matches params)
 ```
 
-The block above is the output of **one real write-back**; "re-run / semantic verification" re-runs the script **in your environment** (if it cannot run, or the semantics do not match, the file is rolled back; see "Three verification layers").
+The block above is the output of **one real write-back** (paths are shown without their directory prefix; you will see absolute paths); "re-run / semantic verification" re-runs the script **in your environment** (if it cannot run, or the semantics do not match, the file is rolled back; see "Three verification layers").
+**On language**: the first line is written in **Chinese** by the current version regardless of `--lang` — it says the script is being re-run in a subprocess, that it waits up to 300s, and that `--no-verify` skips the wait. The remaining lines follow the interface language.
+
+**If your script takes its own arguments** (depends on `sys.argv`, e.g. `python fig1.py --data x.npz`): put them after `--`; the write-back's re-run verification passes them through to the script unchanged, so the re-run matches your baseline and is not mis-rolled-back:
+
+```bash
+mpltweak apply fig1.py --write -- --data x.npz --level 3
+```
 
 When the code holds literals it edits only the numbers inside `add_axes([...]`; otherwise it inserts a self-contained layout block. If any verification step fails, the file is rolled back.
 
@@ -178,6 +207,8 @@ python fig1.py
 ### If nothing happens
 
 No window, no change after write-back, or wondering where the params come from: see "If nothing happens" in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) (a per-symptom table covering `doctor`, `--timeout 600`, `--force-resume`, layout-engine conflicts and more).
+
+If you are stuck, see [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (the three most common problems: nothing happens when you drag / a layout engine overwrites your position / how to read an error), each written as *symptom -> one-line cause -> what to do*.
 
 ## Edit numbers in place, or insert a layout block
 
@@ -202,33 +233,34 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 
 The code holds literals, so **only those numbers moved**: no line added, no `import`, no dependency. The same holds for font sizes, legend position, grid and colorbar: what changes is parameters your code already had.
 
-When the position comes from `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`, there is no number in the source to edit. Such a figure gets a **self-contained layout block** inserted:
+When the position comes from `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`, there is no number in the source to edit. Such a figure gets a **self-contained layout block** inserted (below is one real write-back on a 2x2 grid; the first two lines and the closing marker line are verbatim, repeated per-axis lines in the middle are elided with `# …`):
 
 ```python
 # ===== auto layout (generated) - do not edit inside =====
-# generated by mpltweak on 2026-10-10 16:45 (you may tweak it; keep the two marker lines)
-# axis identity (while laying out): ax0=grid[2, 2, 0, 0], ax1=grid[2, 2, 0, 1], ...
-for _ax, _p in zip(fig.axes, [
-    [0.0728, 0.5363, 0.4418, 0.4015],
-    [0.5394, 0.5363, 0.4418, 0.4015],
-]):  # ... one position per axis of the 2x2 grid
-    _ax.set_position(_p)
-fig.axes[0].title.set_fontsize(12)
-fig.axes[0].grid(False)
+# auto-generated by mpltweak at 2026-10-12 19:42 (feel free to tweak; keep the marker lines above and below)
+# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，ax2=网格[2, 2, 1, 0]，ax3=网格[2, 2, 1, 1]
+axes[0, 0].set_position([0.1450, 0.5500, 0.3723, 0.3700])
+axes[0, 1].set_position([0.5677, 0.5500, 0.3723, 0.3700])
+axes[1, 0].set_position([0.1450, 0.1300, 0.3723, 0.3700])
+axes[1, 1].set_position([0.5677, 0.1300, 0.3723, 0.3700])
+axes[0, 0].title.set_fontsize(14)
+axes[0, 0].grid(True)
+axes[0, 0].lines[0].set_linewidth(1.5)
+axes[0, 0].lines[0].set_color('#1f77b4')
+# … the other three axes each get the same kind of lines (title / lines)
 # ===== end auto layout =====
 ```
+
+Note the form: **one line per axis, with `axes[0, 0]`-style statically provable targets** — not runtime indices (`fig.axes[i]` / `plt.gca()` can point at a colorbar / inset axes at runtime, so the engine no longer uses them). The window exports the **whole state**, so even fields that happened to equal their defaults get pinned (the two `lines[0]` lines above); see [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
+
+**Whether a block can land depends on whether the target object is statically provable**: literal container elements such as `axes[0, 0]` after `fig, axes = plt.subplots(2, 2)` do land (that is the run above); unpacking the axes / using them inside a loop (`for i, ax in enumerate(axes.ravel())`), or a figure whose shape is not a literal, was measured to **fail closed** — **nothing is written, `applied=false`**, and you only get a paste-ready manual snippet (the manual route, see problem ① below).
+
+**On language**: the `# 轴身份（调图时）：…` line inside the block is written in **Chinese** by the current version regardless of `--lang` (it records which grid cell each axis was while you were laying out the figure) — a Chinese line inside an otherwise English sample is expected, not a mistake. The other block lines (including the generated-at line above it) follow the interface language.
 
 Those two marker lines are **written into your script**; `grep auto layout` finds the block. The block is **self-contained**: no added `import`, nothing beyond matplotlib, no change to your logic; a repeated write-back **replaces it as a whole**. To force one path only: `--style inplace` (no block is inserted; a field that cannot be written in place fails with `rc=1`) or `--style block` (always inserts a block).
 
 The per-field three-state rule (① already written in place ② equal to the current source value ③ has a target value, differs from the current one, cannot be written in place), and the boundaries of "zero intrusion" (`describe → apply` straight through pins the whole state into the source; give less to change less) are in [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md). The hard constraints on the insertion point (only before the last `savefig` / `show`; `anchor` / `attempts` as measured), a write-back rejected as a whole, and mixing both forms across rounds are in [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
-
-### `--style` and JSON fields: did this run land?
-
-`--style` has two paths. `auto` (default) edits in place where it can and falls back to inserting a layout block where it cannot; `inplace` (explicit) requires in-place edits, and fails with `rc=1` / `applied=false` where it cannot instead of reporting success; `block` always inserts a block.
-Whether things landed is read from `files[]` of `apply --json`: `needs_block`, `pending`, `inplace_pending` / `inplace_needs_block`, `auto_fallback`, `inplace_changes` / `inplace_reason`.
-Per-field meanings and the measured comparison of the three styles (rc / JSON): [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
-
-## Using it as a skill (for AI clients)
+## Using it with AI and agents
 
 [`skills/mpltweak/SKILL.md`](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) in this repository is an operating manual written for AI (Agent Skills format): the commands, the rules, and the human-machine workflow. Drop it into your client's skills directory (for example `~/.dsh/skills/`), or paste its content to the AI.
 
@@ -236,7 +268,6 @@ Per-field meanings and the measured comparison of the three styles (rc / JSON): 
 
 MCP (the optional adapter layer) and the JSON contract: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
-## Layout interface for AI / agents
 
 Large models write correct plotting code, but **layout numbers are mostly guesswork** for them. mpltweak turns that part from guessing into writing a file: the **params file is a public JSON format (with a JSON Schema)**, so an agent can generate or edit it directly and `mpltweak apply --write` applies it.
 
@@ -255,8 +286,7 @@ The table of the four subcommands, exit-code semantics, the read → modify → 
 **A client that can run shell commands does not need MCP**; MCP targets clients that cannot run shell commands (Claude Desktop and similar). Optional dependency (Python ≥ 3.10): `pip install "mpltweak[mcp]"`, then `mpltweak mcp` starts the stdio server; add to the client config: `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`.
 It exposes a subset of the CLI: `describe_layout` / `check_layout` / `params_schema` / `apply_layout` (`write=False`); `revert`, `--style`, `--verify-fast`, `--strict` and others exist only in the CLI. The actual parameter signatures of the four tools and the best-effort maintenance policy: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
-## How humans and agents split the work
-
+### How humans and agents split the work
 Two common splits: **human drags → agent applies** (you finish dragging in the window and say "apply it"; the AI runs `apply --write`); **agent drafts → human fine-tunes** (the AI lays out a first version → you keep adjusting in the window, the params continue from there → you confirm the write-back).
 
 The rule: **an agent can decide which numbers to change; whether the change is correct is decided by the product** (`check` and the three verification layers return the verdict, and a failing run is rolled back).
@@ -361,6 +391,8 @@ Restoring is a **byte-for-byte copy** (BOM / line endings / encoding untouched).
 
 Exit-code semantics, the effect of a script calling `sys.exit()` itself, and the CI usage of `--strict`: [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
 
+**A pre-flight runs before the write-back (0.1.10)**: when verification is about to re-run your script, `apply --write` and the window launcher take a **static** look at the source (**never executing it**). If they spot “missing dependency / needs arguments / network / waits for input / pops a window”, you get one short heads-up plus a copy-pasteable next step (top-level `preflight.risks[]` under `--json`). A clean script stays completely silent; if the pre-flight itself trips it gets out of the way and never blocks the write-back or the window. The five checks and the JSON fields are in [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
+
 ## When it does not apply (up front)
 
 Write-back verification re-runs the whole script **on your machine, in your environment**; that is part of the mechanism, not an optional step (`--no-verify` skips it, which amounts to switching off the safety net). So the following scripts are out of scope:
@@ -375,88 +407,35 @@ Write-back verification re-runs the whole script **on your machine, in your envi
 Such scripts take the read-only route (`mpltweak describe` / `mpltweak check`, neither writes back), or you edit the code by hand.
 Its target users are **small and medium research plotting scripts that run locally**.
 
-## Static study on real plotting code
+> The concentrated version of the boundaries and the exact wording behind every number (when it does not apply / execution boundaries / exit codes / what verification does not claim / corpus denominators) is in [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md).
 
-<div align="center">
-<img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e221258/docs/accuracy_study.en.png" width="900" alt="static study: per-family in-place write-back rate">
-</div>
+## Is it reliable?
 
+**Only measured numbers, each with its denominator.** Finished lines carry their measured
+value, filled in from log line numbers — nothing is estimated or invented.
+Full version (denominators, per-family tables, block channel, window interaction):
+[docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md).
 
-This section reports a **static study run on real plotting code**. The corpus is **10,158 sha256-unique** public plotting scripts from real projects: **6904 records in Zenodo datasets**, **2045 scripts from research plotting repositories on GitHub**, and **1209 files from official project galleries**; many of them are **supplementary material of published papers**.
-The study only does **static** location and rewrite decisions (**it does not execute** the corpus scripts and does **not redistribute** them). The per-script URL / licence / sha256 are in [`bench/manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/bench/bench/manifest.jsonl); the harness and the per-script conclusions are in the [`bench` branch](https://github.com/shdbl/mpltweak/tree/bench) (the verdict files are sanitised: judgement fields only, no script text). Of these, **4,427** are plotting scripts (2,396 statically analysable / 1,940 with no figure / 90 with syntax errors / 1 still timing out under isolated re-scan). The denominators in the tables below come from the **measurable sites** in those scripts.
+| Layer | Denominator (basis) | Measured |
+|---|---|---|
+| ① Static: real plotting-code corpus | 10,158 public plotting scripts (static judgement, not executed) | **97.8% written back in place (3,531 / 3,610)**; broken promises **0** |
+| ② Runtime: re-run verification after write-back | pool **1,837** → **1,780** runnable | **928 written back and verified** (each of the four laws 928/928); broken promises **0** |
+| ③ Window interaction: off-screen matrix | **declared: 12 figure kinds x 1,000 = 12,000**; the ⑫ "multi-figure script" holds two sub-figures (1,000 each) — **13,000 ops actually run** | **ALL PASS on both console encodings (UTF-8 414.3s / GBK 466.8s)**; targeted assertions **356 applicable / 356 passed / 0 failed**; invariants checked after every op, **0 failures** |
+| ③ Window interaction: real window | 6 figure kinds x 1,000 gestures = **6,000** gestures + **27 hard assertions** | **27/27 passed** (Qt 25/25, Tk 2/2) |
 
-### Where the corpus comes from (reproducible)
+- The static layer really takes public plotting scripts and decides where the edits land:
+  of 4,101 sites, 3,531 were written back in place, 7 were deliberately refused, 37 were
+  rejected as invalid parameters and 3 fell back to an appended block — **never once did it
+  claim an edit it did not make**.
+- The interaction layer is judged by invariants under random operations — **no crash /
+  round-trip consistency (undo-redo) / legal geometry / landing matches the params** —
+  measured on an off-screen matrix (13,000 ops, invariants checked after every operation,
+  0 failures; 356 targeted assertions applicable and all passing, 47 not-applicable cases
+  each carry a reason; the assertion machine was self-checked 6/6: break a criterion and the assertion must go red) and on a real
+  window (6,000 gestures, 27 hard assertions all passing).
 
-| Source | Count (measured in `manifest.jsonl`) |
-|---|---:|
-| Zenodo dataset records (`.py` files in paper supplementary material) | **6,904** |
-| GitHub research-plotting repositories (61 repo names) | **2,045** |
-| Official / project galleries | **1,209** |
-| **Total** | **10,158** |
-
-Selection and de-duplication: **`.py` files only, made unique by sha256** (a script that appears in
-several places is kept once) — the merge stage saw **10,168** raw files and kept **10,158** after
-sha256-uniquing (10 byte-identical duplicates dropped; local build log `corpus_union/_logs/build_summary.json`, not published with the repo:
-`copied=10168 / unique_sha=10158`, `sha_mismatch=0 / size_mismatch=0 / undecodable=0`). An earlier
-cross-stage merge additionally skipped **`dup_cross_stage = 1469`** records whose sha256 was already
-seen (the same script caught by both the GitHub and the Zenodo stage). **The corpus itself is kept
-locally, read-only, and is not redistributed** — only the manifest (path / source / URL / licence /
-sha256 / size) and the **sanitised per-script verdicts** are published. To check how a given script was
-judged, fetch it yourself with the `sha256` / `url` from the manifest. Everything lives in the
-[`bench` branch](https://github.com/shdbl/mpltweak/tree/bench): `manifest.jsonl`, `verdicts/*.jsonl` (per-script verdicts),
-`harness/` (scaffolding) and `tools/` (the two table generators plus the sanitisation self-check).
-
-### 1. In-place edits (numbers edited directly in the source)
-
-| Item | Scripts with a site for this family | Scripts reachable in place | In-place write-backs (combinations) | Pass rate |
-|---|---:|---:|---:|---:|
-| Canvas size `figsize` | 2,256 | 2,256 | 2,247 | **99.6%** |
-| Panel position `pos` | 131 | 94 | 93 | 98.9% |
-| Title font size | 193 | 173 | 165 | 95.4% |
-| Axis label font size x | 181 | 173 | 160 | 92.5% |
-| Axis label font size y | 180 | 171 | 166 | 97.1% |
-| Tick font size x | 189 | 91 | 85 | 93.4% |
-| Tick font size y | 6 | 5 | 4 | not enough samples (n=5) |
-| Grid `grid` | 131 | 124 | 118 | 95.2% |
-| Axis range `xlim` | 401 | 247 | 232 | 93.9% |
-| Axis range `ylim` | 433 | 276 | 261 | 94.6% |
-| **Total** | **4,101** | **3,610** | **3,531** | **97.8%** |
-
-- **Pass rate = in-place write-backs ÷ reachable in place** (not ÷ "the source contains this item").
-- **The totals are sums over families**; different families of the same script are counted once each, so they **are not script counts**.
-- **Broken promises = 0**: no row reports "the tool claims an in-place write-back while the bytes did not change" (within the scope of this static corpus judgement).
-- The cases that did not go in place fall into three groups, with per-script lists in the [`bench` branch](https://github.com/shdbl/mpltweak/tree/bench): **invalid params refused 37** · **refused because the target object could not be proven 7** · **done by inserting a block 3** (none of them silently drops a change).
-
-### 2. Appended code blocks (items that cannot be expressed in place)
-
-| Item | Blocks | Original text preserved byte for byte | No runtime indexing inside the block | Target value landed |
-|---|---:|---|---|---|
-| Whole corpus this round | 427 | ✓ | 427 / 427 | ✓ |
-
-- Criteria for the block path: original text preserved byte for byte (line endings included) · the block does not use **runtime** locators such as `fig.axes[i]` / `plt.gca()` · it acts on the target object · idempotent · can be `revert`ed.
-- `spines` / `xscale` / `yscale` / `clim` can only go through the block path and **were not part of the in-place judgement this round** (the scan covered the ten in-place families only), so they are **not counted in the table above**.
-
-### 3. What the part below 100% consists of
-
-| Family | In place | Landed by block | Refused, not provable | Invalid params refused |
-|---|---:|---:|---:|---:|
-| `figsize` | 2,247 | 0 | 0 | 0 |
-| `pos` | 93 | 0 | 0 | 0 |
-| Title font size | 165 | 1 | 0 | 1 |
-| Axis label font size x | 160 | 0 | 1 | 11 |
-| Axis label font size y | 166 | 0 | 1 | 0 |
-| Tick font size x | 85 | 2 | 3 | 1 |
-| Tick font size y | 4 | 0 | 1 | 0 |
-| `grid` | 118 | 0 | 1 | 3 |
-| `xlim` | 232 | 0 | 0 | 9 |
-| `ylim` | 261 | 0 | 0 | 12 |
-| **Total** | **3,531** | **3** | **7** | **37** |
-
-- **Landed by block (3 cases) is not a failure**: the change landed, it just took the appended-block path.
-- **Refused, not provable (7 cases) is deliberate**: when it cannot statically decide "which figure / which axis is being changed", it **does not write** (`applied=false`, non-empty `pending`) and prints a paste-ready snippet for a manual edit.
-- **Invalid params refused (37 cases)**: the params derived by the measurement harness from sites crossed the validator's legal boundaries (for example an out-of-range axis index, or duplicate axis names within one figure); refusing them is correct behaviour. **If those 37 are removed from the denominator, the pass rate of axis label x is 160/161 ≈ 99.4%**; that removal must state its own denominator, so both numbers are listed.
-
-> Judgement scope: everything is **static** (AST location and rewrite decisions only; corpus scripts are not executed). Summary: **97.8% of the changes land in place in the source (3,531 / 3,610), and no run claims a change it did not make.**
+> Note: the linked sub-documents under `docs/` are currently written in Chinese.
+> How these experiments are designed (four evidence layers, window-interaction design, criteria tiers, known design limits, denominators) is written up in [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md).
 
 ## Params file
 

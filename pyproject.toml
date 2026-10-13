@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mpltweak"
-version = "0.1.9"
+version = "0.1.10"
 description = "Interactive layout editor for matplotlib multi-panel figures - drag, align, snap, then write the numbers back into your Python code"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -52,7 +52,9 @@ qt = ["PyQt5>=5.15"]
 mcp = ["mcp>=1.0; python_version >= '3.10'"]
 all = ["PyQt5>=5.15", "mcp>=1.0; python_version >= '3.10'"]
 # 贡献者用的：pytest 只为"把七个纯脚本套件包出报告"服务，运行时不需要它。
-dev = ["pytest>=7.0"]
+# hypothesis 是 0.1.10 测试加固（writeback property / params fuzz / 语料不变量）
+# 的生成库，同样只在开发/测试时用，不进运行时依赖。
+dev = ["pytest>=7.0", "hypothesis>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/shdbl/mpltweak"

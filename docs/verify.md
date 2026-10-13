@@ -18,6 +18,19 @@
 块路径另外给 `anchor`（块插在哪：`before` / `after` / `tail`）、`attempts`（每次尝试落在第几行、
 成没成）与 `err`（失败原因）—— 出问题时能一眼看出"块插到哪里、为什么没成"。
 
+**脚本自己带参数**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）：重跑验证的
+子进程命令行默认不带用户脚本的参数 → 带参脚本重跑时行为与基线不一致 → 默认回滚 +
+误归因"缺数据/依赖"。把参数放在 `--` 后面即可原样透传（bug #6）：
+
+```bash
+mpltweak apply fig1.py --write -- --data x.npz --level 3
+```
+
+`--` 之后的参数沿 `apply → writeback → verify_run / verify_semantic → 子进程` 全链
+原样到达脚本的 `sys.argv`（`verify_semantic` 的子进程用 `--` 分隔，避免被当成工具自己的
+开关）；baseline 判别（"脚本本来就跑不通"）同样带上这些参数。**不带 `--` 时行为与以前
+完全一致**（命令行不附加任何参数）。
+
 **`--keep-unverified`（自担风险的档位）**：脚本本身在无头环境跑不通时（缺数据 / 依赖 / 需要 GUI），
 **默认是不保留**这次写回的 —— 那时验证证明不了这次写回可用，留下坏写回比失败更糟。只有你确实知道
 自己在干什么（例如脚本要读一个只有你机器上有的数据文件）才加它保留；此时 `verified: null` +
@@ -73,6 +86,11 @@ mpltweak apply fig1.py --write --verify-fast
 `[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的能力边界）`
 —— agent 和你都一眼能看出来这份结果没经过重跑。
 
+不确定"这个脚本重跑得起来吗"时，不用先猜：`apply --write` 在重跑之前会做一次
+**可重跑预检**（静态看源码，**不执行脚本**），命中「缺依赖 / 需要参数 / 联网 / 等人输入 /
+要弹窗」时打一段提示并给出可照抄的下一步（不重跑就不提示，干净脚本零噪音）。
+判据与 `--json` 字段见 [exec-boundaries.md](exec-boundaries.md#写回之前的可重跑预检0110)。
+
 ## 接进 CI：`--strict`
 
 `check` 默认把布局引擎冲突（`constrained_layout` / `autolayout`）当**提示** —— 那是 matplotlib 的正常写法。
@@ -126,7 +144,7 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
 
 `--style` 有两条路。`auto`（默认）能原位改就原位，改不了就退到插入调整块；`inplace`（显式）要求原位，改不了就 `rc=1` / `applied=false`，不假装都改好；`block` 一律插块。
 判读落地情况看 `apply --json` 的 `files[]`：`needs_block`、`pending`、`inplace_pending` / `inplace_needs_block`、`auto_fallback`、`inplace_changes` / `inplace_reason`。
-逐字段含义与三种风格的实测对照（rc / JSON）见 [docs/params.md](docs/params.md)。
+逐字段含义与三种风格的实测对照（rc / JSON）见 [params.md](params.md)。
 
 ## 它到底改了什么
 
