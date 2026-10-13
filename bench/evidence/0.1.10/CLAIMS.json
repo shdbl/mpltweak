@@ -1,0 +1,164 @@
+{
+  "_what_this_is": "mpltweak 0.1.10 运行时层与交互层的原始产出与复现入口。目的：让 README/docs 里的每个数字都能被第三方查到、并尽可能自己重跑。",
+  "_why": "2026-10-13 外部质疑：README 主表里『1,780 份真跑 / 928 通过』与『13,000 次离屏 + 6,000 次真窗口手势 / 27 断言』只给了日志行号，而那些日志没有随仓库发布 ⇒ 只能信、不能查。经核查质疑成立：证据当时全在仓库外的证据目录与临时目录里。本目录即为整改结果。",
+  "_how_to_use": [
+    "1. 先读 README.md（人读索引：每个数字去哪查）。",
+    "2. 要机器可读映射，读本文件 claims[]（每个数字 → 产物 + 命令 + 可复现等级 + 源码溯源）。",
+    "3. 要校验文件完整性，读 MANIFEST.json（每个文件的 sha256）。",
+    "4. 要自己复算，按 claims[].command 跑（测试代码都在仓库里）。"
+  ],
+  "_reproducibility_levels": {
+    "rerun-from-repo": "只要有仓库就能重跑（测试脚本已入库）。注意：耗时与本机相关，不是可复现量。",
+    "needs-corpus": "需要那份本地汇集语料。语料本身不随仓库分发（第三方脚本），但 corpus/filter.jsonl 逐份给出 source 与 sha256，可按来源自行抓回。",
+    "machine-dependent": "墙钟耗时、并发表现等随机器变化；我们只发布实测值与测量环境，不声称它是常量。"
+  },
+  "_measurement_environment": {
+    "python": "3.10.19",
+    "matplotlib": "3.10.8",
+    "interpreter_path_redacted": "<python>",
+    "backends_tested": ["QtAgg(PyQt5)", "TkAgg"],
+    "platform": "Windows",
+    "note": "解释器与工作目录的具体路径已在脱敏时替换为占位符；这不影响任何结论。"
+  },
+
+  "claims": [
+    {
+      "id": "static-corpus-size",
+      "layer": "static",
+      "statement": "10,158 份按 sha256 唯一的公开绘图脚本（Zenodo / GitHub / matplotlib gallery）",
+      "artifacts": ["../manifest.jsonl"],
+      "command": "python bench/harness/safe_extract.py 等脚手架（见 ../README.md 第 3 节）",
+      "reproducibility": "needs-corpus",
+      "note": "0.1.9 静态研究口径；材料在 bench 分支既有部分（本目录不重复）。"
+    },
+    {
+      "id": "static-inplace",
+      "layer": "static",
+      "statement": "可达组合 3,610 → 真原位写回 3,531（97.8%）；五类完全划分 3,531 / 10 / 37 / 32 = 3,610",
+      "artifacts": ["../verdicts/scan_full.jsonl", "../verdicts/README.md"],
+      "command": "python bench/tools/_cu_static_table.py（复算表）",
+      "reproducibility": "needs-corpus"
+    },
+    {
+      "id": "runtime-pool",
+      "layer": "runtime",
+      "statement": "真跑候选池 1,837 份（依赖齐 + 有可静态定位目标，both_ok）",
+      "artifacts": ["corpus/filter.jsonl", "corpus/RUN_META.json"],
+      "command": "python tools/corpus_filter_t7.py --jobs 3",
+      "reproducibility": "needs-corpus",
+      "provenance": {
+        "pool_sha256": "bf22238f61184f17be91fbbf05fe570cb42eac8d523b7e2cf557a087002add99",
+        "pool_definition_rows": 1837,
+        "filter_jsonl_rows": 4433
+      },
+      "note": "池指纹写在 RUN_META.json；池定义变了就拒绝续跑（防『漏跑一批 + 重跑一批』）。"
+    },
+    {
+      "id": "runtime-candidates",
+      "layer": "runtime",
+      "statement": "真跑候选 1,780 = 1,837 − 28（静态判定『真会开窗』）− 29（含联网 / 子进程调用）",
+      "artifacts": ["corpus/SUMMARY.md"],
+      "command": "python tests/test_corpus_invariants.py --pilot 48（试点先行）",
+      "reproducibility": "needs-corpus",
+      "note": "口径修正记录：旧静态判据把『只是调 plt.show()』（Agg 下无害 no-op）也算成会开窗，曾把候选池压到 701；改用 AST 判据后恢复为 1,780。详见 corpus/SUMMARY.md 与 docs/reliability.md。"
+    },
+    {
+      "id": "runtime-pass",
+      "layer": "runtime",
+      "statement": "该写回并验证通过 928 份；四条铁律（幂等 / 可逆 / 语法守恒 / 只动目标）逐律 928/928；违约 0（分母 1,837）",
+      "artifacts": ["corpus/results.jsonl", "corpus/SUMMARY.md"],
+      "command": "python tests/test_corpus_invariants.py --resume",
+      "reproducibility": "needs-corpus",
+      "provenance": {
+        "git_head": "02998e66b0ad98bdd4fdd71db55a4b9e018c5924",
+        "uncommitted_files_at_run": 37,
+        "src_md5": {
+          "apply.py": "ea6bae7111fe290f42c584db4f30c772",
+          "writeback.py": "e7595412a52f64265b87583de9e4f5df",
+          "verify.py": "5b54f60f62db73164e5b1a8d467b22a7",
+          "messages.py": "811af04fdff4723d230f7c204d84626d",
+          "preflight.py": "65b20d3858a72557dc4d92c66cc28e04",
+          "params.py": "a9a27f26835b7d310fda57eee130c110",
+          "revert.py": "d744a6b745ffffa582470332cebfadd5",
+          "launch.py": "f7ce0b653a65e18d33b4a110480b971f",
+          "cli.py": "ad942b2dbd36eaf0468f5913b4709f93"
+        },
+        "provenance_line": "corpus/SUMMARY.md 第 9 节「src 溯源」"
+      },
+      "note": "本轮为 t27 修复后的 postfix 重跑（修复前基线是 929 pass / violation 3，同目录对照见 corpus/SUMMARY.md）。"
+    },
+    {
+      "id": "runtime-undecided",
+      "layer": "runtime",
+      "statement": "其余 852 份未判定、不是失败：需开窗 317 · 等人输入 464 · 撞 90 s 超时 71（928 + 852 = 1,780）",
+      "artifacts": ["corpus/results.jsonl", "corpus/SUMMARY.md"],
+      "command": "（同 runtime-pass）",
+      "reproducibility": "needs-corpus",
+      "note": "na_gui 总计 345 含静态 A 档 28（那 28 份不进候选池）；池内运行时判定为 317。"
+    },
+    {
+      "id": "interaction-matrix",
+      "layer": "interaction",
+      "statement": "离屏图形矩阵：12 种图形 × 1,000 次随机操作（声明 12,000；实跑 13,000，因多 figure 脚本含两张子图各 1,000）；专项断言 356/356；不适用 47（逐条带理由）；每条反向验证 teeth 6/6；A 层不变量失败 0",
+      "artifacts": ["matrix/matrix_utf8.log", "matrix/matrix_gbk.log", "matrix/NUMBERS_matrix.md"],
+      "command": "set MPLTWEAK_MATRIX_N=1000 && set MPLBACKEND=Agg && python tests/test_figure_matrix.py",
+      "reproducibility": "rerun-from-repo",
+      "provenance": {
+        "log_src_line": "每轮日志开头的『源码状态』行（含 toolbox/writeback/apply/verify 的 md5 与 git HEAD）",
+        "note": "0.1.10 发布时这轮日志曾丢失（原先写在被 gitignore 的临时目录）；本目录是 2026-10-13 用同一套件、同一档位（N=1000）重新生成的证据。"
+      }
+    },
+    {
+      "id": "interaction-window",
+      "layer": "interaction",
+      "statement": "真窗口：6 种图形 × 1,000 次 = 6,000 次手势；硬断言 27/27（Qt 轮 25 + Tk 轮 2）；含撤销/重做往返硬断言（已驱动往返必须端到端一致）",
+      "artifacts": ["window/NUMBERS.md", "window/run_qt9.log", "window/run_tk7.log", "window/selftest_t22.log", "window/ledger_drylist.txt"],
+      "command": "python tests/test_real_window.py --backend qt --log window/run_qt9.log && python tests/test_real_window.py --backend tk --log window/run_tk7.log",
+      "reproducibility": "rerun-from-repo",
+      "provenance": {
+        "git_head": "02998e66b0ad98bdd4fdd71db55a4b9e018c5924",
+        "src_md5_prefix": {
+          "toolbox.py": "58d6125152",
+          "writeback.py": "88297ccf71",
+          "apply.py": "ea6bae7111",
+          "verify.py": "5b54f60f62"
+        },
+        "provenance_line": "window/run_qt9.log 第 6 行（每次运行自动打印的源码状态行）"
+      },
+      "note": "真窗口需要一台有图形界面的机器；跑的时候会开窗、会抢焦点（工具内含反污染采样：疑似外部点击会自动重跑该场景）。"
+    },
+    {
+      "id": "interaction-selftest",
+      "layer": "interaction",
+      "statement": "断言机器自检：把每条硬断言逐个弄坏，35/35 变异被抓；场景台账 15 条 / 27 断言 / C 层 16 类一一对应",
+      "artifacts": ["window/selftest_t22.log", "window/ledger_drylist.txt"],
+      "command": "python tests/test_real_window.py --selftest ; python tests/test_real_window.py --dry-list",
+      "reproducibility": "rerun-from-repo",
+      "note": "免弹窗（不 import pyplot、不开窗），用来证明『断言不是空断言』。"
+    },
+    {
+      "id": "onepass-equivalence",
+      "layer": "runtime",
+      "statement": "写回验证从 2 遍合并为 1 遍的等价性：产出文件一致率 143/144 → 144/144；同一批 2 遍 38.1 s → 1 遍 19.6 s（−48.7%）",
+      "artifacts": ["onepass/"],
+      "command": "python tools/cmp_plain_vs_instrumented.py（A 路原样跑 / B 路套壳跑，逐份对账）",
+      "reproducibility": "needs-corpus",
+      "note": "样本：抽样 150（去重后实跑 144；gallery 59 / github 40 / zenodo 51）。语料只读、逐份 sha256 前后对账 0 份不一致、跑前 A 档防弹窗静态筛命中 0。"
+    },
+    {
+      "id": "sandbox-boundaries",
+      "layer": "runtime",
+      "statement": "跑陌生语料脚本时的四层沙箱与其已知边界",
+      "artifacts": ["sandbox/SANDBOX.md"],
+      "command": "python tests/test_sandbox.py",
+      "reproducibility": "rerun-from-repo",
+      "note": "边界如实写明：沙箱判定『是否脚本进程』依据 argv[0]；真跑链路里只有文件层生效，socket/subprocess 层靠静态预筛兜住（含联网或子进程调用的脚本一律不真跑）。"
+    }
+  ],
+
+  "_not_independently_reproducible": [
+    "墙钟耗时（离屏 6.9–7.8 min、真窗口 15–24 min、语料几十 min）——随机器负载变化，只作参考量，不作承诺。",
+    "语料快照本身：第三方脚本不随仓库分发；上游页面可能变动或消失。缓解：corpus/filter.jsonl 逐份给出 source，bench/manifest.jsonl 给出 url 与 sha256。",
+    "真窗口轮的屏幕/缩放环境（本机 960×540 可用区、dpr=4、dpi=200、QT_SCALE_FACTOR=2 等）——不同机器读数会有差异；判据用的是相对量（比值、偏差、极差），不是绝对像素。"
+  ]
+}

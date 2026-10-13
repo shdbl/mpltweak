@@ -1,0 +1,1 @@
+{"pool": "<evidence>/corpus_filter_t7/filter.jsonl", "pool_sha256": "bf22238f61184f17be91fbbf05fe570cb42eac8d523b7e2cf557a087002add99", "limit": null, "corpus": "<corpus_root>", "fast": false, "jobs": 6, "n_all": 1837}

@@ -1,0 +1,87 @@
+==============================================================================
+真窗口自动化测试（t16 / #4）—— 场景与断言清单（--dry-list）
+**本命令不 import pyplot、不开任何窗口**
+==============================================================================
+
+【事件注入机制】Qt: QTest.mousePress / mouseMove / mouseRelease / keyClick；Tk: widget.event_generate
+【禁止项】pyautogui / pynput / win32api / SendInput / mouse_event / keybd_event / QCursor.setPos —— 本文件均无（grep 可证）
+【打扰控制】子进程内 rcParams["figure.raise_window"]=False + 窗口 raise_()/activateWindow() 置 no-op + WA_ShowWithoutActivating（只 patch 测试进程，不动 src/）
+
+场景（15 个）：
+  id         后端    环境档               覆盖的 C 场景                   说明
+  monkey     qt    1x / dpi100       A 层（乱按）· 2×2               真窗口随机手势 1000 次（2×2 四面板）：拖面板 / 拉角 / 拖图例 / 框选 / 修饰键点选 / 快捷键 / 方向键
+  figs_grid4x4 qt    1x / dpi100       ⑫ 4×4＝16 面板                4×4=16 面板：随机手势 1000 次（pump×0.25）+ 拖 1 个只动该面板 + 框选完整包住左上 2×2
+  figs_gridspec qt    1x / dpi100       ⑬ GridSpec 不规则版面           GridSpec 3×3 跨行跨列（height_ratios=[2,1,1] width_ratios=[1,2,1]）：随机手势 1000 次（pump×0.25）+ 开窗结构与 mpl 声明几何一致 + Ctrl+F 不缩半
+  figs_colorbar qt    1x / dpi100       ⑭ 主面板 + colorbar 轴         主面板 + 独立 colorbar 轴（cax）：随机手势 1000 次（pump×0.25）+ 拖主面板 colorbar 不动 + 拖 colorbar 主面板不动
+  figs_clayout qt    1x / dpi100       ⑮ constrained_layout       constrained_layout 2×2：随机手势 1000 次（pump×0.25）+ 开窗布局稳定 + Ctrl+F 不缩半
+  figs_tight1x3 qt    1x / dpi100       ⑯ 1×3 横排 + tight_layout    plt.subplots(1,3)+tight_layout+长中文 suptitle：随机手势 1000 次（pump×0.25）+ 横排几何校验 + 长标题不裁
+  fit        qt    1x·2x × dpi100·200 ② 200% 缩放 · ③ Ctrl+F 裁白边   Ctrl+F 裁白边：4 组（QT_SCALE_FACTOR∈{1,2} × dpi∈{100,200}）
+  huge       qt    2x / dpi100       ① 小屏开大图 · ⑤ 窗口被钳制          请求 30×22in（远超屏幕可用区）→ 开窗自动缩放 + 事件泵稳定性
+  drag       qt    1x / dpi100       ④ 真拖拽位移                    QTest 真拖拽面板 → 位移量（相对位移 + 容差）
+  snap       qt    1x / dpi100       ⑧ 多面板+吸附                   4 面板 + 拖到 0.005 缝隙 → 吸附应把缝隙收成 0
+  qtwin      qt    1x / dpi100       ⑥ Qt 后端                    Qt 真 native 窗口存在性
+  hoverkeys  qt    1x / dpi100       观察项（软检查）                   依赖鼠标悬停的 +/- 快捷键（只观测不判失败）
+  tkwin      tk    1x / dpi100       ⑦ Tk 后端                    Tk 真窗口 + event_generate 真拖拽
+  select     qt    1x / dpi100       ⑨ 框选 / Ctrl 多选（用户目击的盲区）    框选完整包住上排 2 个 → Ctrl 点选加选第 3 个 → 空白点击清空
+  undoredo   qt    1x / dpi100       ⑪ 撤销 / 重做往返                拖面板 → Ctrl+Z 回上一态 → Ctrl+Y 复现（2 次往返，偏差 ≤0.002）
+
+硬断言（27 条）：
+  [A] A1  qt   乱按不崩：6 类图形 × 1000 次真手势（=6000 次）零异常、子进程 rc=0
+  [A] A2  qt   乱按后状态未坏：面板未丢 / 几何合法 / 内容还在（6 类图形逐类查）
+  [B] B1  qt   200% 缩放 + dpi=200 下 Ctrl+F 不缩半（ratio∈[0.55,0.99]）且确实生效（失败自动重试 1 次）
+  [B] B2  qt   Ctrl+F 后主标题完整在画布内，且与内容不重叠（gap ≥ -2px）（失败自动重试 1 次）
+  [B] B3  qt   Ctrl+F 结果与 dpi / 屏幕缩放解耦（4 组 ratio 极差 ≤ 0.08）（失败自动重试 1 次）
+  [B] B4  qt   超大 figure：画布被缩到屏内、只缩不放、该缩时确实缩了（失败自动重试 1 次）
+  [B] B5  qt   超大 figure：事件泵 2s 后 figsize 不被静默改写（±0.05in）（失败自动重试 1 次）
+  [B] B6  qt   真拖拽位移符合预期（相对位移 ±0.03 归一化）（失败自动重试 1 次）
+  [C] C1  qt   小屏开大图：窗口 frameGeometry 未越出可用区（≤1.15×）+ 长宽比守恒（失败自动重试 1 次）
+  [C] C6  qt   Qt 后端：真 native 窗口存在且可见（失败自动重试 1 次）
+  [C] C7  tk   Tk 后端：真窗口已映射 + event_generate 真拖拽位移符合预期（失败自动重试 1 次）
+  [C] C8  qt   多面板吸附：0.005 的缝隙被吸成 0（≤0.002）（失败自动重试 1 次）
+  [C] C2  qt   框选（完整包住上排 2 个）→ 选中的正是那 2 个面板（失败自动重试 1 次）
+  [C] C3  qt   Ctrl+点击下排左面板 → 加选到 3 个（实测 event.modifiers 路径）（失败自动重试 1 次）
+  [C] C4  qt   空白纯点击 → 清空选中（失败自动重试 1 次）
+  [C] C9  tk   Tk 下 huge 长宽比偏差 ≤2%（t20 已修：+99.7% → 0.0%，现为硬断言）（失败自动重试 1 次）
+  [C] C10 qt   撤销/重做往返一致（undo 回上一态 + redo 复现，偏差 ≤0.002）（失败自动重试 1 次）
+  [C] C11 qt   4×4=16 面板：手势后 16 个都在 + 拖 1 个后面板集合不变、只有该面板几何变（≤0.002 判不动）（失败自动重试 1 次）
+  [C] C12 qt   16 面板：框选完整包住左上 2×2 → 选中的正是那 4 个（多面板命中/路由）（失败自动重试 1 次）
+  [C] C13 qt   GridSpec 不规则版面：开窗后每个面板实测 bbox 与 matplotlib 声明的 GridSpec 几何一致（≤0.002）（失败自动重试 1 次）
+  [C] C14 qt   GridSpec 图：Ctrl+F 不缩半（每维 ratio∈[0.80,1.20] 且确实生效）+ 面板数不变（失败自动重试 1 次）
+  [C] C15 qt   主面板+colorbar：colorbar 轴数=1（引擎多信号判定）+ 拖主面板后 colorbar 几何不变（≤0.002）（失败自动重试 1 次）
+  [C] C16 qt   主面板+colorbar：拖 colorbar 本体 → colorbar 确实变了、主面板几何不变（≤0.002）（失败自动重试 1 次）
+  [C] C17 qt   constrained_layout：开窗后布局稳定（两次采样 figsize 与全部面板几何 ≤0.002 不变）（失败自动重试 1 次）
+  [C] C18 qt   constrained_layout 图：Ctrl+F 不缩半（每维 ratio∈[0.80,1.20]；且"确实生效"或引擎明确回报"内容已贴边、无需适配"）+ 面板数不变（失败自动重试 1 次）
+  [C] C19 qt   1×3 tight_layout：三面板同一行（y 差 ≤0.002）/ x 严格递增 / 互不重叠，且面板数=3（失败自动重试 1 次）
+  [C] C20 qt   1×3 图：长中文 suptitle 完整在画布内（Ctrl+F 前后都成立，容差 0.5px）（失败自动重试 1 次）
+
+C 层 16 类场景覆盖（验收要求逐类至少 1 条断言）：
+  ① 小屏开大图            → huge（QT_SCALE_FACTOR=2，逻辑可用区只剩 960×516）→ C1
+  ② 200% 缩放          → fit × (QT_SCALE_FACTOR=2) → B1 / B3
+  ③ Ctrl+F 裁白边       → fit → B1 / B2
+  ④ 真拖拽位移            → drag → B6
+  ⑤ 窗口被钳制            → huge → B4 / B5 / C1（stderr 里的钳制提示也会记录进证据）
+  ⑥ Qt 后端            → qtwin → C6
+  ⑦ Tk 后端            → tkwin → C7
+  ⑧ 多面板 + 吸附         → snap → C8
+  ⑨ 框选 / Ctrl 多选     → select → C2 / C3 / C4（★ 用户 2026-10-12 目击出来的盲区，见文件头）
+  ⑩ Tk 回退路径（单位口径）    → huge@tk → C9（t20 已修：长宽比 +99.7% → 0.0%；pin 已移除，现为硬断言）
+  ⑪ 撤销 / 重做往返        → undoredo → C10（真 Ctrl+Z / Ctrl+Y）
+  ⑫ 4×4＝16 面板        → figs_grid4x4 → C11 / C12（多面板事件路由 + 框选命中 4 个）
+  ⑬ GridSpec 不规则版面   → figs_gridspec → C13 / C14（结构与声明几何一致 + Ctrl+F 不缩半）
+  ⑭ 主面板 + colorbar 轴 → figs_colorbar → C15 / C16（colorbar 轴不被连带改 / 拖 colorbar 不动主面板）
+  ⑮ constrained_layout → figs_clayout → C17 / C18（开窗布局稳定 + Ctrl+F 不缩半）
+  ⑯ 1×3 横排 + tight_layout → figs_tight1x3 → C19 / C20（横排几何 + 长中文标题不裁）
+
+软检查（只打警告、不判失败）：
+  * A 层①几何变化率（真窗口点击可能因抢焦点丢失）—— 只看这一个数会把"框选/点选"误读成"没落地"，必须与②分开看
+  * A 层②选中态变化率（选择类事件是否真的落到了引擎的选择逻辑）
+  * Ctrl+F 是否真的缩短了画布（ratio < 1）
+  * 窗口 isActiveWindow（焦点是否被系统抢走）
+  * 依赖 hover 的 +/- 快捷键是否崩（观察项；禁跑期无法先验证，只记录不判失败）
+  * A 层④撤销/重做按键次数（随机手势里实发次数；一致性只由 C10 的确定性往返判定）
+  * A 层⑤多图形 fuzz 逐类变化率 + pump 倍率（monkey 1.0，5 种新图形 0.25：等待只影响引擎节流/重绘节奏，A 层两条铁律判据一字未改）
+
+pytest 收集：本文件**不被收集**（pyproject.toml 的 python_files 只含 test_suites.py / test_hygiene.py）；不进 CI（需要真实显示器）。
+本次 --dry-list 是否 import 了 pyplot: False（必须为 False）
+
+DRY-LIST OK

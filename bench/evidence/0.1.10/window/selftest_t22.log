@@ -1,0 +1,60 @@
+==============================================================================
+断言机器自检（--selftest）—— **合成数据**，不开窗、不 import pyplot
+这不是真跑证据；真窗口行为只能靠 --backend qt / tk 实跑
+==============================================================================
+  [OK ] 变异 A1（一次手势抛异常）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 A2（乱按后面板丢了 1 个）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B1（Ctrl+F 把画布缩了一半）→ 该条 FAIL；连带 FAIL: ['B3']
+  [OK ] 变异 B2（主标题被裁到画布外）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B3（dpi=200 那档 ratio 漂移 0.13）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B4（超大画布没被缩到屏内）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B5（事件泵后 figsize 被静默改了 0.4in）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B6（真拖拽没产生位移）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C1（窗口 frameGeometry 越出可用区）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C6（Qt 窗口不可见）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C7（Tk 窗口未映射）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C8（吸附没把 0.005 缝隙收成 0）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 A2（面板被推到完全离开画布（新判据仍要抓得住））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 A2（有面板内容被清空）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 B1（Ctrl+F 反而把画布放大了 2 倍（反向倍数错误也要抓））→ 该条 FAIL；连带 FAIL: ['B3']
+  [OK ] 变异 C2（框选只选中 1 个（= 用户看到的现象））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C3（Ctrl 点选没加选（event.modifiers 路径失效））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C4（空白点击没清空选中）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C10（undo 没回到上一态）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C10（redo 没复现拖动结果）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C10（一次往返都没驱动成功（防判据退化成恒真））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 A1（新图形（4×4）一次手势抛异常 → A1 聚合必须抓到）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 A2（新图形（GridSpec）乱按后丢了 2 个面板 → A2 聚合必须抓到）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C11（拖一个面板却把另一个也带走了（"只动目标"判据））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C11（16 面板掉成 15 个）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C12（16 面板上框选只选中 2 个（多面板命中/路由不对））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C13（GridSpec 版面被拉平/挪位 0.02（超过 0.002 容差））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C14（GridSpec 图 Ctrl+F 缩了一半）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C15（拖主面板把 colorbar 轴一起带走了）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C15（colorbar 轴没被引擎的 _is_colorbar_ax 认出来）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C16（拖 colorbar 把主面板也带走了）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C17（constrained_layout 开窗后两次采样不一致（布局自己在动））→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C18（constrained_layout 图 Ctrl+F 反而放大 2 倍）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C18（constrained_layout 图 ratio=1.000 但**引擎一行都没有**（按键根本没到引擎）—— 这一条专门证明 C18 的分支感知守卫不空虚）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C19（1×3 三面板不在同一行）→ 该条 FAIL；连带 FAIL: 无
+  [OK ] 变异 C20（长中文标题 Ctrl+F 后被裁到画布外）→ 该条 FAIL；连带 FAIL: 无
+
+  静态自审 / 台账自审（免弹窗，机器守卫）：
+    · 静态自审：① 无移动光标 / 系统输入 API（10 个禁用名一个都没出现在代码里）
+    · 静态自审：② 无 plt.show() / exec_() / mainloop() / input()（不会卡住窗口循环）
+    · 静态自审：③ 事件注入全在驱动类内（QTest 引用 6 处；event_generate 均在 TkDriver 内）
+    · 台账自审：台账：27 条硬断言「声明 ↔ rep.check 实现」一一对应
+    · 台账自审：台账：15 个场景「声明 ↔ 实现」一一对应
+    · 台账自审：台账：C 层 16 类覆盖表引用的断言都存在（B1, B2, B3, B4, B5, B6, C1, C10, C11, C12, C13, C14, C15, C16, C17, C18, C19, C2, C20, C3, C4, C6, C7, C8, C9）
+    · 自审灵敏度：加入 pyautogui 调用 → 被抓到（出现移动真实光标/系统输入的 API：[(4026, 'import pyautogui'), (402）
+    · 自审灵敏度：加入 plt.show() 阻塞调用 → 被抓到（出现阻塞调用/自建事件循环：[(4026, 'plt.show()')]）
+    · 自审灵敏度：改成 CRLF 混排 → 被抓到（文件里出现 CR（要求纯 LF，避免混排））
+    · 软指标灵敏度：框选 40 次全不中 → ③ 正确 WARN
+    · pin 灵敏度(a)：缺陷形态 → [PIN]、不计失败 ✅
+    · pin 灵敏度(b)：修复形态 + pin 未移除 → 正确报红要求移除 ✅
+    · pin 灵敏度(c)：移除 pin 后 C9 是硬断言且通过 ✅
+
+  基础态：qt 25 条 / tk 2 条硬断言应全过（C9 已是硬断言、无 pin）✅
+  谓词灵敏度：36/36 条变异被捕获
+
+SELFTEST ALL PASS（断言机器接对了，且谓词对各物理量敏感）

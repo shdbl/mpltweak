@@ -1,0 +1,35 @@
+# 摘录自 CLOSE_PROBE_cfd75bbb.json（阶段 1 追因 5 臂实验）
+# 目标脚本: 018/zenodo/18910861__generate_all_figures.py  sha256=1b9f88ed9dc1d3dcb79a2b45f818ad4b6bcded51eed7ec751caa7689c7acfb7d
+# 目标图: ['figures_supplementary/ige_dynamics/2WQR_rg.png']
+#
+arm A    rc=0
+arm A2   rc=0
+arm B    rc=0
+arm bprime rc=0
+arm closeonly rc=0
+arm trace rc=0
+arm tracec rc=0
+target_sizes[A] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 185701}
+target_sizes[A2] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 185701}
+target_sizes[B] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 140667}
+target_sizes[bprime] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 185701}
+target_sizes[closeonly] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 140667}
+target_sizes[trace] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 185701}
+target_sizes[tracec] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': 140667}
+target_sha[A] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86'}
+target_sha[A2] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86'}
+target_sha[B] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df'}
+target_sha[bprime] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86'}
+target_sha[closeonly] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df'}
+target_sha[trace] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86'}
+target_sha[tracec] = {'figures_supplementary/ige_dynamics/2WQR_rg.png': '252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df'}
+pixel_vs_A[A] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.0, 'max_abs': 0, 'mean_abs': 0.0}
+pixel_vs_A[A2] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.0, 'max_abs': 0, 'mean_abs': 0.0}
+pixel_vs_A[B] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.152121, 'max_abs': 255, 'mean_abs': 19.800622}
+pixel_vs_A[bprime] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.0, 'max_abs': 0, 'mean_abs': 0.0}
+pixel_vs_A[closeonly] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.152121, 'max_abs': 255, 'mean_abs': 19.800622}
+pixel_vs_A[trace] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.0, 'max_abs': 0, 'mean_abs': 0.0}
+pixel_vs_A[tracec] = {'shape': [1440, 1920, 3], 'diff_px_ratio': 0.152121, 'max_abs': 255, 'mean_abs': 19.800622}
+savefig_trace_delta: 40 条（键=['2WQR_eigenvalues.png', '2WQR_projection.png', '2WQR_rg.png', '2WQR_rmsd.png', '2Y7Q_eigenvalues.png', '2Y7Q_rg.png']）
+savefig_trace[trace] len=41
+savefig_trace[tracec] len=41

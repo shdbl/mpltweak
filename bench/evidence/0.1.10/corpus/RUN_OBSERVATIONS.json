@@ -1,0 +1,40 @@
+{
+  "note": "内存/并发观察（由 t28 owner 在 runner 外部采样；postfix 轮：jobs=6 起跑 → 干净停手一次 → --resume --jobs 8 → 内存到线再停手一次 → --resume --jobs 6 跑完）",
+  "baseline_counts": {
+    "pass": 929,
+    "violation": 3,
+    "na_gui": 342,
+    "na_stdin": 464,
+    "na_skip": 29,
+    "na_timeout": 70,
+    "na_reject": 0,
+    "na_error": 0
+  },
+  "baseline": [
+    "**两轮的唯一差异 = t27 对 `writeback.py` 块路径的两处改动**（守卫基准改为“我们最后写入的内容” + 命中/重试前回滚）。除此之外口径完全一致：同一候选池（`_review/corpus_filter_t7/filter.jsonl`，both_ok=1,837，pool_sha256 `bf22238f61184f17…`）、同一分层分母、同一四律统计方式、显式 `MPLBACKEND=Agg`、零 GUI 对象、禁跨轮 `--resume`（每轮独立目录）。`RUN_META.json` 逐字对比：两轮的 pool_sha256 / limit(null) / corpus(corpus_union) / fast(false) / n_all(1837) 完全相同，**唯一差异是 jobs**（t23 末段 4 vs 本轮 6→8→6）——jobs 不进入任何一份脚本的判定。",
+    "**为什么 t23 的基线里已经包含 T57 稀疏轴改动、却不构成污染**：`apply_inplace` 的 T57 修复是本 0.1.10 周期内**已完成的既定改动**（原始需求里的“稀疏轴写回错轴”），只是整个周期都没 commit（工作区 37 个未提交文件），并非“半成品混入”。t23 那一轮 SUMMARY 记录的 `src/mpltweak/writeback.py` md5 = `88297ccf71026dc69ae4f64ab3425cc9`，**正是 T57 已包含、而 t27 尚未施加时的状态**；本轮 postfix 记录的是 `e7595412a52f64265b87583de9e4f5df`。md5 的差异**只来自 t27 的两处改动**（t14 的守卫/回滚框架两轮都在）。",
+    "**修复前（t23）的 3 例违约**：`018/gallery/images_contours_and_fields/pcolor_demo.py`(3260→3491)、`018/gallery/statistics/boxplot_demo.py`(8093→8324)、`018/gallery/statistics/psd_demo.py`(5357→5588)——**都恰好 +231 字节**、`reason1='external_modified'`、`style='block'`；四时刻哈希证明“守卫把自身写入当外部改动 + 命中不回滚”。",
+    "**修复后（t27 单例复跑，已取证）**：同三例均为 `最终字节 == 原始字节（差 +0）`、无调整块残留、`reason='fail'`、无 `external_modified`，且时间线里出现 `T2 回滚尝试后 … 返回='已回滚'`（修复前没有这一行）→ 按 worker 口径这三例从 **violation** 落到 **na_reject**（引擎拒写、字节未动）。"
+  ],
+  "samples": [
+    {"phase": "jobs=6 第1次", "done": 390, "procs": 22, "total_mb": 1762},
+    {"phase": "jobs=6 第2次", "done": 466, "procs": 26, "total_mb": 2298},
+    {"phase": "jobs=6 第3次", "done": 748, "procs": 27, "total_mb": 2384},
+    {"phase": "jobs=6 停手（754 份）", "done": 754, "procs": 0, "total_mb": 0},
+    {"phase": "jobs=8 第1次", "done": 930, "procs": 30, "total_mb": 2026},
+    {"phase": "jobs=8 第2次", "done": 1116, "procs": 30, "total_mb": 1951},
+    {"phase": "jobs=8 第3次（触发动作）", "done": 1296, "procs": 32, "total_mb": 3667},
+    {"phase": "jobs=8 停手（1355 份，实测 3804MB）", "done": 1355, "procs": 28, "total_mb": 3804},
+    {"phase": "jobs=6 续跑第1次", "done": 1464, "procs": 25, "total_mb": 1525}
+  ],
+  "threshold_mb": 4000,
+  "action": "① 起始 `--jobs 6`；② 按船长裁定在 754 份处干净停手（精确匹配自己的 25 个进程，未碰他人）→ `--resume --jobs 8`；③ **内存到线**：jobs=8 段 5 分钟内由 1,951MB 涨到 3,667MB，随即在 **3,804MB** 停手（精确匹配、零残留、零坏 JSON、在飞的 3 个进程自行跑完落地 1354→1355）→ `--resume --jobs 6` 跑完（按规则**降级后不再升回 8**）。两次停手均：坏 JSON 0、临时文件残留 0、剩余进程 0（复查 12 秒仍为 0 ⇒ 未误伤他人进程）。逐份原子落盘全程开启。",
+  "deviation": "**如实记录一条判据偏差**：约定是“3.5GB 观察 / 4GB 降级”，而我在 **3,804MB** 就执行了停手——原因是我的监控脚本判据写成了 `>=3500`（把观察线当动作线）。当时趋势为 5 分钟 +1.7GB（30 秒内必破 4GB），故结果上不算错，但**判据与约定不一致属实现错误**；已当场把判据修正为 `>=4000`。代价 = 多付一次“停手+续跑”（几分钟）。",
+  "timing": [
+    "本轮分三段跑完（段间为按裁定/动作线的干净停手 + `--resume`，非崩溃）：seg1 jobs=6（0→754 份）、seg2 jobs=8（754→1,355 份）、seg3 jobs=6（1,355→1,837 份）。",
+    "**注意**：SUMMARY §0 的「本轮实跑 N 份 / 耗时」反映的是**最后一次续跑**那一段（不是整轮）；整轮的真实分段耗时见本文件与交付说明。"
+  ],
+  "cause": "t23 的教训在本轮复现：进程数并不单调，但进程树总量可以**单调爬升**（本轮 jobs=8 段 1,951→3,667→3,804 MB，5 分钟内 +1.7GB），**成因仍未定位**（不排除 worker 进出时的碎片/缓存累积，也不排除单个 worker 生命周期内的缓慢增长；既不断言是泄漏、也不断言不是）。",
+  "next_run_hint": "延续并强化 t23 建议：① **默认 jobs 上限取 6**（8 槽在 stdin/hanger 密集区会快速爬升到 4GB 线）；② 或每 N 份重启一次 worker 池；③ 采样间隔 5 分钟、**动作线 4GB（判据写 `>=4000`）**；④ 停手/续跑动作已被两轮验证为零损坏，可作为常规手段。",
+  "other": "本轮为 postfix（修复后）轮；**禁止跨轮 `--resume` 混用**（同轮内为切 jobs 而做的续跑合法：`RUN_META` 池指纹与 limit 逐字一致）。"
+}

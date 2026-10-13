@@ -1,0 +1,2426 @@
+{
+ "script": "018/zenodo/18910861__generate_all_figures.py",
+ "script_sha256": "1b9f88ed9dc1d3dcb79a2b45f818ad4b6bcded51eed7ec751caa7689c7acfb7d",
+ "gate": {
+  "criterion_source": {
+   "tests_src": "tests/test_corpus_invariants.py",
+   "tests_src_sha256": "0b224f78b9d0a1d90a918b0035a5212bf39742ba1ae7de33e30944010271d54b",
+   "reused": [
+    "_DIALOG_ATTRS",
+    "_DIALOG_BASES",
+    "_MPL_BASES",
+    "_MPL_INTERACTIVE_ATTRS",
+    "_WINDOW_BACKEND_HINTS",
+    "_WINDOW_MODULES",
+    "_window_risk"
+   ]
+  },
+  "window_risk_hits": 0
+ },
+ "arms": {
+  "A": {
+   "rc": 0,
+   "wall": 8.494,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 23,
+   "stderr_tail": "",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\A",
+   "label": "A 原样跑"
+  },
+  "A2": {
+   "rc": 0,
+   "wall": 8.52,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 23,
+   "stderr_tail": "",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\A2",
+   "label": "A′ 原样再跑一遍"
+  },
+  "B": {
+   "rc": 0,
+   "wall": 7.93,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 0,
+   "stderr_tail": "  polymer_interaction figures (S12‑S17) saved.\n  lnp_detailed figures (S18‑S29) saved.\n  tellurium supplementary figures (S30‑S33) saved.\n✅ All main and supplementary figures have been generated.\n   Main figures: figures_main/\n   Supplementary figures: figures_supplementary/",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\B",
+   "label": "B 套壳跑"
+  },
+  "bprime": {
+   "rc": 0,
+   "wall": 8.402,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 0,
+   "stderr_tail": "  polymer_interaction figures (S12‑S17) saved.\n  lnp_detailed figures (S18‑S29) saved.\n  tellurium supplementary figures (S30‑S33) saved.\n✅ All main and supplementary figures have been generated.\n   Main figures: figures_main/\n   Supplementary figures: figures_supplementary/",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\bprime",
+   "label": "B′ 套壳去掉\"拦 close\"这一项（其余干预照旧）"
+  },
+  "closeonly": {
+   "rc": 0,
+   "wall": 7.917,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 23,
+   "stderr_tail": "",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\closeonly",
+   "label": "B″ 原样 + 只加\"拦 close\"这一项（其余不干预）"
+  },
+  "trace": {
+   "rc": 0,
+   "wall": 8.751,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 23,
+   "stderr_tail": "",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\trace",
+   "label": "A + savefig 追踪（只观测）"
+  },
+  "tracec": {
+   "rc": 0,
+   "wall": 7.82,
+   "timeout": false,
+   "spawn_err": "",
+   "stdout_lines": 23,
+   "stderr_tail": "",
+   "seed_dir": "<work>\\.tmp_t39\\close_probe\\cfd75bbb0bad839f\\tracec",
+   "label": "B″ + savefig 追踪（只观测）"
+  }
+ },
+ "files": {
+  "A": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 179437,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 89948,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 192300,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 217936,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 85241,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 100440,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 205877,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 211345,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 221440,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 249163,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 236755,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 235184,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 239555,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 244111,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 222866,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 224142,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 246481,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 230658,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 255576,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 212368,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 178721,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 192902,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 224586,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 212862,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 198201,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 64584,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 122053,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "A2": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 179437,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 89948,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 192300,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 217936,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 85241,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 100440,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 205877,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 211345,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 221440,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 249163,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 236755,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 235184,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 239555,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 244111,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 222866,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 224142,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 246481,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 230658,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 255576,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 212368,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 178721,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 192902,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 224586,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 212862,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 198201,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 64584,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 122053,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "B": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 130374,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 160955,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 170170,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 163358,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 179318,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 243313,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 248867,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 249690,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 81256,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 86413,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 81306,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 78413,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 94143,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 111906,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 102472,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 104009,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 99516,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 94671,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 91536,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 193296,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 194500,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 153494,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 177685,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 178880,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 203878,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 73752,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 86146,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "bprime": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 179437,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 89948,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 192300,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 217936,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 85241,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 100440,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 205877,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 211345,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 221440,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 249163,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 236755,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 235184,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 239555,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 244111,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 222866,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 224142,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 246481,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 230658,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 255576,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 212368,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 178721,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 192902,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 224586,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 212862,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 198201,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 64584,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 122053,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "closeonly": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 130374,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 160955,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 170170,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 163358,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 179318,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 243313,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 248867,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 249690,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 81256,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 86413,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 81306,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 78413,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 94143,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 111906,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 102472,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 104009,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 99516,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 94671,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 91536,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 193296,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 194500,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 153494,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 177685,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 178880,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 203878,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 73752,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 86146,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "trace": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 179437,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 89948,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 192300,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 217936,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 85241,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 100440,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 205877,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 211345,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 221440,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 249163,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 236755,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 235184,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 239555,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 244111,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 222866,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 224142,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 246481,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 230658,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 255576,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 212368,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 178721,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 192902,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 224586,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 212862,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 198201,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 64584,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 122053,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  },
+  "tracec": {
+   "figures_main/fig10_summary_bars.png": 86182,
+   "figures_main/fig1_eigenvalue_spectrum.png": 143259,
+   "figures_main/fig2_fel_2wqr.png": 83012,
+   "figures_main/fig3_rmsf_comparison.png": 217178,
+   "figures_main/fig4_peg_pgl_rmsf.png": 59277,
+   "figures_main/fig5_mmpbsa.png": 92846,
+   "figures_main/fig6_lnp_comparison.png": 547550,
+   "figures_main/fig8_sensitivity.png": 94376,
+   "figures_main/fig9_critical_residues_boxplot.png": 105246,
+   "figures_supplementary/ige_dynamics/2WQR_eigenvalues.png": 92962,
+   "figures_supplementary/ige_dynamics/2WQR_projection.png": 100951,
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667,
+   "figures_supplementary/ige_dynamics/2WQR_rmsd.png": 130374,
+   "figures_supplementary/ige_dynamics/2Y7Q_eigenvalues.png": 160955,
+   "figures_supplementary/ige_dynamics/2Y7Q_rg.png": 170170,
+   "figures_supplementary/ige_dynamics/2Y7Q_rmsd.png": 163358,
+   "figures_supplementary/ige_dynamics/7SHT_eigenvalues.png": 179318,
+   "figures_supplementary/ige_dynamics/7SHT_projection.png": 243313,
+   "figures_supplementary/ige_dynamics/7SHT_rg.png": 248867,
+   "figures_supplementary/ige_dynamics/7SHT_rmsd.png": 249690,
+   "figures_supplementary/lnp_detailed/PEG_LNP_mRNA_dist.png": 81256,
+   "figures_supplementary/lnp_detailed/PEG_LNP_pot.png": 86413,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rg.png": 81306,
+   "figures_supplementary/lnp_detailed/PEG_LNP_rmsd.png": 78413,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_dist.png": 94143,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_pot.png": 111906,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rg.png": 102472,
+   "figures_supplementary/lnp_detailed/PGL_LNP_mRNA_rmsd.png": 104009,
+   "figures_supplementary/lnp_detailed/PGL_LNP_pot.png": 99516,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rg.png": 94671,
+   "figures_supplementary/lnp_detailed/PGL_LNP_rmsd.png": 91536,
+   "figures_supplementary/polymer_interaction/peg_distance.png": 193296,
+   "figures_supplementary/polymer_interaction/peg_interaction_energy.png": 194500,
+   "figures_supplementary/polymer_interaction/peg_sasa.png": 153494,
+   "figures_supplementary/polymer_interaction/pgl_distance.png": 177685,
+   "figures_supplementary/polymer_interaction/pgl_interaction_energy.png": 178880,
+   "figures_supplementary/polymer_interaction/pgl_sasa.png": 203878,
+   "figures_supplementary/tellurium/S13_heatmap_top30.png": 57398,
+   "figures_supplementary/tellurium/S14_pca_plot.png": 73752,
+   "figures_supplementary/tellurium/S15_feature_importance.png": 86146,
+   "figures_supplementary/tellurium/S16_ode_predictions.png": 40509
+  }
+ },
+ "target_files": [
+  "figures_supplementary/ige_dynamics/2WQR_rg.png"
+ ],
+ "target_sizes": {
+  "A": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701
+  },
+  "A2": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701
+  },
+  "B": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667
+  },
+  "bprime": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701
+  },
+  "closeonly": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667
+  },
+  "trace": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 185701
+  },
+  "tracec": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": 140667
+  }
+ },
+ "target_sha": {
+  "A": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86"
+  },
+  "A2": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86"
+  },
+  "B": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df"
+  },
+  "bprime": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86"
+  },
+  "closeonly": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df"
+  },
+  "trace": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "6a7acb15d52f98f6c661b5a9f19c3c9bc7a20032d5f5c82d2a85e2a6a4253e86"
+  },
+  "tracec": {
+   "figures_supplementary/ige_dynamics/2WQR_rg.png": "252597fc61705240bc6795a59c3c97b3182fe6a34a2e331e6b9015d99a1a14df"
+  }
+ },
+ "pixel_vs_A": {
+  "A": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.0,
+   "max_abs": 0,
+   "mean_abs": 0.0
+  },
+  "A2": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.0,
+   "max_abs": 0,
+   "mean_abs": 0.0
+  },
+  "B": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.152121,
+   "max_abs": 255,
+   "mean_abs": 19.800622
+  },
+  "bprime": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.0,
+   "max_abs": 0,
+   "mean_abs": 0.0
+  },
+  "closeonly": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.152121,
+   "max_abs": 255,
+   "mean_abs": 19.800622
+  },
+  "trace": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.0,
+   "max_abs": 0,
+   "mean_abs": 0.0
+  },
+  "tracec": {
+   "shape": [
+    1440,
+    1920,
+    3
+   ],
+   "diff_px_ratio": 0.152121,
+   "max_abs": 255,
+   "mean_abs": 19.800622
+  }
+ },
+ "savefig_trace": {
+  "trace": [
+   {
+    "file": "fig1_eigenvalue_spectrum.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure 1: Eigenvalue spectra"
+    ]
+   },
+   {
+    "file": "fig2_fel_2wqr.png",
+    "fig_number": 1,
+    "n_axes": 2,
+    "n_lines": 0,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure 2: Free energy landscape (2WQR)",
+     ""
+    ]
+   },
+   {
+    "file": "fig3_rmsf_comparison.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 3,
+    "titles": [
+     "Figure 3: RMSF comparison"
+    ]
+   },
+   {
+    "file": "fig4_peg_pgl_rmsf.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 2,
+    "n_patches": 4,
+    "titles": [
+     "Figure 4: PEG vs PGL effect on critical residues"
+    ]
+   },
+   {
+    "file": "fig5_mmpbsa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 10,
+    "titles": [
+     "Figure 5: MM-PBSA energy components"
+    ]
+   },
+   {
+    "file": "fig6_lnp_comparison.png",
+    "fig_number": 1,
+    "n_axes": 4,
+    "n_lines": 8,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "a) Total potential energy",
+     "b) mRNA-lipid distance",
+     "c) Radius of gyration",
+     "d) RMSD"
+    ]
+   },
+   {
+    "file": "fig8_sensitivity.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 6,
+    "titles": [
+     "Figure 8: Morris sensitivity analysis"
+    ]
+   },
+   {
+    "file": "fig9_critical_residues_boxplot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 2,
+    "titles": [
+     "Figure 9: Critical residue flexibility"
+    ]
+   },
+   {
+    "file": "fig10_summary_bars.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 9,
+    "titles": [
+     "Figure 10: Summary of dynamic properties"
+    ]
+   },
+   {
+    "file": "2WQR_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S1: Eigenvalue spectrum (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_projection.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S2: PC1-PC2 projection (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S3: Cε3 domain RMSD (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S4: Radius of gyration (2WQR)"
+    ]
+   },
+   {
+    "file": "2Y7Q_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S5: Eigenvalue spectrum (2Y7Q)"
+    ]
+   },
+   {
+    "file": "2Y7Q_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S6: Backbone RMSD (2Y7Q)"
+    ]
+   },
+   {
+    "file": "2Y7Q_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S7: Radius of gyration (2Y7Q)"
+    ]
+   },
+   {
+    "file": "7SHT_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S8: Eigenvalue spectrum (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_projection.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S9: PC1-PC2 projection (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S10: Cε3 domain RMSD (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S11: Radius of gyration (7SHT)"
+    ]
+   },
+   {
+    "file": "peg_interaction_energy.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S12: Interaction energy (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "peg_distance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S13: Min distance (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "peg_sasa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S14: SASA (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "pgl_interaction_energy.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S15: Interaction energy (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "pgl_distance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S16: Min distance (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "pgl_sasa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S17: SASA (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S18: PEG-LNP potential (no mRNA)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_mRNA_dist.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S19: PEG-LNP mRNA distance"
+    ]
+   },
+   {
+    "file": "PEG_LNP_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S20: PEG-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S21: PEG-LNP RMSD (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S22: PGL-LNP potential (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_dist.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S23: PGL-LNP mRNA distance"
+    ]
+   },
+   {
+    "file": "PGL_LNP_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S24: PGL-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S25: PGL-LNP RMSD (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S26: PGL-LNP potential (with mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S28: PGL-LNP Rg (with mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S29: PGL-LNP RMSD (with mRNA)"
+    ]
+   },
+   {
+    "file": "S13_heatmap_top30.png",
+    "fig_number": 1,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 5,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     ""
+    ]
+   },
+   {
+    "file": "S14_pca_plot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S31: PCA of metabolomic data"
+    ]
+   },
+   {
+    "file": "S15_feature_importance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 20,
+    "titles": [
+     "Figure S32: Random Forest feature importance"
+    ]
+   },
+   {
+    "file": "S16_ode_predictions.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     ""
+    ]
+   }
+  ],
+  "tracec": [
+   {
+    "file": "fig1_eigenvalue_spectrum.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure 1: Eigenvalue spectra"
+    ]
+   },
+   {
+    "file": "fig2_fel_2wqr.png",
+    "fig_number": 2,
+    "n_axes": 2,
+    "n_lines": 0,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure 2: Free energy landscape (2WQR)",
+     ""
+    ]
+   },
+   {
+    "file": "fig3_rmsf_comparison.png",
+    "fig_number": 3,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 3,
+    "titles": [
+     "Figure 3: RMSF comparison"
+    ]
+   },
+   {
+    "file": "fig4_peg_pgl_rmsf.png",
+    "fig_number": 4,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 2,
+    "n_patches": 4,
+    "titles": [
+     "Figure 4: PEG vs PGL effect on critical residues"
+    ]
+   },
+   {
+    "file": "fig5_mmpbsa.png",
+    "fig_number": 5,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 10,
+    "titles": [
+     "Figure 5: MM-PBSA energy components"
+    ]
+   },
+   {
+    "file": "fig6_lnp_comparison.png",
+    "fig_number": 6,
+    "n_axes": 4,
+    "n_lines": 8,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "a) Total potential energy",
+     "b) mRNA-lipid distance",
+     "c) Radius of gyration",
+     "d) RMSD"
+    ]
+   },
+   {
+    "file": "fig8_sensitivity.png",
+    "fig_number": 7,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 6,
+    "titles": [
+     "Figure 8: Morris sensitivity analysis"
+    ]
+   },
+   {
+    "file": "fig9_critical_residues_boxplot.png",
+    "fig_number": 8,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 2,
+    "titles": [
+     "Figure 9: Critical residue flexibility"
+    ]
+   },
+   {
+    "file": "fig10_summary_bars.png",
+    "fig_number": 9,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 9,
+    "titles": [
+     "Figure 10: Summary of dynamic properties"
+    ]
+   },
+   {
+    "file": "2WQR_eigenvalues.png",
+    "fig_number": 10,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S1: Eigenvalue spectrum (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_projection.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S2: PC1-PC2 projection (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S3: Cε3 domain RMSD (2WQR)"
+    ]
+   },
+   {
+    "file": "2WQR_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S4: Radius of gyration (2WQR)"
+    ]
+   },
+   {
+    "file": "2Y7Q_eigenvalues.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S5: Eigenvalue spectrum (2Y7Q)"
+    ]
+   },
+   {
+    "file": "2Y7Q_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S6: Backbone RMSD (2Y7Q)"
+    ]
+   },
+   {
+    "file": "2Y7Q_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 5,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S7: Radius of gyration (2Y7Q)"
+    ]
+   },
+   {
+    "file": "7SHT_eigenvalues.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 6,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S8: Eigenvalue spectrum (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_projection.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 6,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S9: PC1-PC2 projection (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 7,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S10: Cε3 domain RMSD (7SHT)"
+    ]
+   },
+   {
+    "file": "7SHT_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 8,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S11: Radius of gyration (7SHT)"
+    ]
+   },
+   {
+    "file": "peg_interaction_energy.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 9,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S12: Interaction energy (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "peg_distance.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 10,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S13: Min distance (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "peg_sasa.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 11,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S14: SASA (IgE-PEG)"
+    ]
+   },
+   {
+    "file": "pgl_interaction_energy.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S15: Interaction energy (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "pgl_distance.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 13,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S16: Min distance (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "pgl_sasa.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 14,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S17: SASA (IgE-PGL)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 15,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S18: PEG-LNP potential (no mRNA)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_mRNA_dist.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 16,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S19: PEG-LNP mRNA distance"
+    ]
+   },
+   {
+    "file": "PEG_LNP_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 17,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S20: PEG-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   {
+    "file": "PEG_LNP_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 18,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S21: PEG-LNP RMSD (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 19,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S22: PGL-LNP potential (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_dist.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 20,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S23: PGL-LNP mRNA distance"
+    ]
+   },
+   {
+    "file": "PGL_LNP_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 21,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S24: PGL-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 22,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S25: PGL-LNP RMSD (no mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 23,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S26: PGL-LNP potential (with mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 24,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S28: PGL-LNP Rg (with mRNA)"
+    ]
+   },
+   {
+    "file": "PGL_LNP_mRNA_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 25,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S29: PGL-LNP RMSD (with mRNA)"
+    ]
+   },
+   {
+    "file": "S13_heatmap_top30.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 5,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     ""
+    ]
+   },
+   {
+    "file": "S14_pca_plot.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 6,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     "Figure S31: PCA of metabolomic data"
+    ]
+   },
+   {
+    "file": "S15_feature_importance.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 6,
+    "n_patches": 20,
+    "titles": [
+     "",
+     "",
+     "",
+     "Figure S32: Random Forest feature importance"
+    ]
+   },
+   {
+    "file": "S16_ode_predictions.png",
+    "fig_number": 13,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     ""
+    ]
+   }
+  ]
+ },
+ "savefig_trace_delta": {
+  "2WQR_eigenvalues.png": {
+   "A": {
+    "file": "2WQR_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S1: Eigenvalue spectrum (2WQR)"
+    ]
+   },
+   "B2": {
+    "file": "2WQR_eigenvalues.png",
+    "fig_number": 10,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S1: Eigenvalue spectrum (2WQR)"
+    ]
+   }
+  },
+  "2WQR_projection.png": {
+   "A": {
+    "file": "2WQR_projection.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S2: PC1-PC2 projection (2WQR)"
+    ]
+   },
+   "B2": {
+    "file": "2WQR_projection.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S2: PC1-PC2 projection (2WQR)"
+    ]
+   }
+  },
+  "2WQR_rg.png": {
+   "A": {
+    "file": "2WQR_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S4: Radius of gyration (2WQR)"
+    ]
+   },
+   "B2": {
+    "file": "2WQR_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S4: Radius of gyration (2WQR)"
+    ]
+   }
+  },
+  "2WQR_rmsd.png": {
+   "A": {
+    "file": "2WQR_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S3: Cε3 domain RMSD (2WQR)"
+    ]
+   },
+   "B2": {
+    "file": "2WQR_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S3: Cε3 domain RMSD (2WQR)"
+    ]
+   }
+  },
+  "2Y7Q_eigenvalues.png": {
+   "A": {
+    "file": "2Y7Q_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S5: Eigenvalue spectrum (2Y7Q)"
+    ]
+   },
+   "B2": {
+    "file": "2Y7Q_eigenvalues.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S5: Eigenvalue spectrum (2Y7Q)"
+    ]
+   }
+  },
+  "2Y7Q_rg.png": {
+   "A": {
+    "file": "2Y7Q_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S7: Radius of gyration (2Y7Q)"
+    ]
+   },
+   "B2": {
+    "file": "2Y7Q_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 5,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S7: Radius of gyration (2Y7Q)"
+    ]
+   }
+  },
+  "2Y7Q_rmsd.png": {
+   "A": {
+    "file": "2Y7Q_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S6: Backbone RMSD (2Y7Q)"
+    ]
+   },
+   "B2": {
+    "file": "2Y7Q_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S6: Backbone RMSD (2Y7Q)"
+    ]
+   }
+  },
+  "7SHT_eigenvalues.png": {
+   "A": {
+    "file": "7SHT_eigenvalues.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S8: Eigenvalue spectrum (7SHT)"
+    ]
+   },
+   "B2": {
+    "file": "7SHT_eigenvalues.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 6,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S8: Eigenvalue spectrum (7SHT)"
+    ]
+   }
+  },
+  "7SHT_projection.png": {
+   "A": {
+    "file": "7SHT_projection.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S9: PC1-PC2 projection (7SHT)"
+    ]
+   },
+   "B2": {
+    "file": "7SHT_projection.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 6,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S9: PC1-PC2 projection (7SHT)"
+    ]
+   }
+  },
+  "7SHT_rg.png": {
+   "A": {
+    "file": "7SHT_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S11: Radius of gyration (7SHT)"
+    ]
+   },
+   "B2": {
+    "file": "7SHT_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 8,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S11: Radius of gyration (7SHT)"
+    ]
+   }
+  },
+  "7SHT_rmsd.png": {
+   "A": {
+    "file": "7SHT_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S10: Cε3 domain RMSD (7SHT)"
+    ]
+   },
+   "B2": {
+    "file": "7SHT_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 7,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S10: Cε3 domain RMSD (7SHT)"
+    ]
+   }
+  },
+  "PEG_LNP_mRNA_dist.png": {
+   "A": {
+    "file": "PEG_LNP_mRNA_dist.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S19: PEG-LNP mRNA distance"
+    ]
+   },
+   "B2": {
+    "file": "PEG_LNP_mRNA_dist.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 16,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S19: PEG-LNP mRNA distance"
+    ]
+   }
+  },
+  "PEG_LNP_pot.png": {
+   "A": {
+    "file": "PEG_LNP_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S18: PEG-LNP potential (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PEG_LNP_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 15,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S18: PEG-LNP potential (no mRNA)"
+    ]
+   }
+  },
+  "PEG_LNP_rg.png": {
+   "A": {
+    "file": "PEG_LNP_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S20: PEG-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PEG_LNP_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 17,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S20: PEG-LNP radius of gyration (no mRNA)"
+    ]
+   }
+  },
+  "PEG_LNP_rmsd.png": {
+   "A": {
+    "file": "PEG_LNP_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S21: PEG-LNP RMSD (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PEG_LNP_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 18,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S21: PEG-LNP RMSD (no mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_mRNA_dist.png": {
+   "A": {
+    "file": "PGL_LNP_mRNA_dist.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S23: PGL-LNP mRNA distance"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_mRNA_dist.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 20,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S23: PGL-LNP mRNA distance"
+    ]
+   }
+  },
+  "PGL_LNP_mRNA_pot.png": {
+   "A": {
+    "file": "PGL_LNP_mRNA_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S26: PGL-LNP potential (with mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_mRNA_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 23,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S26: PGL-LNP potential (with mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_mRNA_rg.png": {
+   "A": {
+    "file": "PGL_LNP_mRNA_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S28: PGL-LNP Rg (with mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_mRNA_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 24,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S28: PGL-LNP Rg (with mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_mRNA_rmsd.png": {
+   "A": {
+    "file": "PGL_LNP_mRNA_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S29: PGL-LNP RMSD (with mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_mRNA_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 25,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S29: PGL-LNP RMSD (with mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_pot.png": {
+   "A": {
+    "file": "PGL_LNP_pot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S22: PGL-LNP potential (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_pot.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 19,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S22: PGL-LNP potential (no mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_rg.png": {
+   "A": {
+    "file": "PGL_LNP_rg.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S24: PGL-LNP radius of gyration (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_rg.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 21,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S24: PGL-LNP radius of gyration (no mRNA)"
+    ]
+   }
+  },
+  "PGL_LNP_rmsd.png": {
+   "A": {
+    "file": "PGL_LNP_rmsd.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S25: PGL-LNP RMSD (no mRNA)"
+    ]
+   },
+   "B2": {
+    "file": "PGL_LNP_rmsd.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 22,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S25: PGL-LNP RMSD (no mRNA)"
+    ]
+   }
+  },
+  "S13_heatmap_top30.png": {
+   "A": {
+    "file": "S13_heatmap_top30.png",
+    "fig_number": 1,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 5,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     ""
+    ]
+   },
+   "B2": {
+    "file": "S13_heatmap_top30.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 5,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     ""
+    ]
+   }
+  },
+  "S14_pca_plot.png": {
+   "A": {
+    "file": "S14_pca_plot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 1,
+    "n_patches": 0,
+    "titles": [
+     "Figure S31: PCA of metabolomic data"
+    ]
+   },
+   "B2": {
+    "file": "S14_pca_plot.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 6,
+    "n_patches": 0,
+    "titles": [
+     "",
+     "",
+     "",
+     "Figure S31: PCA of metabolomic data"
+    ]
+   }
+  },
+  "S15_feature_importance.png": {
+   "A": {
+    "file": "S15_feature_importance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 20,
+    "titles": [
+     "Figure S32: Random Forest feature importance"
+    ]
+   },
+   "B2": {
+    "file": "S15_feature_importance.png",
+    "fig_number": 12,
+    "n_axes": 4,
+    "n_lines": 0,
+    "n_collections": 6,
+    "n_patches": 20,
+    "titles": [
+     "",
+     "",
+     "",
+     "Figure S32: Random Forest feature importance"
+    ]
+   }
+  },
+  "S16_ode_predictions.png": {
+   "A": {
+    "file": "S16_ode_predictions.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     ""
+    ]
+   },
+   "B2": {
+    "file": "S16_ode_predictions.png",
+    "fig_number": 13,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     ""
+    ]
+   }
+  },
+  "fig10_summary_bars.png": {
+   "A": {
+    "file": "fig10_summary_bars.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 9,
+    "titles": [
+     "Figure 10: Summary of dynamic properties"
+    ]
+   },
+   "B2": {
+    "file": "fig10_summary_bars.png",
+    "fig_number": 9,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 9,
+    "titles": [
+     "Figure 10: Summary of dynamic properties"
+    ]
+   }
+  },
+  "fig2_fel_2wqr.png": {
+   "A": {
+    "file": "fig2_fel_2wqr.png",
+    "fig_number": 1,
+    "n_axes": 2,
+    "n_lines": 0,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure 2: Free energy landscape (2WQR)",
+     ""
+    ]
+   },
+   "B2": {
+    "file": "fig2_fel_2wqr.png",
+    "fig_number": 2,
+    "n_axes": 2,
+    "n_lines": 0,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure 2: Free energy landscape (2WQR)",
+     ""
+    ]
+   }
+  },
+  "fig3_rmsf_comparison.png": {
+   "A": {
+    "file": "fig3_rmsf_comparison.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 3,
+    "titles": [
+     "Figure 3: RMSF comparison"
+    ]
+   },
+   "B2": {
+    "file": "fig3_rmsf_comparison.png",
+    "fig_number": 3,
+    "n_axes": 1,
+    "n_lines": 3,
+    "n_collections": 0,
+    "n_patches": 3,
+    "titles": [
+     "Figure 3: RMSF comparison"
+    ]
+   }
+  },
+  "fig4_peg_pgl_rmsf.png": {
+   "A": {
+    "file": "fig4_peg_pgl_rmsf.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 2,
+    "n_patches": 4,
+    "titles": [
+     "Figure 4: PEG vs PGL effect on critical residues"
+    ]
+   },
+   "B2": {
+    "file": "fig4_peg_pgl_rmsf.png",
+    "fig_number": 4,
+    "n_axes": 1,
+    "n_lines": 4,
+    "n_collections": 2,
+    "n_patches": 4,
+    "titles": [
+     "Figure 4: PEG vs PGL effect on critical residues"
+    ]
+   }
+  },
+  "fig5_mmpbsa.png": {
+   "A": {
+    "file": "fig5_mmpbsa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 10,
+    "titles": [
+     "Figure 5: MM-PBSA energy components"
+    ]
+   },
+   "B2": {
+    "file": "fig5_mmpbsa.png",
+    "fig_number": 5,
+    "n_axes": 1,
+    "n_lines": 0,
+    "n_collections": 0,
+    "n_patches": 10,
+    "titles": [
+     "Figure 5: MM-PBSA energy components"
+    ]
+   }
+  },
+  "fig6_lnp_comparison.png": {
+   "A": {
+    "file": "fig6_lnp_comparison.png",
+    "fig_number": 1,
+    "n_axes": 4,
+    "n_lines": 8,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "a) Total potential energy",
+     "b) mRNA-lipid distance",
+     "c) Radius of gyration",
+     "d) RMSD"
+    ]
+   },
+   "B2": {
+    "file": "fig6_lnp_comparison.png",
+    "fig_number": 6,
+    "n_axes": 4,
+    "n_lines": 8,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "a) Total potential energy",
+     "b) mRNA-lipid distance",
+     "c) Radius of gyration",
+     "d) RMSD"
+    ]
+   }
+  },
+  "fig8_sensitivity.png": {
+   "A": {
+    "file": "fig8_sensitivity.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 6,
+    "titles": [
+     "Figure 8: Morris sensitivity analysis"
+    ]
+   },
+   "B2": {
+    "file": "fig8_sensitivity.png",
+    "fig_number": 7,
+    "n_axes": 1,
+    "n_lines": 2,
+    "n_collections": 1,
+    "n_patches": 6,
+    "titles": [
+     "Figure 8: Morris sensitivity analysis"
+    ]
+   }
+  },
+  "fig9_critical_residues_boxplot.png": {
+   "A": {
+    "file": "fig9_critical_residues_boxplot.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 2,
+    "titles": [
+     "Figure 9: Critical residue flexibility"
+    ]
+   },
+   "B2": {
+    "file": "fig9_critical_residues_boxplot.png",
+    "fig_number": 8,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 2,
+    "titles": [
+     "Figure 9: Critical residue flexibility"
+    ]
+   }
+  },
+  "peg_distance.png": {
+   "A": {
+    "file": "peg_distance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S13: Min distance (IgE-PEG)"
+    ]
+   },
+   "B2": {
+    "file": "peg_distance.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 10,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S13: Min distance (IgE-PEG)"
+    ]
+   }
+  },
+  "peg_interaction_energy.png": {
+   "A": {
+    "file": "peg_interaction_energy.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S12: Interaction energy (IgE-PEG)"
+    ]
+   },
+   "B2": {
+    "file": "peg_interaction_energy.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 9,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S12: Interaction energy (IgE-PEG)"
+    ]
+   }
+  },
+  "peg_sasa.png": {
+   "A": {
+    "file": "peg_sasa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S14: SASA (IgE-PEG)"
+    ]
+   },
+   "B2": {
+    "file": "peg_sasa.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 11,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S14: SASA (IgE-PEG)"
+    ]
+   }
+  },
+  "pgl_distance.png": {
+   "A": {
+    "file": "pgl_distance.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S16: Min distance (IgE-PGL)"
+    ]
+   },
+   "B2": {
+    "file": "pgl_distance.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 13,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S16: Min distance (IgE-PGL)"
+    ]
+   }
+  },
+  "pgl_interaction_energy.png": {
+   "A": {
+    "file": "pgl_interaction_energy.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S15: Interaction energy (IgE-PGL)"
+    ]
+   },
+   "B2": {
+    "file": "pgl_interaction_energy.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 12,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S15: Interaction energy (IgE-PGL)"
+    ]
+   }
+  },
+  "pgl_sasa.png": {
+   "A": {
+    "file": "pgl_sasa.png",
+    "fig_number": 1,
+    "n_axes": 1,
+    "n_lines": 1,
+    "n_collections": 0,
+    "n_patches": 0,
+    "titles": [
+     "Figure S17: SASA (IgE-PGL)"
+    ]
+   },
+   "B2": {
+    "file": "pgl_sasa.png",
+    "fig_number": 11,
+    "n_axes": 1,
+    "n_lines": 14,
+    "n_collections": 2,
+    "n_patches": 0,
+    "titles": [
+     "Figure S17: SASA (IgE-PGL)"
+    ]
+   }
+  }
+ }
+}

@@ -1,0 +1,29 @@
+# t16 第 4 次运行：Tk 下 huge 场景（C9 的实测来源）
+#
+# ⚠️ 证据管理说明（如实标注）：本次运行**没有**用 `--log` 落盘，下面是运行输出的**转录**。
+#    发起命令：`python tests/test_real_window.py --backend tk --scenario huge`
+#    （手工直跑，父进程不注入 PYTHONPATH，故需显式 `set PYTHONPATH=...\src`）
+#    时间：2026-10-12；发起人：fix-verify-args-ds；授权：船长直接批准
+#      （"批准：Tk 侧 huge 场景验证 —— 就查你推理的那条后端差异"）
+#    当时 src 状态：toolbox.py=3b389a871f | git HEAD=02998e6（t19 修复后、t20 修复前）
+#    原生输出见 AgentTeams 消息（fix-verify-args-ds → captain，标题含"Tk `huge` 实测"）。
+#    教训：此后同类测量一律带 `--log`。
+#
+# ---- 以下为转录原文 ----
+
+[mpltweak] 画布 3000x2200 超出屏幕可用区 3840x2160，已自动缩放到屏内 (93%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=166ms 吸附=True 导出=<home>\AppData\Local\Temp\mpltweak_rw_b3h5txlv\huge.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+@@RW@@{"scenario": "huge", "backend": "TkAgg", "cfg": {"figsize": [30.0, 22.0], "dpi": 100}, "error": null, "traceback": null, "py": "3.10.19", "mpl": "3.10.8", "qt_api": null, "scale_env": null, "inches_req": [30.0, 22.0], "inches_open": [27.98181818181818, 20.52], "inches_after": [27.98, 10.275], "canvas_open": [2798, 2052], "canvas": [2798, 1027], "screen": [3840, 2160], "avail": [3840, 2160], "dpr": 1.0, "dpi": 100.0, "frame": null, "tk_geom_open": {"xy": [209, 254], "wh": [200, 200], "mapped": false, "viewable": false, "screen": [3840, 2160]}, "tk_geom_after": {"xy": [209, 254], "wh": [5596, 2119], "mapped": true, "viewable": true, "screen": [3840, 2160]}, "trace": {"resize": [], "resize_n": 0, "fit": [{"before": [30.0, 22.0], "after": [27.9818, 20.52]}]}}
+[mpltweak] 关窗自动导出失败: [Errno 2] No such file or directory: '<home>\AppData\Local\Temp\mpltweak_rw_b3h5txlv\huge.json'
+
+# ---- 说明 ----
+# * `_fit_to_screen` 只缩到 93%（trace: 30×22 → 27.9818×20.52，等比）；
+#   因为 Tk 报的是**物理**屏幕 3840×2160，而画布按逻辑 px 算 3000×2200。
+# * 映射后窗口客户区 5596×2119 物理 px（比屏幕还宽）→ WM 钳制 → matplotlib
+#   _backend_tk.py:279-286 的 resize() 逐轴 set_size_inches → figsize 变 27.98×10.275in
+#   ⇒ 长宽比 2.723 vs 请求 1.3636 = **+99.7%**。
+# * 全程无 `_CLAMP_HINT`（toolbox.py:96）⇒ 0.1.10#1-③ 的钳制守卫未触发。
+# * 末尾"关窗自动导出失败"是**本测试自己的**临时目录清理顺序（子进程退出前已 rmtree），
+#   不是产品缺陷（产品的关窗导出在同场景的 qt 运行里正常）。
