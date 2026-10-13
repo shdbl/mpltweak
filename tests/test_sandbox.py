@@ -39,6 +39,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 try:
     sys.stdout.reconfigure(errors='replace')
@@ -53,7 +54,14 @@ from sandbox_env import (sandbox_env, plain_env, SANDBOX_DIR,   # noqa: E402
                          CHILD_IO_ENCODING)
 
 _PY = sys.executable
-WORKROOT = os.path.join(os.environ.get('TEMP', '.'), 'sandbox_t9_tests')
+# 临时根必须**跨平台**取：Linux 上只有 TMPDIR（没有 TEMP）⇒ 原先写
+# `os.environ.get('TEMP', '.')` 会回落成相对路径 `./sandbox_t9_tests`，
+# 于是 PG 也变相对，而 `_run_raw()` 是「相对脚本路径 + cwd=PG」起子进程 ⇒
+# 子进程在 PG 里再拼一遍相对路径 ⇒ `python: can't open file
+# '…/sandbox_t9_tests/playground/sandbox_t9_tests/playground/<name>.py'`、rc=2、
+# **脚本一行没跑** ⇒ CI 的 py3.12 Ubuntu 那一格全红（本机删掉 TEMP/TMP/TMPDIR
+# 可复现 18 项失败）。`tempfile.gettempdir()` 三平台都认（TMPDIR/TEMP/TMP）。
+WORKROOT = os.path.join(tempfile.gettempdir(), 'sandbox_t9_tests')
 PG = os.path.join(WORKROOT, 'playground')      # 游乐场（每次全新）
 OUT = os.path.join(WORKROOT, 'outside')        # 游乐场外（放"受害者"文件）
 LOG = os.path.join(WORKROOT, 'sandbox.log')    # 守卫拦截日志
@@ -123,8 +131,14 @@ def _pin_child_env(env):
 
 
 def _run_raw(payload, env, cwd, name=None, timeout=90, stdin_devnull=True):
-    """跑脚本，返回**原始字节**（G2 要验证字节层编码，不能先解码）。"""
-    script = os.path.join(cwd, (name or 'evil_script') + '.py')
+    """跑脚本，返回**原始字节**（G2 要验证字节层编码，不能先解码）。
+
+    脚本路径一律取**绝对**：子进程的 cwd 就是 `cwd`，若脚本路径是相对的，子进程会
+    相对 `cwd` 再解析一次（= 路径被拼两层）⇒ `can't open file`、rc=2、脚本没跑。
+    这正是 Linux 上（`TEMP` 缺失 ⇒ WORKROOT 变相对）那一批假红的一半原因；
+    取绝对后，即便将来路径语义再被改坏，也不会退化成"找不到脚本"。
+    """
+    script = os.path.join(os.path.abspath(cwd), (name or 'evil_script') + '.py')
     _write(script, payload)
     r = subprocess.run([_PY, script], capture_output=True, timeout=timeout,
                        env=_pin_child_env(dict(env)), cwd=cwd,

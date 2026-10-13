@@ -122,7 +122,15 @@ _IS_SCRIPT = _is_script_process()
 #   os.popen(cmd,mode,bufsize)  os.chdir(path)  subprocess.Popen(exe,args,cwd)
 #   socket.connect(addr) socket.connect_ex(addr) socket.sendmsg(addr) socket.sendto(addr)
 _WRITE_FLAGS = (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
-                | os.O_EXCL | os.O_TEMPORARY)
+                | os.O_EXCL
+                # ⚠ `os.O_TEMPORARY` 是 **Windows 专属**常量（POSIX 没有它）。本行在
+                # **模块级**求值 ⇒ 直接写 `| os.O_TEMPORARY` 时，Linux 上
+                # `import sitecustomize` 会抛 AttributeError ⇒ CPython 打印
+                # "Error in sitecustomize; set PYTHONVERBOSE for traceback:" ⇒
+                # **整套守卫都装不上**（CI 的 py3.12 Ubuntu 那格红就是这条；
+                # 本机删掉该常量可 100% 复现）。缺失时补 0：POSIX 本无此语义，
+                # 位不变化，拦截行为不变。
+                | getattr(os, 'O_TEMPORARY', 0))
 
 
 def _mode_is_write(mode):
