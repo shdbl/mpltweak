@@ -90,6 +90,10 @@ def build_server():
         script = os.path.abspath(script)
         if not os.path.exists(script):
             return _fail('file_not_found', path=script)
+        # 0.1.10#3-①：describe_layout 也带布局引擎冲突（与 CLI describe 同一扫描）——
+        # agent 读排版第一步就要知道 constrained_layout 会覆盖位置。
+        from . import layoutwarn
+        _layout = layoutwarn.scan(script)
         if all_figs:
             states, err = verify.collect_isolated(script, all_figs=True)
             if states is None:
@@ -98,6 +102,7 @@ def build_server():
                 'version': params.SCHEMA_VERSION,
                 'script': os.path.basename(script),
                 'n_figs': len(states),
+                'layout_engine': _layout,
                 'figures': [_to_params(s, script) for s in states],
             }
         else:
@@ -106,6 +111,7 @@ def build_server():
             if state is None:
                 return _fail('collect_failed', err=err)
             payload = _to_params(state, script)
+            payload['layout_engine'] = _layout
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
     @mcp.tool()
@@ -145,8 +151,13 @@ def build_server():
         tight = _check.has_tight_bbox(script)
         problems, warns = _check.analyze_state(state, tol, with_text=True,
                                               tight=tight)
+        # 0.1.10#3-②：与 CLI check 对齐补 layout_engine 字段（mcp_server 自己
+        # 的注释就要求"与 CLI 走同一入口，免得两边规则漂移"）。CLI check 有
+        # （check.py），MCP 却漏了 → agent 的 check 拿不到 constrained_layout 提示。
+        from . import layoutwarn
         return json.dumps({'ok': not problems, 'problems': problems,
                            'warnings': warns,
+                           'layout_engine': layoutwarn.scan(script),
                            'tight_bbox': tight,
                            'text_checked': not state.get('_text_error')},
                           ensure_ascii=False, indent=2)

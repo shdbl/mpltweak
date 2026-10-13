@@ -263,6 +263,20 @@ def schema() -> Dict[str, Any]:
                        'minItems': 2, 'maxItems': 2},
         'fig_index': {'type': ['integer', 'null']},
         'n_figs': {'type': ['integer', 'null']},
+        # 0.1.10#3：describe/check 产物的布局引擎冲突扫描（constrained_layout /
+        # autolayout 会在每次绘制时覆盖写回的位置）。agent 读排版第一步就要知道。
+        # 它是**脚本级**信息（不随图变化），扫描失败时为空数组。写回侧不认识这个
+        # 键会照常忽略（normalize 只挑已知键），所以 describe 产物喂回 apply 无碍。
+        'layout_engine': {'type': 'array', 'items': {
+            'type': 'object',
+            'properties': {
+                'kind': {'type': 'string'},
+                'line': {'type': 'integer'},
+                'how': {'type': 'string'},
+            },
+            'required': ['kind', 'line', 'how'],
+            'additionalProperties': False,
+        }},
         'axes': {'type': 'array', 'items': axis},
     }
     # `describe --all-figs` 的产物是 {version, script, n_figs, figures:[<单图对象>]}。
@@ -352,11 +366,23 @@ def load(path: str) -> Dict[str, Any]:
     ``no_change`` + rc=0（用户以为成功）。这里在 normalize **之后**打一个内部标记
     （``_`` 前缀：normalize 会把输入里的 ``_`` 键丢掉，所以外部伪造不了），
     由 ``validate_errors`` 译成一条硬错误。
+
+    0.1.10 fuzz（test_fuzz_params.py）实测：**顶层非对象** JSON（数组/字符串/
+    数字/null）过去会让 ``normalize`` 崩成 ``'list' object has no attribute
+    'items'``，一路冒到 CLI 顶层 guard 变 internal_error（rc=2 但 reason 不是
+    bad_params）。它与"缺 version / 结构完全不对"同属**参数层硬错误**：这里
+    就地打 ``_top_not_object`` 内部标记，由 ``validate_errors`` 译成 bad_params。
     """
     text, _enc = read_text(path)
     raw = json.loads(text)
+    if not isinstance(raw, dict):
+        # normalize 假定输入是 dict（`data.items()`）；非对象直接短路，不崩。
+        # ``_`` 前缀键：normalize 会丢掉输入里的 ``_`` 键，外部伪造不了。
+        out = dict(TOP_DEFAULTS)
+        out['_top_not_object'] = repr(raw)[:120]
+        return out
     out = normalize(raw)
-    if not isinstance(raw, dict) or raw.get('version') is None:
+    if raw.get('version') is None:
         out['_version_missing'] = True
     return out
 
@@ -529,6 +555,13 @@ def validate_errors(data: Dict[str, Any]) -> List[str]:
     errs: List[str] = []
     if not isinstance(data, dict):
         return ['顶层不是对象: %r' % (data,)]
+    if data.get('_top_not_object'):
+        # load() 对顶层非对象 JSON 打的标记（同 _version_missing 机制）：
+        # 与"缺 version / 结构完全不对"同一档硬错误 —— 参数文件必须是 JSON 对象。
+        return ('参数文件顶层不是对象（应为 JSON 对象，如 {"version": …}）'
+                '—— 这份文件可能不是本工具导出的，或被人手改坏了结构；拒写。'
+                '请用 `mpltweak describe <脚本>` 重新导出。实际内容: %s'
+                % data['_top_not_object'])
     # T61：version 必须存在且等于当前规范
     p = _version_problem(data)
     if p:

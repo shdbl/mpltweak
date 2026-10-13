@@ -17,11 +17,13 @@ mpltweak.verify —— 语义验证：写回后重跑脚本，dump **目标图�
 取数口径与 ``toolbox.export()`` 完全一致（都用 toolbox 的 ``_bbox``/``_title_fs``/
 ``_clim_of``），保证比对的是同一套定义。
 
-子进程入口：``python -m mpltweak.verify <script> <out.json> [fig_index]``
+子进程入口：``python -m mpltweak.verify <script> <out.json> [fig_index] [-- <脚本参数...>]``
+（``--`` 之后的内容原样透传给用户脚本的 ``sys.argv``，与 ``apply --write -- <参数>`` 同一条链。）
 """
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import json
 import os
@@ -38,6 +40,197 @@ POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
 FS_TOL = 0.51         # 字号容差（磅）
 CLIM_REL_TOL = 0.01   # clim 容差（相对量程）
 TEXT_BOX_LIMIT = 600  # 文字盒条数上限（超多刻度的图别把状态 JSON 撑爆）
+
+# ---------------------------------------------------------------------------
+# 失败归因（0.1.10）：把"脚本跑不起来"和"工具改坏了"彻底分开报。
+#
+# apply 写回后的重跑验证失败时，用户必须能一眼看出**是谁的错、下一步怎么办**。
+# 四类（机器可读取值 = 这里定义的常量，写进 --json 的 `attribution` 字段）：
+#   script_cannot_run                       脚本自身跑不通（缺依赖 / 缺数据…）
+#   script_needs_args                       脚本需要命令行参数（argv 未透传）
+#   script_needs_gui_or_headless_impossible 无头环境跑不通（要开窗口 / 交互）
+#   tool_bug                                internal_error（工具自身异常）
+#
+# 分类要**保守**：判不出时回退 script_cannot_run 并在文案里说明"无法确定原因"，
+# 绝不误报成 tool_bug（吓到用户）或 script_needs_args（把用户带偏去传参数）。
+# 判据 = 子进程 stderr 模式匹配 + 脚本静态扫描（是否读 sys.argv / argparse
+# required / 交互标记）综合；有 stderr 时以 stderr 为准，静态只补无 stderr 的空档。
+# ---------------------------------------------------------------------------
+VERIFY_FAIL_CANNOT_RUN = 'script_cannot_run'
+VERIFY_FAIL_NEEDS_ARGS = 'script_needs_args'
+VERIFY_FAIL_NEEDS_GUI = 'script_needs_gui_or_headless_impossible'
+VERIFY_FAIL_TOOL_BUG = 'tool_bug'
+
+# stderr 里的**强证据**（小写匹配）。needs_args 必须是很具体的 argparse 报错
+# 或带 usage 的用法错误 —— 泛化的 "usage:" 单凭一行不归类（有些脚本自己打印用法）。
+_ARGS_ERR_PATTERNS = (
+    'the following arguments are required',
+    'unrecognized arguments',
+    'expected one argument',
+    'too few arguments',
+    'invalid choice',
+    'no such option',
+    'argumenterror',
+)
+# GUI / 无头环境类报错：Tcl 的 "no display"、Qt 插件加载失败等。
+_GUI_ERR_PATTERNS = (
+    'no display',
+    'cannot connect to display',
+    'cannot open display',
+    'no $display',
+    'qt.qpa',
+    'qt platform plugin',
+    'wayland',
+    'xcb',
+    'tclerror',
+    'qapplication',
+    'no available display',
+)
+# 缺依赖 / 缺数据（归 script_cannot_run，但要能点出具体是什么）。
+_MISSING_DEP_PATTERNS = (
+    'modulenotfounderror',
+    'importerror',
+    'no module named',
+    'cannot import name',
+)
+_MISSING_DATA_PATTERNS = (
+    'filenotfounderror',
+    'no such file or directory',
+    'is not a directory',
+)
+
+
+def _script_static_evidence(script_path: str) -> Dict[str, bool]:
+    """纯静态扫描（ast，**不执行脚本**）：脚本是否读 argv / 是否带交互（GUI）标记。
+
+    返回 ``{'uses_args': bool, 'uses_args_strong': bool, 'needs_gui': bool}``。
+      * ``uses_args``：任何读 ``sys.argv`` / 用 argparse 的迹象；
+      * ``uses_args_strong``：**明确**需要参数（``required=True`` 或直接
+        ``sys.argv[N]``（N>=1）取值）—— 只有强证据才够在"无 stderr"时归
+        needs_args（保守：可选读 argv 的脚本不该被误归"缺参数"）；
+      * ``needs_gui``：import tkinter/PyQt*/PySide*、plt.ion/pause/waitforbuttonpress、
+        ``input()``/``getpass``、matplotlib.use('Qt/Tk/WebAgg')。
+    读不了 / 解析不了 → 全 False（没证据就不归类，保守）。
+    """
+    out = {'uses_args': False, 'uses_args_strong': False, 'needs_gui': False}
+    src = None
+    for enc in ('utf-8', 'gbk', 'gb18030'):
+        try:
+            with open(script_path, 'r', encoding=enc) as f:
+                src = f.read()
+            break
+        except (OSError, UnicodeDecodeError):
+            continue
+    if src is None:
+        return out
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return out
+
+    imports = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imports.update((a.name or '').lower().split('.')[0]
+                           for a in node.names if a.name)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imports.add(node.module.lower().split('.')[0])
+
+    def _is_sys_argv(node):
+        return (isinstance(node, ast.Attribute) and node.attr == 'argv'
+                and isinstance(node.value, ast.Name) and node.value.id == 'sys')
+
+    for node in ast.walk(tree):
+        # 交互（GUI）标记
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if (isinstance(fn, ast.Attribute) and getattr(fn, 'attr', '') == 'use'
+                    and isinstance(fn.value, ast.Name) and fn.value.id == 'matplotlib'):
+                if node.args and isinstance(node.args[0], ast.Constant):
+                    _arg = str(node.args[0].value).lower()
+                    if any(_k in _arg for _k in ('qt', 'tk', 'webagg')):
+                        out['needs_gui'] = True
+            if (isinstance(fn, ast.Attribute) and getattr(fn, 'attr', '')
+                    in ('ion', 'pause', 'interactive', 'waitforbuttonpress',
+                        'get_current_fig_manager')):
+                out['needs_gui'] = True
+            if isinstance(fn, ast.Name) and fn.id == 'input':
+                out['needs_gui'] = True
+            if isinstance(fn, ast.Attribute) and getattr(fn, 'attr', '') == 'getpass':
+                out['needs_gui'] = True
+            if (isinstance(fn, ast.Attribute)
+                    and getattr(fn, 'attr', '') == 'ArgumentParser'):
+                out['uses_args'] = True
+            if (isinstance(fn, ast.Attribute)
+                    and getattr(fn, 'attr', '') in ('parse_args', 'add_argument')):
+                out['uses_args'] = True
+                if getattr(fn, 'attr', '') == 'add_argument':
+                    for kw in node.keywords:
+                        if (kw.arg == 'required' and isinstance(kw.value, ast.Constant)
+                                and kw.value.value is True):
+                            out['uses_args_strong'] = True
+            # len(sys.argv) 比较
+            if (isinstance(fn, ast.Name) and fn.id == 'len' and node.args
+                    and _is_sys_argv(node.args[0])):
+                out['uses_args'] = True
+        # sys.argv[N] 或 sys.argv[N:] —— 直接取值是"无条件需要参数"的强证据
+        if isinstance(node, ast.Subscript) and _is_sys_argv(node.value):
+            _sl = node.slice
+            if isinstance(_sl, ast.Constant) and isinstance(_sl.value, int) \
+                    and _sl.value >= 1:
+                out['uses_args'] = True
+                out['uses_args_strong'] = True
+            else:
+                out['uses_args'] = True
+    if ('tkinter' in imports or any(_m in imports
+                                    for _m in ('pyqt5', 'pyqt6', 'pyside2',
+                                               'pyside6'))):
+        out['needs_gui'] = True
+    return out
+
+
+def classify_verify_failure(err_text: str, script_path: Optional[str] = None,
+                            args_passed: bool = False
+                            ) -> Tuple[str, str]:
+    """把验证重跑的失败归因到四类之一。返回 ``(kind, detail)``。
+
+    ``err_text``：子进程 stderr 尾部（有则模式匹配优先）；没有时（如"原脚本
+    本来也跑不通"的路径只给了笼统文案）用 ``script_path`` 的静态扫描补位。
+    ``args_passed``：本次是否透传了脚本参数（``apply --write -- <args>``）。
+
+    ``detail``：稳定英文短原因，写进 --json 的 ``attribution_detail``：
+    'unknown' / 'argparse' / 'missing_dependency' / 'missing_data' / 'display' /
+    'static_args' / 'static_gui' / 'configured_args'。
+
+    ``args_passed=True``（``apply --write -- <参数>`` 已透传）时，**静态**"读
+    argv"证据不再归 ``script_needs_args`` —— 用户已经把参数给了，再叫他"去传
+    参数"是误导（脚本跑不通另有原因）。真拿到 argparse 报错时仍归
+    ``script_needs_args``，但 detail 改成 ``configured_args`` 并换一句文案
+    （见 apply.py），不重复叫他传参数。有 stderr 时一律以 stderr 为准。
+    """
+    err = (err_text or '').strip()
+    low = err.lower()
+    if low:
+        if any(_p in low for _p in _ARGS_ERR_PATTERNS):
+            return (VERIFY_FAIL_NEEDS_ARGS,
+                    'configured_args' if args_passed else 'argparse')
+        if any(_p in low for _p in _GUI_ERR_PATTERNS):
+            return VERIFY_FAIL_NEEDS_GUI, 'display'
+        if any(_p in low for _p in _MISSING_DEP_PATTERNS):
+            return VERIFY_FAIL_CANNOT_RUN, 'missing_dependency'
+        if any(_p in low for _p in _MISSING_DATA_PATTERNS):
+            return VERIFY_FAIL_CANNOT_RUN, 'missing_data'
+        # 有 stderr 但没对上任何已知模式：不靠静态猜（写回后失败而原脚本可跑通
+        # 时，脚本静态读 argv 也说明不了问题）→ 保守归 cannot_run。
+        return VERIFY_FAIL_CANNOT_RUN, 'unknown'
+    # 无 stderr（原脚本本身跑不通 → writeback 只给笼统文案）：静态证据补位。
+    if script_path:
+        ev = _script_static_evidence(script_path)
+        if ev['uses_args_strong'] and not args_passed:
+            return VERIFY_FAIL_NEEDS_ARGS, 'static_args'
+        if ev['needs_gui']:
+            return VERIFY_FAIL_NEEDS_GUI, 'static_gui'
+    return VERIFY_FAIL_CANNOT_RUN, 'unknown'
 
 
 def _ax_identity(ax) -> Optional[Dict[str, Any]]:
@@ -355,10 +548,10 @@ def _state(fig, with_text: bool = False) -> Dict[str, Any]:
         tls = ax.get_xticklabels()
         if tls:
             item['tick_fontsize'] = tls[0].get_fontsize()
-        # T75b：y 刻度字号**独立采集**（与 label_fontsize_y 同构）。
-        # T73 之后"参数没写 y 就一个字节都不动 y"，比对侧要能真的判 y 侧；
-        # 不采的话 `tick_fontsize_y` 只有一个期望值、没有实际值 —— 那正是
-        # "没比却说通过"的来源。
+        # T75b：y 刻度字号**独立采集**（与 label_fontsize_y 同构）。
+        # T73 之后"参数没写 y 就一个字节都不动 y"，比对侧要能真的判 y 侧；
+        # 不采的话 `tick_fontsize_y` 只有一个期望值、没有实际值 —— 那正是
+        # "没比却说通过"的来源。
         yls = ax.get_yticklabels()
         if yls:
             item['tick_fontsize_y'] = yls[0].get_fontsize()
@@ -603,7 +796,8 @@ def _state_of_one_fig(plt, fig_index, with_text: bool, exited: bool = False
     return st, ''
 
 
-def collect_all(script: str, with_text: bool = False
+def collect_all(script: str, with_text: bool = False,
+                script_args: Optional[List[str]] = None
                 ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
 
@@ -611,12 +805,21 @@ def collect_all(script: str, with_text: bool = False
     switch_backend 全拦掉，cwd 切到脚本目录），只是把每张图都抽出来，
     每张附加 fig_index（0-based，顺序同 plt.get_fignums()）与 n_figs。
 
+    ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6 —— 依赖
+    ``sys.argv`` 的脚本（``python fig.py --data x.npz``）在验证重跑里拿不到
+    自己的参数，行为与基线不一致 → 误回滚）。runpy 只覆盖 ``argv[0]``、
+    不动 ``argv[1:]``，所以这里显式把 ``sys.argv`` 摆成
+    ``[script] + script_args`` 再跑，``finally`` 里还原。
+
     注意：这是**同进程**执行（副作用由 ``_collect_session`` 的快照兜底）。
     CLI / MCP 走的是 ``collect_isolated`` —— 进程级边界，见那里的说明。
     """
     with _collect_session(script) as plt:
         exited = False
+        _argv0 = list(sys.argv)
         try:
+            if script_args:
+                sys.argv = [os.path.abspath(script)] + list(script_args)
             runpy.run_path(script, run_name='__main__')
         except SystemExit:
             # 脚本自己 sys.exit()：图还挂在 Gcf 上，继续往下取（A2 / CH-1）。
@@ -627,22 +830,33 @@ def collect_all(script: str, with_text: bool = False
             exited = True
         except Exception as e:                       # noqa: BLE001
             return None, '%s: %s' % (type(e).__name__, e)
+        finally:
+            sys.argv = _argv0
         return _states_of_all_figs(plt, with_text, exited=exited)
 
 
 def collect(script: str, fig_index: Optional[int] = None,
-            with_text: bool = False) -> Tuple[Optional[Dict], str]:
+            with_text: bool = False,
+            script_args: Optional[List[str]] = None
+            ) -> Tuple[Optional[Dict], str]:
     """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
 
     与 launch 一样拦掉 plt.show / plt.close / matplotlib.use / switch_backend，
     并以脚本所在目录为 cwd（脚本里的相对路径/存图位置才和平时一致）。
+
+    ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6，语义与
+    ``collect_all`` 相同 —— runpy 只覆盖 ``argv[0]``，依赖 ``sys.argv`` 的
+    脚本必须在跑之前把 ``sys.argv`` 摆成 ``[script] + script_args``）。
 
     CLI / MCP 用 ``collect_isolated``（子进程）；这里的同进程版本留给
     已经在子进程里的调用方（``verify.py main`` 自己）与库嵌入场景。
     """
     with _collect_session(script) as plt:
         exited = False
+        _argv0 = list(sys.argv)
         try:
+            if script_args:
+                sys.argv = [os.path.abspath(script)] + list(script_args)
             runpy.run_path(script, run_name='__main__')
         except SystemExit:
             # 脚本自己 sys.exit()：不算采集失败 —— 图还挂在 Gcf 上，继续往下取。
@@ -651,6 +865,8 @@ def collect(script: str, fig_index: Optional[int] = None,
             exited = True
         except Exception as e:                       # noqa: BLE001
             return None, '%s: %s' % (type(e).__name__, e)
+        finally:
+            sys.argv = _argv0
         return _state_of_one_fig(plt, fig_index, with_text, exited=exited)
 
 
@@ -789,9 +1005,9 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
         if fields is None or 'pos' in fields:
             if not locked and ep and ap and any(abs(x - y) > pos_tol for x, y in zip(ep, ap)):
                 bad.append('ax%d 位置 %s≠%s' % (i, _r(ep), _r(ap)))
-        # T75b：字号按 **x/y 各自独立** 比对 —— `tick_fontsize` 是 x 刻度、
-        # `tick_fontsize_y` 是 y 刻度；参数里带了哪个就比哪个。
-        for key in ('title_fontsize', 'tick_fontsize', 'tick_fontsize_y'):
+        # T75b：字号按 **x/y 各自独立** 比对 —— `tick_fontsize` 是 x 刻度、
+        # `tick_fontsize_y` 是 y 刻度；参数里带了哪个就比哪个。
+        for key in ('title_fontsize', 'tick_fontsize', 'tick_fontsize_y'):
             if fields is not None and key not in fields:
                 continue
             ev, av = e.get(key), a.get(key)
@@ -803,33 +1019,33 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                 continue
             if abs(float(ev) - float(av)) > FS_TOL:
                 bad.append('ax%d %s %s≠%s' % (i, key, ev, av))
-        # label_fontsize：x/y 任一等于参数即通过（原位写回可能只找到 set_xlabel 或
-        # 只找到 set_ylabel）。T73（零兼容）：**参数里没写 y 时不再拿 x 的值当 y 的
-        # 合法值** —— 只按 x 比（带 y 的文件仍走原口径，正常流程零变化）。
-        # label_fontsize（x 侧）：**只比 x**。T73 之后"参数没写 y 就一个字节都不动
-        # y"，所以**绝不能再拿 x 的请求值去当 y 的期望**（那是被 T73 删掉的兼容
-        # 回退在比对层的镜像：x 没落地、只要 y 恰好等于 x 的请求值就会"通过"）。
-        if fields is None or 'label_fontsize' in fields:
-            ev = e.get('label_fontsize')
-            if ev is not None:
-                avx = a.get('label_fontsize')
-                if avx is None:
-                    if unjudged is not None:
-                        unjudged.append('ax%d.label_fontsize' % i)
-                elif abs(float(ev) - float(avx)) > FS_TOL:
-                    bad.append('ax%d label_fontsize %s≠%s' % (i, ev, avx))
-        # label_fontsize_y（y 侧）：**参数里带了才比**，比的是 y 自己的期望值。
-        # 带了 y 却不比 = "没比却说通过" —— T75b 要消灭的正是这个。
-        if fields is None or 'label_fontsize_y' in fields:
-            evy = e.get('label_fontsize_y')
-            if evy is not None:
-                avy = a.get('label_fontsize_y')
-                if avy is None:
-                    if unjudged is not None:
-                        unjudged.append('ax%d.label_fontsize_y' % i)
-                elif abs(float(evy) - float(avy)) > FS_TOL:
-                    bad.append('ax%d label_fontsize_y %s≠%s'
-                               % (i, evy, avy))
+        # label_fontsize：x/y 任一等于参数即通过（原位写回可能只找到 set_xlabel 或
+        # 只找到 set_ylabel）。T73（零兼容）：**参数里没写 y 时不再拿 x 的值当 y 的
+        # 合法值** —— 只按 x 比（带 y 的文件仍走原口径，正常流程零变化）。
+        # label_fontsize（x 侧）：**只比 x**。T73 之后"参数没写 y 就一个字节都不动
+        # y"，所以**绝不能再拿 x 的请求值去当 y 的期望**（那是被 T73 删掉的兼容
+        # 回退在比对层的镜像：x 没落地、只要 y 恰好等于 x 的请求值就会"通过"）。
+        if fields is None or 'label_fontsize' in fields:
+            ev = e.get('label_fontsize')
+            if ev is not None:
+                avx = a.get('label_fontsize')
+                if avx is None:
+                    if unjudged is not None:
+                        unjudged.append('ax%d.label_fontsize' % i)
+                elif abs(float(ev) - float(avx)) > FS_TOL:
+                    bad.append('ax%d label_fontsize %s≠%s' % (i, ev, avx))
+        # label_fontsize_y（y 侧）：**参数里带了才比**，比的是 y 自己的期望值。
+        # 带了 y 却不比 = "没比却说通过" —— T75b 要消灭的正是这个。
+        if fields is None or 'label_fontsize_y' in fields:
+            evy = e.get('label_fontsize_y')
+            if evy is not None:
+                avy = a.get('label_fontsize_y')
+                if avy is None:
+                    if unjudged is not None:
+                        unjudged.append('ax%d.label_fontsize_y' % i)
+                elif abs(float(evy) - float(avy)) > FS_TOL:
+                    bad.append('ax%d label_fontsize_y %s≠%s'
+                               % (i, evy, avy))
         if (fields is None or 'grid' in fields) \
                 and e.get('grid') is not None \
                 and bool(e['grid']) != bool(a.get('grid')):
@@ -882,11 +1098,17 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
                     timeout: float = 300,
                     out_path: Optional[str] = None,
                     fields_by_axis: Optional[Dict[int, set]] = None,
-                    figsize_edited: bool = False
+                    figsize_edited: bool = False,
+                    script_args: Optional[List[str]] = None
                     ) -> Tuple[Optional[bool], str]:
     """子进程重跑脚本 → dump 目标图状态 → 与参数比对。
 
     返回 ``(ok, detail)``：True 一致 / False 不一致（detail 为明细）/ None 无法判定。
+
+    ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6）。验证子进程的
+    命令行在 ``--`` 之后追加这些参数（``verify.py main`` 把 ``--`` 之后的内容
+    原样交给用户脚本），依赖 ``sys.argv`` 的脚本（``python fig.py --data x.npz``）
+    重跑时才能拿到与基线一致的参数，否则行为不一致 → 误回滚 + 误归因。
     """
     python = python or sys.executable
     if out_path is None:
@@ -903,9 +1125,13 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
     fig_index = data.get('fig_index')
     idx_arg = str(fig_index) if isinstance(fig_index, int) else '-1'
     env = dict(os.environ, MPLBACKEND='Agg')
+    cmd = [python, '-m', 'mpltweak.verify', script, out_path, idx_arg]
+    if script_args:
+        # `--` 分隔：子进程的 main() 看到它就不再解析后面的参数，原样透传
+        # （否则 ``--data`` 之类会被子进程当成自己的开关而报用法错误）。
+        cmd += ['--'] + list(script_args)
     try:
-        r = subprocess.run([python, '-m', 'mpltweak.verify', script, out_path, idx_arg],
-                           capture_output=True, timeout=timeout, env=env)
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return None, '语义验证超时'
     except Exception as e:                       # noqa: BLE001
@@ -942,7 +1168,7 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
 
 
 _USAGE = ('用法: python -m mpltweak.verify <script> <out.json> [fig_index] '
-          '[--fig N] [--all-figs] [--text] [--envelope]\n')
+          '[--fig N] [--all-figs] [--text] [--envelope] [-- <脚本参数...>]\n')
 
 
 def _int_or_none(v):
@@ -963,15 +1189,25 @@ def main(argv=None) -> int:
     * **信封模式**（``--envelope``，``collect_isolated`` 在用）：**永远**写一个
       ``{"ok": bool, "error": str, ...}``，父进程据此拿失败原因（子进程的 stderr
       混着用户脚本自己的 print，没法拿来解析）。
+
+    ``--`` 分隔（bug #6）：``--`` 之后的内容不再当成本工具的开关/位置参数，
+    原样收进 ``script_args`` 并透传给用户脚本的 ``sys.argv`` —— 依赖
+    ``sys.argv`` 的脚本在验证重跑里才能拿到与基线一致的参数。
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     pos = []
     all_figs = with_text = envelope = False
     fig: Optional[int] = None
+    script_args: List[str] = []
+    passthrough = False
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == '--all-figs':
+        if passthrough:
+            script_args.append(a)
+        elif a == '--':
+            passthrough = True
+        elif a == '--all-figs':
             all_figs = True
         elif a == '--text':
             with_text = True
@@ -997,10 +1233,12 @@ def main(argv=None) -> int:
         fig = _int_or_none(pos[2])
 
     if all_figs:
-        states, err = collect_all(script, with_text=with_text)
+        states, err = collect_all(script, with_text=with_text,
+                                  script_args=script_args)
         state = None
     else:
-        state, err = collect(script, fig, with_text=with_text)
+        state, err = collect(script, fig, with_text=with_text,
+                             script_args=script_args)
         states = None
     ok = not err
 

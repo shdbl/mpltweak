@@ -150,6 +150,16 @@ def main(argv=None) -> int:
             return _msg.EXIT_USAGE
         payload = _to_params(state, script)
 
+    # 0.1.10#3-①：agent 通道第一步读排版时就要知道布局引擎冲突
+    # （constrained_layout / autolayout 会覆盖位置）—— 与 check/apply 同一扫描、
+    # 同一消息、带行号。人类开窗有 launch 的 stderr 提示，agent 走 describe
+    # 之前完全没有，白调一轮后才在 apply 看到。加字段 + stderr 人话提示。
+    from . import layoutwarn
+    _layout = layoutwarn.scan(script)
+    payload['layout_engine'] = _layout
+    for _line in layoutwarn.messages_for(_layout):
+        sys.stderr.write(_line + '\n')
+
     sys.stdout = _real_stdout
     text = json.dumps(payload, ensure_ascii=False,
                       indent=None if args.compact else 2)

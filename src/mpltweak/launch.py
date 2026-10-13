@@ -83,6 +83,37 @@ def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
     return True
 
 
+def _emit_preflight_hint(script, args_passed=False, environ=None, stderr=None):
+    '''开窗**之前**给一次可重跑预检提示（0.1.10）；返回是否打出。
+
+    为什么开窗入口也要提示：launch 会**执行用户脚本**取图 —— 「等人输入」的脚本会把
+    启动卡到超时、「要参数」的脚本直接报错、「要弹窗」的脚本还会再开一个窗口，而这些
+    全都能在跑之前静态看出来（见 mpltweak.preflight，绝不执行脚本）。
+
+    **绝不阻塞开窗**：预检自身出任何岔子都静默返回（失败即放行）。
+    ``MPLTWEAK_NO_HINT=1`` 静默（与后端提示同一开关，批量脚本用）。
+    注意 dry-run 也提示：dry-run **照样执行脚本**（只是不开窗），风险一模一样。
+    '''
+    environ = os.environ if environ is None else environ
+    if environ.get('MPLTWEAK_NO_HINT') == '1':
+        return False
+    try:
+        from . import preflight
+        res = preflight.analyze(script, args_passed=args_passed)
+        lines = preflight.message_lines(res, script)
+    except Exception:                  # noqa: BLE001 - 预检绝不让开窗失败
+        return False
+    if not lines:
+        return False
+    _out = sys.stderr if stderr is None else stderr
+    for _line in lines:
+        try:
+            _out.write(_line + '\n')
+        except Exception:              # noqa: BLE001 - 输出失败也不许影响开窗
+            return False
+    return True
+
+
 def _params_path(script, override=None):
     if override:
         return os.path.abspath(override)
@@ -147,6 +178,13 @@ def _apply_saved(fig, params):
         return 0
     with open(params, 'r', encoding='utf-8-sig') as f:
         data = json.load(f)
+    if not isinstance(data, dict):
+        # 顶层非对象（数组/字符串/数字/null）：不续调、不崩、不打扰主流程
+        # （调用方是 GUI 开窗，绝不能因参数文件坏了崩掉）。与 params.load 的
+        # 0.1.10 修复（params.py）同款语义：文件坏就跳过。
+        print('[mpltweak] 参数文件顶层不是对象，跳过续调：%s' % params,
+              file=sys.stderr, flush=True)
+        return 0
     from .toolbox import _set_cb_clim, _is_colorbar_ax, _cb_mappable, _close_help_fig
     n = 0
     for a in data.get('axes', []):
@@ -336,6 +374,11 @@ def main(argv=None):
     from . import layoutwarn
     for _line in layoutwarn.messages_for(layoutwarn.scan(script)):
         sys.stderr.write(_line + '\n')
+
+    # 0.1.10 可重跑预检：脚本**马上要被执行**（开窗取图），先把静态能看出来的风险
+    # 提示一次（等人输入会卡到超时 / 要参数会直接报错 / 要弹窗会再开一个窗口）。
+    # 纯静态、只写 stderr、**绝不阻塞开窗**（见 _emit_preflight_hint）。
+    _emit_preflight_hint(script, args_passed=bool(passthrough))
 
     # Qt 后端必须在用户脚本之前设置。Qt 绑定/版本差异（PyQt5/PyQt6/PySide2/PySide6、
     # 老版本没有 QtAgg 名字）全在这里兜住：逐个候选后端真建一次 canvas 验证，
@@ -559,6 +602,15 @@ def main(argv=None):
             with open(pth, 'r', encoding='utf-8-sig') as f:
                 _d2 = json.load(f)
         except Exception:
+            continue
+        if not isinstance(_d2, dict):
+            # 顶层非对象（数组/字符串/数字/null）：文件坏/非本工具产物 → 跳过
+            # 续调（"续调是尽力而为"，绝不让 GUI 开窗崩掉）。这是续调流程里
+            # 最早的一道守卫：_d2.get('fig_index') 要求 dict，非对象会在这里
+            # 崩（AttributeError），到不了 _apply_saved。与 params.load 的
+            # 0.1.10 修复同款语义 —— 这类输入归参数层坏文件，但不打断主流程。
+            print('[mpltweak] 参数文件顶层不是对象，跳过续调：%s' % pth,
+                  file=sys.stderr, flush=True)
             continue
         # 脚本比参数文件新 → 代码在保存参数之后被手动改过。此时套用旧参数会
         # 静默覆盖那些改动（你改的看不到效果，关窗写回还会把旧值盖回去），

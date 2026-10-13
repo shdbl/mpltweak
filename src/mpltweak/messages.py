@@ -32,6 +32,11 @@ _lang = None
 #
 # 为什么把「工具自身异常」也归 2 而不是 1：CI 里 1 代表"要去修图"，
 # 工具自己炸了却报 1，用户会去看图找问题——找不到，因为问题在工具里（CH-6）。
+#
+# 0.1.10 起：同为 2，输出会把失败**归因**到脚本侧（跑不起来 / 需要参数 / 无头
+# 跑不通需 GUI）还是工具侧（internal_error）分开报 —— 每类各给一句可照抄的
+# 下一步；--json 用 `attribution` 字段区分（agent 可据此自动分支）。
+# **退出码数值语义不变**（0.1.9 已对外文档化，改动会破坏用户 CI）。
 # ---------------------------------------------------------------------------
 EXIT_OK = 0
 EXIT_PROBLEM = 1
@@ -166,6 +171,71 @@ MESSAGES = {
         'zh': '  [X] Agg 重跑验证失败（已回滚到备份）',
         'en': '  [X] Agg re-run check failed (rolled back to backup)',
     },
+    # ---- 失败归因（0.1.10）：把"脚本跑不起来"和"工具改坏了"分开报，每类一句下一步 ----
+    'fail_attribution_head': {
+        'zh': '  归因：%(kind)s%(unknown)s',
+        'en': '  Attribution: %(kind)s%(unknown)s',
+    },
+    'fail_kind_cannot_run': {
+        'zh': '脚本跑不起来',
+        'en': 'script cannot run',
+    },
+    'fail_kind_needs_args': {
+        'zh': '脚本需要命令行参数',
+        'en': 'script needs command-line arguments',
+    },
+    'fail_kind_needs_gui': {
+        'zh': '无头环境跑不通（需要窗口/交互）',
+        'en': 'cannot run headless (needs a window / interaction)',
+    },
+    'fail_kind_tool_bug': {
+        'zh': '工具自身异常（internal_error）',
+        'en': 'internal tool error (internal_error)',
+    },
+    'fail_unknown_reason': {
+        'zh': '（无法确定原因）',
+        'en': ' (reason could not be determined)',
+    },
+    'fail_next_cannot_run': {
+        'zh': '  工具没有改动你的源码（已回滚）。下一步：`mpltweak check %(script)s --static`'
+              '（不执行脚本，只做静态检查）',
+        'en': '  Your source was not modified (rolled back). Next: run '
+              '`mpltweak check %(script)s --static` (static check only, '
+              'does not run the script)',
+    },
+    'fail_next_needs_args': {
+        'zh': '  你的脚本需要参数。下一步：`mpltweak apply %(script)s --write -- <你的参数...>`'
+              '（`--` 后的参数会原样透传给重跑验证）',
+        'en': '  Your script expects command-line arguments. Next: run '
+              '`mpltweak apply %(script)s --write -- <your args...>` (everything '
+              'after `--` is passed verbatim to the verification re-run)',
+    },
+    # 你**已经**传过参数了，重跑还是 argparse 报错 → 别再叫他"去传参数"（那会
+    # 变成第二轮"归因错误"）。这时只能指向静态检查，并说明参数已透传。
+    'fail_next_needs_args_configured': {
+        'zh': '  你的脚本需要命令行参数，本次参数**已经透传**给重跑验证，但它仍然'
+              '报用法错误。下一步：先用 `mpltweak check %(script)s --static`'
+              '（不执行脚本）确认脚本本身没有第二处缺参，或换一份参数再试',
+        'en': '  Your script takes command-line arguments. This run DID pass your '
+              'arguments through to the verification re-run, yet it still failed '
+              'with a usage error. Next: use `mpltweak check %(script)s --static` '
+              '(does not run the script) to confirm there is no second missing '
+              'argument, or retry with different arguments',
+    },
+    'fail_next_needs_gui': {
+        'zh': '  脚本在无头环境跑不通（要开窗口/交互）。下一步：改用 '
+              '`mpltweak check %(script)s --static`；确要写回可用 `--verify-fast`'
+              '（只查语法，弱保证）或 `--keep-unverified`（保留写回，请先用版本控制）',
+        'en': '  The script cannot run headless (needs a window / interaction). '
+              'Next: use `mpltweak check %(script)s --static`; to write back anyway, '
+              'use `--verify-fast` (syntax only, weak guarantee) or '
+              '`--keep-unverified` (keep the write; commit to version control first)',
+    },
+    'fail_next_tool_bug': {
+        'zh': '  你的源码一个字节都未修改（已回滚）。这是工具的 bug，请把这段输出报告给我们。',
+        'en': '  Your source was not modified at all (rolled back). This is a bug '
+              'in the tool - please report this output to us.',
+    },
     'semantic_ok': {
         'zh': '  [OK] 语义验证通过（目标图状态 == 参数）',
         'en': '  [OK] Semantic check passed (target figure matches params)',
@@ -223,6 +293,15 @@ MESSAGES = {
     'write_failed': {
         'zh': '[X] 写回失败[%(reason)s]: %(err)s',
         'en': '[X] write-back failed [%(reason)s]: %(err)s',
+    },
+    # 外部改动守卫（0.1.10）：验证窗口可能长达几分钟，用户在编辑器里保存过一次，
+    # 工具的后续落盘（回滚 / 块重试）绝不能把它抹掉 —— 停手 + 说清"你的改动还在"。
+    'external_modified': {
+        'zh': '检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。'
+              '若仍要写回，请先保存并重跑本命令',
+        'en': 'the script was modified externally during verification; this '
+              'write-back was abandoned and your changes were NOT overwritten. '
+              'Save first and re-run the command if you still want to write back',
     },
     'summary_multi': {
         'zh': '多图落实小结：共 %(total)d 张，成功 %(ok)d，失败 %(bad)d',
@@ -547,6 +626,63 @@ MESSAGES = {
               '  print the params JSON Schema (draft-07) so agents can validate '
               'what they generate.',
     },
+    # --- 可重跑预检（0.1.10 pre-flight；两个入口：apply 写回前 / launch 开窗前）---
+    # 用户视角评审的最大留存瓶颈：本工具要求"在你的环境里反复重跑脚本"（一次 apply
+    # 默认跑 2~5 遍），而「要参数 / 要联网 / 等人输入 / 要弹窗 / 缺依赖」的脚本会全线
+    # 卡住。这里**事前**讲清楚 + 各给一句可照抄的下一步（与 t11 的事后归因同一风格）。
+    'preflight_head': {
+        'zh': '[预检] 这个脚本重跑验证时可能失败或卡住（apply 默认会重跑 2~5 遍）：',
+        'en': '[preflight] rerun verification may fail or hang on this script '
+              '(apply reruns it 2-5 times by default):',
+    },
+    'preflight_missing_dependency': {
+        'zh': '  [!] 缺依赖：找不到 %(packages)s —— 重跑验证会失败；建议先装依赖，'
+              '或加 --verify-fast（只查语法）/ --keep-unverified'
+              '（保留写回，先用版本控制）',
+        'en': '  [!] missing dependency: %(packages)s -- rerun verification will '
+              'fail; install it first, or use --verify-fast (syntax only) / '
+              '--keep-unverified (keep the write-back, rely on version control)',
+    },
+    'preflight_needs_args': {
+        'zh': '  [!] 需要参数：脚本会读命令行参数 —— 重跑必须把参数原样传给它：\n'
+              '      mpltweak apply %(script)s --write -- <你的参数...>',
+        'en': '  [!] needs arguments: the script reads command-line arguments -- '
+              'pass them through so the rerun sees the same argv:\n'
+              '      mpltweak apply %(script)s --write -- <your args...>',
+    },
+    'preflight_network': {
+        'zh': '  [!] 联网：脚本会联网，无头重跑可能失败或变慢 —— 不想重跑就加 '
+              '--verify-fast（只查语法）/ --keep-unverified'
+              '（保留写回，先用版本控制）',
+        'en': '  [!] network: this script uses the network; a headless rerun may '
+              'fail or get slow -- use --verify-fast (syntax only) / '
+              '--keep-unverified (keep the write-back, rely on version control)',
+    },
+    'preflight_stdin': {
+        'zh': '  [!] 等输入：脚本会读 stdin / 调 input()，重跑时没人输入会一直等到'
+              '超时 —— 不想重跑就加 --verify-fast（只查语法）/ --keep-unverified'
+              '（保留写回，先用版本控制）',
+        'en': '  [!] needs input: this script reads stdin / calls input(); the '
+              'rerun has nobody to type and waits until the timeout -- use '
+              '--verify-fast (syntax only) / --keep-unverified (keep the '
+              'write-back, rely on version control)',
+    },
+    'preflight_gui': {
+        'zh': '  [!] 弹窗：脚本会开窗口 / 交互显示，无头重跑跑不通（在有桌面的机器上'
+              '还可能真的弹出窗口）—— 不想重跑就加 --verify-fast（只查语法）/ '
+              '--keep-unverified（保留写回，先用版本控制）',
+        'en': '  [!] GUI: this script opens a window / interactive display; a '
+              'headless rerun cannot succeed (and it may really pop up a window '
+              'on your desktop) -- use --verify-fast (syntax only) / '
+              '--keep-unverified (keep the write-back, rely on version control)',
+    },
+    'preflight_tail': {
+        'zh': '  [i] 以上只是预警，不影响本次动作；想跳过重跑就用 --verify-fast'
+              '（只查语法）或 --keep-unverified（保留写回，先用版本控制）。',
+        'en': '  [i] this is a heads-up only; it blocks nothing. To skip the '
+              'rerun use --verify-fast (syntax only) or --keep-unverified '
+              '(keep the write-back, rely on version control).',
+    },
 }
 
 
@@ -651,18 +787,25 @@ def emit_json(obj, indent=2):
             pass
 
 
-def fail_json(error_code, msg):
+def fail_json(error_code, msg, attribution=None, next_step=None):
     """失败路径也要给出结构化结果（写 fd1，绕过 Python 层重定向）。
 
     契约：``--json``（以及 ``describe`` 这种"永远输出 JSON"的命令）在**任何**
     失败路径上都必须给一个可解析的 JSON。否则 agent 只能拿到空 stdout，而
     README 承诺的"过程信息走 stderr / 机器读 JSON"在失败路径上完全不成立
     （t3-#11 / t6-H2 的失败路径）。
+
+    ``attribution`` / ``next_step``（0.1.10）：失败归因分类 + 一句可照抄的下一步，
+    供 agent 据此自动分支（取值见 verify.py 的 ``VERIFY_FAIL_*`` 常量）。
     """
     import json as _json
+    _payload = {'ok': False, 'error_code': error_code, 'error': msg}
+    if attribution:
+        _payload['attribution'] = attribution
+    if next_step:
+        _payload['next_step'] = next_step
     try:
-        os.write(1, (_json.dumps({'ok': False, 'error_code': error_code,
-                                  'error': msg}, ensure_ascii=False,
+        os.write(1, (_json.dumps(_payload, ensure_ascii=False,
                                  allow_nan=False) + '\n').encode('utf-8'))
     except OSError:
         pass
@@ -700,14 +843,22 @@ def guard_json_main(fn):
             if _want_json:
                 # 用 fd 层写：describe/check 在采集期间会把 sys.stdout 换成
                 # stderr，若在那一刻崩，走 print 的 JSON 会跑到 stderr 去。
+                # 0.1.10：internal_error = 工具自身 bug（tool_bug）——
+                # --json 补上 attribution/next_step，agent 可据此自动分支。
                 try:
                     os.write(1, (_json.dumps(
                         {'ok': False, 'error_code': 'internal_error',
-                         'error': _err}, ensure_ascii=False,
-                        allow_nan=False) + '\n').encode('utf-8'))
+                         'attribution': 'tool_bug',
+                         'error': _err,
+                         # 机器可读通道一律英文：跟随界面的中文会破坏客户端按
+                         # 关键字匹配/展示的稳定性（见本模块 t_en 的 docstring）。
+                         'next_step': t_en('fail_next_tool_bug')},
+                        ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8'))
                 except OSError:
                     pass
             sys.stderr.write(t('guard_error', err=_err) + '\n')
+            # 0.1.10：人读路径也点明归因（脚本侧 / 工具侧彻底分开报）。
+            sys.stderr.write(t('fail_next_tool_bug') + '\n')
             if os.environ.get('MPLTWEAK_DEBUG'):
                 traceback.print_exc(file=sys.stderr)
             # 退出码 2（"跑不起来"）而不是 1（"发现了问题"）：CI 里 1 的含义是

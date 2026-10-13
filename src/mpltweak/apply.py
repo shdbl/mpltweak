@@ -9,6 +9,7 @@ mpltweak apply —— 「落实」助手（CLI：mpltweak apply <脚本.py>）
   mpltweak apply <脚本.py> --snippet           # 额外输出可粘贴片段
   mpltweak apply <脚本.py> --write             # AST 确定性写回（见 mpltweak.writeback）
   mpltweak apply <脚本.py> --write --timeout 600   # 写回；脚本跑得久就放宽验证等待
+  mpltweak apply <脚本.py> --write -- --data x.npz # 写回；`--` 后的参数透传给重跑验证
   mpltweak apply <脚本.py> --write --no-verify     # 完全跳过重跑验证（安全网，慎用）
   mpltweak apply <脚本.py> --params X          # 指定参数文件
 
@@ -25,6 +26,8 @@ import sys
 from . import layoutwarn
 from . import messages as _msg
 from . import params
+from . import preflight
+from . import verify as _verify
 from . import writeback
 
 
@@ -306,13 +309,18 @@ def _all_params_files(script, override=None):
     return [by_idx[k] for k in sorted(by_idx)] + fallback
 
 
-def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None):
+def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
+               preflight_res=None):
     """--json 的机器可读输出（每个 return 分支前都要调用一次）。
 
     ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
     而退出码却是 2 —— 退出码与 ok 字段语义打架（t6-M7）。
 
     ``extra``：额外平铺进每个 files[] 条目的键（如 ``dry_run``）。
+
+    ``preflight_res``：可重跑预检结果（0.1.10），作为**顶层** ``preflight`` 键给出
+    —— agent 在动笔写回之前就能知道"这个脚本重跑会卡在哪"，而不是等失败后靠
+    attribution 反推。
     """
     sys.stdout = stdout_ref
     _ok = (not [r for _, r in results
@@ -354,24 +362,124 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None):
              # T23：失败原因也要能从 JSON 里读到（过去只有人读 stderr 一行，agent
              # 从 --json 完全看不出为什么 fail）。
              'err': r.get('err') or None,
+             # 0.1.10 外部改动守卫：机器可读通道需要**逐字布尔键**（只有 reason
+             # 字符串不够直观）—— agent 一眼就能判断"这次没成是因为用户在验证
+             # 期间自己保存过"。正常路径恒为 false（行为不变，只多这一个键）。
+             'external_modified': bool(r.get('external_modified')),
              'backup': r.get('backup'),
              'verified': r.get('verified'),
              'verify_mode': r.get('verify_mode'),
              'semantic': r.get('semantic'),
              'warnings': r.get('warnings') or [],
-             'layout_conflicts': r.get('layout_conflicts') or []}
+             'layout_conflicts': r.get('layout_conflicts') or [],
+             # 0.1.10：失败归因（script_cannot_run / script_needs_args /
+             # script_needs_gui_or_headless_impossible / tool_bug）—— agent 可
+             # 据此自动分支，不再只靠读 err 文本猜。next_step 是可直接执行的命令。
+             'attribution': r.get('attribution'),
+             'attribution_detail': r.get('attribution_detail'),
+             'next_step': r.get('next_step')}
             for p, r in results],
     }
     if extra:
         for _f in _payload['files']:
             _f.update(extra)
+    if preflight_res is not None:
+        _payload['preflight'] = preflight_res
     if error:
         _payload['error'] = error
     _msg.emit_json(_payload)
 
 
+# ---------------------------------------------------------------------------
+# 失败归因（0.1.10）：验证重跑失败时把"脚本跑不起来"和"工具改坏了"彻底分开报。
+#
+# 判据在 verify.classify_verify_failure（子进程 stderr 模式匹配 + 脚本静态扫描，
+# 保守：判不出归 script_cannot_run 并说明"无法确定原因"）：
+#   * res['err'] 含 "stderr 尾部：" 前缀（写回后失败但原脚本可跑通）→ 把尾部
+#     stderr 交给分类器做模式匹配；
+#   * 否则（原脚本本身也跑不通，writeback 只给了一句笼统文案）→ 只传静态证据，
+#     分类器用 ast 扫描脚本（读 argv / 交互标记）保守归类。
+# 分类只动输出层：退出码数值语义不变（0.1.9 已文档化，CI 依赖）。
+# ---------------------------------------------------------------------------
+_VERIFY_FAIL_MSG_KEY = {
+    _verify.VERIFY_FAIL_CANNOT_RUN: 'fail_next_cannot_run',
+    _verify.VERIFY_FAIL_NEEDS_ARGS: 'fail_next_needs_args',
+    _verify.VERIFY_FAIL_NEEDS_GUI: 'fail_next_needs_gui',
+    _verify.VERIFY_FAIL_TOOL_BUG: 'fail_next_tool_bug',
+}
+_VERIFY_FAIL_KIND_KEY = {
+    _verify.VERIFY_FAIL_CANNOT_RUN: 'fail_kind_cannot_run',
+    _verify.VERIFY_FAIL_NEEDS_ARGS: 'fail_kind_needs_args',
+    _verify.VERIFY_FAIL_NEEDS_GUI: 'fail_kind_needs_gui',
+    _verify.VERIFY_FAIL_TOOL_BUG: 'fail_kind_tool_bug',
+}
+
+
+def _classify_verify_failure(res, script, script_args):
+    """从写回结果 res 归因验证失败（纯函数，不重跑脚本）。
+
+    返回 ``(kind, detail)``；kind 取值见 verify.VERIFY_FAIL_* 常量。
+    证据提取：
+      * 块路径 Case B（写回后失败但原脚本可跑通）：res['err'] 含
+        'stderr 尾部：' → 取其后文本做模式匹配；
+      * 原位路径 Case B：err 以 '写回后脚本跑不通' 开头，verr 直接嵌在
+        '：' 之后（最多 300 字符）→ 取其后文本；
+      * Case A（原脚本本身也跑不通）：err 只有笼统文案（无 stderr）→ 传空，
+        分类器用 ast 扫描脚本（读 argv / 交互标记）保守归类。
+    """
+    err = res.get('err') or ''
+    tail = ''
+    if 'stderr 尾部：' in err:
+        tail = err.split('stderr 尾部：', 1)[1].strip()
+    elif err.startswith('写回后脚本跑不通') and '：' in err:
+        tail = err.split('：', 1)[1].strip()
+    return _verify.classify_verify_failure(tail, script_path=script,
+                                           args_passed=bool(script_args))
+
+
+def _is_rerun_failure(res):
+    """res['err'] 是否是"验证重跑失败"（而非语法错误 / 无锚点 / 语义不达标）。"""
+    err = res.get('err') or ''
+    return (err.startswith('脚本本身在无头环境跑不通')
+            or err.startswith('所有锚点写回后 Agg 重跑均失败')
+            or err.startswith('写回后脚本跑不通'))
+
+
+def _print_attribution(kind, detail, script):
+    """人读输出：归因行 + 一句可照抄的下一步。kind 为 None（分类未启用）→ 静默。"""
+    if kind not in _VERIFY_FAIL_KIND_KEY:
+        return
+    print(_msg.t('fail_attribution_head',
+                 kind=_msg.t(_VERIFY_FAIL_KIND_KEY[kind]),
+                 unknown=_msg.t('fail_unknown_reason') if detail == 'unknown'
+                 else ''))
+    print(_msg.t(_VERIFY_FAIL_MSG_KEY[kind],
+                 script=os.path.basename(script)))
+
+
+def _next_step_cmd(kind, script):
+    """--json 的机器可读 next_step：给 agent 可直接执行的具体命令模板。"""
+    if kind == _verify.VERIFY_FAIL_NEEDS_ARGS:
+        return 'mpltweak apply %s --write -- <your args...>' % os.path.abspath(script)
+    if kind in (_verify.VERIFY_FAIL_CANNOT_RUN,
+                _verify.VERIFY_FAIL_NEEDS_GUI):
+        return 'mpltweak check %s --static' % os.path.abspath(script)
+    return None
+
+
 @_msg.guard_json_main
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # `--` 分隔（bug #6）：`--` 之后的内容是**用户脚本自己的参数**，不是 apply 的
+    # 开关 —— 透传给写回后的重跑验证（verify_run / verify_semantic），依赖
+    # sys.argv 的脚本（python fig.py --data x.npz）apply --write 时才能与基线
+    # 一致地重跑，否则行为不一致 → 默认回滚 + 误归因。
+    # 在 parse_args 之前截断：argparse 会把 `--` 后的内容当多余位置参数报错。
+    script_args: list = []
+    if '--' in argv:
+        _sep = argv.index('--')
+        script_args = argv[_sep + 1:]
+        argv = argv[:_sep]
     ap = argparse.ArgumentParser(prog='mpltweak apply')
     ap.add_argument('script')
     ap.add_argument('--params', default=None)
@@ -465,6 +573,21 @@ def main(argv=None):
     if len(files) > 1:
         print('发现 %d 份参数文件（一次会话改过多张图）——逐张落实：' % len(files))
 
+    # 0.1.10 可重跑预检（pre-flight）：**在写回之前**把"这个脚本重跑会卡在哪"讲清楚。
+    # 用户视角评审指出的最大留存瓶颈 —— 安全网要求在你的环境里反复重跑脚本（一次
+    # apply 默认跑 2~5 遍），而「要参数 / 要联网 / 等人输入 / 要弹窗 / 缺依赖」的脚本
+    # 会无声撞墙，用户事后归因成"这工具不行"。
+    # 纪律（见 mpltweak.preflight）：纯静态（ast + find_spec，**绝不执行脚本**）、
+    # **默认静默**（没风险一个字都不说）、**失败即放行**（预检自身出岔子当无风险）。
+    # 只在"这次真的会重跑脚本"时才提示：--no-verify / --verify-fast / --dry-run
+    # 都不重跑，说了只是噪音。
+    _pf_res = None
+    if (args.write and not args.no_verify and not args.verify_fast
+            and not args.dry_run):
+        _pf_res = preflight.analyze(script, args_passed=bool(script_args))
+        for _line in preflight.message_lines(_pf_res, script):
+            print(_line)
+
     results = []
     _applied_files = []
     # T36：本批次的"批前原件"备份。多图会话里一次 `apply --write` 会**连着改同一个
@@ -552,7 +675,8 @@ def main(argv=None):
                    timeout=args.timeout, dry_run=args.dry_run,
                    semantic=not args.no_semantic, only_fig=not args.all_figs,
                    fast_check=bool(args.verify_fast),
-                   keep_unverified=bool(args.keep_unverified))
+                   keep_unverified=bool(args.keep_unverified),
+                   script_args=script_args)
         _lk = None
         if args.write and not args.dry_run:
             # 串行化写回：并发跑两个 apply --write 时两边都基于同一份原文算替换，
@@ -742,6 +866,17 @@ def main(argv=None):
             print('!! 参数文件错误（已拒写，脚本未改动）: %s' % (res.get('err') or ''))
         else:
             print(_msg.t('write_failed', reason=res['reason'], err=res['err']))
+            # 0.1.10：验证重跑失败 → 归因到脚本侧（跑不起来 / 需要参数 / 无头需
+            # GUI）并各给一句可照抄的下一步；internal_error 是另一条路径（顶层
+            # guard，归 tool_bug）。语义不达标 / 语法错误 / 无锚点不在此列
+            # （_is_rerun_failure 只认重跑失败的三段文案）。
+            if _is_rerun_failure(res):
+                _kind, _detail = _classify_verify_failure(
+                    res, script, script_args)
+                res['attribution'] = _kind
+                res['attribution_detail'] = _detail
+                res['next_step'] = _next_step_cmd(_kind, script)
+                _print_attribution(_kind, _detail, script)
 
     # T23：把这一批里**落地过**的参数文件互相同步 mtime —— 它们此刻都等于"写回后
     # 的代码状态"，下一次批量写回/开窗就该一致地被判为新鲜（而不是只有最后一份新鲜）。
@@ -761,7 +896,8 @@ def main(argv=None):
         if args.json:
             # dry_run 必须能从 JSON 里看出来（预览没落盘，消费方不能当"已写回"）。
             _emit_json(script, results, _stdout,
-                       extra={'dry_run': bool(args.dry_run)})
+                       extra={'dry_run': bool(args.dry_run)},
+                       preflight_res=_pf_res)
         # 参数文件硬错误（error 级）→ 与写回路径同一档：rc=2（输入/用法错误）
         return 2 if any(r['reason'] == 'bad_params' for _, r in results) else 0
 
@@ -778,7 +914,8 @@ def main(argv=None):
     _rc = (2 if any(r['reason'] == 'bad_params' for _, r in results)
            else (1 if (bad or _unlanded) else 0))
     if args.json:
-        _emit_json(script, results, _stdout, extra={'dry_run': bool(args.dry_run)})
+        _emit_json(script, results, _stdout, extra={'dry_run': bool(args.dry_run)},
+                   preflight_res=_pf_res)
     if len(results) > 1:
         # 这段在 _emit_json 之后打 —— 必须显式走 stderr，否则会拼在 JSON 尾巴
         # 上，让 json.loads 报 "Extra data"（t3-H1 / t6-H3）。
