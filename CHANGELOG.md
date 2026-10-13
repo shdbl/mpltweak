@@ -21,7 +21,7 @@
 - 现象：脚本里"`savefig` → `plt.close(fig)` → 再裸 `plot()`"这种写法下，`apply --write` 会把你目录里的图片覆盖成错的 —— 追因样本的目标图由 185,701 B / `6a7acb15d52f` 变成 140,667 B / `252597fc6170`（内容不同像素 15.2%），而工具这一路仍报成功，旧口径下 `verified=True`。
 - 根因：验证的语义层用「把 `plt.close` 拦成空操作」来保证"脚本跑完还能读到图"。图因此不销毁、仍是 current，**后续绘制画回上一张图**；而真实链路里原样跑那一遍先写出正确的图、套壳这一遍后写盘 ⇒ 覆盖。
 - 修法：不再拦 `close`；取数改成两件只读的东西 —— `Figure.savefig` 钩子在**写盘那一刻**抓快照 + 按**创建顺序**持强引用的 figure 注册表（脚本自己 `close` 过也读得到）。判据**只严不松**：主口径仍是"脚本跑完时图对象的状态"（与旧 `verify_semantic` 逐项一致），快照是**追加**判据——磁盘上那张图也必须体现这次改动。注册表只认 pyplot 托管的图（用 `Figure() + FigureCanvasAgg` 的 OO 风格脚本结论仍是"取不到状态"）。
-- 证据：探针 5 臂双向定位（`B′==A`、`B″==B`：去掉拦 close 差异全消失、只加拦 close 差异完整复现）→ 产出文件一致率 **143/144 → 144/144**（`diff_artifacts` 1 → 0）；同一脚本"旧代码 apply / 新代码 apply / 写回后脚本原样跑"三方对账：旧代码写出的图 ≠ 原样跑产物、新代码 ==；独立目录 A/B 对账 **41/41 张 PNG 逐字节相同**（含 `pgl_sasa.png`、`S14_pca_plot.png`）。素材见 `tools/probe_close_vs_wrapper.py`、`_review/cmp_plain_vs_instrumented/`。
+- 证据：探针 5 臂双向定位（`B′==A`、`B″==B`：去掉拦 close 差异全消失、只加拦 close 差异完整复现）→ 产出文件一致率 **143/144 → 144/144**（`diff_artifacts` 1 → 0）；同一脚本"旧代码 apply / 新代码 apply / 写回后脚本原样跑"三方对账：旧代码写出的图 ≠ 原样跑产物、新代码 ==；独立目录 A/B 对账 **41/41 张 PNG 逐字节相同**（含 `pgl_sasa.png`、`S14_pca_plot.png`）。素材见 `tools/probe_close_vs_wrapper.py`、`_review/cmp_plain_vs_instrumented/`（**本地记录，未随仓库发布**；已发布的等价材料见 [`onepass/`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10/onepass)，可重跑入口 `python tools/cmp_plain_vs_instrumented.py`）。
 
 **写回验证单遍化（2 遍 → 1 遍）**
 - 现象：`apply --write` 每次要跑两遍脚本 —— 第一遍原样跑只为看退出码，第二遍套壳跑为拿图状态，而第二遍必须改脚本行为（即上一条的拦 close）。

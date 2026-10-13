@@ -22,7 +22,8 @@
 | `mpltweak mcp`（MCP 服务端） | **会**，每次 `tools/call` 一次 | 每次调用都在**独立子进程**里跑：脚本 `sys.exit` 带不走 server（实测：跑完一个会 `sys.exit(3)` 的脚本后 server 仍能应答 `tools/list`），上一次调用改的全局状态也不会串味 |
 
 > 上表由探针脚本逐条实测（探针第一行写一个标记文件，跑一遍看文件出没出现）：
-> 复测见 `audit_018/promo/t14_verify.log` 与 `t14_verify2.log`。
+> 复测记录 `audit_018/promo/t14_verify.log` 与 `t14_verify2.log` 是**本地记录，未随仓库发布**；
+> 可重跑的等价入口在仓库里：`python tests/test_agent_api.py`（`describe` / `apply --json` 路径）与 `python tests/test_check.py`。
 
 **唯一"完全不执行脚本"的静态通道**：`mpltweak check <脚本> --static` —— 只做 AST 扫描 + 布局引擎
 冲突检测，不导入、不运行（实测：探针脚本的标记文件没有出现，而 `check --no-text` 会写出来）。
@@ -47,7 +48,8 @@
 
 ## 退出码（实测）
 
-只列**实测过**的组合（合并树 + `PYTHONPATH=<src>`；原始记录 `audit_018/promo/t28_exit_matrix.txt`）：
+只列**实测过**的组合（合并树 + `PYTHONPATH=<src>`；原始记录 `audit_018/promo/t28_exit_matrix.txt` 是**本地记录，未随仓库发布** ——
+可重跑的等价入口：`python tests/test_agent_api.py`、`python tests/test_check.py`、`python tests/test_sandbox.py`）：
 
 | 码 | 什么时候 | 实测例子 |
 |---|---|---|

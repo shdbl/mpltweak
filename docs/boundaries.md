@@ -81,7 +81,7 @@ cwd / `sys.path` / 全局 `rcParams` 怎么处理）见 [exec-boundaries.md](exe
 - **合计是各族之和，不等于脚本数**（同一脚本的不同族各计一次）。
 
 汇总结论是 **97.8%（3,531 / 3,610）**，且**承诺违约 = 0**（没有任何一行"声称原位写回、字节却没变"）。
-逐脚本的 URL / 许可 / sha256 与脱敏判定在 [bench 分支](https://github.com/shdbl/mpltweak/tree/bench)。
+逐脚本的 URL / 许可 / sha256 与脱敏判定在 bench 证据包 [tag `evidence-0.1.10`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10)（不可变引用：清单 [`manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl) + 逐脚本判定 [`verdicts/scan_full.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl)）。
 
 ## 六、这份文件不写什么
 

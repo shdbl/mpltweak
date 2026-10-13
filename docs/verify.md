@@ -260,7 +260,7 @@ sys.exit(1 if bad else 0)
 **不读** `savefig(bbox_inches=...)`；识别到
 `bbox_inches='tight'` 就**降级为提示**（`rc=0`；`--json` 里 `tight_bbox: true`、该条
 `downgraded: "tight_bbox"`），要按旧口径严判加 `--no-tight`。实测
-（`audit_018/promo/t14_verify.log`）：同一段越界文字，无 tight 时 `rc=1` / `error`，
+（`audit_018/promo/t14_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_check.py`）：同一段越界文字，无 tight 时 `rc=1` / `error`，
 有 tight 时 `rc=0` / `warn`。
 
 **`--tol` 只收有限正数**：`inf` / `nan` / `<= 0` 会让几何检查静默失效，现在直接拒绝并说明原因
@@ -309,12 +309,12 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
   30+ 行的块，连"当时恰好是默认值"的那些字段也一起写死（以后改脚本里的默认值就不生效了）。
 - **只给"代码里确有写法"的等值参数 = 不改源码**（实测）：只传 `index` + `pos`（可选
   `figsize_in`）且值与原图一致时，`apply --write --verify-fast` 报 `reason=no_change`、
-  `changes=[]`、字节不变（`audit_018/promo/t14_verify3.log`）。
+  `changes=[]`、字节不变（`audit_018/promo/t14_verify3.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）。
 - **代码里没有写法的字段，等值时也不再插块**（退块判据是**逐字段三态**，见「`--style` 与 JSON
   字段」一节）：只有"有目标值 ∧ 与源码现值不同 ∧ 原位写不了"的字段才会退块。实测 `pos` 等值 +
   `title_fontsize: 12.0`（源码里没写 `fontsize=`），以及 `label_fontsize` + `tick_fontsize` /
   `spines` / `grid` / `xscale` / `figsize` 等值 → `reason=no_change`、不插块、`sha256` 不变
-  （复现：`audit_018/promo/t16_verify.log`）。反向对照（**值确实不同**）仍退块并把值落到图上：
+  （复现：`audit_018/promo/t16_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）。反向对照（**值确实不同**）仍退块并把值落到图上：
   `title_fontsize: 20.0`、`tick_fontsize: 7.0`、`spines={'top': False}`（同日志）。
 - **`describe → apply` 直通依然可能"改代码"**：只要参数里带了**确实不同**、而源码里又写不了的字段，
   它就会插入调整块（那正是"落地"的方式）。所以别把直通写回当成"无需改动"，写回后看一眼 `git diff`。
@@ -323,7 +323,7 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
 - **只想改你要的字段**：参数写成最小形态
   `{"version": 4, "script": "fig1.py", "axes": [{"index": 0, "pos": [0.07, 0.54, 0.44, 0.40]}]}`。
   只有参数里**显式**给出的字段才会写回（缺 `grid` 键不再被当成 `false` 补上；实测
-  `audit_018/promo/t14_verify.log` 的"最小参数"一条：`ax.grid(True)` 原样保留、未出现
+  记录 `audit_018/promo/t14_verify.log`（**本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）的"最小参数"一条：`ax.grid(True)` 原样保留、未出现
   `grid(False)`）。
 - 写回前先 `mpltweak apply fig1.py`（只读预览，**不会执行**脚本）或 `git diff` 看一眼。
 

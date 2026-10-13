@@ -8,7 +8,7 @@
 | ① 静态层：真实绘图代码语料 | **测的是**：改动能不能**原位落进源码**（找得到目标、只动目标、语法不变）<br>**样本**：10,158 份脚本 → 其中 **4,427 份是绘图脚本**（sha256 唯一）→ **可测站点 4,101**（其中**可原位到达 3,610**） | **该落回原位的**成功率 **97.8%**（3,531 / 3,610）；**该追加代码块的**成功率 **100%**（427 / 427，判据＝块外原文逐字节保留 · 不用运行期定位 · 静态可证作用到目标对象，逐条 427 / 427）；其余 **79 例逐一归类、五类之和 = 3,610**：走块通道 **10**（真的落地 3 · 改走块但未落地 7）· 参数非法被拒 **37** · 原始记录里缺该族条目 **32**（流水线的记录缺口，不是产品行为）；承诺违约 **0** |
 | ② 运行时层：写回后重跑验证 | **测的是**：写回后脚本还跑得通、图还出得来、图上位置字号与参数一致<br>**样本**：池 **1,837 份** → **真跑候选 1,780 份**（= 1,837 − 28 份静态已知"要开窗" − 29 份静态已知"联网 / 子进程"） | **该写回并验证通过的** **928 份**（四条铁律逐律 **928 / 928**）；其余 **852 份未判定、不是失败**（需开窗 **317**（345 桶 − 28 静态已排除）· 等人输入 **464** · 撞 90 s 超时 **71**；928 + 852 = 1,780）；写回不篡改：1,837 份 **违约 0** |
 | ③ 窗口交互：离屏矩阵 | **测的是**：随机操作下**不崩 / 往返一致 / 几何合法 / 落位与参数一致**（每次操作后校验）<br>**样本**：**声明口径 12 种图形 × 1,000 次 = 12,000 次**；⑫"多 figure 脚本"含两张子图、各 1,000 次 ⇒ **实跑 13,000 次** | **该通过的不变量校验 100%**（13,000 / 13,000，A 层铁律失败 0）；专项操作断言 **100%**（356 / 356，另有 47 条不适用、逐条带理由）；两编码均 ALL PASS（UTF-8 414.3s / GBK 466.8s） |
-| ③ 窗口交互：真窗口 | **测的是**：同一组不变量在**真窗口**里（6 种图形）跑随机手势<br>**样本**：**6 种图形 × 1,000 次 = 6,000 次手势** + **27 条硬断言**（Qt 轮 25 + Tk 轮 2） | **该通过的硬断言 100%**（**27 / 27**；`NUMBERS.md:28,30,32`；两轮日志 `run_qt9.log` / `run_tk7.log`） |
+| ③ 窗口交互：真窗口 | **测的是**：同一组不变量在**真窗口**里（6 种图形）跑随机手势<br>**样本**：**6 种图形 × 1,000 次 = 6,000 次手势** + **27 条硬断言**（Qt 轮 25 + Tk 轮 2） | **该通过的硬断言 100%**（**27 / 27**；[NUMBERS.md:28,30,32](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L28)；两轮日志 [run_qt9.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log) / [run_tk7.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log)） |
 
 
 > **"承诺违约"**：工具声称"已写回 / 已验证"，但实际字节没变、或验证根本没做。本版为 **0**。
@@ -23,13 +23,13 @@
 本节是**用真实绘图代码跑出来的静态验证**。语料是 **10,158 份 sha256 唯一**的公开绘图脚本，来自真实项目：**Zenodo 数据集记录 6904 份**、
 **GitHub 上的科研绘图仓库 2045 份**、若干项目的**官方 gallery 1209 份** —— 其中大量脚本是**不同论文的补充材料**。
 实测只做**静态**定位与改写判定（**不执行**语料脚本，也**不再分发**）；**逐脚本的 URL / 许可 / sha256 在
-[`bench/manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/bench/bench/manifest.jsonl)，
-脚手架与逐脚本结论在 [`bench` 分支](https://github.com/shdbl/mpltweak/tree/bench)**（判定文件已脱敏：只保留判定字段，不含脚本正文）。其中 **4,427 份**是绘图脚本（可静态分析 2,396 / 无图 1,940 / 语法错 90 /
+[`bench/manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl)，
+脚手架与逐脚本结论在 [`bench` 证据包](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/README.md)**（判定文件已脱敏：只保留判定字段，不含脚本正文）。其中 **4,427 份**是绘图脚本（可静态分析 2,396 / 无图 1,940 / 语法错 90 /
 1 份隔离重扫仍超时）（口径：**0.1.9 静态研究**按"可分析性"分层得到的 4,427 份；**0.1.10** 的静态筛选普查按清单里的 `plot==true` 记为 **4,433 份** —— 两者是**不同管线**，后者用于挑真跑候选池，其 `both_ok` = **1,837** 即 ② 的池），下表的分母都来自这些脚本里的**可测站点**。
 
 ### 语料怎么来的（可复核）
 
-| 来源 | 份数（`manifest.jsonl` 实测） |
+| 来源 | 份数（[`manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl) 实测） |
 |---|---:|
 | Zenodo 数据集记录（论文补充材料里的 `.py`） | **6,904** |
 | GitHub 科研绘图仓库（61 个仓库名） | **2,045** |
@@ -41,10 +41,10 @@
 本地构建日志（`corpus_union/_logs/build_summary.json`，未随仓库发布）记为 `copied=10168 / unique_sha=10158`，
 `sha_mismatch=0 / size_mismatch=0 / undecodable=0`）；更早一次跨阶段合并另有
 **`dup_cross_stage = 1469`** 条命中同一 sha 的记录被跳过（同一脚本在 GitHub / Zenodo 两个阶段都抓到）。
-**语料本体保存在本地只读、不再分发**，仅公开清单（`manifest.jsonl`：路径 / 来源 / URL / 许可 /
+**语料本体保存在本地只读、不再分发**，仅公开清单（[`manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl)：路径 / 来源 / URL / 许可 /
 sha256 / 大小）与**脱敏后的逐脚本判定**；想复核某个脚本被怎么判的，用清单里的 `sha256` / `url`
-自行取回原文即可。全部材料在 [`bench` 分支](https://github.com/shdbl/mpltweak/tree/bench)：`manifest.jsonl`、
-`verdicts/*.jsonl`（逐脚本判定）、`harness/`（脚手架）、`tools/`（两张表的生成脚本 + 脱敏自检脚本）。
+自行取回原文即可。全部材料在 [`bench` 证据包](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/README.md)：[`manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl)、
+[`verdicts/scan_full.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl)（逐脚本判定）、[`harness/`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/harness)（脚手架）、[`tools/`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/tools)（两张表的生成脚本 + 脱敏自检脚本）。
 
 ### 原位修改（直接改源码里的数字）
 
@@ -65,7 +65,7 @@ sha256 / 大小）与**脱敏后的逐脚本判定**；想复核某个脚本被�
 - **通过率 = 真原位写回 ÷ 可原位到达**（不是 ÷"源码里有这一项"）。
 - **合计是各族的和**，同一脚本的不同族会各计一次，**不等于脚本数**。
 - **承诺违约 = 0**：没有任何一行出现"工具声称原位写回、字节却没变"（这批语料判定的范围内）。
-- 没走成原位的分三类，逐脚本清单在 [`bench` 分支](https://github.com/shdbl/mpltweak/tree/bench)：**参数非法被拒 37** ·
+- 没走成原位的分三类，逐脚本清单在 [`bench` 证据包](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/README.md)：**参数非法被拒 37** ·
   **证不出目标对象而拒绝落地 7** · **改为追加块完成 3**（都不是静默丢改动）。
 
 ### 追加代码块（原位表达不了的改动）
@@ -109,7 +109,7 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 | **合计** | **3,531** | **3** | **7** | **37** | **32** |
 
 上表是**完全划分**：每族的五类之和 = 该族"可原位到达"（10 族合计 **3,531 + 3 + 7 + 37 + 32 = 3,610**），
-逐族逐类都由 `bench` 分支的 `verdicts/scan_full.jsonl` 复算得到（复算脚本与断言见下）。
+逐族逐类都由 [`bench/verdicts/scan_full.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl) 复算得到（复算脚本与断言见下）。
 
 - **改为块落地（3 例）不是失败**：改动落地了，只是走了追加块那条路。
 - **证不出而拒绝（7 例）是刻意的**：静态判不出"改的是哪张图 / 哪条轴"就**不写盘**（`applied=false`、`pending` 非空），
@@ -119,11 +119,11 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
   这种剔法必须写明口径，所以两个数都列出来。
 - **记录缺条目（32 例）是**流水线的**记录缺口，不是产品行为**：这些组合在 `n_reach_sites` 里被判可达，
   但原始判定记录里**根本没有该族的条目**（`families` 里连键都没有），所以既不能说它原位成功、也不能说它被跳过。
-  取证（2026-10-13）：`bench/verdicts/scan_full.jsonl` 共 4,427 行（与 4,427 份绘图脚本一一对应，
+  取证（2026-10-13）：[`bench/verdicts/scan_full.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl) 共 4,427 行（与 4,427 份绘图脚本一一对应，
   **无重复 path**）；全库 `families` 条目共 **3,578** 条，比可达组合 3,610 少**正好这 32 条**；
   这 32 条分布在 **25 个脚本 / 8 个族**（`figsize` 9 · `xlim` 6 · `标题字号` 6 · `标签y` 4 · `ylim` 3 · `grid` 2 · `标签x` 1 · `pos` 1），
   且它们的脚本 `error` 全为 `null`（可分析）、其它族有正常条目。**排除两种可能**：① 不是"按 path 去重丢明细"
-  （4,427 行 = 4,427 个唯一 path，每个 path 只出现一次）；② 不是脱敏造成的（`tools/sanitize_verdicts.py` 是纯白名单投影，
+  （4,427 行 = 4,427 个唯一 path，每个 path 只出现一次）；② 不是脱敏造成的（[`bench/tools/sanitize_verdicts.py`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/tools/sanitize_verdicts.py) 是纯白名单投影，
   `families` 的键**只增不减**）⇒ 缺口发生在上游静态扫描：那 32 个可达组合没有被写判定条目。
 - **旧表述与本文的对齐（重要）**：`bench/tools/_cu_why_not100.py` 那份"为什么没到 100%"报表统计的是**有判定条目的
   3,578 个组合**，所以它的四类之和是 3,578（= 3,531 + 3 + 7 + 37），**与主表的 3,610 不同源**：差的正是这 32 条记录缺口。
@@ -147,7 +147,7 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 | 四条铁律（幂等 / 可逆 / 语法守恒 / 只动目标） | 928 份 × 4 律 | **3,712 / 3,712**（逐律各 **928 / 928**） |
 | 写回不篡改（"说没写就一个字节都不能变"） | 1,837 份 | **违约 0**（其中 928 份被真正写回：没有任何一份"声称写了、字节却没变"；`na_reject = 0`，故"拒写不改字节"这条判据无对象） |
 | 语料目录完整性 | 跑前 / 跑后快照 | **未被修改**（前后快照相等）；runner `EXIT=0`；坏 JSON **0** |
-| 耗时 | 首份 → 末份 | **53.5 分钟**（口径：首份 → 末份结果的**计算耗时**；并发档位在运行中按**内存动作线**调整过，分三段跑完：seg1 `jobs=6` 754 份 → seg2 `jobs=8` 601 份 → seg3 `jobs=6` 482 份，段间为干净停手 + `--resume`；份数与档位出处 `SUMMARY.md:287`） |
+| 耗时 | 首份 → 末份 | **53.5 分钟**（口径：首份 → 末份结果的**计算耗时**；并发档位在运行中按**内存动作线**调整过，分三段跑完：seg1 `jobs=6` 754 份 → seg2 `jobs=8` 601 份 → seg3 `jobs=6` 482 份，段间为干净停手 + `--resume`；份数与档位出处 [SUMMARY.md:287](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/SUMMARY.md#L287)） |
 
 - 这套判据与离屏侧的 property 测试（`tests/test_property_writeback.py`）用的是**同一批断言**，
   所以"离屏绿"与"语料绿"可以互相印证，而不是两套口径。
@@ -180,27 +180,27 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 
 | 口径 | 数值 |
 |---|---|
-| 图形类型 | **6 种**：2×2 / **4×4 = 16 面板** / 不规则 `GridSpec` / 主面板 + colorbar / `constrained_layout` / 1×3 + `tight_layout`（`NUMBERS.md:27`） |
+| 图形类型 | **6 种**：2×2 / **4×4 = 16 面板** / 不规则 `GridSpec` / 主面板 + colorbar / `constrained_layout` / 1×3 + `tight_layout`（[NUMBERS.md:27](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L27)） |
 | 每图手势 | 1,000 次随机手势（7 类动作 + 4 种乱序形态，确定性种子） |
-| **合计手势** | **6,000 次**（`NUMBERS.md:28` ＝ `run_qt9.log:20`） |
-| 场景数 | **15 个**（`NUMBERS.md:29`） |
-| **硬断言** | **27 条全部通过**：Qt 轮 **25/25**、Tk 轮 **2/2**（`run_qt9.log:79`、`run_tk7.log:19,27`） |
-| 后端 | **2 个**：QtAgg(PyQt5) 与 TkAgg 都实测（`NUMBERS.md:49`） |
-| 耗时 | Qt 逐类 fuzz 合计 **2948.5 s ≈ 49.1 min**（`NUMBERS.md:130` ＝ `run_qt9.log:20,27`）；Tk 轮墙钟 **7.8 s**（`NUMBERS.md:32` ＝ `run_tk7.log:30`） |
+| **合计手势** | **6,000 次**（[NUMBERS.md:28](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L28) ＝ [run_qt9.log:20](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L20)） |
+| 场景数 | **15 个**（[NUMBERS.md:29](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L29)） |
+| **硬断言** | **27 条全部通过**：Qt 轮 **25/25**、Tk 轮 **2/2**（[run_qt9.log:79](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L79)、[run_tk7.log:19,27](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log#L19)） |
+| 后端 | **2 个**：QtAgg(PyQt5) 与 TkAgg 都实测（[NUMBERS.md:49](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L49)） |
+| 耗时 | Qt 逐类 fuzz 合计 **2948.5 s ≈ 49.1 min**（[NUMBERS.md:130](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L130) ＝ [run_qt9.log:20,27](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L20)）；Tk 轮墙钟 **7.8 s**（[NUMBERS.md:32](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L32) ＝ [run_tk7.log:30](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log#L30)） |
 
-**关键读数（逐条可追到日志行，完整清单见 `NUMBERS.md` 第一节）**
+**关键读数（逐条可追到日志行，完整清单见 [NUMBERS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md) 第一节）**
 
 | 关键读数 | 实测 | 来源 |
 |---|---|---|
-| 高分屏 · Ctrl+F 裁白边一致性 | 4 组「缩放 × 分辨率」ratio **极差 0.000 / 0.002** | `NUMBERS.md:36` ＝ `run_qt9.log:32-33` |
-| 拖拽落位 | 请求 (-0.080, -0.110) → 实得 (-0.080, -0.110)，**\|Δ\| = (0.000, 0.000)** | `NUMBERS.md:37` ＝ `run_qt9.log:40-41` |
-| 吸附对齐残差 | 0.005 的缝隙 → 松手后残差 **0.0000** | `NUMBERS.md:41` ＝ `run_qt9.log:44-45` |
-| 框选 / Ctrl 加选 / 清空 | 完整包住上排 2 个 → 选中 **2 个**；Ctrl 点击 → **3 个**；点空白 → **[]** | `NUMBERS.md:38-40` ＝ `run_qt9.log:46-51` |
-| **Tk 超大图（Tk 后端）** | 请求 **30×22 in（比值 1.364）** → 实得 **13.99×10.26 in（比值 1.364）**、**偏差 0.0%**；客户区 **[2798, 2116] ≤ 屏幕 [3840, 2160]** | `NUMBERS.md:33` ＝ `run_tk7.log:15-16` |
-| **16 面板（4×4）专项** | 拖 ax5 请求 0.03 → 实测 **0.0337**、几何变化的只有 **['ax5']**、其余 15 个最大偏差 **0.0000**；框选左上 2×2 → 恰好选中 **4 个** | `NUMBERS.md:42-43` ＝ `run_qt9.log:54-57` |
-| **不规则 GridSpec / 1×3** | 逐面板偏差 **0.000000**（声明行高比 2.000、列宽比 4.533）；1×3 三面板 y0 极差 **0.000000**、长中文标题在 Ctrl+F **前/后都在画布内** | `NUMBERS.md:44,48` ＝ `run_qt9.log:58-59,70-73` |
-| **colorbar / constrained_layout** | 轴数 **1**；拖主面板 → colorbar 偏差 **0.0000**；拖 colorbar → 位移 **0.0508**、主面板 **0.0000**；clayout 两次采样 Δsize **0.000000** | `NUMBERS.md:45-46` ＝ `run_qt9.log:62-67` |
-| 撤销 / 重做 | 6,000 次手势里实际发出 **Ctrl+Z ×156 / Ctrl+Y ×162**；确定性往返：**驱动到的往返端到端一致**（判据 \|G2−G0\|∞ ≤ 0.002 且 \|G3−G1\|∞ ≤ 0.002） | `NUMBERS.md:50-51,74-77` ＝ `run_qt9.log:26,52-53` |
+| 高分屏 · Ctrl+F 裁白边一致性 | 4 组「缩放 × 分辨率」ratio **极差 0.000 / 0.002** | [NUMBERS.md:36](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L36) ＝ [run_qt9.log:32-33](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L32) |
+| 拖拽落位 | 请求 (-0.080, -0.110) → 实得 (-0.080, -0.110)，**\|Δ\| = (0.000, 0.000)** | [NUMBERS.md:37](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L37) ＝ [run_qt9.log:40-41](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L40) |
+| 吸附对齐残差 | 0.005 的缝隙 → 松手后残差 **0.0000** | [NUMBERS.md:41](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L41) ＝ [run_qt9.log:44-45](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L44) |
+| 框选 / Ctrl 加选 / 清空 | 完整包住上排 2 个 → 选中 **2 个**；Ctrl 点击 → **3 个**；点空白 → **[]** | [NUMBERS.md:38-40](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L38) ＝ [run_qt9.log:46-51](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L46) |
+| **Tk 超大图（Tk 后端）** | 请求 **30×22 in（比值 1.364）** → 实得 **13.99×10.26 in（比值 1.364）**、**偏差 0.0%**；客户区 **[2798, 2116] ≤ 屏幕 [3840, 2160]** | [NUMBERS.md:33](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L33) ＝ [run_tk7.log:15-16](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log#L15) |
+| **16 面板（4×4）专项** | 拖 ax5 请求 0.03 → 实测 **0.0337**、几何变化的只有 **['ax5']**、其余 15 个最大偏差 **0.0000**；框选左上 2×2 → 恰好选中 **4 个** | [NUMBERS.md:42-43](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L42) ＝ [run_qt9.log:54-57](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L54) |
+| **不规则 GridSpec / 1×3** | 逐面板偏差 **0.000000**（声明行高比 2.000、列宽比 4.533）；1×3 三面板 y0 极差 **0.000000**、长中文标题在 Ctrl+F **前/后都在画布内** | [NUMBERS.md:44,48](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L44) ＝ [run_qt9.log:58-59,70-73](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L58) |
+| **colorbar / constrained_layout** | 轴数 **1**；拖主面板 → colorbar 偏差 **0.0000**；拖 colorbar → 位移 **0.0508**、主面板 **0.0000**；clayout 两次采样 Δsize **0.000000** | [NUMBERS.md:45-46](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L45) ＝ [run_qt9.log:62-67](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L62) |
+| 撤销 / 重做 | 6,000 次手势里实际发出 **Ctrl+Z ×156 / Ctrl+Y ×162**；确定性往返：**驱动到的往返端到端一致**（判据 \|G2−G0\|∞ ≤ 0.002 且 \|G3−G1\|∞ ≤ 0.002） | [NUMBERS.md:50-51,74-77](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L50) ＝ [run_qt9.log:26,52-53](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L26) |
 | 来源 | `tests/test_real_window.py`（**需要真实显示器**，一次只开一个窗口，跑完确认零残留） |
 
 > 内部指标（几何变化率 / 选中态变化率 / 落地率 / 框选命中率 / `isActiveWindow`）只进内部报告，
@@ -208,10 +208,44 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 
 ## 这些数字怎么来的（可复核）
 
-- **静态层（语料）**：清单与逐脚本判定在 [`bench` 分支](https://github.com/shdbl/mpltweak/tree/bench)（`manifest.jsonl` / `verdicts/*.jsonl` / `harness/` / `tools/`）。
-- **运行时层 / 窗口交互**：全部由本仓库的测试与工装产出，跑法写在对应测试文件的文件头里（示例脚本、命令行、环境变量），
-  每次运行都带 **src 溯源行**（当前代码状态）与 `--log` 日志；本文件只搬**已跑完**的数字。
-- **更新方式**：重跑后按日志行号回填本文件的数字，并保留分母与口径；**不用估算值填空位**。
+**证据随仓库发布。** 上表的每一个数字，原始产物都在 bench 分支的证据包
+**[tag `evidence-0.1.10`（不可变）](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10)** ——
+里面有索引 [`README.md`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/README.md)、
+机器可读的 [`CLAIMS.json`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/CLAIMS.json)（数字 → 产物 → 命令）
+与逐文件 sha256 的 [`MANIFEST.json`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/MANIFEST.json)。
+正文里 [`NUMBERS.md:28`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L28)、
+[`run_qt9.log:20`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L20) 这类写法
+**都是指向该证据包里对应文件的链接**，行号就是那个文件的行号。
+
+**可复现等级**（下表每个数字都标了属于哪一档）：
+
+| 档 | 含义 |
+|---|---|
+| **A · 第三方可重跑** | 测试代码就在本仓库里，装好依赖即可自己跑出**同一批判据**（判据应一致；**时间不必一致**） |
+| **B · 需本地语料** | 需要按 bench 清单（[`manifest.jsonl`](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/manifest.jsonl) 每行都有 `url` + `sha256`）自行取回语料，再跑对应测试 |
+| **C · 与本机相关** | 墙钟耗时、屏幕分辨率 / DPI、并发档位 —— 换台机器就不一样，**不是可复现量** |
+| **D · 本地日志，未随仓库发布** | 该产物不在发布范围内；本文只用它记决策，不作对外主张（见本节末） |
+
+| 数字 | 原始产物（bench 证据包） | 生成它的命令 | 档 |
+|---|---|---|---|
+| 10,158 份脚本 → 4,427 份绘图脚本 | [corpus/FILTER.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/FILTER.md) · [corpus/filter.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/filter.jsonl) | 语料汇集 → 静态筛选（口径见 [corpus/FILTER.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/FILTER.md)） | B |
+| 4,101 站点 / 3,610 可达 / 3,531 原位 / **97.8%** | [bench/verdicts/scan_full.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl)（4,427 行逐脚本判定） | `python bench/tools/_cu_static_table.py` | B |
+| 块通道 **427** / 四条判据逐条 427 / 记录缺条目 32 | 同上（`n_literal_sites` / `n_reach_sites` / `families` 三个键逐条比对） | `python bench/tools/_cu_why_not100.py` | B |
+| 池 1,837 → 候选 1,780 / **928 通过** / 四律 928×4 | [corpus/results.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/results.jsonl)（1,837 条）· [corpus/SUMMARY.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/SUMMARY.md) · [corpus/RUN_META.json](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/RUN_META.json) | `python tests/test_corpus_invariants.py`（仓库内；需本地语料 + 沙箱） | B |
+| 离屏 **13,000 次** / 专项 **356·356** / 两编码 ALL PASS | [matrix/matrix_utf8.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/matrix/matrix_utf8.log) · [matrix/matrix_gbk.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/matrix/matrix_gbk.log) · [matrix/NUMBERS_matrix.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/matrix/NUMBERS_matrix.md) | `set MPLTWEAK_MATRIX_N=1000` + `set MPLBACKEND=Agg`，再 `python tests/test_figure_matrix.py`（离屏、**免显示器**） | A（该目录是**同套件、同档位重新生成**的证据；耗时属 C） |
+| 真窗口 **6,000 手势** / 硬断言 **27/27** / 15 场景 / 2 后端 | [window/NUMBERS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md) · [window/run_qt9.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log) · [window/run_tk7.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log) | `python tests/test_real_window.py --backend qt` / `--backend tk`（**需要真实显示器**） | A（判据部分；屏幕相关读数按 C） |
+| 断言机器自检：**变异 35/35 被抓**；台账 **15 场景 / 27 断言 / C 层 16 类**一一对应 | [window/selftest_t22.log](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/selftest_t22.log) · [window/ledger_drylist.txt](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/ledger_drylist.txt) | `python tests/test_real_window.py --selftest` / `--dry-list`（**免窗口**） | A |
+| 沙箱四层边界 | [sandbox/SANDBOX.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/sandbox/SANDBOX.md) | `python tests/test_sandbox.py` | A |
+| 单遍化等价性 143/144 → 144/144 | [onepass/](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10/onepass) | `python tools/cmp_plain_vs_instrumented.py`（A 路原样跑 / B 路套壳跑，逐份对账） | B（需本地语料） |
+| 墙钟（414.3 s / 466.8 s / 2948.5 s / 53.5 min） | 同上的日志 | 同上 | **C** |
+
+**未随仓库发布的东西（按静态层先例明确标注）**：`_review/**`、`_tmp_*/**`、`audit_018/**` 是**本机工作记录**
+（决策台账、逐次探针日志、进程 / 屏幕现场），**不在发布范围内**；正文凡是引用它们的地方都写明
+"**本地记录，未随仓库发布**"，并给出**可重跑的替代入口**（上表里的测试命令）。
+只出现在这类记录里的数字（例：排期探针的 `monkey 1000 次 = 248.1 s`）本文只当"当时怎么排期"的备注，
+**不作为对外主张**。
+
+**更新方式**：重跑后按日志行号回填本文件的数字，并保留分母与口径；**不用估算值填空位**。
 
 ---
 
@@ -286,8 +320,8 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 
 > **出处（终值）**：Qt 逐类 fuzz 实测 —— monkey **421.9 s** / grid4x4 **1241.2 s** / gridspec **373.2 s** /
 > colorbar **213.2 s** / clayout **372.5 s** / tight1x3 **326.5 s**，合计 **2948.5 s ≈ 49.1 min**
-> （`run_qt9.log:20,27`；逐行清单 `NUMBERS.md:130-131`）；Tk 轮墙钟 **7.8 s**（`run_tk7.log:30`；`NUMBERS.md:32`）。
-> ⚠ 别混口径：`NUMBERS.md` 里的 `monkey 1000 次 = 248.1 s` 是**排期探针**（`_tmp_t22/time_scenario.py`，单场景、
+> （[run_qt9.log:20,27](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L20)；逐行清单 [NUMBERS.md:130-131](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L130)）；Tk 轮墙钟 **7.8 s**（[run_tk7.log:30](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_tk7.log#L30)；[NUMBERS.md:32](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L32)）。
+> ⚠ 别混口径：[NUMBERS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md) 里的 `monkey 1000 次 = 248.1 s` 是**排期探针**（`_tmp_t22/time_scenario.py` —— **本地记录，未随仓库发布**，可重跑的等价入口是 `python tests/test_real_window.py --scenario monkey`；单场景、
 > 另一套 harness 口径），与本页这套**套件内逐场景实测**不是同一件事。
 
 **运行环境与"干净运行"证据（两轮终值）**：py 3.10.19 / mpl 3.10.8；后端 **QtAgg(PyQt5)** 与 **TkAgg**；
@@ -295,7 +329,7 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 机器负载自检：Qt 轮「其它 python **6 个** / CPU 基准 **21 ms**」、Tk 轮「3 个 / 21 ms」；
 反污染采样**未触发**（`isActiveWindow=False`，无重跑）；
 src 溯源行（两轮逐字相同）：`toolbox.py=58d6125152 writeback.py=88297ccf71 apply.py=ea6bae7111 verify.py=5b54f60f62 ｜ git HEAD=02998e6`
-（`run_qt9.log:6-7,75,118,121-122`；`NUMBERS.md:137,146-148`）。
+（[run_qt9.log:6-7,75,118,121-122](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L6)；[NUMBERS.md:137,146-148](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L137)）。
 
 ### 3. 离屏 vs 真窗口：分工，不是互相替代
 

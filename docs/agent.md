@@ -57,10 +57,10 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 **agent 路径建议不要加 `--verify-fast`**：它只检查语法、**不重跑脚本**，因此证明不了"某个字段
 与源码现值相等"。当源码里没有可比写法时（典型：`plt.subplots` 的网格轴位置由 subplotspec + 边距
 算出），工具只能**保守退块**。实测：拿 12 个真实语料脚本走 `describe` 原样导出 → `apply --write
---verify-fast`，能跑起来的 **7/7 都插了调整块**（`audit_018/engine-hunter/fix018/t15_agent_path.txt`）；
+--verify-fast`，能跑起来的 **7/7 都插了调整块**（`audit_018/engine-hunter/fix018/t15_agent_path.txt` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）；
 同一条路径**去掉 `--verify-fast`** 就是 `reason=no_change`、一个字节不动（本地 A/B：同一份
 `plt.subplots(2, 2)` 脚本，加它 → `style=block` 且块 31 行，不加 → `reason=no_change / applied=false`，
-`audit_018/promo/t16_probe2.log`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
+`audit_018/promo/t16_probe2.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
 **`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。

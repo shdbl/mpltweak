@@ -63,7 +63,7 @@
 | 同上再加 `--style block` | 0 | 一律插块（即使能原位改） |
 
 实测（同一份 `plt.subplots(2, 2)` 脚本、目标 `pos=[0.2, 0.2, 0.6, 0.6]`，源码里没有位置字面量；
-`audit_018/promo/t16_verify.log`）：
+`audit_018/promo/t16_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）：
 
 ## 原位改数字，还是插入调整块
 
@@ -146,7 +146,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 之前** —— 插在它后面等于"你调的布局根本没进图"，而这正是最难发现的一类事故。行内复合语句
 （如 `if flag: fig.savefig("o.png")`）会把插入点**提升到那条语句之前**；找不到合规插入点就**拒绝写回**
 （`reason=fail`、脚本一个字节都不动），不会再出现"报成功、你的 PNG 却没变"。实测
-（`audit_018/promo/t32_probe.log`）：`if flag: fig.savefig("o.png")` 在第 76 行时，块落在第 9–75 行、
+（`audit_018/promo/t32_probe.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）：`if flag: fig.savefig("o.png")` 在第 76 行时，块落在第 9–75 行、
 `anchor="before"`、`attempts=[{"anchor": "before", "line": 9, "ok": true, "semantic": true}]`。
 
 **写回还可能被整体拒绝**：写盘后工具会**无条件**做一次 `ast.parse`（原位与块两条路径都做），语法只要
@@ -167,7 +167,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 - colorbar 的槽轴（`fig.colorbar(...)` 自动建的 `cax`）**剔除**，不占序号；它的位置按设计
   **不支持**原位改写（该项 `is_colorbar: true`）；
 - 按"代码里 `add_axes` 的顺序"编号会错位：实测在混用脚本（如 gallery 的 `artists.py`）上写回会对不上
-  轴、语义验证失败并回滚（日志 `audit_018/promo/33_index_order.log`）；
+  轴、语义验证失败并回滚（日志 `audit_018/promo/33_index_order.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）；
 - 最稳的用法是**先让工具自己写一份，再只改你要动的字段**：
   `mpltweak describe fig1.py -o .tweak_params/fig1.json`。注意 `-o` 的**目录必须先存在**，否则报
   `FileNotFoundError`（默认路径 `.tweak_params/` 工具已经帮你建好了）。
@@ -181,7 +181,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 ```
 
 实测：`rc=0`、`style=inplace`、`changes=["figsize"]`，脚本里的 `plt.subplots(figsize=(6, 4))`
-被改成 `(10, 6)`（`audit_018/promo/t14_verify.log`）。而 `figsize=(w,h)` 恰好是论文型绘图脚本里
+被改成 `(10, 6)`（`audit_018/promo/t14_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）。而 `figsize=(w,h)` 恰好是论文型绘图脚本里
 **最常见**的可静态构造目标（只算确实绘图：89.5%）。
 
 **3. `label_fontsize_y`：y 轴标签字号可以单独给。**
@@ -196,7 +196,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 `mpltweak apply <脚本> --params all-figs.json --write` 会以 **`rc=1 / reason=no_axes`** 明确失败
 ——**不静默、脚本一个字节都不改**（`writeback.py` 里有对应的 NO_AXES 早退）。原因是 `apply` 的
 `--all-figs` 语义是“循环出图时**统一应用**”，它读的输入仍是**单图**状态。
-实测（`audit_018/promo/t24_allfigs.log`）：喂嵌套文件 → `rc=1 / ok=false / reason=no_axes /
+实测（`audit_018/promo/t24_allfigs.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）：喂嵌套文件 → `rc=1 / ok=false / reason=no_axes /
 applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <脚本> --fig 0 -o one.json`）加
 `--all-figs` 喂回则 `rc=0`。要落实多图就**逐图导出、逐图 apply**（`--fig N`）。
 
@@ -205,7 +205,7 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 与 `label_fontsize_y` 同款：`tick_fontsize` 管 x 刻度、`tick_fontsize_y` 管 y 刻度。源码里本来就有
 `tick_params(axis='y', labelsize=…)` 时**各改各的**（原位）；只有一个 `labelsize=`（一次管两边）时两个
 字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。**没写 `tick_fontsize_y` 时 y 一个字节都不动**（T73 零兼容）。字段已进 `mpltweak schema`。
-实测（`audit_018/promo/t32_probe.log`）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
+实测（`audit_018/promo/t32_probe.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
 把 `tick_fontsize_y` 改成 14 → `inplace_changes=["ax0.tick_fontsize_y"]`，源码
 `ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。
 
