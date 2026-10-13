@@ -119,7 +119,7 @@ pip install "mpltweak[qt]"
 QtAgg → Qt5Agg → Qt6Agg → TkAgg 逐个真建 canvas 探测；`doctor` 会多报一行当前开窗后端
 （实测：`开窗后端   : Tk（未装 Qt；想要 Qt 界面：pip install "mpltweak[qt]"）`）。
 
-这句提示**每个用户只打一次**（0.1.11 起）：第一次用 Tk 开窗时提醒，之后不再重复念，
+这句提示**每个用户只打一次**（0.1.10 起）：第一次用 Tk 开窗时提醒，之后不再重复念，
 免得每次开窗都刷一行。它记在一个戳文件里：
 
 ```text
