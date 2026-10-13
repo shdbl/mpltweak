@@ -691,9 +691,26 @@ plt.close(_fitB)
 #    —— 旧实现会用逻辑 px÷200 把图缩成一半；新实现按英寸直算不缩水。
 _fitC = _mk_fit_fig(dpi=200.0, suptitle='HI DPI FIT')
 # 模拟 Qt 行为：canvas.get_width_height 给逻辑 px（物理的一半）
+#
+# ⚠ matplotlib 3.11 起签名变成 `get_width_height(*, physical=False)`：**关键字参数**，
+#   而且 `FigureCanvasAgg.get_renderer()` 会以 `physical=True` 调进来（3.10 不会）。
+#   所以这个 mock **必须接受 physical**，否则 py3.11/3.12 + mpl 3.11 的 CI 直接
+#   `TypeError: <lambda>() got an unexpected keyword argument 'physical'`（本任务根因）。
+#   语义照真画布来，保持本用例原本的模拟意图：
+#     physical=False（逻辑 px）→ 物理的一半 ← 本用例要模拟的 HiDPI 现象
+#     physical=True （物理 px）→ 真实像素值（= 逻辑 × 2），与后端缓冲区尺寸一致
+#   额外容忍未知关键字：将来 matplotlib 再给这个方法加参数，也不至于又把 CI 弄红。
 _real_gwh = _fitC.canvas.get_width_height
-_fitC.canvas.get_width_height = lambda: (
-    _real_gwh()[0] // 2, _real_gwh()[1] // 2)
+_real_physical = _real_gwh()
+
+
+def _hidpi_gwh(physical=False, **_kw):
+    if physical:
+        return _real_physical
+    return (_real_physical[0] // 2, _real_physical[1] // 2)
+
+
+_fitC.canvas.get_width_height = _hidpi_gwh
 _twC = Tweak(_fitC, export_path=os.path.join(
     tempfile.gettempdir(), 'test_fit_c.json'), heavy=False)
 _twC._fit_to_content()
