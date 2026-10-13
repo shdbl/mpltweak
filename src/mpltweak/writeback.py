@@ -43,6 +43,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import errno
+import hashlib
 import json
 import math
 import os
@@ -82,6 +83,10 @@ FAIL = 'fail'                # 写文件/验证失败
 # `params.validate_errors` 拒写同一档：reason='bad_params' → rc=2 + ok=false。
 # 这样"引擎能看出问题"的情况不再伪装成 no_change/ok。
 BAD_PARAMS = 'bad_params'
+# 0.1.10 外部改动守卫：源码读取之后、任何**落盘动作**之前发现磁盘内容已经变了
+# （用户在编辑器里保存过）→ 停手，绝不覆盖。人读文案见 messages 的
+# 'external_modified'；机器可读字段见 _external_result（reason + external_modified）。
+EXTERNAL_MODIFIED = 'external_modified'
 
 
 
@@ -1177,10 +1182,19 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
     _fi = data.get('fig_index')
     axes_calls = _figure_axes_for_index(tree, _fi if isinstance(_fi, int) else 0)
     var_for: Dict[int, str] = {}
-    for a, (nm, _call) in zip((x for x in axes if not x.get('is_colorbar')),
-                              axes_calls):
-        if isinstance(a.get('index'), int):
-            var_for[a['index']] = nm
+    # T57-稀疏轴（t2 fuzz high）：**按轴序号 index 直接索引** —— index 的语义就是
+    # "第 index 个非 colorbar 轴创建调用"（与 collect 侧一致，见 _figure_axes_for_index）。
+    # 旧实现把「参数里的非 colorbar 轴（按参数出现序）」与 axes_calls **按位置 zip**：
+    # 参数稀疏（只给 index=1、不带 0）时参数第 0 项（index=1）被配到 axes_calls[0]
+    # （ax0）→ var_for[1] 错绑 ax0 → 原位写回改错轴（t2 实测：第一次错写 ax0 被语义
+    # 回滚，第二次又被块"掩盖" → ax0 被改坏 + 幂等破功）。越界 / 负 / 非 int 一律
+    # 不登记 var_for（fail-closed）→ nm=None → 进 skipped → 退块，不崩不静默写错。
+    for _a in axes:
+        if _a.get('is_colorbar'):
+            continue
+        _ai = _a.get('index')
+        if isinstance(_ai, int) and 0 <= _ai < len(axes_calls):
+            var_for[_ai] = axes_calls[_ai][0]
     # T41（blocker）：同一张图里**同一个变量名被赋值 ≥2 次**（`ax = fig.add_subplot(2,1,k)`
     # 写两遍）时，第 2 个及以后的轴**无法原位定位** —— `_find_call` 只取"本图区间内
     # 最早"的同名调用，于是第 2 个轴的属性永远命中第 1 个轴的调用：
@@ -2303,15 +2317,14 @@ def _rollback_note(backup, script, expect=None):
     ``expect`` 是我们刚写进去的文本。若磁盘上的内容已经和它不同，说明用户
     （或编辑器）在验证期间改过这个文件 —— 这时**不能**拿备份整体覆盖，那会把
     用户刚写的改动一起抹掉而且只字不提（t5-S5 / t6-M13）。改为保留现状 + 告知。
+    判据用与正向写盘同一套 **sha256 内容指纹**（两侧不对称是最容易漏的 bug）。
     """
     if expect is not None:
-        try:
-            _now, _ = params.read_text(script)
-        except (OSError, UnicodeDecodeError):
-            _now = None
-        if _now is not None and _now != expect:
-            return ('检测到脚本在验证期间被外部修改，已跳过自动回滚以免抹掉你的改动；'
-                    '备份在 %s' % backup)
+        _now = _disk_fingerprint(script)
+        if _now is not None and _now != _sha256_text(expect):
+            # 外部改动守卫（0.1.10）：不回滚 = 磁盘上留下的是**用户保存的版本**。
+            return ('%s（本次未回滚；磁盘上保留的是你保存的版本，备份在 %s）'
+                    % (_msg.t('external_modified'), backup))
     d = os.path.dirname(os.path.abspath(script)) or '.'
     try:
         _mode = os.stat(script).st_mode & 0o7777
@@ -2340,24 +2353,83 @@ def _rollback_note(backup, script, expect=None):
                 '备份在 %s，请手动恢复' % (type(e).__name__, e, backup))
 
 
-def _guard_external_edit(script, src):
-    """src 读取之后、落盘之前：若磁盘上的脚本已被外部（编辑器）改过，拒绝写盘。
+# ---------------------------------------------------------------------------
+# 外部改动守卫（0.1.10）：把"用户在编辑器里的保存"保住。
+#
+# 为什么必须做：`apply --write` 的源码在流程**开头**读一次，之后最长要等（重跑验证的）
+# 300 秒才落盘。用户在这段时间里回编辑器保存一次是极自然的动作（他以为工具已经改完），
+# 而工具的**后续落盘**（验证失败后的回滚、块重试的二次写盘）会把它**静默覆盖** ——
+# 对科研用户这是最不可接受的一类数据丢失。回滚路径早有 expect 检测（_rollback_note），
+# 正向写盘路径过去反而没有，两侧不对称。
+#
+# 判据 = **内容指纹（sha256）**：读源码时算一份，落盘前重算一份，不一致就停手。
+# 为什么用指纹而不是 size+mtime：编辑器保存常常只差一个字符，而 mtime 精度、
+# "保存了但内容没变"（编辑器整体重写盘）都会骗过粗判据；sha256 只认内容。
+# ---------------------------------------------------------------------------
+def _sha256_text(text):
+    """文本内容的 sha256 指纹（十六进制）。``None`` → ``None``。"""
+    if text is None:
+        return None
+    return hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()
 
-    返回 None = 可以写；返回 str = 拒绝原因（直接可写进结论的 err）。
 
-    为什么必须有：`apply --write` 的 src 在流程**开头**读一次，之后最长要等
-    （重跑验证的）300 秒才落盘 —— 期间用户在编辑器里保存一次，落盘就会把
-    他的改动**静默覆盖**。回滚路径早有 expect 检测（_rollback_note），正向
-    写盘路径过去反而没有，两侧不对称（外部评审确认）。
+def _disk_fingerprint(script):
+    """磁盘上脚本当前的 sha256（与 params.read_text 同一解码口径）。
+
+    读不了（不存在 / 全是坏字节）→ ``None``：调用方按"没改过"放行，真写不进去
+    会由写盘异常兜底 —— 守卫不该在读取失败时把正常写回拦下。
     """
     try:
-        _cur, _ = params.read_text(script)
+        cur, _ = params.read_text(script)
     except (OSError, UnicodeDecodeError):
-        return None          # 读不了就当没改过，真写不进去会由写盘异常兜底
-    if _cur != src:
-        return ('脚本在读取之后被外部修改（编辑器保存？），已拒绝写盘以免覆盖你的改动；'
-                '当前内容保留在磁盘上')
-    return None
+        return None
+    return _sha256_text(cur)
+
+
+def _external_result(script, expect_sha, found_sha, backup=None):
+    """外部改动 → 统一的拒绝结果（人读文案 + 机器可读字段）。
+
+    调用方直接 ``res.update(...)``：``reason`` 变成 ``external_modified``，
+    ``err`` 是给人看的一句话（含可照抄的下一步），另有 ``external_modified``
+    布尔标记与两侧指纹，供 agent / 嵌入式调用者复核"到底哪边变了"。
+    """
+    return {
+        'reason': EXTERNAL_MODIFIED,
+        'external_modified': True,
+        'err': _msg.t('external_modified'),
+        'next_step': 'mpltweak apply %s --write' % os.path.abspath(script),
+        'sha256_expected': expect_sha,
+        'sha256_found': found_sha,
+        'changes': [],
+        'applied': False,
+        'verified': None,
+        'backup': backup,
+    }
+
+
+def _check_external_edit(script, src, src_sha=None, backup=None):
+    """落盘前的核心判据。返回 ``None`` = 可以落盘；返回 dict = 拒绝（直接 update）。
+
+    ``src``：流程**开头**读到的那份源码（可能已经等了几分钟验证）。
+    ``src_sha``：调用方已经算过指纹就传进来，省一次哈希。
+    """
+    expect = src_sha if src_sha else _sha256_text(src)
+    found = _disk_fingerprint(script)
+    if expect is None or found is None:
+        return None                     # 读不了 → 不拦（见 _disk_fingerprint）
+    if found == expect:
+        return None
+    return _external_result(script, expect, found, backup=backup)
+
+
+def _guard_external_edit(script, src):
+    """兼容入口：返回一句原因文本（``None`` = 放行）。
+
+    保留旧签名是因为它已被 tests/test_writeback.py §86 直接调用；新代码请用
+    :func:`_check_external_edit`（能拿到 reason / 指纹等结构化字段）。
+    """
+    _r = _check_external_edit(script, src)
+    return None if _r is None else _r['err']
 
 
 def _scale_literal(tree, nm, field):
@@ -2580,7 +2652,8 @@ def _pv_live_field(field, e, a, data, i):
     return None
 
 
-def _pending_vs_live(script, data, pending, python, timeout, params_path):
+def _pending_vs_live(script, data, pending, python, timeout, params_path,
+                     script_args=None):
     """参数里"原位写不了"的字段，是否**确实与源码现值不同**。
 
     这是 E1 的判据核心：自动退块（apply 的 auto）只有在"参数里有目标值、
@@ -2590,6 +2663,9 @@ def _pending_vs_live(script, data, pending, python, timeout, params_path):
 
     返回 True（确实不同 → 该退块）/ False（已经一致 → 什么都不用做）/
     None（重跑不了、取不到实测状态 → 判不了）。
+
+    ``script_args``：验证重跑要透传给用户脚本的 ``sys.argv[1:]``（bug #6）——
+    依赖 ``sys.argv`` 的脚本在这里拿不到参数就判不了，会保守退块。
     """
     if not pending:
         return False
@@ -2614,7 +2690,8 @@ def _pending_vs_live(script, data, pending, python, timeout, params_path):
     ok, detail = _verify.verify_semantic(script, data, python, timeout,
                                          out_path=out_path,
                                          fields_by_axis=None,
-                                         figsize_edited=False)
+                                         figsize_edited=False,
+                                         script_args=script_args)
     if ok is False:
         return True                       # 实测与参数不一致 → 这里有真改动
     if ok is None:
@@ -2701,10 +2778,14 @@ def _figsize_from_source(src, tree):
 
 def _writeback_inplace(script, src, tree, data, params_path, verify,
                        python, timeout, dry_run, semantic, encoding='utf-8',
-                       fast_check=False, backup=None, keep_unverified=False):
+                       fast_check=False, backup=None, keep_unverified=False,
+                       script_args=None):
     """原位写回主流程：改数字 → 备份 → 写文件 → Agg + 语义验证（只比被覆盖字段）。
 
     backup：复用调用方已做好的备份（L0-4，见 writeback() 的同名参数）。
+    script_args：验证重跑透传给用户脚本的 ``sys.argv[1:]``（bug #6）——
+    verify_run / verify_semantic / baseline 重跑全都带上，依赖 ``sys.argv``
+    的脚本（``python fig.py --data x.npz``）才能与基线一致地重跑。
     """
     res: Dict[str, Any] = {'reason': FAIL, 'changes': [], 'block': None,
                            'backup': None, 'warnings': [], 'verified': None,
@@ -2801,7 +2882,8 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     elif verify and semantic:
         # 允许重跑 → 用实测状态逐字段回比（判不了时 _pending_vs_live 返回 None → 保守）
         _needs = _pending_vs_live(script, data, _pending, python, timeout,
-                                  params_path) is not False
+                                  params_path,
+                                  script_args=script_args) is not False
     else:
         # --verify-fast / --no-verify：不重跑脚本就证不出"相等" → 保守退块（T7 既有设计）
         _needs = True
@@ -2852,9 +2934,9 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         res['err'] = '备份失败: %s' % e
         return res
     res['backup'] = backup
-    _guard = _guard_external_edit(script, src)
+    _guard = _check_external_edit(script, src, backup=backup)
     if _guard:
-        res['err'] = _guard
+        res.update(_guard)
         return res
     try:
         _atomic_write(script, in_src, encoding=encoding)
@@ -2899,7 +2981,8 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             return res
     if verify:
         try:
-            vok, verr = verify_run(script, python, timeout)
+            vok, verr = verify_run(script, python, timeout,
+                                   script_args=script_args)
         except BaseException as e:                         # noqa: BLE001
             # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：脚本已经写盘了 →
             # 这里起任何异常都必须回滚，窄化会漏掉下一种未知异常（E3 的现场）。
@@ -2935,7 +3018,8 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                 try:
                     sok, sdetail = _verify.verify_semantic(
                         script, data, python, timeout, fields_by_axis=fba,
-                        figsize_edited=figsize_edited)
+                        figsize_edited=figsize_edited,
+                        script_args=script_args)
                 except BaseException as e:                 # noqa: BLE001
                     # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：写盘之后
                     # 任何异常都必须回滚，窄化会漏掉下一种未知异常（E3；块路径同款）。
@@ -2976,7 +3060,8 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             _base = None
             if backup:
                 try:
-                    _base, _ = verify_run(backup, python, timeout)
+                    _base, _ = verify_run(backup, python, timeout,
+                                          script_args=script_args)
                 except OSError:
                     _base = None      # 起不了子进程 → 判不了，按"跑不通"处理
             if _base is False:
@@ -3211,10 +3296,17 @@ def _needed_block_fields(tree, data, src, fig_index):
     """
     _axes_calls = _figure_axes_for_index(tree, fig_index)
     var_for: Dict[int, str] = {}
-    for _a, (_nm, _call) in zip((x for x in _axis_items(data)
-                                 if not x.get('is_colorbar')), _axes_calls):
-        if isinstance(_a.get('index'), int):
-            var_for[_a['index']] = _nm
+    # T57-稀疏轴（t2 fuzz high）：与 apply_inplace 同口径 —— 按轴序号 index 直接
+    # 索引（index → 第 index 个非 colorbar 轴创建调用），不再按位置 zip（稀疏参数
+    # 只给 index=1 时旧代码把 index=1 错配到 axes_calls[0] → _proved_equal 拿**错的
+    # 变量**证明"已等值"，目标值与 ax0 恰巧相等时会静默漏写 ax1）。越界/负/非 int
+    # 不登记（fail-closed，由调用方转 skipped/块）。
+    for _a in _axis_items(data):
+        if _a.get('is_colorbar'):
+            continue
+        _ai = _a.get('index')
+        if isinstance(_ai, int) and 0 <= _ai < len(_axes_calls):
+            var_for[_ai] = _axes_calls[_ai][0]
     _drop_dup_var_names(var_for)      # T41：与 apply_inplace 同一口径（见该函数注释）
     idx_map = axis_var_index(tree)
     out: Dict[int, set] = {}
@@ -3582,7 +3674,11 @@ def _axes_binding_entries(tree, fig_index, fig_var=None):
                     continue
                 entries.append((None, None, _ln, True))  # 匿名但**确实建了一条轴**
                 continue
-            _sig = '%s|%s' % (attr, ast.dump(_call_sig(node)))
+            # t8 修复：`_call_sig(node)` 返回的是**字符串列表**，不能喂给 ast.dump()
+            # （TypeError: expected AST, got 'list'）→ 无赋值名的 plt.subplot(1,2,1)
+            # 让 apply 崩成 internal_error。join 成字符串即达目的；此行语义=「槽位
+            # 签名」去重（相同 subplot 调用=复用不新建轴，参数不同=新建轴）保持不变。
+            _sig = '%s|%s' % (attr, '|'.join(_call_sig(node)))
             if _sig in sigs:
                 continue                                # 同一个槽位是"复用"，不新建
             sigs.add(_sig)
@@ -4151,19 +4247,25 @@ def insert_or_replace(src, block, anchor, meta_path, tag=None):
 # --------------------------------------------------------------------------
 # 验证（Agg 无头重跑）
 # --------------------------------------------------------------------------
-def verify_run(script, python=None, timeout=300):
+def verify_run(script, python=None, timeout=300, script_args=None):
     """Agg 无头重跑脚本：exit 0 = 通过。返回 (ok, err_tail)。
 
     cwd 切到脚本目录——脚本里的相对路径（pd.read_csv('data.csv') / np.load /
     open(...)）必须在脚本目录下解析，与 verify_semantic 的 collect() 口径一致，
     否则会被误判"写回后跑不通"而回滚。
+
+    ``script_args``：追加到 ``[python, script]`` 之后（bug #6）。依赖
+    ``sys.argv`` 的脚本（``python fig.py --data x.npz``）重跑时拿不到参数
+    就与基线行为不一致 → 默认回滚 + 误归因"缺数据/依赖"。``python script args``
+    的 argv 本来就是 ``[script] + args``，直接拼进命令行即可。
     """
     python = python or sys.executable
     env = dict(os.environ)
     env['MPLBACKEND'] = 'Agg'
     cwd = os.path.dirname(os.path.abspath(script))
     try:
-        r = subprocess.run([python, script], capture_output=True,
+        cmd = [python, script] + list(script_args or [])
+        r = subprocess.run(cmd, capture_output=True,
                            timeout=timeout, env=env, cwd=cwd)
         err = (r.stderr or b'').decode('utf-8', 'replace')[-2000:]
         return r.returncode == 0, err
@@ -4179,7 +4281,7 @@ def verify_run(script, python=None, timeout=300):
 def writeback(script, data, params_path, verify=True, python=None,
               timeout=300, dry_run=False, semantic=True, only_fig=True,
               style='block', fast_check=False, backup=None,
-              keep_unverified=False):
+              keep_unverified=False, script_args=None):
     """确定性写回。返回结果 dict：
       {reason, changes, block, backup, warnings, verified, semantic, err}
     reason：ok / best_effort / no_change / no_fig / no_axes / fail。
@@ -4192,6 +4294,10 @@ def writeback(script, data, params_path, verify=True, python=None,
     在一条命令里可能写两次（先原位、再退块），第二次再备份就会把第一次的备份
     **覆盖**成"已经改过一次"的中间态 → `revert` 拿不回原件（主仓实测 20154193__RealSpace.py：
     写回 20567 B → revert 后 20568 B）。apply 把第一次的 `res['backup']` 传进来即可。
+    script_args：验证重跑透传给用户脚本的 ``sys.argv[1:]``（bug #6，``apply --write
+    -- <脚本参数...>`` 的 CLI 契约）。原位与块两条路径的 verify_run /
+    verify_semantic / baseline 重跑全部带上，依赖 ``sys.argv`` 的脚本才能与基线
+    一致地重跑（否则行为不一致 → 默认回滚 + 误归因"缺数据/依赖"）。
     """
     script = os.path.abspath(script)
     # style 必须如实回报：apply 用它选"已原位改 N 处"还是"已插入调整块"两种消息，
@@ -4259,7 +4365,8 @@ def writeback(script, data, params_path, verify=True, python=None,
                                   verify, python, timeout, dry_run, semantic,
                                   encoding=_src_enc, fast_check=fast_check,
                                   backup=backup,
-                                  keep_unverified=keep_unverified)
+                                  keep_unverified=keep_unverified,
+                                  script_args=script_args)
 
     fig_var, _ = find_fig_var(tree)
     pre_warnings: List[str] = []
@@ -4559,6 +4666,12 @@ def writeback(script, data, params_path, verify=True, python=None,
         last_sem = ''
         baseline = None
         content = None
+        # t27：`_expected` = **我们最后一次写进磁盘的内容**，也是外部改动守卫的比对基准。
+        # 为什么不能拿入口读的 `src` 当基准：块循环每个候选失败后都可能换锚点重试，
+        # 而上一轮**可能已经写过盘**。拿入口 `src` 去比，就会把"我们自己刚写进去的块"
+        # 误判成"用户在编辑器里改过" ⇒ 报 external_modified 并把块留在磁盘上
+        # （t23 全量真跑实测的 no-tamper 违约，三例都恰好 +231 字节 = 一个调整块）。
+        _expected = src
         for cand in cands:
             blk, note = _guarded(block, cand)
             content = insert_or_replace(new_src, blk, cand, meta, tag)
@@ -4583,11 +4696,23 @@ def writeback(script, data, params_path, verify=True, python=None,
                                 % _se)
                     last_sem = last_err
                     continue
-                _guard = _guard_external_edit(script, src)
+                _guard = _check_external_edit(script, _expected, backup=backup)
                 if _guard:
-                    res['err'] = _guard
+                    # t27 修复②：命中守卫 = 磁盘与我们**最后一次写入**不一致（真外部改动）。
+                    # 若我们先前写过盘，先把干净状态还回去（no-tamper：说没写就真没写）；
+                    # 若磁盘已被用户改过，_rollback_note 的 expect 保护会**跳过**覆盖并
+                    # 如实说明 —— 绝不抹掉用户保存的那一版（t14 建立的不变量）。
+                    if _expected != src:
+                        _guard['err'] = '%s（%s）' % (
+                            _guard.get('err'),
+                            _rollback_note(backup, script, expect=_expected))
+                    res.update(_guard)
                     return res
                 _atomic_write(script, content, encoding=_src_enc)
+                # t27：写进去了 → 基准跟着走。下一轮候选的守卫要比的是**我们现在
+                # 写进去的这份**，而不是入口那份 `src`（否则同一轮内的自身写入会被
+                # 误判成外部改动）。写盘失败走 except，基准不动（磁盘没变）。
+                _expected = content
             except OSError as e:
                 res['err'] = '写文件失败: %s（%s）' % (
                     e, _rollback_note(backup, script))
@@ -4616,7 +4741,8 @@ def writeback(script, data, params_path, verify=True, python=None,
                                      rerun=None, semantic=None)
                 break
             try:
-                vok, verr = verify_run(script, python, timeout)
+                vok, verr = verify_run(script, python, timeout,
+                                       script_args=script_args)
             except BaseException as e:                     # noqa: BLE001
                 # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：E3 的现场 ——
                 # 脚本**已经写盘**了 → 这一步之后任何异常都必须回滚，绝不能把
@@ -4653,7 +4779,8 @@ def writeback(script, data, params_path, verify=True, python=None,
                             script, _prune_refused(data, _unexpressed),
                             python, timeout,
                             figsize_edited=bool(figsize_in_block
-                                                or data.get('figsize_in')))
+                                                or data.get('figsize_in')),
+                            script_args=script_args)
                     except BaseException as e:                 # noqa: BLE001
                         # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：E3 的
                         # 现场 —— 参数里 xlim 带 null 时 verify.compare 里
@@ -4702,7 +4829,8 @@ def writeback(script, data, params_path, verify=True, python=None,
             # 验证失败：先判别是"我们的块弄坏了"还是"脚本本来就无头跑不通"。
             # 跑原脚本（备份即原文）——它要也跑不通，就不该怪写回。
             if baseline is None:
-                baseline, _ = verify_run(backup, python, timeout)
+                baseline, _ = verify_run(backup, python, timeout,
+                                         script_args=script_args)
                 res['baseline_ok'] = baseline
                 if not baseline:
                     # T23 / 外部评审条目 3(c)：脚本本来就在无头环境跑不通（缺数据/依赖）
@@ -4729,6 +4857,16 @@ def writeback(script, data, params_path, verify=True, python=None,
                                 '或先修好脚本（让它能在无头环境跑通）再来写回。'
                                 % _rollback_note(backup, script, expect=content))})
                     return res
+            # t27 修复③：这一轮验证失败、要换锚点重试 → **先把批前状态还回去**（与
+            # inplace 路径对齐）。否则上一候选的块会留在磁盘上，成为下一轮的污染基准
+            # —— 那正是 t23 全量真跑 3 例 no-tamper 违约的现场（守卫把自身写入误判成
+            # 外部改动，块却留在盘上）。回滚成功才把基准重置回 `src`；回滚失败则保持
+            # `_expected`（磁盘上仍是我们写的那份），让下一轮守卫判定保持正确。
+            _rnote = _rollback_note(backup, script, expect=_expected)
+            if _rnote == '已回滚':
+                _expected = src
+            else:
+                warnings.append('换锚点重试前回滚未完成：%s' % _rnote)
         if chosen is None:
             # 全部候选都跑不通 → 回滚；回滚是否真的成功要如实写进结论。
             # 传 expect：若用户在我们验证期间改过这个文件，就别拿备份整体覆盖。
@@ -4752,7 +4890,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                                 'stderr 尾部：\n%s'
                                 % (_head,
                                    _rollback_note(backup, script,
-                                                  expect=content),
+                                                  expect=_expected),
                                    attempts, last_err.strip()))})
             return res
         anchor = chosen

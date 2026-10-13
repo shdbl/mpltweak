@@ -90,6 +90,12 @@ def _info(*args, **kwargs):
 _DOUBLE_OPEN_HINT = ('[mpltweak] 参数未保存：%s 已被 pid=%s 的新窗口接管，本窗口的'
                      '改动不会落盘。补救：关闭新窗口后重试，或按 e 手动导出到别的'
                      '路径。')
+# 0.1.10#1-③/#2：窗口被 Windows 钳制时 backend_qt.py:395-399 的 resizeEvent 会
+# 自动 set_size_inches 悄悄改 figsize（13×11 → 13×10.26），导致画布超屏、拖拽
+# ghost 错位。恢复 figsize 时给一句人话提示（stderr，不污染 stdout/--json）。
+_CLAMP_HINT = ('[mpltweak] 窗口超出屏幕可用区，已被系统钳制：figsize 被悄悄改过，'
+               '已恢复为开窗时的尺寸。若画布仍超出屏幕，请手动把窗口拖小一点，'
+               '或按 Ctrl+F 适配画布到内容。')
 _FIG_LEGEND_HINT = ('[mpltweak] 提示：fig.legend()（图级图例）不挂在任何子图上，'
                     '本工具箱的图例拖拽/循环按子图定位，无法接管它——该图例不会被'
                     '调整，其余功能正常。')
@@ -1039,9 +1045,29 @@ def _resize_frac(b1, handle, mx, my, locked, min_size=MIN_SIZE, center=False):
     return [x0, y0, x1, y1]
 
 
-def _snap_resize(b1, handle, others, tol=SNAP_TOL):
-    '''缩放时只吸附被拖动的边/角（对边固定），返回 (新b1, gx, gy) 供画参考线。'''
+def _snap_resize(b1, handle, others, tol=SNAP_TOL, min_size=None):
+    '''缩放时只吸附被拖动的边/角（对边固定），返回 (新b1, gx, gy) 供画参考线。
+
+    **带约束的吸附**（t24 修的缺陷）：候选线若会让被拖轴的尺寸**小于 min_size**，
+    一律跳过（还有更远但在 tol 内的合法候选就吸那一条，没有就**不吸**）。
+    没有这道约束时的真实现场：`_resize_frac` 已把边夹到 `MIN_SIZE=0.02`，
+    吸附又把它拉到邻块的**中线**（0.70 → 0.6841，距离 0.0159 < 0.02）
+    ⇒ 面板塌成 ~9.5px 一条线（用户会说"我的图被我拖没了"）。
+    出口再加一道 min_size 保险：**任何路径之后都不得小于 min_size**。
+    `min_size=None` 时行为与历史版本完全一致（既有调用方/测试不受影响）。
+    '''
     x0, y0, x1, y1 = b1
+    mn = 0.0 if min_size is None else float(min_size)
+
+    def _pick(cur, cands, ok):
+        """cands 里挑**最近且满足 ok** 的候选（都在 tol 内才考虑）；无则 None。"""
+        for c in sorted(cands, key=lambda v: abs(v - cur)):
+            if abs(c - cur) > tol:
+                break
+            if ok(c):
+                return c
+        return None
+
     # 显式列出每种手柄真正在动的边。**不能用子串判断**：
     # 'left' 含 't'、'right' 含 't'、'bottom' 含 't' → 会把不该动的 y1 也拿去吸附，
     # 结果"拖一条边，另一维也变了"。
@@ -1061,39 +1087,52 @@ def _snap_resize(b1, handle, others, tol=SNAP_TOL):
         cx_ = [ox0, (ox0 + ox1) / 2.0, ox1]
         cy_ = [oy0, (oy0 + oy1) / 2.0, oy1]
         if 'x0' in moving:
-            v = _nearest(x0, cx_, tol)
+            v = _pick(x0, cx_, lambda c: c <= x1 - mn)
             if v is not None:
                 x0 = v
                 gx.append(v)
         if 'x1' in moving:
-            v = _nearest(x1, cx_, tol)
+            v = _pick(x1, cx_, lambda c: c >= x0 + mn)
             if v is not None:
                 x1 = v
                 gx.append(v)
         if 'y0' in moving:
-            v = _nearest(y0, cy_, tol)
+            v = _pick(y0, cy_, lambda c: c <= y1 - mn)
             if v is not None:
                 y0 = v
                 gy.append(v)
         if 'y1' in moving:
-            v = _nearest(y1, cy_, tol)
+            v = _pick(y1, cy_, lambda c: c >= y0 + mn)
             if v is not None:
                 y1 = v
                 gy.append(v)
-    # 画布边界（0/1）吸附：只作用于被拖动的边
+    # 画布边界（0/1）吸附：只作用于被拖动的边，**同样受 min_size 约束**
+    # （否则 0/1 这条候选线也能把面板压到下限以下）
     for cand in (0.0, 1.0):
-        if 'x0' in moving and abs(x0 - cand) <= tol:
+        if 'x0' in moving and abs(x0 - cand) <= tol and cand <= x1 - mn:
             x0 = cand
             gx.append(cand)
-        if 'x1' in moving and abs(x1 - cand) <= tol:
+        if 'x1' in moving and abs(x1 - cand) <= tol and cand >= x0 + mn:
             x1 = cand
             gx.append(cand)
-        if 'y0' in moving and abs(y0 - cand) <= tol:
+        if 'y0' in moving and abs(y0 - cand) <= tol and cand <= y1 - mn:
             y0 = cand
             gy.append(cand)
-        if 'y1' in moving and abs(y1 - cand) <= tol:
+        if 'y1' in moving and abs(y1 - cand) <= tol and cand >= y0 + mn:
             y1 = cand
             gy.append(cand)
+    # 出口保险（只夹**被拖轴的被拖边**）：保证 acceptance 的硬不变量
+    # "任何路径（含吸附）之后都不得小于 min_size"。正常路径下不会触发。
+    if x1 - x0 < mn:
+        if 'x0' in moving:
+            x0 = x1 - mn
+        else:
+            x1 = x0 + mn
+    if y1 - y0 < mn:
+        if 'y0' in moving:
+            y0 = y1 - mn
+        else:
+            y1 = y0 + mn
     return [x0, y0, x1, y1], sorted(set(gx)), sorted(set(gy))
 
 
@@ -1283,6 +1322,11 @@ class Tweak:
         self._drag_leg = False
         self._leg = None
         self._press_xy = (0, 0)
+        # 0.1.10#2-②：按下记**归一化锚点**（相对 fig.bbox 的比例），motion 只算
+        # 增量 —— 不依赖可能变化的 fig.bbox.size（窗口被系统钳制/拖动时旧像素锚点
+        # 会错位 → ghost 蓝框与面板对不上）。
+        self._press_norm = (0.0, 0.0)
+        self._warned_offscreen = False   # 0.1.10#1-③：画布超出屏幕的钳制提示只打一次
         self._origin = None
         self._ghost = None
         self._guides = []
@@ -1327,6 +1371,33 @@ class Tweak:
             if k.startswith('keymap.'):
                 plt.rcParams[k] = ''
         self._connect()
+        # 0.1.10#2-① / t19：**开窗之前**就把画布等比缩到屏幕可用区内。
+        # 为什么"时机"就是这个缺陷的根因（t16 真窗口实测）：这一段过去写在
+        # w.show() **之后**，而 show() 会先被 Windows 钳制窗口 →
+        # backend_qt.py:395-399 的 resizeEvent 按"钳制后的画布像素"逐轴
+        # `set_size_inches(w/dpi, h/dpi)`，figsize 被改成**非等比**
+        # （请求 30×22in 长宽比 1.364 → 画布 1601×496px 即 3.234）；随后那次
+        # "等比缩放"只是把这个**已变形**的尺寸整体缩到 57%（→ 912×282）——
+        # 变形被固化，`_figsize_open` 记的也是变形值，0.1.10#1-③ 的钳制守卫
+        # 从此"保护"错的尺寸。
+        # 提前到 show 之前：此刻画布尺寸 == figsize×dpi（窗口管理器还没碰它），
+        # 等比缩放后窗口本身就落在屏内 → 钳制不再发生 ⇒ 长宽比守恒。
+        # `_figsize_req` = 用户请求的尺寸，后面所有等比缩放都以它为基准。
+        self._figsize_req = list(self.fig.get_size_inches())
+        self._figsize_open = None
+        # t20：记下"这次等比缩放用的是哪个 dpr"。Tk 上它**映射后会变**
+        # （未映射 1.0 → 映射后真实缩放，如 2.0），`_on_resize` 据此触发一次
+        # "映射后等比修正"。先记后缩，避免 _fit_to_screen 触发的嵌套 resize 递归。
+        self._fit_dpr = self._canvas_dpr()
+        # _fit_to_screen() 自己兜异常并返回 None，这里不再套一层宽兜底
+        # （toolbox.py 的宽兜底棘轮只允许降）。
+        self._fit_to_screen()
+        # 0.1.10#1-③：记录**开窗时**（= 已等比缩到屏内）的 figsize，
+        # resizeEvent 的钳制检测以它为基准恢复 —— 现在它一定是等比尺寸。
+        try:
+            self._figsize_open = list(self.fig.get_size_inches())
+        except Exception:
+            self._figsize_open = None
         # 窗口标题 + 置顶（用户不需要强抢焦点，只保证弹在最前）
         # 模式标签进窗口标题：全量重绘耗时 + blit 是否降级，一眼可见
         # 标题不再带"重图[Nms]"模式标签（用户要求；重绘耗时见控制台 [mpltweak] 输出）
@@ -1350,6 +1421,9 @@ class Tweak:
                         pass
         except Exception:
             pass
+        # 0.1.10#2-①/#1-③ 的 _fit_to_screen() 与 _figsize_open 记录**已提前到
+        # show() 之前**（见本函数上半段注释）—— 这里不再重复调用，否则又会
+        # 拿"被窗口钳制改形后的画布"当缩放基准。
         # 背景预抓（关键：解决"第一下拖拽卡半秒"）——窗口已显示，先复用
         # _is_heavy() 那次 draw 直接抓一次（不额外绘制），再延迟补抓一次，
         # 防止 w.show() 引发的 resize 把刚抓的背景作废。
@@ -1463,6 +1537,182 @@ class Tweak:
             pass
         self._bg = None            # 画布尺寸变了，缓存背景必须失效重抓
         self._arm_bg_capture()     # 但别等下次拖拽才抓（那会卡一次全量重绘）
+        # t20（Tk 时序）：`device_pixel_ratio` 只有在窗口**映射后**才正确
+        # （matplotlib 的 Tk 后端在 <Map> 事件里更新它，_backend_tk.py:207/263-272）
+        # ⇒ 开窗前那次 `_fit_to_screen()` 只能按 dpr=1.0 折算，把物理屏当逻辑屏，
+        # 目标偏大（实测 93% 而非 ~47%，窗口仍比屏大 → 被 WM 逐轴改形）。
+        # 这里**在 dpr 变化后**用**请求尺寸**重算一次等比目标，并同步
+        # `_figsize_open`（钳制守卫的目标必须始终是"等比且正确"的那个）；
+        # 这一步同时把"映射瞬间就被 WM 改形"的 figsize 一并纠正回等比。
+        # 这一段**不套宽兜底**：读 dpr / `_fit_to_screen()` / 读 figsize 都不会抛
+        # （`_fit_to_screen` 自身已兜底），免得给 toolbox.py 的宽兜底棘轮加分。
+        _dpr_now = self._canvas_dpr()
+        if abs(_dpr_now - getattr(self, '_fit_dpr', 1.0)) > 1e-9:
+            # **先记后缩**：_fit_to_screen 里的 set_size_inches 会再触发一次
+            # resize 事件，若不先记就会在嵌套调用里重复触发（递归）。
+            self._fit_dpr = _dpr_now
+            _fit = self._fit_to_screen()
+            if _fit is not None:
+                self._figsize_open = list(self.fig.get_size_inches())
+        # 0.1.10#1-③ / t19 / t20：窗口被 Windows 钳制时 backend_qt.py:395-399 或
+        # backend_tk.py:279-286 的 resize 会**自动** set_size_inches 悄悄改 figsize
+        # （用户没拖窗口、子图却变了）。这里检测「画布仍超出屏幕可用区」这一钳制
+        # 特征：若被改过就恢复**等比**的开窗尺寸并提示（用户真在拖窗口缩放时画布
+        # 不会超出屏幕，不误伤）。
+        # t19：恢复目标必须是**等比**的 —— 优先用开窗时记录的 `_figsize_open`
+        # （开窗前已按屏幕等比缩过，见 __init__）；万一它缺失（拿不到屏幕/异常），
+        # 就用**请求尺寸** `_figsize_req` 现算一个等比目标。**绝不**拿当前这个
+        # "已经被钳制改形"的 figsize 当基准 —— 那正是本缺陷的成因。
+        # t20：两边现在**同一口径（逻辑 px）**（见 `_screen_available` 的 docstring）
+        # —— 过去 Tk 上这里是"逻辑画布 vs 物理屏幕"⇒ 条件恒假 ⇒ 永不恢复。
+        try:
+            _avail = self._screen_available()
+            if _avail is not None:
+                _W, _H = self.fig.canvas.get_width_height()
+                if _W > _avail[0] or _H > _avail[1]:
+                    _tgt = getattr(self, '_figsize_open', None)
+                    if not _tgt:
+                        _fit = self._fit_size_for(_avail[0], _avail[1])
+                        _tgt = _fit[0] if _fit else None
+                    if _tgt is not None:
+                        _cur = self.fig.get_size_inches()
+                        if abs(_cur[0] - _tgt[0]) > 1e-6 \
+                                or abs(_cur[1] - _tgt[1]) > 1e-6:
+                            if not self._warned_offscreen:
+                                self._warned_offscreen = True
+                                sys.stderr.write(_CLAMP_HINT + '\n')
+                                sys.stderr.flush()
+                            self.fig.set_size_inches(_tgt[0], _tgt[1])
+        except Exception:
+            pass
+
+    def _canvas_dpr(self):
+        '''画布的设备像素比（物理 px ÷ 逻辑 px）；拿不到/非法时按 1.0（= 不折算）。
+
+        依据（t20）：matplotlib 的 Tk 后端在 ``<Map>`` 事件里用
+        ``round(tk scaling / (96/72), 2)`` 求出它（``_backend_tk.py:207`` 绑定、
+        ``:263-272`` 实现）—— 它正是"物理 px ÷ 逻辑 px"。**窗口未映射时它还没被
+        更新**（缺省 1.0），所以开窗前那次折算只能按 1.0 算，映射后由
+        `_on_resize` 的 dpr 自检重新等比修正（见那里的注释）。
+        `device_pixel_ratio` 是只读 property（backend_bases.py:1895-1906），
+        读它不会抛；本函数**不自己兜异常**（两个调用方各自在兜底里），
+        这样也不给 toolbox.py 的宽兜底棘轮加分。
+        '''
+        _dpr = float(getattr(self.fig.canvas, 'device_pixel_ratio', 1.0) or 1.0)
+        return _dpr if _dpr > 0 else 1.0
+
+    def _screen_available(self):
+        '''屏幕可用尺寸，**与 `fig.canvas.get_width_height()` 同一口径（逻辑 px）**。
+
+        Qt：``availableGeometry()`` 本来就是逻辑 px（Qt 缩放感知）→ 直接用。
+        Tk：``winfo_screenwidth/height`` 在 Windows 上给的是**物理** px
+        （t16 实测 3840×2160，而逻辑屏是 1920×1080；Tk 进程 DPI-unaware），
+        而引擎其余部分（画布 px、Tk 的 ``<Configure>`` 客户区）都是**逻辑** px
+        —— 必须除 ``device_pixel_ratio`` 折算，否则：
+          * `_fit_to_screen` 把 3000×2200 的逻辑画布去比 3840×2160 的物理屏 →
+            只算出 93%（远远不够，窗口仍比屏大）；
+          * `_on_resize` 的钳制判据（逻辑 vs 物理）恒假 ⇒ **永不恢复** ⇒ figsize
+            被 WM 逐轴改形后永久固化（t20 修的正是这条）。
+        拿不到返回 None（不缩放、不打扰）。
+        '''
+        w = getattr(getattr(self.fig.canvas, 'manager', None), 'window', None)
+        if w is None:
+            return None
+        try:
+            from matplotlib.backends.qt_compat import QtWidgets
+            scr = None
+            if hasattr(w, 'screen'):
+                try:
+                    scr = w.screen()
+                except Exception:
+                    scr = None
+            if scr is None:
+                app = QtWidgets.QApplication.instance()
+                scr = app.primaryScreen() if app is not None else None
+            if scr is not None:
+                ag = scr.availableGeometry()
+                if ag.width() > 0 and ag.height() > 0:
+                    # Qt 已是逻辑 px，**不折算**（折算反而会把可用区砍半）
+                    return (int(ag.width()), int(ag.height()))
+        except Exception:
+            pass
+        try:
+            _sw = int(w.winfo_screenwidth())
+            _sh = int(w.winfo_screenheight())
+        except Exception:
+            return None
+        _dpr = self._canvas_dpr()
+        return (max(1, int(round(_sw / _dpr))), max(1, int(round(_sh / _dpr))))
+
+    def _fit_size_for(self, aw, ah):
+        '''把**请求的** figsize（`_figsize_req`）等比缩到屏幕可用区内的目标尺寸。
+
+        `aw, ah` 是**逻辑 px** 的屏幕可用区（= `_screen_available()` 的口径）。
+        请求尺寸换到同一口径：``W = 请求英寸 × fig.dpi ÷ device_pixel_ratio``。
+        **依据（t20）**：HiDPI 下 matplotlib 把 ``fig.dpi`` 乘过 dpr
+        （``backend_bases.py:1935-1943`` 的 `_set_device_pixel_ratio` 用
+        ``ratio × _original_dpi`` 重设 dpi，Tk/Qt 后端都在映射时调它），而
+        ``canvas.get_width_height()`` 返回的是**逻辑** px
+        （``backend_bases.py:1967``：``physical=False`` 时除以 dpr）——
+        所以"英寸 → 逻辑 px"必须再除一次 dpr，否则 HiDPI 下会把可用区与画布混单位
+        （Tk 上就是 t16 实测的"只缩到 93%、窗口仍比屏大"）。
+
+        返回 ``((w_in, h_in), s)``；已放得下或没有基准时返回 None。
+        **基准必须是请求尺寸**（t19）：绝不能拿"已被窗口管理器改形过的当前
+        figsize"当基准 —— 那会把变形照原样保留（旧实现的根因，见 __init__ 注释）。
+        本函数**不自己兜异常**（两个调用方 `_fit_to_screen` / `_on_resize` 各自
+        已有兜底）：这样也不会给 toolbox.py 的宽兜底棘轮加分。
+        '''
+        base = getattr(self, '_figsize_req', None)
+        if not base:
+            return None
+        dpi = float(self.fig.dpi) or 100.0
+        W, H = base[0] * dpi / self._canvas_dpr(), base[1] * dpi / self._canvas_dpr()
+        if W <= 0 or H <= 0:
+            return None
+        # 窗口 = 画布 + 标题栏/工具栏，留 ~5% 余量；两个方向同一个比例 ⇒ 长宽比守恒
+        s = min((aw * 0.95) / W, (ah * 0.95) / H)
+        if s >= 1.0:
+            return None
+        return (base[0] * s, base[1] * s), s
+
+    def _fit_to_screen(self):
+        '''把画布等比缩到屏幕可用区内（0.1.10#2-①；t19 修正调用时机；t20 修 Tk 口径）。
+
+        **两段式**（t20）：
+          ① 开窗**前**先缩一次 —— 此刻画布尺寸 == figsize×dpi、窗口管理器还没碰它，
+             缩完窗口本身就落在屏内，钳制不再发生（t19）；
+          ② 窗口**映射后**再由 `_on_resize` 触发一次自检 —— Tk 的
+             `device_pixel_ratio` 只有在 ``<Map>`` 事件后才正确（未映射时是 1.0），
+             于是第一段会把**物理**屏当逻辑屏、目标偏大（t16 实测只缩到 93%，
+             窗口仍比屏大 → 被 WM 逐轴改形）。第二段用正确 dpr 重算同一个等比
+             目标（基准始终是 `_figsize_req`，绝不用被改形后的当前 figsize）。
+
+        根因（t16 真窗口实测，Qt 侧）：旧顺序是 ``w.show()`` 先跑 → Windows 钳制
+        窗口 → backend_qt.py:395-399 的 resizeEvent 按"钳制后的画布像素"逐轴
+        ``set_size_inches(w/dpi, h/dpi)`` → figsize 变成**非等比**（30×22in 长宽比
+        1.364 → 1601×496px 即 3.234）；这次"等比缩放"再把这个已变形的尺寸整体缩到
+        57% —— 变形被固化。
+        返回缩放到的新尺寸或 None（不需要缩/拿不到屏幕）。只缩不放；拿不到屏幕
+        尺寸就跳过（headless 不打扰）。'''
+        try:
+            avail = self._screen_available()
+            if avail is None:
+                return None
+            W, H = self.fig.canvas.get_width_height()
+            if W <= 0 or H <= 0:
+                return None
+            _fit = self._fit_size_for(avail[0], avail[1])
+            if _fit is None:
+                return None
+            (fiw, fih), s = _fit
+            self.fig.set_size_inches(fiw, fih)
+            # 缩放会触发 resize_event → _on_resize 会重抓背景并刷新 _fig_px
+            _info('[mpltweak] 画布 %dx%d 超出屏幕可用区 %dx%d，已自动缩放到屏内 '
+                  '(%.0f%%)' % (W, H, avail[0], avail[1], s * 100), flush=True)
+            return (fiw, fih)
+        except Exception:
+            return None
 
     def _on_close(self, event):
         '''关窗口自动导出 JSON（无感协作的关键一步）。'''
@@ -2015,12 +2265,15 @@ class Tweak:
 
     def _fit_to_content(self):
         '''一键「适配画布到内容」（快捷键）：把画布缩到刚好包住所有内容——
-        面板 + 图例 + 标题/轴标签/刻度文字，四周白边全裁掉，子图**像素大小
-        不变**、整体平移到边距处。
+        面板 + 图例 + 标题/轴标签/刻度文字 + suptitle/fig.text，四周白边全裁掉，
+        子图**像素大小不变**、整体平移到边距处。
 
-        坐标系：全程用 **figure 归一化坐标**（0-1 比例）。tightbbox 返回的
-        物理像素要除以 fig.bbox 才归一化（高 DPI 下 fig.dpi=200、bbox 是逻辑
-        像素的 2 倍，直接混用会把内容范围算大 2 倍 → 永远"已贴边"）。
+        坐标系：全程用 **figure 归一化坐标**（0-1 比例）+ 英寸。tightbbox 返回的
+        物理像素除以 fig.bbox 得归一化；新画布尺寸直接用「归一化内容范围 × 当前
+        fig.get_size_inches() + FIT_MARGIN_IN」**按英寸算**，与 dpi/dpr 完全解耦
+        （0.1.10#1-②：旧实现用 canvas 逻辑像素 ÷ fig.dpi，Windows 200% 缩放 +
+        matplotlib HiDPI 下 fig.dpi=200，逻辑 px÷200 = 真实物理英寸的一半 →
+        整图每次缩小约一半）。
         '''
         _info('[mpltweak] fit: 收到快捷键', flush=True)
         try:
@@ -2037,8 +2290,9 @@ class Tweak:
         BW, BH = self.fig.bbox.width, self.fig.bbox.height   # 物理像素
         if BW <= 0 or BH <= 0:
             BW, BH = W, H
-        # 1) 归一化内容范围：轴框（兜底）∪ tightbbox（含文字）∪ 图例。
-        #    面板定位用轴框归一化（ax_px 存归一化，最后转逻辑像素）。
+        # 1) 归一化内容范围：轴框（兜底）∪ tightbbox（含文字）∪ 图例 ∪
+        #    fig 级文字（suptitle / fig.text / fig.legend —— 0.1.10#1-①：
+        #    这些不进任何 ax 的 tightbbox，不并入 Ctrl+F 就把主标题裁掉一块）。
         boxes = []          # 归一化 [x0, y0, x1, y1]
         ax_px = []          # [ax, nx0, ny0, nw, nh] —— 轴框归一化
         for ax in self.fig.axes:
@@ -2060,43 +2314,74 @@ class Tweak:
                                   lb.x1 / BW, lb.y1 / BH])
                 except Exception:
                     pass
+        # fig 级文字：用 fig.get_tightbbox 一并并入。先把工具箱自己的 UI 覆盖层
+        # （状态栏/toast）藏起来，别让它们把内容盒撑大（白边裁不干净）。
+        # 注意：fig.get_tightbbox 返回的是**图单位（英寸）**bbox（不是显示 px），
+        # 归一化要除以 fig.get_size_inches()，不能除以 fig.bbox（那是物理 px）——
+        # 否则 suptitle 的 bbox 会被压成 ~0，标题照样被裁（0.1.10#1-① 实测踩到）。
+        _hidden = []
+        for _a in (self._status, self._toast_art):
+            if _a is not None and _a.get_visible():
+                _a.set_visible(False)
+                _hidden.append(_a)
+        try:
+            _ftb = self.fig.get_tightbbox(renderer)
+            if _ftb is not None:
+                _figw, _figh = self.fig.get_size_inches()
+                boxes.append([_ftb.x0 / _figw, _ftb.y0 / _figh,
+                              _ftb.x1 / _figw, _ftb.y1 / _figh])
+        except Exception:
+            pass
+        finally:
+            for _a in _hidden:
+                _a.set_visible(True)
+        if not boxes:
+            _info('[mpltweak] fit: 内容盒为空，无法适配', flush=True)
+            return
         cx0 = min(b[0] for b in boxes)
         cy0 = min(b[1] for b in boxes)
         cx1 = max(b[2] for b in boxes)
         cy1 = max(b[3] for b in boxes)
         cw = max(cx1 - cx0, 1e-4)
         ch = max(cy1 - cy0, 1e-4)
-        # 2) 新画布（逻辑像素）= 归一化内容范围 × 当前逻辑画布 + 边距
-        m = int(round(FIT_MARGIN_IN * 100.0))
-        NW = max(2 * m + 1, int(round(cw * W + 2 * m)))
-        NH = max(2 * m + 1, int(round(ch * H + 2 * m)))
-        if NW >= W and NH >= H:
-            _info('[mpltweak] fit: 内容已贴边，无需适配（%dx%d）' % (W, H), flush=True)
+        # 2) 新画布尺寸（**英寸**）= 归一化内容范围 × 当前图英寸 + 边距。
+        #    完全避开「逻辑 px ÷ fig.dpi」的 DPI 换算（0.1.10#1-②）。
+        fiw, fih = self.fig.get_size_inches()
+        NW_in = max(2 * FIT_MARGIN_IN, cw * fiw + 2 * FIT_MARGIN_IN)
+        NH_in = max(2 * FIT_MARGIN_IN, ch * fih + 2 * FIT_MARGIN_IN)
+        if NW_in >= fiw - 1e-9 and NH_in >= fih - 1e-9:
+            _info('[mpltweak] fit: 内容已贴边，无需适配（%.2fx%.2f in）'
+                  % (fiw, fih), flush=True)
             return
         self._push_undo()
-        # 3) 改画布：NW/NH 是 figsize×fig.dpi 的像素，换算英寸要用图自己的 dpi
-        #    （T25-#1：原先 /100.0 只在 dpi==100 时成立，dpi=200 会算小一半）。
+        # 3) 改画布：直接 set_size_inches(英寸)。
         try:
-            _dpi = float(self.fig.dpi) or 100.0
-            self.fig.set_size_inches(NW / _dpi, NH / _dpi)
-            self._fig_px = (NW, NH)
+            self.fig.set_size_inches(NW_in, NH_in)
+            # 新画布逻辑像素（导出用）：逻辑 px = 英寸 × 逻辑 px/英寸
+            # （W/fiw 与 DPR 无关，HiDPI 下也稳定）。
+            _lppw = (W / fiw) if fiw > 0 else 100.0
+            _lpph = (H / fih) if fih > 0 else 100.0
+            self._fig_px = (int(round(NW_in * _lppw)),
+                            int(round(NH_in * _lpph)))
         except Exception:
             import traceback as _tb
             _tb.print_exc()
             _info('[mpltweak] fit: set_size_inches 失败', flush=True)
             return
-        # 4) 面板像素大小不变，内容左上角贴边距 → 新归一化坐标
-        #    原面板逻辑像素 = 归一化 × 旧逻辑画布；新归一化 = 像素 / 新逻辑画布
+        # 4) 面板像素大小不变，内容左上角贴边距 → 新归一化坐标。
+        #    全英寸口径：面板尺寸/位置换算成英寸再归一化，不再经过逻辑像素。
         for ax, nx0, ny0, nw, nh in ax_px:
-            px0, py0 = nx0 * W, ny0 * H        # 逻辑像素（大小与位置）
-            _set_bbox(ax, [(px0 - cx0 * W + m) / NW,
-                           (py0 - cy0 * H + m) / NH,
-                           nw * W / NW, nh * H / NH])
+            _set_bbox(ax, [
+                (FIT_MARGIN_IN + (nx0 - cx0) * fiw) / NW_in,
+                (FIT_MARGIN_IN + (ny0 - cy0) * fih) / NH_in,
+                nw * fiw / NW_in,
+                nh * fih / NH_in,
+            ])
         self._rebuild_selection_artists()
-        self._set_title_hint('适配画布到内容 → %dx%d px' % (NW, NH))
+        self._set_title_hint('适配画布到内容 → %.2fx%.2f in' % (NW_in, NH_in))
         self._refresh(moved=True)
-        _info('[mpltweak] fit: 完成 → %dx%d px（原 %dx%d）'
-              % (NW, NH, W, H), flush=True)
+        _info('[mpltweak] fit: 完成 → %.2fx%.2f in（原 %.2fx%.2f）'
+              % (NW_in, NH_in, fiw, fih), flush=True)
 
     def _snap_on(self, event):
         '''当前是否吸附：开关开着 且 **没按住 Alt**（Alt = 临时关吸附）。'''
@@ -2345,7 +2630,8 @@ class Tweak:
             self.fig.canvas.draw_idle()
 
     def _finish_band(self):
-        '''框选结束：与选框相交的面板全选中；框太小视为点击=清空选中。'''
+        '''框选结束：**完全框住**的面板才选中（相交不算，与下方判据 @2497-2499
+        同口径）；框太小视为点击=清空选中。'''
         band, self._band = self._band, None
         self._band_active = False
         self._band_origin = None
@@ -2539,6 +2825,7 @@ class Tweak:
             st['loc'] = None                     # 自由拖拽 = 锚定模式
             st['anchor'] = list(anchor0)
             self._press_xy = (event.x, event.y)
+            self._press_norm = (event.x / X, event.y / Y)
             self._drag_leg = True
             if self.heavy and self._blit_ok:
                 # 重图：先把图例藏掉刷新干净背景（无拖痕），再画回起始位置
@@ -2568,6 +2855,7 @@ class Tweak:
             self._rs_origin = [x0, y0, x0 + w, y0 + h]
             self._rs_target = list(self._rs_origin)
             self._press_xy = (event.x, event.y)
+            self._press_norm = (event.x / X, event.y / Y)
             self._rs_mods = set((event.key or '').split('+')) if event.key else set()
             self._drag_resize = True
             _log('[mpltweak] 缩放开始 ax%d %s' % (
@@ -2608,6 +2896,7 @@ class Tweak:
                                   for a in self.fig.axes
                                   if id(a) in self._selected}
             self._press_xy = (event.x, event.y)
+            self._press_norm = (event.x / X, event.y / Y)
             _log('[mpltweak] 多选拖拽 %d 个面板' % len(self._selected), flush=True)
             return
         # 6) 点击面板：单选（显示蓝框）+ 拖拽
@@ -2618,6 +2907,7 @@ class Tweak:
         self._origin = _bbox(event.inaxes)
         self._target = list(self._origin)
         self._press_xy = (event.x, event.y)
+        self._press_norm = (event.x / X, event.y / Y)
         self._drag = True
         _log('[mpltweak] 拖轴开始 ax%d' % self.fig.axes.index(event.inaxes), flush=True)
         if self.heavy:
@@ -2648,8 +2938,10 @@ class Tweak:
             ah = ax.bbox.height
             if aw == 0 or ah == 0:
                 return
-            dx = (event.x - self._press_xy[0]) / aw
-            dy = (event.y - self._press_xy[1]) / ah
+            # 0.1.10#2-②：增量用归一化锚点换算（按下记比例、motion 只算增量），
+            # 不依赖可能变化的 fig.bbox.size —— 窗口被钳制时旧像素差值会错位。
+            dx = (event.x / X - self._press_norm[0]) * X / aw
+            dy = (event.y / Y - self._press_norm[1]) * Y / ah
             anchor = [self._leg_anchor0[0] + dx, self._leg_anchor0[1] + dy]
             self._leg.set_bbox_to_anchor((anchor[0], anchor[1]),
                                          transform=ax.transAxes)
@@ -2679,8 +2971,9 @@ class Tweak:
             return
         if self._multi_drag and self._drag_ax is not None:
             # 多选拖拽：拖被抓住的面板，所有选中面板按同一位移跟随
-            dx = (event.x - self._press_xy[0]) / X
-            dy = (event.y - self._press_xy[1]) / Y
+            # 0.1.10#2-②：用归一化锚点增量（不依赖 fig.bbox.size）
+            dx = event.x / X - self._press_norm[0]
+            dy = event.y / Y - self._press_norm[1]
             target = [self._drag_ax_origin[0] + dx,
                       self._drag_ax_origin[1] + dy,
                       self._drag_ax_origin[2], self._drag_ax_origin[3]]
@@ -2736,14 +3029,15 @@ class Tweak:
                 # locked 分支会把 `s` 抬到 min_size/h，导致**宽高一起缩**
                 # （表现为"减到最小高度以下就整体缩了"）。
                 locked = False
-                dxp = event.x - self._press_xy[0]
-                dyp = event.y - self._press_xy[1]
+                # 0.1.10#2-②：方向判定也用归一化增量（不依赖 fig.bbox.size）
+                dxp = event.x / X - self._press_norm[0]
+                dyp = event.y / Y - self._press_norm[1]
                 if abs(dxp) > abs(dyp) * 1.5:
-                    handle = ('left' if (self._press_xy[0] - b0[0] * X)
-                              < (b0[2] * X - self._press_xy[0]) else 'right')
+                    handle = ('left' if (self._press_norm[0] - b0[0])
+                              < (b0[2] - self._press_norm[0]) else 'right')
                 else:
-                    handle = ('bottom' if (self._press_xy[1] - b0[1] * Y)
-                              < (b0[3] * Y - self._press_xy[1]) else 'top')
+                    handle = ('bottom' if (self._press_norm[1] - b0[1])
+                              < (b0[3] - self._press_norm[1]) else 'top')
             b1 = _resize_frac(self._rs_origin, handle, mx, my, locked, ms,
                               center=center)
             b1_raw = list(b1)
@@ -2755,7 +3049,7 @@ class Tweak:
                         continue
                     x0, y0, w, h = _bbox(a)
                     others.append([x0, y0, x0 + w, y0 + h])
-                b1, gx, gy = _snap_resize(b1, handle, others)
+                b1, gx, gy = _snap_resize(b1, handle, others, min_size=ms)
             if not QUIET:
                 print('[mpltweak] DBG ax%d 按下=%s 实际=%s locked=%s origin=%s '
                       'resize=%s snap=%s (gx=%s gy=%s)'
@@ -2780,9 +3074,9 @@ class Tweak:
                 self.fig.canvas.draw_idle()
             return
         if self._drag and self._ax is not None:
-            # 拖轴：平移 + 自动吸附
-            dx = (event.x - self._press_xy[0]) / X
-            dy = (event.y - self._press_xy[1]) / Y
+            # 拖轴：平移 + 自动吸附（0.1.10#2-②：归一化锚点增量，不依赖 fig.bbox.size）
+            dx = event.x / X - self._press_norm[0]
+            dy = event.y / Y - self._press_norm[1]
             box = self._origin
             target = [box[0] + dx, box[1] + dy, box[2], box[3]]
             gx = gy = ()
