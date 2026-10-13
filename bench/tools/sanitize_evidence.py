@@ -88,6 +88,8 @@ FILES = [
     # 离屏矩阵：0.1.10 发布时这轮日志曾丢失（写在被 gitignore 的临时目录），此处是重跑生成的证据
     ('matrix/matrix_utf8.log', 'matrix/matrix_utf8.log'),
     ('matrix/matrix_gbk.log', 'matrix/matrix_gbk.log'),
+    # t54：离屏矩阵数字表（体例同 window/NUMBERS.md，每行带「日志文件:行」）
+    ('matrix/NUMBERS_matrix.md', 'matrix/NUMBERS_matrix.md'),
 ]
 
 

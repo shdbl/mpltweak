@@ -1,6 +1,6 @@
 {
   "version": "0.1.10",
-  "generated_at": "2026-10-13T18:12:22+0800",
+  "generated_at": "2026-10-13T18:17:15+0800",
   "generator": "bench/tools/build_evidence_manifest.py",
   "guard": "python bench/tools/check_evidence_publishable.py --root D:/Agent/deepseek/_mpltweak_bench_wt/bench/evidence/0.1.10",
   "files": [
@@ -45,9 +45,14 @@
       "sha256": "68346d92ebe10f225d11d461e42cb84c9df7f01838dd7aed05fd3cf2954aa2e9"
     },
     {
+      "path": "matrix/NUMBERS_matrix.md",
+      "bytes": 10746,
+      "sha256": "d8c8c605a4c2e06c091d67d6530062ca89400eb12fc5fb8733ce86aeca8d80a5"
+    },
+    {
       "path": "matrix/matrix_gbk.log",
-      "bytes": 24513,
-      "sha256": "501e05e2fbd1a39ddfa0b6982e677c644d41ff6dbd349e546f8b87aa81f82d0f"
+      "bytes": 68995,
+      "sha256": "11dc4dc004c20c4a3c8e80d960c1a632827d5ff9c844ab2ebe2b837df5918898"
     },
     {
       "path": "matrix/matrix_utf8.log",
