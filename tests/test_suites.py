@@ -66,6 +66,9 @@ SUITES = [
     # 12 图 × 100 次 = 1,200 次离屏矩阵：**降档回归档**（船长 t24 裁定：从 200 降到 100，
     # 让 pytest 总时长回到目标区间；交付证据档 1000 = 12,000 次见文件头，单独跑、不进 pytest）
     ('test_figure_matrix', {'MPLTWEAK_MATRIX_N': '100'}),
+    # --- t15 挂入：记号纪律检查器（纯 AST + 合成样例自证，零 IO 重活、秒级；
+    #     只报告不修；真仓库要求产品面零违规。见 tools/notation_discipline.py 文件头）---
+    ('test_notation_discipline', {}),
 ]
 
 # 刻意不挂进 pytest 的两个（理由见文件头 docstring）：

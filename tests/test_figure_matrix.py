@@ -167,6 +167,7 @@ def _ensure_tmp_writable():
         os.makedirs(root, exist_ok=True)
     os.environ['TEMP'] = root
     os.environ['TMP'] = root
+    os.environ['TMPDIR'] = root
     tempfile.tempdir = root
     return root
 

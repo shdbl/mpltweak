@@ -5280,6 +5280,195 @@ check('90④ 夹具确实走到了"换锚点重试"（≥2 个候选），否则
       'attempts=%r' % (_res90.get('attempts'),))
 shutil.rmtree(_d90, ignore_errors=True)
 
+# =====================================================================
+# §91 执行边界（0.1.11，t2 实测）：`apply --write --dry-run` 默认档**会跑一遍你的脚本**
+# =====================================================================
+# 触发链（行号按当前 writeback.py）：
+#   :2888 `_needs = _pending_vs_live(...)` 在 :2902 的 `dry_run` 早退**之前**被调用，
+#   而 :2694 的 `_pending_vs_live` 内部会调 `_verify.verify_semantic(...)`
+#   → **真跑一遍脚本**、并在参数文件旁写 `_verify_state.json`。
+# 触发条件（:2882-2893 的判据链）：存在"原位写不了"的字段（`_pending` 非空）
+#   **且** `verify and semantic` 都为真。`--verify-fast`（apply.py:733 →
+#   verify=False / fast_check=True）、`--no-verify`（verify=False）、
+#   `--no-semantic`（semantic=False）都走 :2891-2893 的保守分支 → 不重跑。
+# 为什么必须钉住：docs/exec-boundaries.md 那张"哪些命令会跑你的脚本"的表里，
+#   `--write --dry-run` 那一格曾经写"不会"（实测相反）。这是对用户的**安全承诺**，
+#   只靠措辞没有回归网 —— 这里用**标记文件法**（脚本第一行就写标记文件）钉死：
+#   会跑脚本（标记文件出现）与不会改你的脚本（dry-run 后字节不变）是**两件事**，
+#   分别断言，不许混为一谈。
+# 反向验证（"故意改坏会不会变红"，照 tools/teeth_onepass.py 的做法在临时树上做，
+#   不改仓库文件：复制 src/mpltweak → 单点变异 → PYTHONPATH 指向变异树跑本套件）：
+#   ① 把 :2902 的 `if dry_run:` 早退**提到** :2888 之前（= 让文档里"不会执行"成真）
+#      → 91① 必红（标记文件不再出现）；91② 仍绿（那本来就不该变）。
+#   ② 去掉 :2886 的 `and semantic`（= 让 _pending_vs_live 在 --no-semantic 下也跑）
+#      → 91⑤ 必红。
+_SRC91 = ('import os\n'
+          'open(%r, "w", encoding="utf-8").write("ran")\n'
+          'import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig, ax = plt.subplots(figsize=(6, 3))\n'
+          'ax.plot([1, 2, 3])\n'
+          'fig.savefig("out91.png")\n')
+# 参数里只有 pos：`plt.subplots` 的网格轴在源码里没有可写的 pos 字面量 →
+# 进 skipped（writeback.py:1354-1358）→ `_pending = {'ax0': {'pos'}}`，
+# 且实测（:2694 那一遍）与源码现值不同 → 退块。
+_PAR91 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]}
+# 对照夹具：只改 figsize 且**与源码现值相等** → `_pending` 为空 → 压根不进 _pending_vs_live
+_PAR91_NOPENDING = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'figsize_in': [6.0, 3.0]}
+
+
+def _cli91(s, p, *extra):
+    """E2E：`apply <脚本> --params <p> --write --dry-run [extra]`（Agg 子进程）。"""
+    r = subprocess.run(
+        [sys.executable, '-m', 'mpltweak', 'apply', s, '--params', p,
+         '--write', '--dry-run'] + list(extra),
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        env=dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8',
+                 MPLTWEAK_LANG='zh',
+                 PYTHONPATH=os.path.dirname(os.path.dirname(
+                     os.path.abspath(writeback.__file__)))))
+    return (r.stdout or '') + (r.stderr or ''), r.returncode
+
+
+def _case91(name, params, *extra):
+    """造 case 目录跑一次 dry-run → (输出, 退出码, 脚本跑过吗, 源码字节没变吗)。
+
+    标记文件路径**写进脚本第一行**，所以"脚本被跑过"只可能由这一行产生
+    （不受 __file__ / cwd / 子进程工作目录影响）。case 目录用完即删
+    （落在本文件旁的 `_TMPROOT` 里，与 §89/§90 同一个临时区、不往系统 %TEMP% 写）。
+    """
+    d = os.path.join(_TMPROOT, 'case_%s' % name)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d, exist_ok=True)
+    try:
+        mark = os.path.join(d, 'marker91.txt')
+        src = _SRC91 % mark
+        s = os.path.join(d, 'fig.py')
+        p = os.path.join(d, 'p.json')
+        with open(s, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(src)
+        with open(p, 'w', encoding='utf-8', newline='\n') as f:
+            json.dump(dict(params, script='fig.py'), f, ensure_ascii=False)
+        out, rc = _cli91(s, p, *extra)
+        return out, rc, os.path.exists(mark), read(s) == src
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+_o91a, _rc91a, _ran91a, _same91a = _case91('t91a', _PAR91)
+check('91① 默认档（verify+semantic）：apply --write --dry-run **会跑**你的脚本（标记文件出现）',
+      _rc91a == 0 and _ran91a is True,
+      'rc=%r marker=%r %s' % (_rc91a, _ran91a,
+                              str([_l.strip() for _l in _o91a.splitlines()
+                                   if 'dry-run' in _l or '未落盘' in _l][:2])))
+check('91② 但**不写你的脚本**：dry-run 之后源码字节不变（"会跑"≠"会改"）',
+      _same91a is True, 'src_unchanged=%r' % (_same91a,))
+_o91b, _rc91b, _ran91b, _same91b = _case91('t91b', _PAR91, '--verify-fast')
+check('91③ --verify-fast：不跑脚本（标记文件不出现），源码也不变',
+      _rc91b == 0 and _ran91b is False and _same91b is True,
+      'rc=%r marker=%r' % (_rc91b, _ran91b))
+_o91c, _rc91c, _ran91c, _same91c = _case91('t91c', _PAR91, '--no-verify')
+check('91④ --no-verify：不跑脚本（标记文件不出现），源码也不变',
+      _rc91c == 0 and _ran91c is False and _same91c is True,
+      'rc=%r marker=%r' % (_rc91c, _ran91c))
+_o91d, _rc91d, _ran91d, _same91d = _case91('t91d', _PAR91, '--no-semantic')
+check('91⑤ --no-semantic：不跑脚本（触发条件里 `verify and semantic` 的 semantic 那一半）',
+      _rc91d == 0 and _ran91d is False and _same91d is True,
+      'rc=%r marker=%r' % (_rc91d, _ran91d))
+_o91e, _rc91e, _ran91e, _same91e = _case91('t91e', _PAR91_NOPENDING)
+check('91⑥ 对照：参数里**没有**"原位写不了"的字段时，默认档也不跑脚本（触发条件钉死）',
+      _rc91e == 0 and _ran91e is False and _same91e is True,
+      'rc=%r marker=%r' % (_rc91e, _ran91e))
+
+# =====================================================================
+# §92 无感化②（0.1.10 遗留回归，t4）：**默认成功只报一行**，细节全进 `-v`
+# =====================================================================
+# 行为（messages.py:115-124 那段红线）：apply 写回成功后，默认 stdout 的**结果段**
+# 只有一行 —— 带关键数字的 `written_inplace_summary`（"已原位写回 N 处（脚本）…"）；
+# 逐处清单（written_inplace_count）/ 备份路径（backup_at）/ 两层验证的确认行
+# （verify_run_ok / semantic_ok）只在 `-v/--verbose` 下打印。
+# **失败与降级一个字都不收敛**（这是"成功路径的收敛"，别读成"少说话"）——
+# 所以本用例只钉成功路径，且 92④ 专门排除"因为压根没成功才只有一行"的假绿。
+#
+# 为什么必须钉：tests/test_hygiene.py:197-204 只钉了 `written_inplace` 这个**模板
+# 字符串**本身，钉不住 apply.py 里那条 `if _verbose:` 的分支走向 —— 把默认分支改回
+# 多行，既有套件一样全绿。
+# 反向验证（"故意改坏会不会变红"）：把 apply.py:830 的 `if _verbose:` 改成
+# `if True:`（= 默认档也打"已写回 + 逐处清单"两行、不再打带关键数字的那一行）
+# → 92① 必红（`[OK]` 行里没有"已原位写回 1 处"这个 summary），92② 也红。
+# 做法照 tools/teeth_onepass.py：复制 src/mpltweak 到临时树做单点变异，再用
+# `PYTHONPATH=<变异树>/src` 跑本套件（本套件不把仓库 src 硬塞 sys.path，
+# 且下面 _case92 的 PYTHONPATH 取自**当前 import 到的** apply，所以变异会被子进程继承）。
+_SRC92 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 3))\n'
+          'ax = fig.add_axes([0.1, 0.1, 0.4, 0.4])\n'
+          'ax.plot([1, 2, 3])\n'
+          'fig.savefig("o92.png")\n')
+# add_axes 的位置是源码里**现成的数字字面量** ⇒ 走原位写回（style=inplace），
+# 且默认真跑档（verify+semantic）能判"图已更新" —— 这正是"干净成功"这条路。
+_PAR92 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5]}]}
+
+
+def _case92(name, *extra):
+    """跑一次 `apply <脚本> --params <p> --write [extra]` → (非空输出行, 退出码, 写回后源码)。
+
+    case 目录落在本文件旁的 `_TMPROOT`（与 §89/§90/§91 同一临时区），用完即删。
+    语言显式钉 zh（本用例断言的是中文人读文案），后端硬钉 Agg（级联闸门）。
+    """
+    d = os.path.join(_TMPROOT, 'case_%s' % name)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d, exist_ok=True)
+    try:
+        s = os.path.join(d, 'fig.py')
+        p = os.path.join(d, 'p.json')
+        with open(s, 'w', encoding='utf-8', newline='\n') as _f:
+            _f.write(_SRC92)
+        with open(p, 'w', encoding='utf-8', newline='\n') as _f:
+            json.dump(dict(_PAR92, script='fig.py'), _f, ensure_ascii=False)
+        _r = subprocess.run(
+            [sys.executable, '-m', 'mpltweak', 'apply', s, '--params', p,
+             '--write'] + list(extra),
+            capture_output=True, cwd=d,
+            env=dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8',
+                     MPLTWEAK_LANG='zh',
+                     PYTHONPATH=os.path.dirname(os.path.dirname(
+                         os.path.abspath(apply.__file__)))))
+        return ([_l for _l in _decode_out(_r.stdout).splitlines() if _l.strip()],
+                _r.returncode, read(s))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+_l92, _rc92, _src92 = _case92('t92a')
+# 注意：成功路径那几行确认行在 -v 下是**缩进**的（'  [OK] …'），所以一律 strip 后再判前缀。
+_ok92 = [_l for _l in _l92 if _l.strip().startswith('[OK]')]
+check('92① 默认成功只报一行：结果段恰好 1 条 [OK]（且带关键数字"已原位写回 1 处"）',
+      _rc92 == 0 and len(_ok92) == 1 and '已原位写回 1 处' in _ok92[0],
+      'rc=%r [OK]x%d %s' % (_rc92, len(_ok92), _ok92[:2]))
+check('92② 默认档不再打细节行（逐处清单 / 备份路径都收进 -v）',
+      all('原位修改' not in _l and '.tweak.bak' not in _l for _l in _l92),
+      str(_l92))
+_l92v, _rc92v, _src92v = _case92('t92b', '-v')
+_ok92v = [_l for _l in _l92v if _l.strip().startswith('[OK]')]
+check('92③ 加 -v 细节全回来：>=3 条 [OK]（逐处清单 + 两层验证的确认行）',
+      _rc92v == 0 and len(_ok92v) >= 3
+      and any('原位修改' in _l for _l in _l92v)
+      and any('语义验证通过' in _l for _l in _l92v),
+      'rc=%r [OK]x%d %s' % (_rc92v, len(_ok92v), _l92v[-4:]))
+check('92④ 前置：这次写回**真的落盘了**（源码里 add_axes 的数字被改）——'
+      '排除"因为没成功才只有一行"的假绿',
+      _rc92 == 0 and '[0.2, 0.2, 0.5, 0.5]' in _src92
+      and '[0.1, 0.1, 0.4, 0.4]' not in _src92,
+      _src92.splitlines()[4] if len(_src92.splitlines()) > 4 else _src92)
+check('92⑤ 结构性对照（与文案无关）：默认档的输出行数严格少于 -v',
+      len(_l92) < len(_l92v), 'default=%d verbose=%d' % (len(_l92), len(_l92v)))
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)
 

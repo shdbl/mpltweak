@@ -586,7 +586,8 @@ def main():
         # 背景（0.1.10 t11）：失败的**归因**（谁错了 + 下一步）只属于 apply 的
         # 写回验证重跑那一条链。check 的失败路径（跑不起来 / 语法错 / 文件不存在）
         # 必须**保持原样**，尤其不能凭空长出一个 attribution 字段让消费方误判
-        # "这是写回失败"。这里钉住三件事：① 退出码数值语义不变（0.1.9 已对外
+        # "这是写回失败"。这里钉住三件事：① 退出码口径不变（0.1.11 方案 A：0 / 1 / 2 / 4，
+        # 3 已退役；"跑不起来"仍是 2）—— 0.1.9 已对外
         # 文档化，用户 CI 依赖）；② check 的失败 JSON 仍只有 error_code；
         # ③ 分类器不会把"脚本需要参数"说成"缺数据"（评审点名的伪装问题）。
         _s15 = os.path.join(tmp, 'attr_gone_dep.py')
@@ -599,7 +600,7 @@ def main():
         rc, out, err = run('check', _s15, '--json')
         _d15 = json.loads(out)
         check(rc == 2 and _d15.get('error_code') == 'collect_failed',
-              '脚本跑不起来 → rc=2 + error_code=collect_failed（数值语义不变）',
+              '脚本跑不起来 → rc=2 + error_code=collect_failed（方案 A 后仍是 2）',
               (rc, _d15.get('error_code')))
         check('attribution' not in _d15 and 'failure_kind' not in _d15,
               'check 的失败 JSON **不带**写回归因字段（归因只属于 apply 那条链）',

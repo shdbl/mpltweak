@@ -438,7 +438,8 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
 #     stderr 交给分类器做模式匹配；
 #   * 否则（原脚本本身也跑不通，writeback 只给了一句笼统文案）→ 只传静态证据，
 #     分类器用 ast 扫描脚本（读 argv / 交互标记）保守归类。
-# 分类只动输出层：退出码数值语义不变（0.1.9 已文档化，CI 依赖）。
+# 分类只动输出层：退出码口径见 messages.py 常量区（0.1.11 方案 A 统一为
+# 0 / 1 / 2 / 4；3 已退役）——分类不改变任何退出码的数值归属。
 # ---------------------------------------------------------------------------
 _VERIFY_FAIL_MSG_KEY = {
     _verify.VERIFY_FAIL_CANNOT_RUN: 'fail_next_cannot_run',
@@ -592,11 +593,25 @@ def main(argv=None):
             _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
                        error=_err)
         sys.stderr.write('[apply] --no-verify 与 --verify-fast 不能同时用：\n'
-                         '  --no-verify   = 跳过重跑与语义验证（写盘后的语法检查仍会做）；\n'
-                         '  --verify-fast = 只做语法检查。二选一。\n')
+                         '  --no-verify   = 跳过重跑与语义验证（写盘后的语法检查仍会做）：\n'
+                         '                  脚本跑不通、布局没落到位都不会被发现，也不会自动回滚；\n'
+                         '                  这是写坏代码时唯一的自动安全网，一般不建议用。\n'
+                         '  --verify-fast = 只做语法检查（**不重跑脚本**）：坏语法会当场回滚，\n'
+                         '                  但"能跑通"和"布局真的落到目标图上"都不保证。\n'
+                         '  二选一。\n')
         return 2
 
     script = os.path.abspath(args.script)
+    # 顺序（方案 A，t58）：**脚本本身是主参数，参数文件是次要产物** —— 脚本不存在时先说
+    # “脚本找不到”，再去查参数文件（否则先报 `no params:`，用户以为是自己没调过图）。
+    # 与 describe / check / revert 同族：file_not_found 文案 + rc=2。
+    if not os.path.exists(script):
+        if args.json:
+            _emit_json(script, [], _stdout, ok=False,
+                       error=_msg.t_en('file_not_found', path=script))
+        else:
+            sys.stderr.write('[apply] %s\n' % _msg.t('file_not_found', path=script))
+        return 2
     # 布局引擎冲突（constrained_layout / figure.autolayout）：位置写回会被引擎在每次
     # 绘制时覆盖。只扫一次，逐份参数文件复用到 res['layout_conflicts']。
     _conflicts = layoutwarn.messages_for(layoutwarn.scan(script))

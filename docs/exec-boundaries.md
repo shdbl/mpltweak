@@ -16,7 +16,7 @@
 | `mpltweak apply <脚本> --write` | **会**（子进程重跑） | 写回后重跑做"能跑通 + 语义一致"验证，不过就回滚 |
 | `mpltweak apply <脚本> --write --verify-fast` | **不会** | 只做语法检查（实测：脚本没被执行、也没重出图） |
 | `mpltweak apply <脚本> --write --no-verify` | **不会** | 跳过重跑与语义验证（**写盘后的语法检查仍会做**）：跑不通、布局没落到位都不会被发现，也不会自动回滚 —— 等于关掉唯一的安全网 |
-| `mpltweak apply <脚本> --write --dry-run` | **不会** | 只把参数写出去 |
+| `mpltweak apply <脚本> --write --dry-run` | **会**（**默认档** + 参数里有"原位写不了"的字段时） | 只把参数写出去、**不落盘**；但"到底要不要退块"只能**实测**参数与源码现值是否不同 ⇒ 会**先跑一遍**脚本（`writeback.py:2888` 在 `:2902` 的 dry-run 早退**之前**）。`--verify-fast` / `--no-verify` / `--no-semantic` 下**不跑**；参数里没有这类字段时也不跑 |
 | `mpltweak revert <脚本> [--write]` | **不会** | 纯文件操作 |
 | `mpltweak schema` / `mpltweak doctor` | **不会** | 不碰你的脚本 |
 | `mpltweak mcp`（MCP 服务端） | **会**，每次 `tools/call` 一次 | 每次调用都在**独立子进程**里跑：脚本 `sys.exit` 带不走 server（实测：跑完一个会 `sys.exit(3)` 的脚本后 server 仍能应答 `tools/list`），上一次调用改的全局状态也不会串味 |
@@ -34,14 +34,23 @@
 
 | 类型 | 具体是什么 |
 |---|---|
-| 写文件 | `.tweak_params/<脚本>.json`（参数）、`<脚本>.tweak.bak`（**固定名**备份：**首份优先**，只在不存在时创建、之后的写回**不覆盖**它；默认 `revert` 用它回到最初原件）、`<脚本>.tweak.<pid>.bak`（**每次写回各留一份**的专属副本，保留"最近 5 份 + **最早 1 份**"；`revert --first` 用它）、`<脚本>.revert.bak`（revert 前的留档）、`_verify_state.json`、`<脚本>.apply.lock` |
-| 写在哪儿 | 全部落在**脚本旁**：`<脚本目录>/.tweak_params/`。备份的锚点是**脚本**、不是参数文件 —— `--params other/x.json` 只影响从哪儿读参数，备份**不会**跟着跑到 `other/`，`revert` 也**不需要**再传 `--params`（0.1.8 放在参数文件旁边的旧位置只作为兼容兜底读一次） |
+| 写文件 | `.tweak_params/<脚本>.json`（参数）、`.tweak_params/<stem>.fig<k>.json`（多图会话里每张图一份正式参数；同名 `.lock` 是会话接管标记，launch.py:593、toolbox.py:1232）、`.tweak_params/<stem>.writeback.json`（写回元数据，writeback.py:4151、apply.py:313）、`<脚本>.tweak.bak`（**固定名**备份：**首份优先**，只在不存在时创建、之后的写回**不覆盖**它；默认 `revert` 用它回到最初原件）、`<脚本>.tweak.<pid>.bak`（**每次写回各留一份**的专属副本，保留"最近 5 份 + **最早 1 份**"；`revert --first` 用它）、`<脚本>.revert.bak`（revert 前的留档）、`_verify_state.json`、`<脚本>.apply.lock`（并发写回锁，writeback.py:2237） |
+| 写在哪儿 | **不全是脚本旁**：分**三处** —— 脚本旁 `<脚本目录>/.tweak_params/`、系统临时区 `mpltweak_state_*.json`、用户家目录 `~/.mpltweak/`；逐项见下面「落盘位置（三处）」那张表 |
 | 联网 | **工具本体不联网**（不查版本、不回传，源码里没有任何网络调用）。但你的脚本可能联网 —— 每次执行都是一次真的执行 |
 | 缓存 | Python 会写 `__pycache__/`；matplotlib 可能写字体缓存 |
 | 工作目录 | 脚本执行期间 `cwd` 被切到**脚本所在目录**，结束后恢复，所以脚本里的相对路径照常能找到数据 |
 | 导入路径 | 执行期间脚本所在目录会被插进 `sys.path` —— 插的是**子进程**的，你的进程不受影响 |
 | 全局 rcParams | `describe` / `check` / `apply --write` 的验证都跑在**子进程**里，脚本改过的全局 `rcParams` 不会留到你的进程（库级实测：`collect_isolated` 前后父进程 `font.size` 10.0 → 10.0，`sys.path` / `sys.modules` 也无残留）。只有**开窗**仍是本进程 |
-| 退出码 | 脚本自己调 `sys.exit` / `os._exit` **不会**带走命令：执行在子进程里，工具照样输出结果 |
+| 退出码（**子进程**命令：`describe` / `check` / `apply` 验证重跑 / `mcp`） | 脚本自己调 `sys.exit` / `os._exit` **不会**带走命令：执行在子进程里（`collect_isolated` 起子进程 verify.py:1101、重跑层 writeback.py:4288），工具照样输出结果 |
+| 退出码（**开窗**） | **本进程**跑脚本（launch.py:511），只 `except SystemExit`（launch.py:512-513）⇒ 脚本里的 `sys.exit()` 被吞掉，但 `os._exit()` 会**直接杀掉窗口进程** |
+
+**落盘位置（三处，不是"全部落在脚本旁"）**：
+
+| 落在哪儿 | 具体是什么 | 备注 |
+|---|---|---|
+| **脚本旁** `<脚本目录>/.tweak_params/` | 参数 `.tweak_params/<脚本>.json`、多图参数 `.tweak_params/<stem>.fig<k>.json` 与会话接管标记 `<stem>.fig<k>.json.lock`（launch.py:593、toolbox.py:1232）、写回元数据 `.tweak_params/<stem>.writeback.json`（writeback.py:4151、apply.py:313）、备份 `<脚本>.tweak.bak` / `<脚本>.tweak.<pid>.bak` / `<脚本>.revert.bak`、验证状态中转 `_verify_state.json`、并发锁 `<脚本>.apply.lock`（writeback.py:2237） | 备份的锚点是**脚本**、不是参数文件 —— `--params other/x.json` 只影响从哪儿读参数，备份**不会**跟着跑到 `other/`，`revert` 也**不需要**再传 `--params`（0.1.8 放在参数文件旁边的旧位置只作为兼容兜底读一次） |
+| **系统临时区**（`tempfile` 的默认目录：`/tmp`、`%TEMP%`） | `mpltweak_state_*.json` —— `describe` / `check` 的采集子进程把图状态 dump 到这里，父进程读完即删（`tempfile.mkstemp(prefix='mpltweak_state_')`，verify.py:1088；清理 verify.py:1104-1116） | 与脚本目录无关 ⇒ 采集不会在你的项目里留下中转文件；超时 / 起不来时也走同一条清理 |
+| **用户家目录** `~/.mpltweak/` | `tk_hint_shown` —— "Tk 后端提示只打一次"的戳文件（launch.py:74-81） | `MPLTWEAK_HOME` 可改这个家目录（测试隔离 / 多环境共用一台机器）；每个用户 / 每次安装一个，与具体脚本无关 |
 
 **同一个脚本会被重复执行**：开窗 1 次、每次 `check` / `describe` 1 次、每次 `apply --write` 1 次。
 所以**别把它指向"跑一次会花钱 / 会改数据 / 会发消息"的脚本** ——「不适用场景」讲的就是这类。
@@ -55,17 +64,19 @@
 |---|---|---|
 | `0` | 成功（含"没发现问题""未检测到改动"） | `mpltweak --help`、`doctor`、`schema`、`schema --help`、`describe <脚本>`、`check <干净脚本>`、`check --static`、`launch <脚本> --dry-run` |
 | `1` | **跑通了，但结果需要处理** | `check <有问题的脚本>`（有 problem）、`apply --params <describe --all-figs 的嵌套产物> --write`（`no_axes`：原位改不了、需要退块） |
-| `2` | **输入 / 用法错误**（子命令层） | `describe` / `check` / `revert <不存在的脚本>`（`[xxx] 找不到脚本: …`）、`apply` 没有参数文件或参数文件不合法（`no params: …`）、脚本抛异常或 `sys.exit` 导致**采集失败**、`check --tol inf`、`schema --bogus`、`revert` 还没有可回退的备份 |
-| `3` | **顶层路径**（`mpltweak <脚本>`：不开窗直接跑脚本这条入口） | `mpltweak nosuch.py` → `[launch] 找不到脚本: …`；`mpltweak --bogus` → `[launch] 需要脚本路径，或用 --doctor 做环境自检` |
+| `2` | **跑不起来**（**所有入口同一口径**，0.1.11 方案 A） | 脚本找不到：顶层 `mpltweak nosuch.py`、`launch` / `describe` / `check` / `apply` / `revert <不存在的脚本>` 全部 `[xxx] 找不到脚本: …`；顶层未知参数：`mpltweak --bogus` → `[launch] 需要脚本路径…`；脚本自己报错 / 采集失败；`apply` 没有参数文件或参数文件不合法（`no params: …`）；工具自身异常（`internal_error`）。原表此行的尾部例子：`check --tol inf`、`schema --bogus`、`revert` 还没有可回退的备份 |
+| ~~`3`~~ | **已退役**（0.1.11 方案 A）：常量 `messages.EXIT_SCRIPT` 保留（外部可能 import），但**任何路径都不再返回 3** | 0.1.9 时它背着三件事（顶层找不到脚本 / 顶层脚本报错 / 顶层未知参数），现已全部并入 `2`；子命令早就是 `2` |
 | `4` | **开窗但找不到可用图形后端**（顶层 `launch`） | 无 Qt / 无 tkinter 的环境开窗 → `[launch] 找不到可用的交互后端…`，并提示装 `mpltweak[qt]` 或 `python3-tk`；纯 CLI 命令（describe / check / apply）不受影响 |
 
 两点要记住：**脚本自己的 `sys.exit(N)` 不会成为命令的退出码**（执行在子进程里，工具照常给结论）；
-**"脚本找不到"在顶层是 3、在子命令是 2**（已记进 CHANGELOG 的 CH-6，未统一）。
+**"脚本找不到"、"脚本自己报错"、"顶层未知参数"在全部入口都是 `2`**（0.1.11 方案 A 统一；
+0.1.9 的 `3` 已退役）。口径收敛成一句话：**0 = 没问题/成功；1 = 发现问题（check）；2 = 跑不起来；4 = 没有可用图形后端**。
 这张表只覆盖实测过的情形，没列到的请以 `--help` 为准。
 
 ## 写回之前的可重跑预检（0.1.10）
 
-`apply --write` 默认要**重跑你的脚本**（重跑层 + 语义层：原位路径**正常只跑 1 遍**、取不到目标图状态时回退 2 遍、需要归因时最多 3 遍；
+`apply --write` 默认要**重跑你的脚本**（重跑层 + 语义层：原位路径**正常只跑 1 遍**（参数里有"原位写不了"的字段时会
+**先额外跑 1 遍**判要不要退块，`writeback.py:2888`）、取不到目标图状态时回退 2 遍、需要归因时最多 3 遍；
 要插调整块的路径会**逐个候选插入点重试**，每试一个再跑一遍 —— 逐条口径见
 [verify.md 的「写回会跑几遍脚本」](verify.md#写回会跑几遍脚本)）。于是「跑不通 / 会卡住」
 的脚本总是等到写回时才暴露 —— 现在改成**动手之前先说**：默认会重跑时，`apply --write` 与开窗入口
@@ -83,8 +94,9 @@
 
 * **预检不执行你的脚本**：只有 `ast` 读源码 + `importlib.util.find_spec` 查"包在不在"
   （find_spec 只查规格、**不执行模块体**）。
-* **没风险就一个字都不说**：干净脚本零噪音；`--no-verify` / `--verify-fast` / `--dry-run` 本来就不重跑，
-  也不提示。`--` 后面已经给了参数时不再喊"需要参数"。
+* **没风险就一个字都不说**：干净脚本零噪音；`--no-verify` / `--verify-fast` 本来就不重跑，也不提示；
+  `--dry-run` 也不提示（预检只在真写回时才做，`apply.py:644-647`）—— 但它**仍可能**跑一遍脚本（见上表）。
+  `--` 后面已经给了参数时不再喊"需要参数"。
 * **预检自己出岔子一律放行**：读不了 / 语法错误 / 目录 / 找不到一律当"无风险"，绝不让预检成为新的失败点。
 
 `--json` 顶层字段（与 `files[]` 平级）：`preflight.ok`（bool）与 `preflight.risks[]`，每条含
@@ -130,9 +142,10 @@
   `unknown`）、`next_step`（可直接执行的命令模板）。agent 客户端据此自动分支，不必读中文文案猜。
 * **判不出原因时归 `script_cannot_run` 并在文案里注明"无法确定原因"**，绝不猜成 `tool_bug`
   （会把人吓到）或 `script_needs_args`（会把人带偏去传参数）。
-* **退出码数值语义一个字都没改**（`0` / `1` / `2` / `3` / `4` 的含义与上表一致，0.1.9 已对外
-  文档化，用户 CI 依赖）：只加了文案与 JSON 字段。同为退出码 `2`，现在能一眼看出是脚本侧还是
-  工具侧。
+* **退出码口径（0.1.11 方案 A）**：对外只有 `0` / `1` / `2` / `4`；**`3` 已退役**（常量保留、
+  任何路径都不再产生）。变化只有一处：原先顶层路径返回 `3` 的三类（找不到脚本 / 脚本报错 /
+  未知参数）现在返回 `2` —— **不是软化**（仍是非零失败，不会把错误变成成功），而是把"同一个
+  脚本找不到"在顶层与子命令之间的分歧抹平。同为退出码 `2`，仍能一眼看出是脚本侧还是工具侧。
 
 失败归因只挂在 **apply 写回验证**这条链上；`check` 的失败路径（跑不起来 / 语法错 / 文件不存在）
 仍是原来的 `error_code`，不带归因字段。

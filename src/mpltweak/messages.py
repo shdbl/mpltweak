@@ -27,8 +27,12 @@ _lang = None
 #
 #   0  OK         什么都没发现 / 动作成功
 #   1  PROBLEM    "确实有问题"：check 检出了排版问题（这是唯一该用 1 的场景）
-#   2  USAGE      "跑不起来"：参数非法、文件不存在、脚本报错、工具自身异常
-#   3  SCRIPT     交互命令（launch）找不到要打开的脚本文件
+#   2  USAGE      "跑不起来"：参数非法、**脚本找不到**（所有入口统一）、**脚本自己报错**、
+#                 **顶层未知参数**、工具自身异常 —— 方案 A（0.1.11）把这几类全部归 2
+#   3  SCRIPT     **已退役**（方案 A，0.1.11）：常量保留（外部可能 `from mpltweak.messages
+#                 import EXIT_SCRIPT`），但**任何路径都不再返回 3**。历史上它背着三件事
+#                 （找不到脚本 / 脚本报错 / 顶层未知参数），现已全部并入 2。
+#   4  BACKEND    找不到可用的图形后端（开窗）
 #
 # 为什么把「工具自身异常」也归 2 而不是 1：CI 里 1 代表"要去修图"，
 # 工具自己炸了却报 1，用户会去看图找问题——找不到，因为问题在工具里（CH-6）。
@@ -36,13 +40,15 @@ _lang = None
 # 0.1.10 起：同为 2，输出会把失败**归因**到脚本侧（跑不起来 / 需要参数 / 无头
 # 跑不通需 GUI）还是工具侧（internal_error）分开报 —— 每类各给一句可照抄的
 # 下一步；--json 用 `attribution` 字段区分（agent 可据此自动分支）。
-# **退出码数值语义不变**（0.1.9 已对外文档化，改动会破坏用户 CI）。
+# 方案 A（0.1.11，用户拍板）：对外口径收敛为 **0 / 1 / 2 / 4**；3 退役。
+# 3→2 **不是软化**（仍是非零失败、不会把错误当成功），而是把"同一个脚本找不到"
+# 在顶层与子命令之间的分歧抹平（0.1.9 起子命令早已是 2）。
 # ---------------------------------------------------------------------------
 EXIT_OK = 0
 EXIT_PROBLEM = 1
 EXIT_USAGE = 2
 EXIT_INTERNAL = 2
-EXIT_SCRIPT = 3
+EXIT_SCRIPT = 3   # 已退役（方案 A）：保留常量兼容外部 import；任何路径都不再返回它
 
 
 def detect_lang():
@@ -645,6 +651,17 @@ MESSAGES = {
               'pip install "mpltweak[qt]"',
         'en': 'using the Tk backend (less polished than Qt); for the Qt UI: '
               'pip install "mpltweak[qt]"',
+    },
+    # --- 首次开窗（B 组，0.1.11：每个用户只打一次；新戳 first_open_shown）---
+    # 与 backend_tk_hint 同一范式：launch._first_open_hint 优先取本键，键缺失时退回
+    # launch 内置兜底（文案与这里逐字一致）。en 纯 ASCII、zh/en 都 GBK 可编码。
+    'first_open_hint': {
+        'zh': '[launch] 第一次开窗会等几秒（窗口要现建），不是卡住了；'
+              '之后拖拽/缩放跟在 PPT 里拖图一样跟手。放心拖：关窗之前不会写你的脚本。',
+        'en': '[launch] the first window takes a few seconds to build; it is not '
+              'frozen. After that, dragging and resizing feel like moving shapes '
+              'in a slide editor. Go ahead - nothing touches your script until '
+              'you close the window.',
     },
     # --- launch 关窗后的下一步（无感化①：省掉"记住怎么写回"这一步）---
     # 只在**这次真的存过参数**（用户拖过东西）时打；没拖过零噪音。

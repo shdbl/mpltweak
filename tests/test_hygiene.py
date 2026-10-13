@@ -300,6 +300,168 @@ def test_emit_backend_hint_cases(monkeypatch, tmp_path):
     assert launch._emit_backend_hint('TkAgg', environ={'MPLTWEAK_NO_HINT': '1'},
                                      stderr=sink) is False
     assert lines == []
+
+
+# --- B 组（首次使用体验，0.1.11）：首次开窗安慰提示（与 Tk 提示同一范式，各用各的戳）---
+def test_emit_first_open_hint_cases(monkeypatch, tmp_path):
+    """首次开窗安慰：第一次 True / 第二次 False / dry-run 不落戳 / NO_HINT 静默。
+
+    另钉两条纪律：
+      * 戳文件是**新戳**（``first_open_shown``），与 ``tk_hint_shown`` 不是同一个
+        文件 —— 不许改既有戳的语义；
+      * 消息表里还没有这个键时走 launch 内置兜底：en 纯 ASCII、zh/en 都 GBK 可编码
+        （messages.py 顶部那条约束）。
+    """
+    import mpltweak.launch as launch
+    import mpltweak.messages as _msg
+    lines = []
+
+    class _Sink:
+        def write(self, s):
+            lines.append(s)
+
+    # 文案走 messages 表（键缺失时 launch 有内置兜底，见 _first_open_hint）
+    monkeypatch.setattr(_msg, 'MESSAGES', {
+        'first_open_hint': {'zh': 'FIRST-ZH', 'en': 'FIRST-EN'}})
+
+    env = {'MPLTWEAK_HOME': str(tmp_path)}
+    stamp = os.path.join(str(tmp_path), 'first_open_shown')
+    assert launch._first_open_stamp_path(env) == stamp
+    # 新戳另起名字：两条"只打一次"的提示互不影响（Tk 提示打过了不代表这句打过了）
+    assert launch._first_open_stamp_path(env) != launch._tk_hint_stamp_path(env)
+
+    sink = _Sink()
+    assert launch._emit_first_open_hint(environ=env, stderr=sink) is True
+    assert ''.join(lines) in ('FIRST-ZH\n', 'FIRST-EN\n')
+    assert os.path.exists(stamp)                  # 打过一次就落戳
+
+    lines.clear()
+    assert launch._emit_first_open_hint(environ=env, stderr=sink) is False
+    assert lines == []
+
+    # dry-run 不开窗：不提示、也**不落戳**（下次真开窗还得说）
+    env2 = {'MPLTWEAK_HOME': str(tmp_path / 'h2')}
+    lines.clear()
+    assert launch._emit_first_open_hint(dry_run=True, environ=env2,
+                                        stderr=sink) is False
+    assert lines == []
+    assert not os.path.exists(os.path.join(str(tmp_path / 'h2'), 'first_open_shown'))
+
+    # MPLTWEAK_NO_HINT=1 = "这次别说话"，同样不落戳
+    lines.clear()
+    assert launch._emit_first_open_hint(
+        environ=dict(env2, MPLTWEAK_NO_HINT='1'), stderr=sink) is False
+    assert lines == []
+    assert not os.path.exists(os.path.join(str(tmp_path / 'h2'), 'first_open_shown'))
+
+    # 键缺失 → 内置兜底（消息表由 messages.py 侧补；补之前也不能少一句话、不能崩）
+    monkeypatch.setattr(_msg, 'MESSAGES', {})
+    monkeypatch.setattr(_msg, 'current_lang', lambda: 'en')
+    en = launch._first_open_hint()
+    assert en and all(ord(c) < 128 for c in en), 'en 兜底必须纯 ASCII'
+    monkeypatch.setattr(_msg, 'current_lang', lambda: 'zh')
+    zh = launch._first_open_hint()
+    assert zh and zh != en
+    for s in (zh, en):
+        s.encode('gbk')                           # 控制台编码约束（messages.py 同款）
+
+
+def test_first_open_hint_is_wired_into_main_without_opening_a_window(monkeypatch,
+                                                                     tmp_path):
+    """调用点接线：main() 在**真要建窗口的那一刻**打这句安慰，dry-run 不打。
+
+    做法：让 main 以为"有一张可交互的图"（``plt.get_fignums`` / ``matplotlib.
+    get_backend`` 换成桩），再把 ``toolbox.gaitu``（main 建窗时调它）换成"记一笔就
+    抛错"的桩 —— 流程停在建窗口之前，所以**全程不开窗**（本机随时可跑；必须真开窗
+    的探针在 tests/test_real_window.py，那类要按约定挑时间跑）。另加一道保险：
+    ``plt.switch_backend`` 变空操作，万一走到"把已有图重新挂回 QtAgg"那一支也不会
+    真拉起 Qt。
+
+    这条用例同时钉住"**没开成窗的路径不许消耗这个戳**"：换成"不留图"的脚本时
+    （main 在"没有可交互的图"处就返回 rc=2），戳**不该**被写出来 —— 那正是 2026-10-13
+    实测踩到的坑（调用点原先放在后端探测之后，test_launch.py 的顶层 CLI 子进程用例
+    会走到那里，跑一次 pytest 就把用户的一次性提示吃掉了）。
+    """
+    import matplotlib
+    import matplotlib.pyplot as plt
+    import mpltweak.launch as launch
+    import mpltweak.messages as _msg
+    import mpltweak.toolbox as _tb
+    lines = []
+
+    class _Sink:
+        def write(self, s):
+            lines.append(s)
+
+    class _FakeCanvas:
+        @staticmethod
+        def get_width_height():
+            return (640, 480)
+
+        @staticmethod
+        def mpl_connect(*a, **k):
+            return 0
+
+    class _FakeFig:
+        axes = ()
+        canvas = _FakeCanvas()
+
+    def _fake_figure(*a, **k):
+        return _FakeFig()                             # 不真建图，更不真建窗
+
+    def _stop_before_window(*a, **k):
+        raise RuntimeError('STOP-BEFORE-WINDOW')      # 建窗口之前就停，绝不开窗
+
+    monkeypatch.setattr(_msg, 'MESSAGES', {
+        'first_open_hint': {'zh': 'FIRST-ZH', 'en': 'FIRST-EN'}})
+    monkeypatch.setattr(launch, '_detect_backend', lambda: ('QtAgg', None))
+    monkeypatch.setattr(plt, 'get_fignums', lambda: [])   # ① 先当作"没有图"
+    monkeypatch.setattr(plt, 'figure', _fake_figure)
+    monkeypatch.setattr(matplotlib, 'get_backend', lambda: 'QtAgg')
+    monkeypatch.setattr(plt, 'switch_backend', lambda *a, **k: None)
+    monkeypatch.setattr(_tb, 'gaitu', _stop_before_window)
+    monkeypatch.setattr(sys, 'stderr', _Sink())
+    monkeypatch.setattr(sys, 'argv', list(sys.argv))
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    monkeypatch.setenv('MPLTWEAK_HOME', str(tmp_path))
+    monkeypatch.delenv('MPLTWEAK_NO_HINT', raising=False)
+    plt.close('all')                              # 前置清场：不留别人开着的图
+
+    # ① 没开成窗的路径（脚本不留图）：不打这句、也**不许落戳**
+    nofig = tmp_path / 'no_fig.py'
+    nofig.write_text('# 故意不留任何图\n', encoding='utf-8')
+    assert launch.main([str(nofig)]) == 2         # 走到"没有可交互的图"
+    assert 'FIRST-' not in ''.join(lines)
+    assert not (tmp_path / 'first_open_shown').exists()
+
+    # ② 真要建窗口（图有、后端可交互）：建窗之前打一次 + 落戳
+    monkeypatch.setattr(plt, 'get_fignums', lambda: [0])
+    script = tmp_path / 'has_fig.py'
+    script.write_text('# 图由 get_fignums 桩提供，脚本本身不用真的画图\n',
+                      encoding='utf-8')
+    _cwd = os.getcwd()
+    try:
+        with pytest.raises(RuntimeError):         # 被 gaitu 桩拦在建窗之前
+            launch.main([str(script)])
+        assert 'FIRST-' in ''.join(lines)
+        assert (tmp_path / 'first_open_shown').exists()
+
+        lines.clear()                             # 第二次（同一个家目录）不再念
+        with pytest.raises(RuntimeError):
+            launch.main([str(script)])
+        assert 'FIRST-' not in ''.join(lines)
+
+        lines.clear()                             # dry-run 不开窗：不打、不落戳
+        monkeypatch.setenv('MPLTWEAK_HOME', str(tmp_path / 'dry'))
+        with pytest.raises(RuntimeError):
+            launch.main([str(script), '--dry-run'])
+        assert 'FIRST-' not in ''.join(lines)
+        assert not (tmp_path / 'dry' / 'first_open_shown').exists()
+    finally:
+        os.chdir(_cwd)        # main 在异常路径上不会自己 chdir 回去（它停在建窗之前）
+        plt.close('all')
+
+
 # --------------------------------------------------------------------------
 # 第 3 条棘轮：测试套件自己也不许在 GBK 控制台上把套件打挂（T13）
 # --------------------------------------------------------------------------

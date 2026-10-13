@@ -3615,6 +3615,78 @@ def _grid_element(container, nrows, ncols, squeeze, k):
     return '%s[%d, %d]' % (container, k // ncols, k % ncols)
 
 
+def _fig_receiver_names(tree):
+    """t10：脚本里**可证是 Figure** 的变量名（`fig = plt.figure(...)`、`fig, axs = subplots(...)` 的 fig）。
+
+    只用于判 ``X.subplots(...)`` 的形态：Figure **方法**直接返回轴数组，而 pyplot 的
+    ``plt.subplots(...)`` 返回 ``(fig, axs)`` 元组 —— 后者包在一个名字里时得取 ``[1]``。
+    认不出接收者就退回旧口径（按元组），宁可不认也不写错。
+    """
+    out = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and node.targets):
+            continue
+        attr = getattr(node.value.func, 'attr', None)
+        if attr not in FIG_FACTORIES:
+            continue
+        names = list(_iter_assign_names(node.targets[0]))
+        if not names:
+            continue
+        if attr == 'figure':
+            out.update(names)
+        elif len(names) >= 2:
+            out.add(names[0])          # (figure, axes...) 的第一个才是 figure
+    return out
+
+
+def _ravel_receiver(value):
+    """``<name>.ravel()`` / ``<name>.flatten()``（调用）或 ``<name>.flat``（属性）→ name。"""
+    if isinstance(value, ast.Call):
+        if value.args or value.keywords:
+            return None
+        value = value.func
+    if isinstance(value, ast.Attribute) and value.attr in ('ravel', 'flatten', 'flat') \
+            and isinstance(value.value, ast.Name):
+        return value.value.id
+    return None
+
+
+def _unpack_axis_names(tree, container, total):
+    """t10：``a, b, c, d = <container>.ravel()|.flat|.flatten()`` → [(名字, 绑定行号), ...]。
+
+    容器是**轴数组**时的第二种名字来源（`fig, axs = subplots(...)` 的 axs /
+    `axs = fig.subplots(...)` 的 axs）：用户常把轴解包成局部名再用，块里用这些名字
+    定位目标最直接。行主序 ⇒ 第 k 个名字就是第 k 条轴（与 `_grid_element` 的
+    k = r*ncols + c 同序）。
+
+    返回 None ⇒ 没这种解包 / 名字数不够 / 解包里混了非名字 / 有重名 / 某个名字在同一
+    作用域里被直接赋过多次（T84 同类坑：名字指哪个对象证不出）⇒ 调用方退回容器元素
+    表达式（`axs[r, c]`，仍然正确），**不写错也不自造识别**。
+    """
+    if not (isinstance(container, str) and container.isidentifier()):
+        return None
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+            continue
+        tgt = node.targets[0]
+        if not isinstance(tgt, (ast.Tuple, ast.List)):
+            continue
+        if _ravel_receiver(node.value) != container:
+            continue
+        names = [e.id for e in tgt.elts if isinstance(e, ast.Name)]
+        if len(names) != len(tgt.elts) or len(names) < total:
+            return None                # 解包里混了非名字 / 名字数不够
+        if len(set(names)) != len(names):
+            return None                # 重名解包 ⇒ 谁是谁证不出
+        scope0 = _node_scope(tree, node.lineno)
+        for nm in names[:total]:
+            if len(_direct_assign_linenos(scope0, nm)) != 1:
+                return None            # 该名字被赋过多次 / 不在直接语句里
+        return [(nm, node.lineno) for nm in names[:total]]
+    return None
+
+
 def _axes_binding_entries(tree, fig_index, fig_var=None):
     """目标图内**按源码序**的每一次建轴 → (表达式, 根名字, 绑定行号, 是否匿名)；匿名 → None。
 
@@ -3659,6 +3731,7 @@ def _axes_binding_entries(tree, fig_index, fig_var=None):
         suspect = ln if suspect is None else min(suspect, ln)
     found.sort(key=lambda x: (x[0], x[1]))
     entries, sigs = [], set()
+    _fig_names = _fig_receiver_names(tree)      # t10：判 `X.subplots(...)` 的形态
     for _ln, _co, attr, node in found:
         if attr == 'subplots':
             shape = _grid_size(node)
@@ -3669,14 +3742,34 @@ def _axes_binding_entries(tree, fig_index, fig_var=None):
             if len(names) >= 2:
                 container = names[1]
             elif names:
-                container = '%s[1]' % names[0]     # 单名接的是 (fig, axs) 元组
+                # 单名有两种来源（t10）：
+                #   `t = plt.subplots(...)`   → pyplot 返回 (fig, axs) 元组，轴数组是 t[1]
+                #   `axs = fig.subplots(...)` → Figure **方法**直接返回轴数组，就是 axs 本身
+                # 旧代码一律按元组（`name[1]`），于是 `axs = fig.subplots(2,2)` +
+                # `a, b, c, d = axs.ravel()` 的元素表达式成了 `axs[1][r, c]`、根名字也不是
+                # 纯名字 ⇒ 目标全证不出、pos 被 fail-closed 拒（t10 复现）。
+                # 只在**可证接收者是 Figure** 时才换成数组口径，认不出就保持旧行为。
+                recv = node.func.value
+                if isinstance(recv, ast.Name) and recv.id in _fig_names:
+                    container = names[0]
+                else:
+                    container = '%s[1]' % names[0]     # 单名接的是 (fig, axs) 元组
             else:
                 container = None
             nr, nc = shape
+            # t10：优先用 `a, b, c, d = <container>.ravel()` 解包出的**局部名**定位
+            # （证不出就退回容器元素表达式 `axs[r, c]`，两者都正确）。
+            unpack = (_unpack_axis_names(tree, container, nr * nc)
+                      if container is not None else None)
             for k in range(nr * nc):
-                entries.append(None if container is None
-                               else (_grid_element(container, nr, nc, sq, k),
-                                     container, _ln, False))
+                if container is None:
+                    entries.append(None)
+                elif unpack is not None:
+                    nm, bl = unpack[k]
+                    entries.append((nm, nm, bl, False))
+                else:
+                    entries.append((_grid_element(container, nr, nc, sq, k),
+                                    container, _ln, False))
             continue
         names = _assign_names_of(tree, node)
         if attr == 'colorbar':

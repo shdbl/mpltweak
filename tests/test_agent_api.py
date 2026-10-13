@@ -728,8 +728,16 @@ def main():
         check('Agg re-run check passed' not in out,
               '快速档不再打印英文的"Agg re-run check passed"', out[-200:])
 
-        rc, out, err = run('apply', s13, '--write', '--no-verify', '--verify-fast')
+        rc, out, err = run('apply', s13, '--write', '--no-verify', '--verify-fast',
+                           env={'MPLTWEAK_LANG': 'zh'})
         check(rc == 2, '--no-verify 与 --verify-fast 互斥 → rc=2', rc)
+        # A1（t4）：互斥报错也必须把**后果**说全 —— 与 apply.py 用法行（:13）和
+        # `apply --help`（:530-540）同款口径：只说"二选一"用户不知道这两档分别
+        # 丢了哪层安全网。断言钉在 zh 文案上（界面上方那句是硬编码中文，不受
+        # MPLTWEAK_LANG 影响；这里仍显式钉 zh，免得将来本地化后判据漂移）。
+        check('不会自动回滚' in err and '唯一的' in err and '不重跑脚本' in err,
+              '互斥报错补齐后果口径（不会自动回滚 / 唯一的自动安全网 / 不重跑脚本）',
+              err[:240])
         # --json 下互斥错误也必须是可解析 JSON（独立审阅 F4：原先 stdout 是空的）
         rc, out, err = run('apply', s13, '--write', '--no-verify',
                            '--verify-fast', '--json')
@@ -1270,7 +1278,7 @@ print("RESULT " + "|".join([
         ) % os.path.join(ROOT, 'src')
         _r4 = subprocess.run([PY, '-c', _code21], capture_output=True)
         _o4, _e4 = _dec(_r4.stdout), _dec(_r4.stderr)
-        check(_r4.returncode == 2, '④工具自身异常 → 退出码仍是 2（数值语义不变）',
+        check(_r4.returncode == 2, '④工具自身异常 → 退出码仍是 2（方案 A 统一后不变）',
               _r4.returncode)
         try:
             _j4 = json.loads(_o4)
@@ -1293,8 +1301,18 @@ print("RESULT " + "|".join([
               _ut[_ut.find('工具侧'):][:120] if '工具侧' in _ut else _ut[:120])
         check('tool_bug' in _ut and 'script_cannot_run' in _ut,
               '⑤cli 帮助列出 attribution 的取值（agent 可据此分支）')
-        check('0.1.9' in _ut and '数值语义不变' in _ut,
-              '⑤cli 帮助仍声明退出码数值语义不变（CI 依赖）')
+        # t58（方案 A）：cli 帮助改成 0 / 1 / 2 / 4 且写明 3 已退役 —— 判据从
+        # "0.1.9 的旧表述还在"改为"新契约三件都写全"（口径统一，不是软化：
+        # 1 = 发现问题、2 = 跑不起来、非零仍表示失败）。
+        # F2（t4）：版本标注 = **实际随哪个版本发布** —— 这批退出码改动是在 0.1.10
+        # 发布之后做的（仍在工作区未提交），所以帮助里必须写 0.1.11（先前误写 0.1.10）。
+        check('0.1.11' in _ut and '0 / 1 / 2 / 4' in _ut,
+              '⑤cli 帮助声明统一后的退出码集合 0 / 1 / 2 / 4（版本标注=0.1.11）',
+              _ut[_ut.find('退出码'):][:140] if '退出码' in _ut else _ut[:140])
+        check('已退役' in _ut and '3' in _ut,
+              '⑤cli 帮助注明 0.1.9 的退出码 3 已退役、不再由任何路径产生')
+        check('1 = 发现问题' in _ut and '2 = 跑不起来' in _ut,
+              '⑤cli 帮助保留 1 / 2 的语义（CI 依赖：非零仍是失败）')
 
         # ---- ⑥ 英文分支（文案走 messages.py，中英各一份）----
         _s6 = _mk21('attr_needs_args_en.py',

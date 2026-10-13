@@ -25,6 +25,7 @@
 import contextlib
 import io
 import json
+import re
 import os
 import shutil
 import sys
@@ -236,6 +237,140 @@ def _msgs_next_step(lang):
                    cmd='mpltweak apply fig1.py --write')
 
 
+# ---------------------------------------------------------------------------
+# t58（方案 A，0.1.11）：**退出码矩阵** —— 0 / 1 / 2 / 4；**3 已退役**
+#
+# 口径（用户 2026-10-13 拍板）：
+#   0 = 没问题 / 成功；1 = 发现问题（check）；2 = 跑不起来；4 = 没有可用图形后端。
+#   2 覆盖：脚本找不到 / 脚本自己报错 / 顶层未知参数 / 参数非法 / 工具自身异常。
+#
+# 这里**真的起子进程跑 CLI**（`python -m mpltweak ...`）——不用 mock：口径是"用户 CI
+# 会看到的那个数字"，只有真调用才算证据。矩阵覆盖 6 个入口 × 各场景。
+#
+# 例外（**不在本用例的豁免之外，如实登记**）：`src/mpltweak/verify.py` 内部子进程
+# 契约仍返回 3（它由 writeback 以子进程方式消费、不是用户可见 CLI 入口），改它不在
+# 本任务 inScope；本用例只断言**用户可见入口**（cli/launch/apply/describe/check/
+# revert/mcp_server）里没有任何 `return 3`、也没有任何地方 return `EXIT_SCRIPT`。
+# ---------------------------------------------------------------------------
+
+def _cli_env():
+    env = dict(os.environ)
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src')
+    env['PYTHONPATH'] = src
+    env['MPLBACKEND'] = 'Agg'
+    env['MPLTWEAK_LANG'] = 'zh'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    return env
+
+
+def _write_fixture(name, text):
+    p = os.path.join(_TMPROOT, name)
+    with open(p, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+    return p
+
+
+def _run_cli(argv):
+    """真跑一次 CLI，返回 (rc, 第一条非空 stderr/stdout 行)。"""
+    import subprocess
+    r = subprocess.run([sys.executable, '-m', 'mpltweak'] + list(argv),
+                       capture_output=True, text=True, encoding='utf-8',
+                       errors='replace', env=_cli_env(),
+                       cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       timeout=300)
+    first = ''
+    for line in ((r.stderr or '') + '\n' + (r.stdout or '')).split('\n'):
+        if line.strip():
+            first = line.strip()
+            break
+    return r.returncode, first
+
+
+def run_exit_matrix():
+    ok_script = _write_fixture('exit_ok.py',
+                               'import matplotlib\nmatplotlib.use("Agg")\n'
+                               'import matplotlib.pyplot as plt\n'
+                               'fig = plt.figure(figsize=(4, 3))\n'
+                               'ax = fig.add_axes([0.1, 0.1, 0.5, 0.5])\n'
+                               'ax.plot([0, 1], [0, 1])\n')
+    raise_script = _write_fixture('exit_raise.py', 'raise RuntimeError("boom")\n')
+    nofig_script = _write_fixture('exit_nofig.py', 'x = 1\n')
+    overlap_script = _write_fixture('exit_overlap.py',
+                                    'import matplotlib\nmatplotlib.use("Agg")\n'
+                                    'import matplotlib.pyplot as plt\n'
+                                    'fig = plt.figure(figsize=(4, 3))\n'
+                                    'a = fig.add_axes([0.2, 0.2, 0.4, 0.4])\n'
+                                    'a.plot([0, 1], [0, 1])\n'
+                                    'b = fig.add_axes([0.2, 0.2, 0.4, 0.4])\n'
+                                    'b.plot([0, 1], [1, 0])\n')
+    missing = os.path.join(_TMPROOT, 'exit_nope.py')
+    if os.path.exists(missing):
+        os.remove(missing)
+    # `apply <存在但没参数>` 必须用一个**没被别的用例碰过**的脚本（launch --dry-run
+    # 会顺手落参数文件，跑过就变成"有参数"了）
+    bare_script = _write_fixture('exit_bare.py',
+                                 'import matplotlib\nmatplotlib.use("Agg")\n'
+                                 'import matplotlib.pyplot as plt\n'
+                                 'fig = plt.figure(figsize=(4, 3))\n'
+                                 'ax = fig.add_axes([0.1, 0.1, 0.5, 0.5])\n')
+    for f in (bare_script,):
+        b = os.path.join(os.path.dirname(f), '.tweak_params',
+                         os.path.splitext(os.path.basename(f))[0] + '.json')
+        if os.path.exists(b):
+            os.remove(b)
+
+    cases = [
+        ('顶层 · 脚本找不到', [missing], 2, '找不到脚本', None),
+        ('顶层 · 脚本自己报错', [raise_script], 2, None, None),
+        ('顶层 · 脚本没图', [nofig_script], 2, None, None),
+        ('顶层 · 未知参数', ['--bogus'], 2, None, None),
+        ('launch · 脚本找不到', ['launch', missing], 2, '找不到脚本', None),
+        ('launch · 脚本自己报错', ['launch', raise_script], 2, None, None),
+        ('describe · 脚本找不到', ['describe', missing], 2, '找不到脚本', None),
+        ('describe · 脚本自己报错', ['describe', raise_script], 2, None, None),
+        ('describe · 正常脚本', ['describe', ok_script], 0, None, None),
+        ('check · 脚本找不到', ['check', missing], 2, '找不到脚本', None),
+        ('check · 脚本自己报错', ['check', raise_script], 2, None, None),
+        ('check · 检出排版问题', ['check', overlap_script], 1, None, None),
+        ('check · 正常脚本', ['check', ok_script], 0, None, None),
+        ('apply · 脚本找不到', ['apply', missing], 2, '找不到脚本', 'no params'),
+        ('apply · 存在但没参数文件', ['apply', bare_script], 2, 'no params', None),
+        ('apply · 脚本自己报错（无参数文件）', ['apply', raise_script], 2, None, None),
+        ('revert · 脚本找不到', ['revert', missing], 2, '找不到脚本', None),
+        ('revert · 存在但没备份', ['revert', bare_script], 2, None, None),
+        ('doctor', ['doctor'], 0, None, None),
+    ]
+    for label, argv, want, must, must_not in cases:
+        rc, first = _run_cli(argv)
+        detail = 'rc=%s（期望 %s）| 首行: %s' % (rc, want, _gbk_safe(first)[:90])
+        ok = (rc == want)
+        if ok and must is not None:
+            ok = must in first
+            if not ok:
+                detail += '（首行必须含 %r）' % must
+        if ok and must_not is not None:
+            ok = must_not not in first
+            if not ok:
+                detail += '（首行不许含 %r）' % must_not
+        check('退出码矩阵：%s' % label, ok, detail)
+
+    # 静态面：用户可见入口里不许再出现 `return 3`；也不许再 return EXIT_SCRIPT
+    src_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src', 'mpltweak')
+    entries = ['cli.py', 'launch.py', 'apply.py', 'describe.py', 'check.py', 'revert.py',
+               'mcp_server.py', 'schema.py', 'params.py']
+    bad = []
+    for name in entries:
+        p = os.path.join(src_dir, name)
+        if not os.path.exists(p):
+            continue
+        text = io.open(p, encoding='utf-8').read()
+        for i, line in enumerate(text.split('\n'), 1):
+            if re.match(r'\s*return\s+3\b', line) or re.match(r'\s*return\s+\.?EXIT_SCRIPT\b', line) \
+                    or re.match(r'\s*return\s+_?m(sg)?\.EXIT_SCRIPT\b', line):
+                bad.append('%s:%d' % (name, i))
+    check('退出码矩阵：用户可见入口无 `return 3`（3 已退役）', not bad, ','.join(bad) or '干净')
+
+
 def main():
     os.makedirs(_TMPROOT, exist_ok=True)
     print('launch._apply_saved 顶层非对象 JSON 守卫回归（0.1.10）')
@@ -243,6 +378,9 @@ def main():
     print()
     print('t44 无感化①：关窗后那条"可直接复制"的写回命令（纯函数级，不建窗）')
     run_next_step()
+    print()
+    print('t58 退出码矩阵（方案 A：0 / 1 / 2 / 4；3 已退役）—— 真起子进程跑 CLI')
+    run_exit_matrix()
     shutil.rmtree(_TMPROOT, ignore_errors=True)
     print()
     if _fails:

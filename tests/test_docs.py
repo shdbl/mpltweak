@@ -10,13 +10,28 @@
 * 章节**编号 / 改名 / 移动都会改变锚点**（`## 它解决什么问题` → `## 1. 它解决什么问题`
   ⇒ 锚点 `#它解决什么问题` → `#1-它解决什么问题`）。仓库此前对这一层**零守卫**。
 
-本套件检查四类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
+本套件检查五类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
 ================================================================================
 ① **文件内锚点**：`](#slug)` 必须命中**同文件**某个标题的 slug；
 ② **相对链接**：`docs/x.md` / `../README.md` / `x.md#slug` 的**目标文件必须存在**；带 `#slug`
    的还要在**目标文件**里存在该 slug（跨文档锚点也管）；
 ③ **相对图片**：`![](相对路径)` 必须存在；`http(s)://` 一律跳过，**不发任何网络请求**；
-④ **外部链接**：`http(s)://` 只做**格式**检查（scheme + host 形如域名），同样不发请求。
+④ **外部链接**：`http(s)://` 只做**格式**检查（scheme + host 形如域名），同样不发请求；
+⑤ **自仓 URL**（0.1.11 扩展，见下）：`https://github.com/<owner>/<repo>/blob|tree/<默认分支>/<path>`
+   **解析回仓库内相对路径**，再按 ② 同款口径查"文件/目录存在 + 跨文档锚点存在"。
+
+⑤ 为什么必须有（**真实口径漏洞，不是假想**）
+==========================================
+两份 README 引 `docs/*.md` 用的**不是相对链接**，而是**绝对自仓 URL**（如
+`https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md`）—— 全文各 30 余条。
+旧口径下这些链接落到 ④，**只查格式**（`github.com` 有域名、格式永远合法）⇒
+**`docs/` 里任何一份被改名/删除，没有任何用例会变红**，而 README 是用户第一入口。
+⑤ 把这类 URL 映射回仓库路径后按 ② 查，缺口才真正补上。口径上"**宁可少判也不要误报**"：
+* 只认 `owner/repo` 与 `pyproject.toml` 的 `Homepage` **完全一致**的自仓 URL；外部仓库 → 交给 ④；
+* 只认**默认分支 `main`**；README 里引的证据分支（`blob/evidence-0.1.10/…`）本地不存在该分支，
+  硬查必然**误报** ⇒ 一律跳过；
+* `tree/<dir>` 查目录、`blob/<file>` 查文件（有 `isdir` 探针时）；锚点只在目标是**已扫描的 `.md`**
+  时查（与 ② 同款：目标不在扫描集里就不硬判）。
 
 slug 算法必须**自证**，不许靠约定
 ================================
@@ -45,8 +60,10 @@ teeth（必须能咬人）
 ==================
 对**合成 markdown 字符串**注入已知错误 ⇒ 检查器**必须报出**：断锚点 / 不存在的相对链接 /
 不存在的图片 / 跨文档断锚点 / 坏外链 / 被引用的歧义标题（R1）/ 新增歧义标题（R2）/
-"R1 与 R2 同时命中时 R1 先报"。再加两条**反向验证**（把判据弄坏就必须变红）：
+"R1 与 R2 同时命中时 R1 先报"。⑤ 另有两条**误报守卫**（宁可不判，也不许误报）：
+别的分支的自仓 URL、别人的仓库 URL 都**必须不报**。再加两条**反向验证**（把判据弄坏就必须变红）：
 把 `slug()` 换成坏实现 ⇒ 真仓库的断锚点数 > 0；把 `AMBIG_BASELINE` 清空 ⇒ R2 必须报出全部 34 处。
+⑤ 的反向验证在 `run_real` 的"README 覆盖钉"（README 若被移出扫描面或链接不再被解析 ⇒ 直接红）。
 
 口径（仍需人工判断的边界，写清不藏）
 ==================================
@@ -171,6 +188,57 @@ HTTP_RE = re.compile(r'^https?://')
 HOST_OK_RE = re.compile(r'^https?://[^\s/]+\.[^\s/]+')
 SCHEME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9+.\-]*:')
 
+# ---- ⑤ 自仓 URL：README 引 docs/ 用的就是这种写法（旧口径只查格式 ⇒ 等于没查）----
+DEFAULT_BRANCH = 'main'
+SELF_REPO_RE = re.compile(
+    r'^https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+)/'
+    r'(?P<kind>blob|tree)/(?P<branch>[^/\s]+)/(?P<path>[^#?\s]+)')
+README_DOCS = ('README.md', 'README.en.md')
+
+
+def _self_repo_slug(root=ROOT):
+    """从 `pyproject.toml` 的 `[project.urls] Homepage` 读 (owner, repo)；读不到 → None。
+
+    刻意**不硬编码** owner/repo：仓库改名 / fork 后自仓 URL 的判据要跟着走，而不是悄悄失效。
+    零网络、零 git 调用（只读一个本地文件）。
+    """
+    try:
+        text = io.open(os.path.join(root, 'pyproject.toml'), encoding='utf-8').read()
+    except (OSError, IOError):
+        return None
+    m = re.search(r'^Homepage\s*=\s*"https://github\.com/([^/"]+)/([^/"]+)"', text, re.M)
+    return (m.group(1), m.group(2)) if m else None
+
+
+SELF_REPO = _self_repo_slug()
+
+
+def _self_repo_target(tgt, self_repo=None):
+    """自仓 GitHub URL → `(仓库相对路径, 是否目录链接, 锚点)`；**非自仓 / 非默认分支 → None**。
+
+    返回 None 的那些会落到 ④（只查格式）——这是刻意的"宁可少判也不要误报"：
+    外部仓库、以及 `blob/evidence-0.1.10/…` 这类**别的分支**（本地根本没有那个分支）都不硬查。
+    """
+    slug = SELF_REPO if self_repo is None else self_repo
+    if not slug:
+        return None
+    m = SELF_REPO_RE.match(tgt)
+    if not m:
+        return None
+    if (m.group('owner').lower(), m.group('repo').lower()) != (slug[0].lower(), slug[1].lower()):
+        return None
+    if m.group('branch') != DEFAULT_BRANCH:
+        return None
+    path = urllib.parse.unquote(m.group('path')).rstrip('/')
+    if not path:
+        return None
+    frag = ''
+    q = tgt.find('#')
+    if q >= 0:
+        frag = urllib.parse.unquote(tgt[q + 1:].split('?')[0])
+    return path, m.group('kind') == 'tree', frag
+
+
 # 歧义字符：在 slug 里"是否被剔除"因渲染器而异的那些（t32 的 `·` 就是实例）
 AMBIG_CHARS = {
     '\u00b7': 'MIDDLE DOT(U+00B7)',
@@ -230,18 +298,25 @@ def headings(text, skip_fences=True):
 
 
 # ---------------------------------------------------------------- 核心分析器
-def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None):
+def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None,
+            self_repo=None, isdir=None):
     """纯函数核心（teeth 直接在合成内容上调用它）。
 
-    files   : {relpath: markdown 文本}（只含 .md）
-    exists  : callable(relpath) -> bool（相对仓库根的路径是否存在；图片/其它文件都走它）
-    baseline: R2 冻结基线 {(relpath, 标题文本)}；None → 用模块级 AMBIG_BASELINE
-    返回 dict(kind -> [issue 描述])，kind ∈ anchor / rel / img / ext /
+    files    : {relpath: markdown 文本}（只含 .md）
+    exists   : callable(relpath) -> bool（相对仓库根的路径是否存在；图片/其它文件都走它）
+    baseline : R2 冻结基线 {(relpath, 标题文本)}；None → 用模块级 AMBIG_BASELINE
+    self_repo: (owner, repo)；None → 用模块级 SELF_REPO（从 pyproject.toml 读出）
+    isdir    : callable(relpath) -> bool；只给 ⑤ 的 `tree/` 链接判"是不是真目录"，
+               为 None 时退化成 exists()（宁可少判：不硬判类型）
+    返回 dict(kind -> [issue 描述])，kind ∈ anchor / rel / img / ext / selflink /
                                         ambig_linked(R1) / ambig_new(R2) / baseline_stale
+    另有 res['stats']['checkable'] = {relpath: 该文件里**真正被解析成仓库内路径**的链接数}
+    （② + ⑤ 之和）—— run_real 用它钉"README 的链接确实在被校验"，防止扫描面悄悄缩水。
     """
     base = AMBIG_BASELINE if baseline is None else baseline
-    res = {k: [] for k in ('anchor', 'rel', 'img', 'ext', 'ambig_linked', 'ambig_new',
-                           'baseline_stale')}
+    res = {k: [] for k in ('anchor', 'rel', 'img', 'ext', 'selflink', 'ambig_linked',
+                           'ambig_new', 'baseline_stale')}
+    res['stats'] = {'checkable': {}}
     heads = {rel: [(ln, t, slug_fn(t)) for ln, t in headings(text, skip_fences)]
              for rel, text in files.items()}
     slug_sets = {rel: {s for _ln, _t, s in hs} for rel, hs in heads.items()}
@@ -261,7 +336,30 @@ def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None):
                         res['anchor'].append('%s  文件内锚点 `%s` 在本文件找不到对应标题（%s）'
                                              % (where, tgt, label))
                 elif HTTP_RE.match(tgt):
-                    if not HOST_OK_RE.match(tgt) or ' ' in tgt:
+                    st = _self_repo_target(tgt, self_repo) if not is_img else None
+                    if st is not None:
+                        # ⑤ 自仓 URL → 按 ② 的口径查（README 引 docs/ 走的就是这条）
+                        path, is_tree, frag = st
+                        res['stats']['checkable'][rel] = \
+                            res['stats']['checkable'].get(rel, 0) + 1
+                        if is_tree:
+                            if not (isdir(path) if isdir else exists(path)):
+                                res['selflink'].append(
+                                    '%s  自仓目录链接目标不存在 `%s`（%s）' % (where, tgt, label))
+                        elif not exists(path):
+                            res['selflink'].append(
+                                '%s  自仓文件链接目标不存在 `%s`（%s）' % (where, tgt, label))
+                        elif isdir and isdir(path):
+                            res['selflink'].append(
+                                '%s  自仓链接用的是 `blob/` 但目标是目录（GitHub 上 404）`%s`（%s）'
+                                % (where, tgt, label))
+                        elif frag and path.endswith('.md') and path in files:
+                            linked.add((os.path.basename(path), frag))
+                            if frag not in slug_sets[path]:
+                                res['anchor'].append(
+                                    '%s  自仓 URL 锚点 `%s` 在 `%s` 里找不到对应标题（%s）'
+                                    % (where, tgt, path, label))
+                    elif not HOST_OK_RE.match(tgt) or ' ' in tgt:
                         res['ext'].append('%s  外部链接格式可疑 `%s`（%s）' % (where, tgt, label))
                 elif SCHEME_RE.match(tgt):
                     continue                     # mailto: 等其它协议，跳过
@@ -272,6 +370,9 @@ def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None):
                         if path else rel
                     target = target.replace('\\', '/')
                     kind_long = '相对图片' if is_img else '相对链接'
+                    if not is_img:
+                        res['stats']['checkable'][rel] = \
+                            res['stats']['checkable'].get(rel, 0) + 1
                     if not exists(target):
                         res['img' if is_img else 'rel'].append(
                             '%s  %s目标不存在 `%s`（%s）' % (where, kind_long, tgt, label))
@@ -361,15 +462,20 @@ def slug_selfproof():
 def run_real():
     files = load_files()
     exists = lambda p: os.path.exists(os.path.join(ROOT, p))          # noqa: E731
-    res = analyze(files, exists)
+    isdir = lambda p: os.path.isdir(os.path.join(ROOT, p))            # noqa: E731
+    res = analyze(files, exists, isdir=isdir)
     n_heads = sum(len(headings(t)) for t in files.values())
     _p('---- 真仓库：%d 个 *.md / %d 个标题 ----' % (len(files), n_heads))
     _p('（② 的反验即"下列锚点必须 0 处解析失败"；失败清单会逐条打印）')
+    _p('（⑤ 自仓 URL 判据：owner/repo = %s，默认分支 = %s；'
+       '读不到 pyproject.toml 时该项自动跳过）'
+       % ('%s/%s' % SELF_REPO if SELF_REPO else '（未读到）', DEFAULT_BRANCH))
     checks = [
         ('anchor', '① 文件内锚点：全部命中同文件标题'),
         ('rel', '② 相对链接：目标文件全部存在'),
         ('img', '③ 相对图片：全部存在（http(s) 一律跳过、零网络）'),
         ('ext', '④ 外部链接：格式全部合法（不查可达性）'),
+        ('selflink', '⑤ 自仓 URL：blob/tree 目标全部存在（只认自仓 + main 分支）'),
         ('ambig_linked', 'R1 被链接引用的标题：无歧义字符（零容忍）'),
         ('ambig_new', 'R2 新增歧义标题：无（基线之外的都算新增）'),
     ]
@@ -378,6 +484,16 @@ def run_real():
         check('%s —— 实得 %d 处' % (label, len(items)), not items,
               (items[0][:120] if items else ''))
         _print_issues(items)
+
+    # —— README 覆盖钉：两份 README 必须在扫描面内，且它们的链接**真的**被解析成仓库路径 ——
+    # 不钉的话，将来把 README 移出扫描面（或链接风格一换）本套件会**静默**失去对第一入口的覆盖。
+    # 判据用"② + ⑤ 合计 > 0"而不是"自仓 URL > 0"：README 若改回相对链接，这条不该跟着红。
+    readme_n = {f: res['stats']['checkable'].get(f, 0) for f in README_DOCS}
+    check('README 覆盖钉：两份 README 都在扫描面内、且其链接确实被校验（%s）'
+          % '、'.join('%s=%d 条' % (f, n) for f, n in sorted(readme_n.items())),
+          all(f in files for f in README_DOCS) and sum(readme_n.values()) > 0,
+          '缺失文件 %s' % [f for f in README_DOCS if f not in files])
+
     _p('---- R2 冻结基线：%d 条（只拦新增；某条已不复存在时请从 AMBIG_BASELINE 删掉）----'
        % len(AMBIG_BASELINE))
     for rel, title in sorted(AMBIG_BASELINE):
@@ -394,9 +510,11 @@ def run_real():
 
 
 # ---------------------------------------------------------------- teeth
-def _an(files, exists=None, slug_fn=slug, skip_fences=True, baseline=None):
+def _an(files, exists=None, slug_fn=slug, skip_fences=True, baseline=None,
+        self_repo=None, isdir=None):
     return analyze(files, exists or (lambda p: p in files), slug_fn=slug_fn,
-                   skip_fences=skip_fences, baseline=baseline)
+                   skip_fences=skip_fences, baseline=baseline,
+                   self_repo=self_repo, isdir=isdir)
 
 
 def teeth(real_files, real_exists):
@@ -463,6 +581,50 @@ def teeth(real_files, real_exists):
           and len(r_noskip['anchor']) == 1 and len(r_noskip['rel']) == 1,
           'skip=%s noskip=%s' % ((len(r_skip['anchor']), len(r_skip['rel'])),
                                  (len(r_noskip['anchor']), len(r_noskip['rel']))))
+
+    # ---- ⑤ 自仓 URL（README 引 docs/ 的真实写法）----
+    # 合成 URL 从**运行时解析出的** SELF_REPO 拼，避免把用例与 pyproject 里那串字面量耦死。
+    _slug = SELF_REPO or ('shdbl', 'mpltweak')
+    _base = 'https://github.com/%s/%s/blob/%s/' % (_slug[0], _slug[1], DEFAULT_BRANCH)
+
+    r = _an({'README.md': '# T\n\n[x](%sdocs/nope.md)\n' % _base})
+    check('teeth⑪ ⑤ 自仓 URL 指向不存在的文件必须报出（且不再只是"格式合法"）',
+          len(r['selflink']) == 1 and 'nope.md' in r['selflink'][0] and not r['ext'],
+          '实得 selflink=%s ext=%s' % (r['selflink'], r['ext']))
+
+    r = _an({'README.md': '# T\n\n[x](%sdocs/ok.md)\n' % _base, 'docs/ok.md': '# OK\n'})
+    check('teeth⑫ ⑤ 自仓 URL 目标存在时必须**不报**（防"恒红"）',
+          not r['selflink'] and not r['ext'],
+          '实得 selflink=%s ext=%s' % (r['selflink'], r['ext']))
+
+    other_branch = 'https://github.com/%s/%s/blob/evidence-0.1.10/bench/nope.jsonl' % _slug
+    r = _an({'README.md': '# T\n\n[x](%s)\n' % other_branch})
+    check('teeth⑬ ⑤ 误报守卫：**别的分支**的自仓 URL 必须不报（本地没那个分支）',
+          not r['selflink'] and not r['ext'],
+          '实得 selflink=%s ext=%s' % (r['selflink'], r['ext']))
+
+    foreign = 'https://github.com/someone-else/other-repo/blob/main/docs/nope.md'
+    r = _an({'README.md': '# T\n\n[x](%s)\n' % foreign})
+    check('teeth⑭ ⑤ 误报守卫：**别人的仓库** URL 必须不报（只查格式，交给 ④）',
+          not r['selflink'] and not r['ext'],
+          '实得 selflink=%s ext=%s' % (r['selflink'], r['ext']))
+
+    r = _an({'README.md': '# T\n\n[x](%sdocs/b.md#nope)\n' % _base, 'docs/b.md': '# Second\n'})
+    check('teeth⑮ ⑤ 自仓 URL 的 `#锚点` 必须按目标文件标题校验（断锚点报出、文件存在不报 rel）',
+          len(r['anchor']) == 1 and 'b.md#nope' in r['anchor'][0]
+          and not r['selflink'] and not r['rel'],
+          '实得 anchor=%s selflink=%s' % (r['anchor'], r['selflink']))
+
+    tree_ok = 'https://github.com/%s/%s/tree/%s/docs' % (_slug[0], _slug[1], DEFAULT_BRANCH)
+    r = _an({'README.md': '# T\n\n[x](%s)\n' % tree_ok},
+            exists=lambda p: p in ('README.md', 'docs'),
+            isdir=lambda p: p == 'docs')
+    r_bad_tree = _an({'README.md': '# T\n\n[x](%s)\n' % (tree_ok + '/nope')},
+                     exists=lambda p: p in ('README.md', 'docs'),
+                     isdir=lambda p: p == 'docs')
+    check('teeth⑯ ⑤ `tree/<dir>` 查目录：存在的目录不报、不存在的目录报出',
+          not r['selflink'] and len(r_bad_tree['selflink']) == 1,
+          'ok=%s bad=%s' % (r['selflink'], r_bad_tree['selflink']))
 
     # ---- 反向验证：把判据弄坏 ⇒ 必须变红（不许"恰好全绿"）----
     _p('---- 反向验证（把判据弄坏就必须变红）----')

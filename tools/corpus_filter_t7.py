@@ -35,6 +35,8 @@
 #   python tools/corpus_filter_t7.py --limit 30       # 冒烟小样
 #   python tools/corpus_filter_t7.py --jobs 4         # 并发 apply 预演 worker 数（有界池）
 #   python tools/corpus_filter_t7.py --out <dir>      # 产出目录（默认 _review/corpus_filter_t7）
+#   python tools/corpus_filter_t7.py --workroot <dir> # 临时工作目录（默认 <tmp>/corpus_filter_work；
+#                                                     #  <tmp> 跨平台取 TMPDIR→TEMP→TMP→gettempdir()）
 #
 # 语料目录只读；产出 filter.jsonl + FILTER.md。
 import argparse
@@ -46,6 +48,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from importlib.util import find_spec
 
@@ -55,6 +58,36 @@ DEFAULT_OUT = r'D:\Agent\deepseek\_review\corpus_filter_t7'
 PARAMS_TEMPLATE = {"version": 4, "fig_index": 0, "figsize_in": [8.5, 5.5]}
 APPLY_TIMEOUT = 20.0          # 单份 apply 预演超时（秒）
 _PY = sys.executable
+
+
+def default_tmp_root():
+    """跨平台取临时根目录 —— **保证返回绝对路径**。
+
+    顺序：``TMPDIR`` → ``TEMP`` → ``TMP`` → ``tempfile.gettempdir()``。
+
+    为什么不能沿用旧的 ``os.environ.get('TEMP', '.')``：POSIX 上 ``TEMP`` 通常
+    **不存在** ⇒ 回落成 ``'.'`` ⇒ 产物写进**当前工作目录**（``./corpus_filter_work``），
+    与 ``tests/test_sandbox.py:57-63`` 记录过的那次 CI 假红**同源**。
+    故这里对每个环境变量候选都要求 ``os.path.isabs``：相对值（含 ``'.'`` / ``'..'``）
+    一律**跳过**、继续找下一个，**绝不**静默落到 cwd。
+
+    实测（2026-10-13，本机 longxia）：``tempfile.gettempdir()`` 对**存在的相对目录**
+    （如 ``TMPDIR='reltmp'``）会返回它的 ``abspath``（锚到 cwd）；但对
+    ``TMPDIR`` / ``TEMP`` / ``TMP`` 恰好等于 ``'.'`` 的情形，CPython 对
+    ``os.curdir`` **不做** ``abspath`` 规范化、会把 ``'.'`` **原样返回**
+    —— 所以末位回落**并非天然安全**，下面那道 ``isabs`` 断言是**真会触发**的防线
+    （场景实测见 t22 验证记录）。宁可响亮失败，也绝不把产物写进 cwd。
+    """
+    for key in ('TMPDIR', 'TEMP', 'TMP'):
+        val = os.environ.get(key)
+        if val and os.path.isabs(val):
+            return val
+    fallback = tempfile.gettempdir()
+    if not os.path.isabs(fallback):
+        raise RuntimeError(
+            '找不到绝对路径的临时目录（gettempdir()=%r）：请把 TMPDIR/TEMP/TMP '
+            '设成绝对路径，或显式传 --workroot <绝对路径>' % fallback)
+    return fallback
 
 # ---------------------------------------------------------------------------
 # manifest
@@ -281,7 +314,7 @@ def main():
     ap.add_argument('--corpus', default=None)
     ap.add_argument('--out', default=None)
     ap.add_argument('--workroot', default=os.path.join(
-        os.environ.get('TEMP', '.'), 'corpus_filter_work'))
+        default_tmp_root(), 'corpus_filter_work'))
     args = ap.parse_args()
 
     corpus_root = args.corpus or DEFAULT_CORPUS

@@ -19,7 +19,9 @@
 #     --dry-run       不开窗：只验证「能抓到图 + 能存参数」后立即退出
 #     --timeout SEC   配合 --dry-run 无意义；留作将来扩展
 #
-# 退出码：0 正常；2 脚本没留下可调的图；3 脚本本身报错；4 找不到可用的图形后端
+# 退出码（方案 A，0.1.10 统一）：0 = 成功；2 = 跑不起来（脚本找不到 / 脚本自己报错 /
+#           参数非法 —— 与各子命令同一口径）；4 = 找不到可用的图形后端。
+#           **3 已退役**：常量（messages.EXIT_SCRIPT）保留，但任何路径都不再返回它。
 # ======================================================================
 
 import argparse
@@ -36,6 +38,21 @@ _BACKEND_TK_HINT_ZH = ('[launch] 当前是 Tk 后端（交互体验不如 Qt）�
                        '想要 Qt 界面：pip install "mpltweak[qt]"')
 _BACKEND_TK_HINT_EN = ('[launch] using the Tk backend (less polished than Qt); '
                        'for the Qt UI run: pip install "mpltweak[qt]"')
+
+# B 组（首次使用体验，0.1.11）：**第一次**开窗给一句安慰/预期说明 —— 窗口是现建的，
+# 头几秒终端里没有新输出，用户很容易以为卡死了；这句话说清"会慢、之后就顺手了"，
+# **不改任何行为**（写回/验证判定一个字节都不动）。
+# 与 Tk 提示同一套"每个用户只打一次"范式（戳文件 + MPLTWEAK_HOME 可改 + dry-run
+# 不落戳 + MPLTWEAK_NO_HINT=1 静默），但**各用各的戳**（first_open_shown）——
+# 绝不动 tk_hint_shown 的语义。文案优先走 messages.t('first_open_hint')，键缺失时
+# 退回内置兜底（en 必须纯 ASCII；两者都必须 GBK 可编码，见 messages.py 顶部）。
+_FIRST_OPEN_HINT_ZH = ('[launch] 第一次开窗会等几秒（窗口要现建），不是卡住了；'
+                       '之后拖拽/缩放跟在 PPT 里拖图一样跟手。'
+                       '放心拖：关窗之前不会写你的脚本。')
+_FIRST_OPEN_HINT_EN = ('[launch] the first window takes a few seconds to build; '
+                       'it is not frozen. After that, dragging and resizing feel '
+                       'like moving shapes in a slide editor. Go ahead - nothing '
+                       'touches your script until you close the window.')
 
 
 def _detect_backend():
@@ -66,6 +83,17 @@ def _backend_tk_hint():
     return hint
 
 
+def _mpltweak_home(environ=None):
+    '''mpltweak 的家目录（戳文件放这里）：``MPLTWEAK_HOME`` 可改，默认 ``~/.mpltweak``。
+
+    测试隔离 / 多环境共用一台机器时用。各条"只打一次"的提示**共用这个家目录、
+    但各用各的戳文件**（见 ``_tk_hint_stamp_path`` / ``_first_open_stamp_path``）。
+    '''
+    environ = os.environ if environ is None else environ
+    return environ.get('MPLTWEAK_HOME') or os.path.join(
+        os.path.expanduser('~'), '.mpltweak')
+
+
 def _tk_hint_stamp_path(environ=None):
     '''"Tk 提示已经打过一次"的戳文件路径。
 
@@ -73,10 +101,7 @@ def _tk_hint_stamp_path(environ=None):
     （测试隔离 / 多环境共用一台机器时用）。命名与位置是**对外行为**，见
     ``docs/interaction.md``「窗口后端」一节。
     '''
-    environ = os.environ if environ is None else environ
-    home = environ.get('MPLTWEAK_HOME') or os.path.join(
-        os.path.expanduser('~'), '.mpltweak')
-    return os.path.join(home, 'tk_hint_shown')
+    return os.path.join(_mpltweak_home(environ), 'tk_hint_shown')
 
 
 def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
@@ -101,6 +126,81 @@ def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
     # 只在真的第一次提示时说话；判断失败（权限/IO）= 当作没打过（宁可多说一次，
     # 也不能因为戳文件读不了就把提示彻底吞掉）。
     stamp = _tk_hint_stamp_path(environ)
+    try:
+        if os.path.exists(stamp):
+            return False
+    except OSError:                                # noqa: BLE001
+        pass
+    _out = sys.stderr if stderr is None else stderr
+    try:
+        _out.write(hint + '\n')
+    except (OSError, ValueError):                  # noqa: BLE001 - 输出失败也不许影响开窗
+        return False
+    # best-effort 落戳：写不了也照常开窗（代价只是下次再说一遍）。
+    try:
+        _dir = os.path.dirname(stamp)
+        if _dir:
+            os.makedirs(_dir, exist_ok=True)
+        with open(stamp, 'w', encoding='utf-8') as _f:
+            _f.write('1\n')
+    except OSError:                                # noqa: BLE001
+        pass
+    return True
+
+
+def _first_open_hint():
+    '''首次开窗的安慰/预期说明（B 组，0.1.11）。
+
+    与 ``_backend_tk_hint()`` 同一写法：优先取 messages 表，键缺失时退回内置兜底 ——
+    绝不因为消息表里还没有这个键就少一句话，也绝不崩。
+    '''
+    from . import messages
+    hint = messages.t('first_open_hint')
+    if hint == 'first_open_hint':
+        hint = (_FIRST_OPEN_HINT_ZH if messages.current_lang() == 'zh'
+                else _FIRST_OPEN_HINT_EN)
+    return hint
+
+
+def _first_open_stamp_path(environ=None):
+    '''"首次开窗提示已经打过一次"的戳文件路径：``~/.mpltweak/first_open_shown``。
+
+    与 ``_tk_hint_stamp_path()`` 共用家目录规则（``MPLTWEAK_HOME`` 可改），但**是
+    另一个戳**：Tk 提示打过了不代表开窗安慰打过了，两条提示互不影响；删掉这个文件
+    即可让安慰再来一次。
+    '''
+    return os.path.join(_mpltweak_home(environ), 'first_open_shown')
+
+
+def _emit_first_open_hint(dry_run=False, environ=None, stderr=None):
+    '''**第一次**开窗时给一句安慰/预期；返回是否打出。
+
+    为什么要有：窗口是现建的（第一次还要加载后端的平台插件），建窗那几秒终端里没有
+    新输出，用户很容易以为卡死了。这一句只解释"会慢、之后就像在 PPT 里拖图一样跟手、
+    关窗之前不会写你的脚本"，**不改任何行为**（写回/验证的判定一个字都不动）。
+
+    **调用点由 main() 决定，语义是"真要建窗口的那一刻"**（见 main 里那段注释）：
+    放到更早的位置（例如后端刚探测完）会让"脚本报错 / 没留图 / 找不到脚本"这些**根本
+    没开成窗**的路径也把戳写掉，用户真正的第一次开窗反而看不到这句话 —— 2026-10-13
+    实测：test_launch.py 的顶层 CLI 子进程用例就会走到那个更早的位置，跑一次 pytest
+    就把 ``~/.mpltweak/first_open_shown`` 写了出来。
+
+    **每个用户只打一次**（与 ``_emit_backend_hint`` 同一范式，戳文件见
+    ``_first_open_stamp_path()``）：每次开窗都念一遍只会变成噪音。
+    dry-run 不开窗不提示（也**不落戳**）；``MPLTWEAK_NO_HINT=1`` 静默（批量脚本用，
+    同样不落戳 —— 那是"这次别说话"，不是"已经说过了"）。
+
+    输出只走 stderr（与后端提示/预检同款）：stdout 留给 `--json` / MCP 的机器可读
+    内容，不能被这句安慰污染。
+    '''
+    environ = os.environ if environ is None else environ
+    if dry_run or environ.get('MPLTWEAK_NO_HINT') == '1':
+        return False
+    hint = _first_open_hint()
+    if not hint:
+        return False
+    # 判断失败（权限/IO）= 当作没打过（宁可多说一次，也不能因为戳文件读不了就把话吞掉）。
+    stamp = _first_open_stamp_path(environ)
     try:
         if os.path.exists(stamp):
             return False
@@ -416,6 +516,7 @@ def doctor():
 
 
 def main(argv=None):
+    from . import messages   # 退出码常量（方案 A：只用 EXIT_USAGE / EXIT_OK）
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument('script', nargs='?',
                     help='要调图的用户脚本（里面不需要任何本工具的代码）')
@@ -436,12 +537,12 @@ def main(argv=None):
         return doctor()
     if not args.script:
         sys.stderr.write('[launch] 需要脚本路径，或用 --doctor 做环境自检\n')
-        return 3
+        return messages.EXIT_USAGE
 
     script = os.path.abspath(args.script)
     if not os.path.exists(script):
         sys.stderr.write('[launch] 找不到脚本: %s\n' % script)
-        return 3
+        return messages.EXIT_USAGE
 
     # 布局引擎冲突（constrained_layout / figure.autolayout）必须**在开窗之前**提示：
     # 引擎会在每次绘制时重算轴位置，用户拖完看到的是"位置弹回去/验证不一致"，
@@ -515,7 +616,7 @@ def main(argv=None):
         os.chdir(old_cwd)
         traceback.print_exc()
         sys.stderr.write('[launch] 用户脚本执行出错，已中止\n')
-        return 3
+        return messages.EXIT_USAGE
     finally:
         plt.show = real_show
         matplotlib.use = real_use
@@ -577,6 +678,17 @@ def main(argv=None):
         print('[launch] 提示：%d 个窗口，**全部关闭**后本进程才会退出（窗口标题带 [图 k/%d]）。'
               '一次关完按 Ctrl+Q；每关一个就立刻存一份参数（没改过的不存），随时停也不会白改'
               % (len(targets), len(nums)), flush=True)
+
+    # B 组（首次使用体验，0.1.11）：**第一次**开窗给一句安慰/预期（stderr）。
+    # 位置是"**真要建窗口的那一刻**"（下面 gaitu 才开始建窗）—— 刻意不放到更早的
+    # 地方：那里连"有没有图、开不开得成窗"都还不知道，脚本报错 / 没留图 / 找不到
+    # 脚本这些**根本没开成窗**的路径会把一次性戳吃掉，用户真正的第一次开窗反而看
+    # 不到这句话（2026-10-13 实测：test_launch.py 的顶层 CLI 子进程用例会走到更早
+    # 的位置，跑一次 pytest 就把 ~/.mpltweak/first_open_shown 写了出来）。
+    # 与后端提示同款：dry-run 不开窗不打（也不落戳 —— dry-run 只建窗不 show，但它
+    # 不是"开窗调图"，同样不该消耗这个戳）、MPLTWEAK_NO_HINT=1 静默、每个用户只打
+    # 一次（新戳 first_open_shown，与 tk_hint_shown 互不影响）。
+    _emit_first_open_hint(dry_run=args.dry_run)
 
     # 多图：每张图各挂一个控制器、各写自己的参数文件（``<stem>.fig<k>.json``，
     # 文件名带图号，就是它最终的正式参数）；关窗时按"哪张真被改过"决定留不留，

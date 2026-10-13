@@ -1,0 +1,279 @@
+# -*- coding: utf-8 -*-
+"""tests/test_notation_discipline.py —— 记号纪律检查器自己的套件（0.1.11）
+
+被检查的东西在 ``tools/notation_discipline.py``（只报告、不修复）。本套件做两件事：
+
+1. **teeth**：对**合成样例**注入已知违规 ⇒ 检查器必须报出；同时注入
+   **已知不该报**的样例（注释/docstring 里的禁用字形、受准的 ``√`` / ``×``）⇒
+   必须**一处都不报**。后者比前者更重要：误报会让检查器废掉（见文件头判据）。
+2. **真仓库**：跑一遍全仓，要求 ``src/mpltweak/``（产品面 = 用户控制台）零违规。
+   非产品面的命中里，凡文件自带控制台兜底（``reconfigure(errors=``）的归为
+   **刻意例外**，逐条打印，不判红。
+
+为什么单独一个套件、而不是塞进 ``tests/test_hygiene.py``：hygiene 的两条棘轮只管
+``messages.py`` 模板表与「测试套件有没有装兜底」，管不到 ``src/`` 里**直接 print 出去**
+的字符串，也不管记号字形。分工写在 ``tools/notation_discipline.py`` 文件头。
+
+口径：``MAINTENANCE.md:336``（§8.5 微软雅黑缺 ``✓`` U+2713 / ``↺`` U+21BA 的字形 →
+用 ``√`` U+221A / ``×`` U+00D7``）+ ``CONTRIBUTING.md:71-74``（终端字符串必须 GBK 可编码）
++ ASCII ``[OK]`` / ``[X]``。
+"""
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TOOL = os.path.join(ROOT, 'tools', 'notation_discipline.py')
+PY = sys.executable
+
+# 控制台兜底（T13/T15 同款；也被 tests/test_hygiene.py 的 GBK 棘轮认这个标记）
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(errors='replace')
+    except (AttributeError, ValueError, OSError):
+        pass
+
+_fails = []
+
+
+def check(name, cond, detail=''):
+    mark = 'OK' if cond else 'FAIL'
+    print('%s | %s%s' % (mark, name, (' | ' + str(detail)) if detail else ''))
+    if not cond:
+        _fails.append(name)
+
+
+def _run_tool(root):
+    """跑检查器（CLI 真身，不是 import 内部函数）→ (findings, rc)。"""
+    env = dict(os.environ, PYTHONIOENCODING='utf-8', MPLBACKEND='Agg')
+    r = subprocess.run([PY, TOOL, '--root', root, '--json'],
+                       capture_output=True, env=env, cwd=ROOT)
+    out = r.stdout.decode('utf-8', 'replace')
+    try:
+        findings = json.loads(out)
+    except ValueError:
+        findings = None
+    return findings, r.returncode, out
+
+
+def _write(root, rel, text):
+    p = os.path.join(root, rel.replace('/', os.sep))
+    d = os.path.dirname(p)
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    with io.open(p, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+    return p
+
+
+def _hits(findings, rel, rule=None):
+    out = [f for f in findings if f['rel'].replace('\\', '/') == rel]
+    if rule is not None:
+        out = [f for f in out if f['rule'] == rule]
+    return out
+
+
+def _fmt(findings):
+    return ['%s:%d %s %s' % (f['rel'], f['line'], f['codepoint'], f['rule'])
+            for f in findings]
+
+
+# ---------------------------------------------------------------------- teeth
+def teeth():
+    print('---- teeth：合成样例注入已知违规 / 已知不该报 ----')
+    tmp = tempfile.mkdtemp(prefix='t15_notation_')
+    try:
+        # ① 已知**不该报**：注释 + docstring + 受准字形 + 普通中文
+        _write(tmp, 'clean.py',
+               '# -*- coding: utf-8 -*-\n'
+               '"""模块 docstring 里写 \u2713 \u21ba 也不算输出串（本检查器不判）。"""\n'
+               '\n'
+               '\n'
+               'def helper():\n'
+               '    """docstring: \u2713 \u26a0 \u21d2 都不该被报。"""\n'
+               '    # 注释：\u2713 done / \u21d2 结论\n'
+               '    return 1\n'
+               '\n'
+               '\n'
+               'def go():\n'
+               '    ok = "\u221a 已通过"\n'
+               '    bad = "\u00d7 失败"\n'
+               '    print(ok, bad)          # 受准字形：\u221a / \u00d7\n'
+               '    x = "\u2713"               # 不是输出串（只是赋值）\n'
+               '    print(x)\n'          # ← 这个**是**输出串，见 ② 的边界
+               )
+        # 上面最后两行其实是输出串（print(x) 的实参是一个变量，不是字面量）
+        # —— 字面量在赋值语句里、不在 print 实参里，所以**不该**被报。
+        findings, rc, out = _run_tool(tmp)
+        check('teeth 01 检查器能跑通并输出合法 JSON（rc 只反映真违规）',
+              findings is not None, 'rc=%s 输出头=%r' % (rc, out[:120]))
+        check('teeth 02 【误报守卫】注释 / docstring 里的 U+2713 U+21BA U+26A0 U+21D2 一处都不报',
+              not _hits(findings or [], 'clean.py'),
+              '实得 %s' % _fmt(_hits(findings or [], 'clean.py')))
+        check('teeth 03 【误报守卫】受准字形 \u221a(U+221A) / \u00d7(U+00D7) 不报',
+              not [f for f in (findings or []) if f['char'] in ('\u221a', '\u00d7')],
+              '实得 %s' % _fmt([f for f in (findings or [])
+                                if f['char'] in ('\u221a', '\u00d7')]))
+
+        # ② 直接 print 里的禁用字形 ⇒ R1 + R2 都要报
+        _write(tmp, 'bad_mark.py',
+               '# -*- coding: utf-8 -*-\n'
+               'print("\u2713 已写回")\n')
+        findings, _rc, _out = _run_tool(tmp)
+        hm = _hits(findings or [], 'bad_mark.py')
+        check('teeth 04 print() 里的 U+2713 必须报（R1 记号 + R2 GBK 至少各一条）',
+              any(f['rule'] == 'mark' for f in hm) and any(f['rule'] == 'gbk' for f in hm)
+              and all(f['line'] == 2 for f in hm),
+              '实得 %s' % _fmt(hm))
+        check('teeth 05 报出位置带 文件:行号 与原文行',
+              bool(hm) and 'print' in hm[0]['snippet'] and hm[0]['codepoint'] == 'U+2713',
+              '实得 %s' % (hm[0] if hm else None))
+
+        # ③ GBK 编不出的箭头 ⇒ R2
+        _write(tmp, 'bad_gbk.py',
+               '# -*- coding: utf-8 -*-\n'
+               'import sys\n'
+               'sys.stderr.write("\u21d2 \u7ed3\u8bba\\n")\n')
+        findings, _rc, _out = _run_tool(tmp)
+        hg = _hits(findings or [], 'bad_gbk.py')
+        check('teeth 06 sys.stderr.write() 里的 U+21D2 必须报 R2（GBK 编不出）',
+              any(f['rule'] == 'gbk' for f in hg), '实得 %s' % _fmt(hg))
+
+        # ④ 打印助手**按函数体自动发现**（不靠名字白名单）
+        _write(tmp, 'helper.py',
+               '# -*- coding: utf-8 -*-\n'
+               'def _say(msg):\n'
+               '    print("[mpltweak] " + msg)\n'
+               '\n'
+               '\n'
+               'def unrelated():\n'
+               '    return "\u2713"\n'        # 同名的诱惑：这个函数不打印，不该传导
+               '\n'
+               '\n'
+               'def go():\n'
+               '    _say("\u2713 \u5df2\u5199\u56de")\n'
+               '    unrelated()\n')
+        findings, _rc, _out = _run_tool(tmp)
+        fh = _hits(findings or [], 'helper.py')
+        check('teeth 07 打印助手 _say() 被**按函数体**发现，其字面量实参要报',
+              any(f['line'] == 11 for f in fh), '实得 %s' % _fmt(fh))
+        check('teeth 08 【误报守卫】共文件里**不打印**的函数（unrelated）不被传导',
+              not any(f['origin'].startswith('函数 unrelated') for f in fh),
+              '实得来源 %s' % sorted({f['origin'] for f in fh}))
+
+        # ⑤ 一跳跨函数：return 的字面量被 print 出去
+        _write(tmp, 'retchain.py',
+               '# -*- coding: utf-8 -*-\n'
+               'def hint():\n'
+               '    return "\u2713 \u5df2\u5c31\u7eea"\n'
+               '\n'
+               '\n'
+               'def never_printed():\n'
+               '    return "\u2713"\n'
+               '\n'
+               '\n'
+               'print(hint())\n'
+               'never_printed()\n')
+        findings, _rc, _out = _run_tool(tmp)
+        fr = _hits(findings or [], 'retchain.py')
+        check('teeth 09 一跳跨函数：print(hint()) 里 hint() 的 return 字面量要报',
+              any(f['line'] == 3 for f in fr), '实得 %s' % _fmt(fr))
+        check('teeth 10 【误报守卫】返回值没上终端的函数（never_printed）不报',
+              not any(f['line'] == 7 for f in fr), '实得 %s' % _fmt(fr))
+
+        # ⑥ 消息表（模块级 XXX_MESSAGES）
+        _write(tmp, 'table.py',
+               '# -*- coding: utf-8 -*-\n'
+               'MESSAGES = {\n'
+               '    "written": {"zh": "\u2713 \u5df2\u5199\u56de", "en": "written"},\n'
+               '}\n')
+        findings, _rc, _out = _run_tool(tmp)
+        ft = _hits(findings or [], 'table.py')
+        check('teeth 11 消息表 MESSAGES 的模板串要报（模板必然上终端）',
+              any(f['line'] == 3 for f in ft), '实得 %s' % _fmt(ft))
+
+        # ⑦ 分级：装了控制台兜底 ⇒ 刻意例外；但 src/mpltweak/ 产品面零容忍
+        _write(tmp, 'exempted.py',
+               '# -*- coding: utf-8 -*-\n'
+               'import sys\n'
+               'for _s in (sys.stdout, sys.stderr):\n'
+               '    try:\n'
+               "        _s.reconfigure(errors='replace')\n"
+               '    except Exception:\n'
+               '        pass\n'
+               'print("\u2713 \u5df2\u5199\u56de")\n')
+        _write(tmp, 'src/mpltweak/prod.py',
+               '# -*- coding: utf-8 -*-\n'
+               'import sys\n'
+               "sys.stdout.reconfigure(errors='replace')\n"   # 兜底也不放宽产品面
+               'print("\u2713 \u5df2\u5199\u56de")\n')
+        findings, rc, _out = _run_tool(tmp)
+        sev = {f['rel'].replace('\\', '/'): f['severity']
+               for f in (findings or []) if f['rel'].endswith('.py')}
+        check('teeth 12 装了控制台兜底的非产品面文件 -> severity=exempt（刻意例外）',
+              sev.get('exempted.py') == 'exempt', '实得 %s' % sev.get('exempted.py'))
+        check('teeth 13 src/mpltweak/ 产品面**即使装了兜底也必须 error**（用户控制台零容忍）',
+              sev.get('src/mpltweak/prod.py') == 'error',
+              '实得 %s' % sev.get('src/mpltweak/prod.py'))
+        check('teeth 14 有真违规时 rc 必须非 0（能被 CI 咬到）', rc != 0, '实得 rc=%s' % rc)
+
+        # ⑧ 全干净 ⇒ 0 命中、rc=0（防"恒红"）
+        clean2 = tempfile.mkdtemp(prefix='t15_clean_')
+        try:
+            _write(clean2, 'pure.py',
+                   '# -*- coding: utf-8 -*-\n'
+                   'print("[OK] \u5df2\u539f\u4f4d\u5199\u56de")\n'
+                   'print("[X] \u9a8c\u8bc1\u672a\u901a\u8fc7")\n'
+                   'print("\u221a \u5e03\u5c40\u5065\u5eb7")\n')
+            findings, rc, _out = _run_tool(clean2)
+            check('teeth 15 【防恒红】ASCII [OK]/[X] + 受准字形 -> 0 命中、rc=0',
+                  not findings and rc == 0,
+                  '实得 %s rc=%s' % (_fmt(findings or []), rc))
+        finally:
+            shutil.rmtree(clean2, ignore_errors=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        check('teeth 16 临时样例目录已清理（不留脏文件）', not os.path.exists(tmp),
+              '还在 %s' % tmp if os.path.exists(tmp) else '')
+
+
+# ------------------------------------------------------------------- 真仓库
+def run_real():
+    print('---- 真仓库：全仓扫描 ----')
+    findings, rc, out = _run_tool(ROOT)
+    if findings is None:
+        check('真仓库：检查器可解析输出', False, '输出头=%r' % out[:200])
+        return
+    errs = [f for f in findings if f['severity'] == 'error']
+    exs = [f for f in findings if f['severity'] == 'exempt']
+    print('总命中 %d：真违规 %d / 刻意例外 %d' % (len(findings), len(errs), len(exs)))
+    check('真仓库：产品面（src/mpltweak/）与未豁免文件 0 真违规', not errs,
+          '实得 %d 处：%s' % (len(errs), _fmt(errs)[:5]))
+    print('     ---- 刻意例外逐条（文件带控制台兜底，输出已清洗）----')
+    for f in exs:
+        print('     %s:%d  %s %s  <%s>' % (f['rel'], f['line'], f['codepoint'],
+                                          f['char'], f['rule']))
+    check('真仓库 rc 与"有无真违规"一致', (rc != 0) == bool(errs),
+          'rc=%s errs=%d' % (rc, len(errs)))
+
+
+def main():
+    print('记号纪律检查器套件（tools/notation_discipline.py 的自证与真仓库扫描）')
+    print('口径：MAINTENANCE.md:336 §8.5 字形 + CONTRIBUTING.md:71-74 GBK 可编码 + [OK]/[X]')
+    print('')
+    teeth()
+    run_real()
+    print('')
+    if _fails:
+        print('FAILED: %d 项 -> %s' % (len(_fails), _fails))
+        return 1
+    print('ALL PASS')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

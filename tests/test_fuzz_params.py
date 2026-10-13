@@ -90,6 +90,7 @@ os.makedirs(_TMPROOT, exist_ok=True)
 # %TEMP% 写入被沙箱拦（环境提示）：子进程跑 apply 前把 TEMP/TMP 指到可写目录。
 os.environ['TEMP'] = _TMPROOT
 os.environ['TMP'] = _TMPROOT
+os.environ['TMPDIR'] = _TMPROOT
 
 _fails = []
 

@@ -113,6 +113,7 @@ def _ensure_tmp_writable():
     _TMPROOT = root
     os.environ['TEMP'] = root
     os.environ['TMP'] = root
+    os.environ['TMPDIR'] = root
     tempfile.tempdir = root
     return root
 

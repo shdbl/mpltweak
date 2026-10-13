@@ -58,6 +58,7 @@ pip install "mpltweak[qt]"      # 要开窗拖图再加这个（装 PyQt5 图形
 
 > 后端对照表、各平台装法、`mpltweak doctor` 探测顺序与开窗失败逐条处理 —— [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
 > 哪些命令会**执行**你的脚本、退出码怎么算 —— [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md)。
+> 退出码只有四个：**0 = 没问题 / 成功；1 = 发现问题（check）；2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数不对，所有入口一致）；4 = 没有可用图形后端**（0.1.9 的 3 已退役）。
 
 ## 5 分钟上手
 
@@ -103,7 +104,7 @@ fig.savefig('fig1.png', dpi=150)
 
 **写回是确定性的。** AST 会把你的代码拆成一棵"语法树"（按代码结构而非文本匹配来读），所以能精确定位那几个数字。写回分两条路：**代码里写的是字面量时，直接改那几个数字**（最干净，不插入任何东西）；**否则在文件末尾追加一段自包含的调整块**（术语叫"退块"：追加一段独立代码，不加 `import`、不改动你原有的逻辑）。两条路都要过**三层验证**（语法 / 重跑 / 语义：先看语法对不对，再把脚本真跑一遍，最后核对图上的位置字号和你拖出来的是不是一致），任一层不过**默认回滚**（退回改动前的样子，`--keep-unverified` 可保留但需自己验证）。
 
-**图是用 `plt.subplots()` / `GridSpec` 画的？** 源码里往往没有能直接改的数字，那就走"追加调整块"这条路，不满意用 `mpltweak revert fig1.py --write` 一键删掉；你原来写的代码一行都没被改写。
+**图是用 `plt.subplots()` / `GridSpec` 画的？** 源码里往往没有能直接改的数字，那就走"追加调整块"这条路 —— 但**前提是块里的目标对象能被静态认出来**（如字面量下标 `axes[0, 1]`）：`fig.axes[i]` / `plt.gca()` / 循环建轴这类"运行期才知道指向谁"的写法会被**拒绝**，`rc=1`、你的脚本一个字节都不动（不会硬塞一个作用不确定的块）。不满意用 `mpltweak revert fig1.py --write` 一键删掉；你原来写的代码一行都没被改写。
 
 > 卡住了见 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md)（拖了没反应 / 拖了弹回去 / 报错怎么办，每条都是「现象 → 一句话原因 → 怎么做」）。
 
@@ -127,10 +128,10 @@ fig.savefig('fig1.png', dpi=150)
 
 ## 给 Agent 用
 
-**你不需要懂命令行 —— 把这件事交给 Agent 就行。**（自己敲命令也行：拖一下就到位，**不用手写那些位置数字**。）
+**你不需要懂命令行 —— 把这件事交给 Agent 就行。**
 （**要能直接读写你电脑上文件的那种 Agent**；只在网页聊天窗口里聊天的，做不到。）
 
-把下面这条链接发给你正在用的 Agent（Claude / ChatGPT / Cursor / DeepSeek 等，只要它能读写你电脑上的文件），
+把下面这条链接发给你正在用的 Agent（Claude Code / Codex / Cursor / DeepSeek Harness 等，只要它能读写你电脑上的文件），
 它自己就会照着这份手册把环境配好、帮你调图：
 
 - **给 Agent 的操作手册**：https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md

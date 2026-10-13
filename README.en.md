@@ -60,6 +60,7 @@ The second line is for **opening a window**: that needs a graphics backend (in p
 
 > Backend comparison table, per-platform installs, `mpltweak doctor` probing order and per-symptom handling of a failed window — [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
 > Which commands **execute** your script, and how exit codes are derived — [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
+> There are only four: **0 = fine / success; 1 = problem found (check); 2 = cannot run (script not found / the script itself fails / bad arguments — the same in every entry point); 4 = no usable graphics backend** (0.1.9's 3 is retired).
 
 ## 5-minute quick start
 
@@ -105,7 +106,7 @@ fig.savefig('fig1.png', dpi=150)
 
 **Writing back is deterministic.** AST parses your code into a syntax tree (it reads code structure, not text patterns), so it can pinpoint those numbers. Write-back takes one of two forms: **when the code holds literals, those numbers are edited directly** (cleanest, nothing inserted); **otherwise a self-contained layout block is appended at the end of the file** (adding one independent piece of code: no `import`, no change to your own logic). Both forms go through **three verification layers** (syntax / re-run / semantic: first check the syntax, then really run the script, then confirm the positions and font sizes on the figure match what you dragged), and if any layer does not pass the file is **rolled back by default** (back to how it was; `--keep-unverified` keeps the write-back, and then you must check it yourself).
 
-**Built the figure with `plt.subplots()` / `GridSpec`?** The source often has no number you can edit directly, so it takes the "append a layout block" route — and `mpltweak revert fig1.py --write` takes that block away again; the code you wrote is not rewritten.
+**Built the figure with `plt.subplots()` / `GridSpec`?** The source often has no number you can edit directly, so it takes the "append a layout block" route — **provided the block's target objects can be identified statically** (a literal subscript such as `axes[0, 1]`): idioms that only resolve at run time (`fig.axes[i]`, `plt.gca()`, axes built in a loop) are **refused** with `rc=1` and your script untouched by a single byte (no block of uncertain effect is forced in). `mpltweak revert fig1.py --write` takes that block away again; the code you wrote is not rewritten.
 
 > Stuck? See [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (dragging does nothing / the panel snaps back / an error — each one is "symptom → the reason in one line → what to do").
 
@@ -129,10 +130,10 @@ We ran three kinds of tests: **static judgement** — take **10,158 public plott
 
 ## Using it with Agents
 
-**You do not need to know any command line — just hand this to an Agent.** (Or type the commands yourself: dragging gets it right, and **you never hand-write those position numbers**.)
+**You do not need to know any command line — just hand this to an Agent.**
 (It has to be one that can read and write files on your machine directly; a plain web chat window cannot.)
 
-Send this link to the Agent you already use (Claude / ChatGPT / Cursor / DeepSeek — anything that can read and write files on your machine), and it will set itself up and do the tweaking for you:
+Send this link to the Agent you already use (Claude Code / Codex / Cursor / DeepSeek Harness — anything that can read and write files on your machine), and it will set itself up and do the tweaking for you:
 
 - **Operating manual for the Agent**: https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md
   (Or ask it to open `skills/mpltweak/SKILL.md` in this repository, or paste that file's content to it.)
