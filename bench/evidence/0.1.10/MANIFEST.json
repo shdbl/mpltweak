@@ -1,6 +1,6 @@
 {
   "version": "0.1.10",
-  "generated_at": "2026-10-13T18:17:15+0800",
+  "generated_at": "2026-10-13T18:24:05+0800",
   "generator": "bench/tools/build_evidence_manifest.py",
   "guard": "python bench/tools/check_evidence_publishable.py --root D:/Agent/deepseek/_mpltweak_bench_wt/bench/evidence/0.1.10",
   "files": [
@@ -10,9 +10,14 @@
       "sha256": "28b8bb799e5fbc5c6bb9cc3b02b590bcc8d789e0f49a82c81eaf14f09a32e474"
     },
     {
+      "path": "INDEPENDENT_SPOTCHECK.md",
+      "bytes": 5850,
+      "sha256": "5287bd79f2b0ad521b3b105c7b393be3ff035ce2ae931c5a3f722c22e25924de"
+    },
+    {
       "path": "README.md",
-      "bytes": 8252,
-      "sha256": "baf1ae0be85604e93b10c5d546e2fc74929621b9cc6176465ee08b9a4d366019"
+      "bytes": 8774,
+      "sha256": "ade0362acb90eafad2f7cdf40bb46ad30d3daaa7882a19b140c82eeb53379397"
     },
     {
       "path": "corpus/FILTER.md",
