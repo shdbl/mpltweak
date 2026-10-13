@@ -24,9 +24,6 @@
 - [给 AI 和 agent 用](#给-ai-和-agent-用)
 - [工作流](#工作流)
 - [它可靠吗](#它可靠吗)
-
-<details><summary><b>进阶与详细文档</b>（点击展开）</summary>
-
 - [键位速查](#键位速查)
 - [原位改数字，还是插入调整块](#原位改数字还是插入调整块)
 - [三层验证](#三层验证)
@@ -36,7 +33,6 @@
 - [开发](#开发)
 - [License](#license)
 
-</details>
 ## 它解决什么问题
 
 调一张多面板图（multi-panel figure）时，麻烦通常出在排版而不是数据：挪一下子图，旁边的轴标签就被挡住；字号放大一点，图例又压到曲线上。而每改一次，都要重跑脚本、再看一遍图。
@@ -209,6 +205,8 @@ python fig1.py
 
 ## 原位改数字，还是插入调整块
 
+写回有**两条路**：源码里写的是**字面量** → **直接改那几个数字**；位置来自 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec`（源码里本来就没有数字）→ **插入一个自包含的调整块**。**能不能插块，取决于目标能不能静态证出**：证不出就 `applied=false`、**不写盘**，只给你一份可粘贴的手改片段。
+
 以 `fig1.py` 为例。**动手前**（手写的数字，通常都不齐）：
 
 ```python
@@ -230,29 +228,19 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 
 代码里写的就是字面量，所以**只动了这几个数字**：没有新增一行、没有加 `import`、没有引入任何依赖。字号、图例位置、网格、colorbar 同理，改的都是你代码里原本就有的参数。
 
-位置来自 `plt.subplots()` / `plt.subplot(1,2,n)` / `GridSpec` 时，源码里没有数字可改。这种图改成**插入一个自包含的调整块**（下面是 2x2 网格的一次真实写回，头部两行与结尾标记行逐字照抄，中间重复的同类行用 `# …` 省略）：
+位置来自 `subplots` / `GridSpec` 的那类图，插的是这样一段（2×2 网格的一次真实写回；头部两行与结尾标记行逐字照抄，中间重复的同类行用 `# …` 省略）：
 
 ```python
 # ===== auto layout (generated) - do not edit inside =====
 # 本块由 mpltweak 自动生成于 2026-10-12 19:42（可手动微调，勿删上下两行标记）
-# 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，ax2=网格[2, 2, 1, 0]，ax3=网格[2, 2, 1, 1]
 axes[0, 0].set_position([0.1450, 0.5500, 0.3723, 0.3700])
-axes[0, 1].set_position([0.5677, 0.5500, 0.3723, 0.3700])
-axes[1, 0].set_position([0.1450, 0.1300, 0.3723, 0.3700])
-axes[1, 1].set_position([0.5677, 0.1300, 0.3723, 0.3700])
 axes[0, 0].title.set_fontsize(14)
-axes[0, 0].grid(True)
 axes[0, 0].lines[0].set_linewidth(1.5)
-axes[0, 0].lines[0].set_color('#1f77b4')
-# … 其余三条轴各自同样几行（title / lines）
+# … 其余三条轴各自同样几行（位置 / title / lines）
 # ===== end auto layout =====
 ```
 
-注意块里的写法：**逐轴一行、目标写成 `axes[0, 0]` 这种静态可证的表达式** —— 不是运行期下标（`fig.axes[i]` / `plt.gca()` 那类在运行期还可能指向 colorbar / inset 轴，工程上已不再使用）。开窗导出的是**整份状态**，所以连"当时恰好等于默认值"的字段也会被写死（上面 `lines[0]` 那两行就是），详见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md)。
-
-**能不能插块，取决于能不能静态证出目标对象**：`fig, axes = plt.subplots(2, 2)` 之后用 `axes[0, 0]` 这样的**字面量元素**定位可以落地（上图即实测）；把轴解包/放进循环里用（`for i, ax in enumerate(axes.ravel())`）或让建图形状不是字面量时，实测按 **fail-closed** 处理 —— **不写盘、`applied=false`**，只给一份可粘贴的手改片段（就是你手动落实的那条路，见 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) ①）。
-
-上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
+上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位；块是**自包含**的（不加 `import`、不改你原有的逻辑），重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。**块内为什么这么写、"整份状态被钉进源码"这类取舍，见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md)。**
 
 
 ## 给 AI 和 agent 用

@@ -197,12 +197,12 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
   30+ 行的块，连"当时恰好是默认值"的那些字段也一起写死（以后改脚本里的默认值就不生效了）。
 - **只给"代码里确有写法"的等值参数 = 不改源码**（实测）：只传 `index` + `pos`（可选
   `figsize_in`）且值与原图一致时，`apply --write --verify-fast` 报 `reason=no_change`、
-  `changes=[]`、字节不变（本次发行前实测）。
+  `changes=[]`、字节不变（实测）。
 - **代码里没有写法的字段，等值时也不再插块**（退块判据是**逐字段三态**，见「`--style` 与 JSON
   字段」一节）：只有"有目标值 ∧ 与源码现值不同 ∧ 原位写不了"的字段才会退块。实测 `pos` 等值 +
   `title_fontsize: 12.0`（源码里没写 `fontsize=`），以及 `label_fontsize` + `tick_fontsize` /
   `spines` / `grid` / `xscale` / `figsize` 等值 → `reason=no_change`、不插块、`sha256` 不变
-  （复现：本次发行前实测）。反向对照（**值确实不同**）仍退块并把值落到图上：
+  （复现：实测）。反向对照（**值确实不同**）仍退块并把值落到图上：
   `title_fontsize: 20.0`、`tick_fontsize: 7.0`、`spines={'top': False}`（同日志）。
 - **`describe → apply` 直通依然可能"改代码"**：只要参数里带了**确实不同**、而源码里又写不了的字段，
   它就会插入调整块（那正是"落地"的方式）。所以别把直通写回当成"无需改动"，写回后看一眼 `git diff`。

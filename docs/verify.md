@@ -83,7 +83,7 @@ mpltweak apply fig1.py --write --verify-fast
 所以它只适合"先快速落实、马上自己跑一遍看图"的迭代过程；正式落实请去掉这个开关。
 `--json` 里会如实标 `"verify_mode": "fast"`、`"verified": null`、
 `layers = {syntax: true, rerun: null, semantic: null}`；**人读输出也会明说**：
-`[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的能力边界）`
+`[!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。没有重跑脚本 —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast`
 —— agent 和你都一眼能看出来这份结果没经过重跑。
 
 不确定"这个脚本重跑得起来吗"时，不用先猜：`apply --write` 在重跑之前会做一次
@@ -139,12 +139,25 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
 之前** —— 插在它后面等于"你调的布局根本没进图"，而这正是最难发现的一类事故。行内复合语句
 （如 `if flag: fig.savefig("o.png")`）会把插入点**提升到那条语句之前**；找不到合规插入点就**拒绝写回**
 （`reason=fail`、脚本一个字节都不动），不会再出现"报成功、你的 PNG 却没变"。实测
-（本次发行前实测）：`if flag: fig.savefig("o.png")` 在第 76 行时，块落在第 9–75 行、
+（实测）：`if flag: fig.savefig("o.png")` 在第 76 行时，块落在第 9–75 行、
 `anchor="before"`、`attempts=[{"anchor": "before", "line": 9, "ok": true, "semantic": true}]`。
 
 `--style` 有两条路。`auto`（默认）能原位改就原位，改不了就退到插入调整块；`inplace`（显式）要求原位，改不了就 `rc=1` / `applied=false`，不假装都改好；`block` 一律插块。
 判读落地情况看 `apply --json` 的 `files[]`：`needs_block`、`pending`、`inplace_pending` / `inplace_needs_block`、`auto_fallback`、`inplace_changes` / `inplace_reason`。
 逐字段含义与三种风格的实测对照（rc / JSON）见 [params.md](params.md)。
+
+## 调整块的写法与取舍
+
+主 README 的「原位改数字，还是插入调整块」只讲两条路与两个最小示例；块内的**写法与取舍**在这里：
+
+- **目标写成静态可证的表达式**：块里逐轴一行，目标用 `axes[0, 0]` 这类**字面量元素**写法。
+  **不用运行期下标** —— `fig.axes[i]` / `plt.gca()` / `plt.gcf()` 是"运行时才知道指向谁"的写法
+  （运行期下标还可能指到 colorbar / inset 轴），工程上已不再使用。
+- **能不能插块取决于目标能否静态证出**：`fig, axes = plt.subplots(2, 2)` 之后用 `axes[0, 0]` 定位可以落地；
+  把轴**解包 / 放进循环**里用（`for i, ax in enumerate(axes.ravel())`）或建图形状不是字面量时，
+  按 **fail-closed** 处理 —— **不写盘、`applied=false`**，只给一份可粘贴的手改片段。
+- **块里钉的是"整份状态"**：开窗导出的是当时的整体状态，所以连"恰好等于默认值"的字段也会被写死
+  （例如 `axes[0, 0].lines[0].set_linewidth(1.5)`）—— 想少改就少给（只给真正要改的项）。
 
 ## 它到底改了什么
 
