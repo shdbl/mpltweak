@@ -67,7 +67,9 @@ jobs:
           # test_property_writeback）。**必须装**：否则它们只会打印 SKIP，property 在 CI
           # 里永远不跑（缺依赖时套件仍能 import 并跑完确定性断言，见 tests/_hypothesis_shim.py）。
           python -m pip install "pytest>=7.0" "hypothesis>=6.0"
-          python -m pytest -q
+          # 用 Python 包装：把失败摘要写进 job summary（API 拿不到 job 日志时这是唯一可读通道），
+          # 并原样回传 pytest 的退出码。shell 无关（windows 是 pwsh、ubuntu 是 bash）。
+          python tools/ci_pytest_summary.py
 
       # 0.1.9 新增：**CI 过去从不构建发行物** —— 打包缺件 / sdist 混进构建元数据
       # 这类问题只有到发版那一刻才会暴露（CH-11 的 `src/mpltweak.egg-info` 就是这么
