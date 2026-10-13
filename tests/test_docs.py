@@ -334,16 +334,9 @@ AMBIG_BASELINE = {
     ('CHANGELOG.md', '文档 · 推广'),
     # 注意：**不要**把不入库的 `MAINTENANCE.md` 的标题写进基线 —— 它在 CI / 干净检出里
     # 不存在，会让这些条目"已不复存在"并使 R2 误报红（2026-10-13 实际踩到，见 md_files 注释）。
-    ('README.en.md', '1 · Your existing script, unchanged'),
-    ('README.en.md', '2 · Open the layout window'),
-    ('README.en.md', '3 · See what it intends to change (read-only)'),
-    ('README.en.md', '4 · Write back'),
-    ('README.en.md', '5 · Re-run and look'),
-    ('README.md', '1 · 你原来的脚本，一行都不用改'),
-    ('README.md', '2 · 打开调图窗口'),
-    ('README.md', '3 · 先看它打算改什么（只读）'),
-    ('README.md', '4 · 写回'),
-    ('README.md', '5 · 重跑看图'),
+    # 2026-10-13（README 方案 A 落地）：两份 README 各 5 条 `### N · …` 步骤标题随分层压缩一起
+    # 消失（那 5 步现在在正文的表与段落里，不再是小标题）⇒ 按本文件的语义**删掉这 10 条**；
+    # 新结构里没有任何"被引用且含歧义字符"的标题，故**不新增**（判据本身、R1 与阈值一字未改）。
     ('docs/agent.md', '也可以接进 AI 客户端（MCP）——**可选适配层**'),
     ('skills/mpltweak/SKILL.md', 'mpltweak —— 交互式调图闭环'),
 }          # ← 机器生成（见上面那段说明）；清完请删条目

@@ -15,7 +15,7 @@
 1. 先跑 `mpltweak apply <脚本>`（只读预览：不执行脚本、不写文件），看逐轴清单 —— 能原位改的会列出数字，要插调整块的会说明，写不了的连同原因一起列出来。
 2. 被拒绝时代码**一个字节都不动**，并打印一段**可粘贴片段**（也可以显式 `mpltweak apply <脚本> --snippet` 拿这份片段）；把片段里的 `<ax>` / `<fig>` 换成你自己的变量名贴进脚本即可。
 3. 想让下次能自动落地：给它一个**名字** —— `fig, ax = plt.subplots(...)` 比 `plt.subplot(...)` 裸调更好定位（片段末尾也会这么提示）。
-4. **网格图（`plt.subplots()`）另有一个坑**：`axes[0, 0]` 这类**字面量元素索引**能落地；但 `for ax in axes.ravel()` 或 `ax0, ax1 = axes.ravel()` 这种**解包 / 循环**用法会被 fail-closed 拒绝（宁可不写也不猜）—— 改成对容器直接下标（`axes[0, 0]`）的写法，或手动贴 `--snippet` 给的片段。实测：这两种用法都是 `applied=false`、不写盘（见主 README 的「原位改数字，还是插入调整块」）。
+4. **网格图（`plt.subplots()`）另有一个坑**：`axes[0, 0]` 这类**字面量元素索引**能落地；但 `for ax in axes.ravel()` 或 `ax0, ax1 = axes.ravel()` 这种**解包 / 循环**用法会被 fail-closed 拒绝（宁可不写也不猜）—— 改成对容器直接下标（`axes[0, 0]`）的写法，或手动贴 `--snippet` 给的片段。实测：这两种用法都是 `applied=false`、不写盘（两条路与两个最小示例见 [params.md 的「原位改数字，还是插入调整块」](params.md#原位改数字还是插入调整块)，写回输出样张见 [verify.md](verify.md#一次真实写回完整输出样张)）。
 
 > 完全没弹窗、或开窗报错，是另一回事：先跑 `mpltweak doctor`，逐条见 [interaction.md](interaction.md) 的「如果没反应」。
 > 细节：逐字段判据见 [params.md](params.md)，"写回被整体拒绝"的硬约束见 [verify.md](verify.md)。
@@ -55,6 +55,14 @@
 | 慢脚本，想先快速落实、马上自己看图 | `--verify-fast` | 只做语法检查：**不重跑脚本**、不证明布局落到了目标图上（`--json` 里如实标 `verify_mode: "fast"`） |
 | 不想执行脚本，先做静态体检 | `mpltweak check <脚本> --static` | 只看代码：量不了真实渲染尺寸，**`--static` 通过不等于图没问题** |
 
-真改坏了也不用慌：**默认已经回滚到批前状态**，备份留在 `.tweak_params/<脚本>.tweak.bak`，`mpltweak revert <脚本> --write` 退回写回前（预览 + 可逆，见主 README 的「后悔了」一节与 [verify.md](verify.md)）。`--no-verify` 跳过的是**重跑与语义验证**（写盘后的语法检查仍会做）：跑不通、布局没落到位都不会被发现，也不会自动回滚 —— 那等于关掉唯一的安全网，不建议。
+真改坏了也不用慌：**默认已经回滚到批前状态**，备份留在 `.tweak_params/<脚本>.tweak.bak`，`mpltweak revert <脚本> --write` 退回写回前（预览 + 可逆，见 [verify.md 的「后悔了：`mpltweak revert`」](verify.md#后悔了mpltweak-revert)）。`--no-verify` 跳过的是**重跑与语义验证**（写盘后的语法检查仍会做）：跑不通、布局没落到位都不会被发现，也不会自动回滚 —— 那等于关掉唯一的安全网，不建议。
 
 > 细节：三层验证各查什么、`--json` 的 `layers` 怎么读，见 [verify.md](verify.md)；哪些命令会跑你的脚本、退出码怎么算、四类归因的完整表，见 [exec-boundaries.md](exec-boundaries.md)。
+
+## 补充：没看到窗口？按顺序自查三件事
+
+1. 脚本末尾是不是有 `input()` / 要等你输入？开窗或重跑都会卡在那儿 —— 先临时注释掉那一行。
+2. 脚本要参数吗（平时敲的是 `python fig1.py --data x.npz` 那种）？命令后面用 `--` 把参数原样带上：`mpltweak fig1.py -- --data x.npz`。
+3. 还不行：把终端里的输出**整段**贴给你的 Agent，问一句"这是什么问题"。
+
+三条都不中，先跑 `mpltweak doctor`；完全没弹窗的逐条对照见 [interaction.md](interaction.md) 的「如果没反应」。

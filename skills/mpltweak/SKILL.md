@@ -9,7 +9,7 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 
 **定位**：只管**位置 / 字号 / 图例 / 样式**，不发明内容。文字、数据、图元仍由用户代码决定。
 
-面向人的完整文档在项目根的 `README.md`（含演示 GIF、键位表、JSON 规范）。
+面向人的完整文档在项目根的 `README.md`（演示 GIF、5 分钟上手、可靠性数字与全部子文档的索引）；键位与手势在 `docs/interaction.md`，参数文件 JSON 规范在 `docs/params.md`。
 
 ## 铁律（违反即失败）
 

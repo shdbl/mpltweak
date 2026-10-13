@@ -13,8 +13,8 @@ python tests/test_mcp.py         # MCP 服务（未装 mcp 依赖时自行 skip�
 python tools/crosscheck.py       # 环境 / API 兼容性自检
 ```
 
-这 7 个 `tests/test_*.py` 是**模块级脚本**（逐个直接跑，和 CI 一致）；另有 `pytest -q` 包装入口
-（七套件各一条 + 卫生棘轮）。细节见 CONTRIBUTING。
+这些 `tests/test_*.py` 是**模块级脚本**（逐个直接跑，和 CI 一致）；`pytest -q` 是包装入口，
+套件清单以 [`tests/test_suites.py`](../tests/test_suites.py) 的 `SUITES` 为准（含卫生棘轮）。细节见 CONTRIBUTING。
 
 ```text
 src/mpltweak/

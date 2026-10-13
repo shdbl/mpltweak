@@ -795,6 +795,11 @@ def one_case(sample, corpus: str, python: str, work_root: str, timeout: float):
 
     env = dict(os.environ)
     env['MPLBACKEND'] = 'Agg'
+    # 硬钉输出编码（**不能**依赖调用方 shell）：Windows GBK 控制台下，脚本若打印
+    # U+2011 这类字符会在写 stdout 时 UnicodeEncodeError ⇒ A 臂 rc=1 ⇒ 被当成
+    # "两侧退出码不一致"的噪声（t40 复核复跑时正是这么拿到噪声的；阶段 1 钉了它
+    # 才是干净的）。
+    env['PYTHONIOENCODING'] = 'utf-8'
     env.pop('MPLTWEAK_SANDBOX_ROOT', None)     # 沙箱会拦脚本写盘，探针要放行
     parts = [p for p in (env.get('PYTHONPATH') or '').split(os.pathsep) if p]
     if SRC not in parts:
@@ -1232,6 +1237,7 @@ def corpus_of(args):
 def _child_env() -> dict:
     env = dict(os.environ)
     env['MPLBACKEND'] = 'Agg'
+    env['PYTHONIOENCODING'] = 'utf-8'          # 硬钉编码：见上面同名字段的说明（GBK 噪声）
     env.pop('MPLTWEAK_SANDBOX_ROOT', None)     # 沙箱会拦脚本写盘，探针要放行
     parts = [p for p in (env.get('PYTHONPATH') or '').split(os.pathsep) if p]
     if SRC not in parts:

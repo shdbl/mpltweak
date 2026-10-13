@@ -58,9 +58,11 @@ def legacy_backup_path(script: str, params_path: str) -> str:
 def oldest_backup(script: str, params_path: str = None):
     """**最早**一份 pid 备份的路径（没有则 None）—— ``--first`` 用。
 
-    固定名备份只代表"最近一次写回之前"，反复 apply 之后原件就找不回来了。
-    ``_prune_backups`` 从 0.1.9 起永久保留最早那一份，这里把它找出来，
-    让"回到最初的原文"成为一条可执行的命令（RC-7）。
+    默认回退用的固定名备份是**首份优先**的（只在不存在时创建）⇒ 它自己通常就代表
+    "第一次改这张图之前"的原件，普通 `revert --write` 就够了。``--first`` 是给"固定名
+    备份被删过 / 被旧版覆盖过"或"想明确取最早那份快照"的场景准备的：
+    ``_prune_backups`` 从 0.1.9 起永久保留最早那一份，这里把它找出来（RC-7）。
+    一份 pid 副本都没有时，``--first`` 会**明确失败 rc=2**，不拿固定名备份冒充"最早"。
     """
     pp = params_path or params.params_path(script)
     d = writeback._backup_dir(script, pp)

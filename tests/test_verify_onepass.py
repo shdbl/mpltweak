@@ -83,6 +83,18 @@ def _has_mpltweak(parts):
 if not _has_mpltweak(sys.path):
     sys.path.insert(0, SRC)
 
+# 再把 src 放进**本进程的 os.environ['PYTHONPATH']**（不只是 sys.path）—— t40 复核 A2：
+# 本套件有 3 处是**在进程内直接调产品函数**（`V.verify_once(...)`，见 [A]/[A2]/[D]），
+# 而产品那几个入口用 `dict(os.environ)` 起子进程、**不补 PYTHONPATH**。只塞 sys.path
+# 的话，子进程 `python -m mpltweak.verify` 会 ModuleNotFoundError ⇒ 单遍取不到状态
+# ⇒ fail-closed 回退两遍 ⇒ 本套件出 5 条**假红**（实测：无 PYTHONPATH 时 FAILED:5；
+# 把本块临时停用则 FAILED:12）。开发检出（未做 editable 安装、又没给 PYTHONPATH）
+# 正是这种情况；CI 有 `pip install -e .` 所以看不到。有此一行即两种条件全绿。
+_pp = [p for p in (os.environ.get('PYTHONPATH') or '').split(os.pathsep) if p]
+if SRC not in _pp:
+    _pp.insert(0, SRC)
+os.environ['PYTHONPATH'] = os.pathsep.join(_pp)
+
 os.environ.setdefault('MPLBACKEND', 'Agg')
 os.environ.setdefault('MPLTWEAK_LANG', 'zh')
 
