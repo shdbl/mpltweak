@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import json
 import os
 import runpy
@@ -701,22 +702,136 @@ def _restore_process_state(snap: Dict[str, Any]) -> None:
             pass
 
 
+# ---------------------------------------------------------------------------
+# t39：单遍验证的取数基础 —— figure 注册表 + `Figure.savefig` 快照
+#
+# 旧实现（到 0.1.10 为止）在 `_collect_session` 里把 ``plt.close`` 空操作化，好让所有
+# 图留在 Gcf 里、脚本 close 之后还能读到状态。但**拦 close 会改脚本行为**：
+#   `fig.savefig(...)` → `plt.close(fig)` → 再裸 `plot()`（不新建 figure）时，图没被
+#   销毁、仍是 current ⇒ 后续内容画到上一张图上。阶段 1 双向实测（B′==A、B″==B）：
+#   追因样本 41 次 savefig 有 40 次抓到的状态与真图不同（`pgl_sasa.png` 1→14 条线），
+#   而真实链路是 verify_run（原样，写对图）→ verify_semantic（套壳，写错图）**同 cwd**
+#   ⇒ 后者把用户目录里刚写好的图**静默覆盖成错的**（样本 1/144）。
+#
+# 去掉拦 close 之后，"脚本自己 close 过的图"不在 Gcf 里了，取数改用两件**只读**的东西：
+#   * `_FigureRegistry`：钩 **``plt.figure``**（pyplot 建图的唯一漏斗），按**创建顺序**登记
+#     每一张图并持**强引用**（实测：`plt.close(fig)` 之后 figure 上的 axes/artists/字号依然
+#     可读）。注册表顺序 == 旧 Gcf 的顺序（`plt.figure()` 会复用编号，但"创建顺序"不受
+#     影响）⇒ `fig_index` / `n_figs` 语义与旧实现、与 describe **逐位一致**；也保证
+#     "用 ``Figure()+FigureCanvasAgg`` 的 OO 脚本在旧口径下取不到状态"这一结论不变
+#     （那种图不进 pyplot，注册表同样不认）。
+#   * `Figure.savefig` 钩子：在**写盘那一刻**抓目标图的状态快照 —— 那才是磁盘上那张图的
+#     来源。钩子是纯观测：先原样调用真 savefig，成功后再记状态；返回值、异常行为、
+#     签名都不变（`functools.wraps`），抓状态自身出错也只记进 `snapshot_errors`。
+#
+# 两件东西各司其职（**判据只严不松**）：
+#   * 逐字段比对的**主口径**仍是"脚本跑完时图对象的状态"（= 旧 verify_semantic 的口径，
+#     一个字没改，见 verify_semantic 的 `actual`/`snapshot` 说明）；
+#   * savefig 快照是**追加的严格检查**：这次改动必须也出现在**磁盘上那张图**里。
+#     旧口径下"改动只落在最后一次 savefig 之后"会被判过（图其实没变），快照能抓住它。
+# ---------------------------------------------------------------------------
+class _FigureRegistry:
+    """本会话里 pyplot 托管的 figure（创建顺序、强引用）与它们的 savefig 快照。"""
+
+    def __init__(self) -> None:
+        self.figs: List[Any] = []                 # 强引用：脚本 close 过也读得到
+        self._index: Dict[int, int] = {}          # id(fig) -> 创建序号
+        self.snapshots: Dict[int, Dict[str, Any]] = {}   # id(fig) -> savefig 快照
+        self.savefig_calls = 0                    # 本会话 savefig 总次数（诊断用）
+        self.snapshot_errors: List[str] = []
+
+    def register(self, fig) -> None:
+        key = id(fig)
+        if key not in self._index:
+            self._index[key] = len(self.figs)
+            self.figs.append(fig)
+
+    def index_of(self, fig) -> Optional[int]:
+        return self._index.get(id(fig))
+
+    def snapshot(self, fig) -> None:
+        """记下这张图**此刻**的状态（写盘那一刻）。
+
+        只观测：钩子跑在**用户自己的 ``savefig`` 调用里**，这里抛出的任何异常都会变成
+        "用户的 savefig 失败了"（脚本可能当场崩）—— 所以必须吞掉一切。
+        吞掉的异常只记进 ``snapshot_errors``，供诊断；不给用户脚本任何可观测的变化。
+        （棘轮会要求这处宽兜底在 BASELINE 里登记：不是懒，是**唯一正确**的形态 ——
+        用户的自定义 artist 抛什么类型的异常都可能，列具体类型必然漏。）
+        """
+        self.savefig_calls += 1
+        try:
+            self.snapshots[id(fig)] = _state(fig)
+        except Exception as e:                    # noqa: BLE001 - 见上：绝不许影响脚本
+            self.snapshot_errors.append('%s: %s' % (type(e).__name__, e))
+
+
+class _Session:
+    """一次采集会话：``plt``（已装拦截/钩子）与 ``reg``（figure 注册表）。"""
+
+    __slots__ = ('plt', 'reg')
+
+    def __init__(self, plt, reg: _FigureRegistry) -> None:
+        self.plt = plt
+        self.reg = reg
+
+
+@contextlib.contextmanager
+def _capture_figures(plt):
+    """装/卸 figure 注册表与 `Figure.savefig` 快照钩子（都只观测，不改行为）。
+
+    * 注册表钩 **``plt.figure``**（pyplot 建图的唯一漏斗：``subplots`` / ``gca`` /
+      ``gcf`` 内部都走它）—— 这正是旧实现 ``plt.get_fignums()`` 看的那批图
+      （pyplot 托管），只是注册表**持强引用**，所以脚本自己 close 掉也读得到。
+      刻意**不**钩 `Figure.__init__`：用 ``Figure()+FigureCanvasAgg`` 的 OO 风格脚本
+      在旧口径下本来"取不到状态"（不进 Gcf），钩它会把这类脚本的结论从
+      "②层没跑成（None）"变成"验过了"，那是**改动既有判据**，不是本任务要的。
+    * 快照钩 `Figure.savefig`：整类钩，但只对注册表里认得的图取快照（省开销），
+      先原样落盘、成功后再抽状态 —— 返回值/异常行为不变。
+    """
+    from matplotlib.figure import Figure
+
+    reg = _FigureRegistry()
+    real_figure = plt.figure
+    real_savefig = Figure.savefig
+
+    @functools.wraps(real_figure)
+    def _figure(*a, **k):
+        fig = real_figure(*a, **k)
+        reg.register(fig)
+        return fig
+
+    @functools.wraps(real_savefig)
+    def _savefig(self, *a, **k):
+        r = real_savefig(self, *a, **k)
+        if reg.index_of(self) is not None:        # 只跟 pyplot 托管的图（见上）
+            reg.snapshot(self)
+        return r
+
+    plt.figure = _figure
+    Figure.savefig = _savefig
+    try:
+        yield reg
+    finally:
+        plt.figure = real_figure
+        Figure.savefig = real_savefig
+
+
 @contextlib.contextmanager
 def _collect_session(script: str):
-    """一次"跑用户脚本"的进程状态边界：cwd / sys.stdout / fd1 / 全局状态。
+    """一次"跑用户脚本"的进程状态边界：cwd / sys.stdout / fd1 / 全局状态 + 取数钩子。
 
-    进块之前摆好拦截（plt.show / plt.close / matplotlib.use / switch_backend
-    全拦掉，cwd 切到脚本目录），出块时**无论成功失败**都还原 —— 包括 A3 的
-    sys.path / sys.modules / rcParams 快照。yield 出 ``pyplot`` 给调用方用。
+    进块之前摆好拦截（plt.show / matplotlib.use / switch_backend 拦掉 —— **不再拦
+    ``plt.close``**，见 `_FigureRegistry` 的说明），装上 savefig 快照钩子与 figure
+    注册表，cwd 切到脚本目录；出块时**无论成功失败**都还原 —— 包括 A3 的
+    sys.path / sys.modules / rcParams 快照。yield 出 :class:`_Session`。
     """
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     plt.switch_backend('Agg')       # 真初始化后端，之后再拦（否则 pyplot 内部取不到）
 
-    real = (plt.show, plt.close, matplotlib.use, plt.switch_backend)
+    real = (plt.show, matplotlib.use, plt.switch_backend)
     plt.show = lambda *a, **k: None
-    plt.close = lambda *a, **k: None
     matplotlib.use = lambda *a, **k: None
     plt.switch_backend = lambda *a, **k: None
     # 脚本自己的 print 绝不能污染调用方的 stdout —— MCP server 正是用 stdout 传
@@ -732,11 +847,14 @@ def _collect_session(script: str):
     try:
         if d not in sys.path:
             sys.path.insert(0, d)
-        yield plt
+        with _capture_figures(plt) as reg:
+            yield _Session(plt, reg)
     finally:
-        plt.show, plt.close, matplotlib.use, plt.switch_backend = real
+        plt.show, matplotlib.use, plt.switch_backend = real
         try:
-            plt.close('all')            # 先做可能打印的清理，再恢复 stdout
+            # 真 close（已放行）：清掉本会话留下的图。放在采集**之后**做，
+            # 不影响取数（状态这时已经抽完了）。
+            plt.close('all')
         except Exception:                        # noqa: BLE001
             pass
         _fd_restore(_fd_saved)
@@ -746,64 +864,131 @@ def _collect_session(script: str):
         _restore_process_state(snap)
 
 
-def _states_of_all_figs(plt, with_text: bool, exited: bool = False
-                        ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
+def _exec_script(script: str, script_args: Optional[List[str]],
+                 outcome: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
+    """跑一次用户脚本，返回 ``(kind, err)``：kind ∈ ``'ok'`` / ``'exit'`` / ``'error'``。
+
+    * ``'ok'``    脚本正常跑完；
+    * ``'exit'``  脚本自己 ``sys.exit()``（图还挂着，调用方照旧往下取状态）；
+    * ``'error'`` 脚本抛了异常（``err`` 是 ``类型: 消息``，与旧实现同一文案）。
+
+    ``outcome`` 非 None 时把"脚本自己跑成了没有"如实写进去（``script_ok`` /
+    ``script_exit`` / ``error``）—— 这是单遍验证**一遍同时回答"还跑得通吗"**的依据，
+    runpy 捕掉的异常不会出现在子进程退出码上。
+    """
+    _argv0 = list(sys.argv)
+    try:
+        # bug #6 / R1：**无条件**把 sys.argv 摆成 ``[script] + script_args``。
+        # 原来只在 script_args 非空时才摆 —— 套壳自己的两个位置参数（out.json、
+        # fig_index）于是留在用户脚本的 argv[1:] 里，argparse 脚本当场报
+        # `unrecognized arguments: <out.json> 0`（阶段 1 实测 3 份，A/B 两侧
+        # 报错文案不同、归因被打偏）。
+        sys.argv = [os.path.abspath(script)] + list(script_args or [])
+        runpy.run_path(script, run_name='__main__')
+    except SystemExit as e:
+        # 脚本自己 sys.exit()：图还挂在注册表里，继续往下取（A2 / CH-1）。
+        # 退出码非 0 = 脚本自己判失败 —— 单遍验证要按"跑不通"处理
+        # （与 ``python script.py`` 的 returncode 同口径）。
+        code = e.code
+        ok = code is None or code == 0
+        err = '' if ok else 'SystemExit: %r' % (code,)
+        if outcome is not None:
+            outcome.update({'script_ok': ok,
+                            'script_exit': code if isinstance(code, int)
+                            else (0 if ok else 1),
+                            'error': err})
+        return 'exit', err
+    except Exception as e:                       # noqa: BLE001
+        err = '%s: %s' % (type(e).__name__, e)
+        if outcome is not None:
+            outcome.update({'script_ok': False, 'script_exit': 1, 'error': err})
+        return 'error', err
+    finally:
+        sys.argv = _argv0
+    if outcome is not None:
+        outcome.update({'script_ok': True, 'script_exit': 0, 'error': ''})
+    return 'ok', ''
+
+
+def _states_of_all_figs(sess: _Session, with_text: bool,
+                        exited: bool = False) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """把所有 figure 采成状态列表（``collect_all`` 的正常 / SystemExit 两条路共用）。"""
     try:
-        nums = list(plt.get_fignums())
-        if not nums:
+        figs = list(sess.reg.figs)
+        if not figs:
             return None, ('脚本 sys.exit 退出，且没有留下任何图' if exited
                           else '脚本没有留下任何图（可能存完图就 close 了）')
         out = []
-        for k, num in enumerate(nums):
-            st = _state(plt.figure(num), with_text=with_text)
+        for k, fig in enumerate(figs):
+            st = _state(fig, with_text=with_text)
             st['fig_index'] = k
-            st['n_figs'] = len(nums)
+            st['n_figs'] = len(figs)
             out.append(st)
         return out, ''
     except Exception as e:                       # noqa: BLE001 采集失败要给人话，不是裸栈
         return None, '%s: %s' % (type(e).__name__, e)
 
 
-def _state_of_one_fig(plt, fig_index, with_text: bool, exited: bool = False
+def _state_of_one_fig(sess: _Session, fig_index, with_text: bool,
+                      exited: bool = False,
+                      info: Optional[Dict[str, Any]] = None
                       ) -> Tuple[Optional[Dict], str]:
-    """取目标图状态（``collect`` 的正常 / SystemExit 两条路共用）。"""
+    """取目标图状态（``collect`` 的正常 / SystemExit 两条路共用）。
+
+    主口径 = **图对象当前状态**（与历史行为、与 describe 逐项一致）；注册表持强引用，
+    所以脚本自己 close 过的图也读得到。
+
+    ``info`` 非 None 时（单遍验证用）额外填两项，供调用方如实汇报/追加严格检查：
+      * ``info['snapshot']``：目标图**最后一次 savefig 时刻**的状态（没有则 None）
+        —— 那是磁盘上那张图的来源；
+      * ``info['basis']``：'live'（只有图对象当前状态）或 'live+savefig'
+        （两份状态都拿到了，父进程会**两份都比**）。
+    """
     try:
-        nums = list(plt.get_fignums())
+        figs = list(sess.reg.figs)
     except Exception as e:                       # noqa: BLE001
         return None, '%s: %s' % (type(e).__name__, e)
-    if not nums:
+    if not figs:
         return None, ('脚本 sys.exit 退出，且没有留下任何图' if exited
                       else '脚本没有留下任何图（可能存完图就 close 了）')
     # 越界必须报错，不能静默返回最后一张：调用方（agent）会拿到"另一张图"的
     # 数据却以为是自己要的那张，而返回体里原本连 fig_index 都没有可判别。
     # 负值（含 verify 子进程约定的 -1）表示"最后一张"，不是越界。
     if not exited and isinstance(fig_index, int) and fig_index >= 0 \
-            and not (0 <= fig_index < len(nums)):
+            and not (0 <= fig_index < len(figs)):
         return None, ('第 %d 张图不存在（脚本共留下 %d 张）；'
                       '请用 0..%d 之间的序号，或用 --all-figs 全部导出'
-                      % (fig_index, len(nums), len(nums) - 1))
+                      % (fig_index, len(figs), len(figs) - 1))
     idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
-           else len(nums) - 1)
-    if exited and not (0 <= idx < len(nums)):
+           else len(figs) - 1)
+    if exited and not (0 <= idx < len(figs)):
         return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
-                      % (fig_index, len(nums)))
-    st = _state(plt.figure(nums[idx]), with_text=with_text)
+                      % (fig_index, len(figs)))
+    fig = figs[idx]
+    snap = sess.reg.snapshots.get(id(fig)) if info is not None else None
+    # 主口径 = 图对象当前状态（与历史行为逐项一致）。这里**不**加兜底 try：
+    # 与旧实现同款 —— 真取不到就让异常照旧冒到调用方（子进程不留状态 → 父进程
+    # 按"取不到状态"fail-closed 处理），而不是在这里换一份口径糊过去。
+    st = _state(fig, with_text=with_text)
+    if info is not None:
+        info['basis'] = 'live+savefig' if snap is not None else 'live'
+        info['snapshot'] = snap
     # 必须自报家门：产物会被直接喂回 apply，而 apply 在没有 fig_index 时
     # 只能按第 0 张处理 → 参数会落到错的图上（多图脚本的 agent 闭环曾 100% 中招）。
     st['fig_index'] = idx
-    st['n_figs'] = len(nums)
+    st['n_figs'] = len(figs)
     return st, ''
 
 
 def collect_all(script: str, with_text: bool = False,
-                script_args: Optional[List[str]] = None
+                script_args: Optional[List[str]] = None,
+                outcome: Optional[Dict[str, Any]] = None
                 ) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """跑一次脚本，采集**所有**图的状态。返回 (list|None, err)。
 
-    与 collect 同一套拦截口径（plt.show / plt.close / matplotlib.use /
-    switch_backend 全拦掉，cwd 切到脚本目录），只是把每张图都抽出来，
-    每张附加 fig_index（0-based，顺序同 plt.get_fignums()）与 n_figs。
+    与 collect 同一套口径（plt.show / matplotlib.use / switch_backend 拦掉，
+    cwd 切到脚本目录，``plt.close`` **不拦**），只是把每张图都抽出来，
+    每张附加 fig_index（0-based，**figure 创建顺序**）与 n_figs。
 
     ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6 —— 依赖
     ``sys.argv`` 的脚本（``python fig.py --data x.npz``）在验证重跑里拿不到
@@ -811,38 +996,32 @@ def collect_all(script: str, with_text: bool = False,
     不动 ``argv[1:]``，所以这里显式把 ``sys.argv`` 摆成
     ``[script] + script_args`` 再跑，``finally`` 里还原。
 
+    ``outcome``：非 None 时填脚本自身成败（单遍验证用）。
+
     注意：这是**同进程**执行（副作用由 ``_collect_session`` 的快照兜底）。
     CLI / MCP 走的是 ``collect_isolated`` —— 进程级边界，见那里的说明。
     """
-    with _collect_session(script) as plt:
-        exited = False
-        _argv0 = list(sys.argv)
-        try:
-            if script_args:
-                sys.argv = [os.path.abspath(script)] + list(script_args)
-            runpy.run_path(script, run_name='__main__')
-        except SystemExit:
-            # 脚本自己 sys.exit()：图还挂在 Gcf 上，继续往下取（A2 / CH-1）。
-            # 0.1.8 只给 collect 加了这条分支，collect_all 漏了 —— 于是
-            # `describe --all-figs` 对 sys.exit(0) 的脚本零输出（rc=0 却什么都没打），
-            # MCP 的 describe_layout(all_figs=True) 更会把 server 进程直接带走
-            # （SystemExit 穿过 anyio TaskGroup → BaseExceptionGroup([SystemExit(0)])）。
-            exited = True
-        except Exception as e:                       # noqa: BLE001
-            return None, '%s: %s' % (type(e).__name__, e)
-        finally:
-            sys.argv = _argv0
-        return _states_of_all_figs(plt, with_text, exited=exited)
+    with _collect_session(script) as sess:
+        _kind, _err = _exec_script(script, script_args, outcome)
+        if _kind == 'error':
+            return None, _err
+        return _states_of_all_figs(sess, with_text, exited=(_kind == 'exit'))
 
 
 def collect(script: str, fig_index: Optional[int] = None,
             with_text: bool = False,
-            script_args: Optional[List[str]] = None
+            script_args: Optional[List[str]] = None,
+            outcome: Optional[Dict[str, Any]] = None,
+            info: Optional[Dict[str, Any]] = None
             ) -> Tuple[Optional[Dict], str]:
     """在当前进程跑脚本并抽取目标图状态。返回 (state|None, err)。
 
-    与 launch 一样拦掉 plt.show / plt.close / matplotlib.use / switch_backend，
-    并以脚本所在目录为 cwd（脚本里的相对路径/存图位置才和平时一致）。
+    与 launch 一样拦掉 plt.show / matplotlib.use / switch_backend（``plt.close``
+    **不拦** —— 拦它会改脚本行为，见 `_FigureRegistry`），并以脚本所在目录为 cwd
+    （脚本里的相对路径/存图位置才和平时一致）。
+
+    ``info``：非 None 时（单遍验证）额外回报 ``snapshot`` / ``basis``，
+    见 `_state_of_one_fig`。
 
     ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6，语义与
     ``collect_all`` 相同 —— runpy 只覆盖 ``argv[0]``，依赖 ``sys.argv`` 的
@@ -851,23 +1030,12 @@ def collect(script: str, fig_index: Optional[int] = None,
     CLI / MCP 用 ``collect_isolated``（子进程）；这里的同进程版本留给
     已经在子进程里的调用方（``verify.py main`` 自己）与库嵌入场景。
     """
-    with _collect_session(script) as plt:
-        exited = False
-        _argv0 = list(sys.argv)
-        try:
-            if script_args:
-                sys.argv = [os.path.abspath(script)] + list(script_args)
-            runpy.run_path(script, run_name='__main__')
-        except SystemExit:
-            # 脚本自己 sys.exit()：不算采集失败 —— 图还挂在 Gcf 上，继续往下取。
-            # 原先只捕 Exception，SystemExit 会直接穿出去：CLI 退出码被顶成脚本的
-            # 退出码，而 --json 下 stdout 一个字节都没有（t3-#9 / t6）。
-            exited = True
-        except Exception as e:                       # noqa: BLE001
-            return None, '%s: %s' % (type(e).__name__, e)
-        finally:
-            sys.argv = _argv0
-        return _state_of_one_fig(plt, fig_index, with_text, exited=exited)
+    with _collect_session(script) as sess:
+        _kind, _err = _exec_script(script, script_args, outcome)
+        if _kind == 'error':
+            return None, _err
+        return _state_of_one_fig(sess, fig_index, with_text,
+                                 exited=(_kind == 'exit'), info=info)
 
 
 # ---------------------------------------------------------------------------
@@ -1094,22 +1262,163 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
     return bad
 
 
+def _compare_state(data: Dict[str, Any], actual: Dict[str, Any],
+                   fields_by_axis: Optional[Dict[int, set]] = None,
+                   figsize_edited: bool = False) -> Tuple[List[str], str]:
+    """参数与实测状态逐字段比对 → ``(不一致明细, 未判定字段文案)``。
+
+    ``verify_semantic``（回退两遍路径）与 ``verify_once``（单遍路径）**共用这一个**
+    函数 —— 判据不可能分叉，也就不会出现"单遍比两遍更松"这种事。
+    """
+    unjudged: List[str] = []
+    bad = compare(data.get('axes') or [], actual.get('axes') or [],
+                  fields_by_axis=fields_by_axis, unjudged=unjudged)
+    # figsize 也必须比对：它同样会被写回，而"改到另一张图"恰恰在这条线上最容易
+    # 静默通过（块路径的 edit_figsize 曾不传 fig_index，见 t1-A / t6-M1）。
+    # 只在这次确实原位改了 figsize 时才比 —— 否则参数里的目标值本来就与当前
+    # 代码不一致，会把"本图不改画布"误判成失败。
+    if figsize_edited:
+        ev_fs, av_fs = data.get('figsize_in'), actual.get('figsize_in')
+        if ev_fs and av_fs and any(abs(float(a) - float(b)) > 0.01
+                                   for a, b in zip(ev_fs, av_fs)):
+            bad.append('figsize %s≠%s' % (_r(ev_fs), _r(av_fs)))
+    # T75b：已请求但**判不了**的字段必须如实列出来（不许"没比却说通过"）。
+    # 注意 ok 仍然只由 bad 决定：判不了 ≠ 判失败。
+    _uj = ''
+    if unjudged:
+        _uj = '未判定字段（已请求但比不了）: %s' % ', '.join(
+            sorted(set(unjudged))[:8])
+    return bad, _uj
+
+
+def verify_once(script: str, data: Dict[str, Any], python: Optional[str] = None,
+                timeout: float = 300, fields_by_axis: Optional[Dict[int, set]] = None,
+                figsize_edited: bool = False,
+                script_args: Optional[List[str]] = None,
+                out_path: Optional[str] = None) -> Dict[str, Any]:
+    """t39：**一遍跑到底** —— 一次子进程同时回答"脚本还跑得通吗"与"改动真生效了吗"。
+
+    与 ``verify_semantic``（跑一遍只为拿状态）的区别是：这里把**脚本自身的成败**
+    一并带回来（``script_ok``）。runpy 捕掉的用户异常不会体现在子进程退出码上，
+    所以子进程用信封把 ``script_ok`` / ``script_exit`` / ``error`` 一起写出来。
+
+    返回 dict（调用方按 ``status`` 分流，**取不到状态一律不许当成"通过"**）：
+      * ``status='ok'``            → ``verified``: True/False + ``detail``（比对明细）
+      * ``status='script_failed'`` → 脚本自己跑不通（``detail`` 为异常文案，
+        ``stderr`` 为子进程 stderr 尾部）
+      * ``status='no_state'``      → 脚本跑通了但取不到目标图状态 → 调用方**必须**
+        fail-closed 回退两遍（``fallback_reason`` 是给人看的原因）
+      * ``status='timeout'``       → 重跑超时（与旧 verify_run 超时同口径）
+      * ``status='spawn_failed'``  → 起不了子进程 → 调用方**必须**回退
+    其余字段：``actual``/``snapshot``（两份实测状态，供 ``verify_semantic`` 做
+    主判据与"磁盘上那张图"的追加判据）、``basis``（'live' = 取自图对象当前状态 /
+    'savefig' = 图对象读不到、退回写盘那一刻的快照）、``stderr``、``rc``。
+    """
+    python = python or sys.executable
+    if out_path is None:
+        d = os.path.dirname(os.path.abspath(script))
+        out_path = os.path.join(d, '.tweak_params', '_verify_state.json')
+    try:
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    except OSError:
+        pass
+    _unlink(out_path)
+    fig_index = data.get('fig_index')
+    idx_arg = str(fig_index) if isinstance(fig_index, int) else '-1'
+    env = dict(os.environ, MPLBACKEND='Agg')
+    cmd = [python, '-m', 'mpltweak.verify', script, out_path, idx_arg, '--onepass']
+    if script_args:
+        cmd += ['--'] + list(script_args)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return {'status': 'timeout', 'verified': None, 'detail': '语义验证超时',
+                'stderr': '', 'rc': None, 'basis': None, 'fallback_reason': ''}
+    except (OSError, ValueError) as e:
+        # 起不了子进程 / 命令行构造不合法：判不了 → 交给调用方回退（fail-closed）。
+        # 这里刻意**只收这两类**（棘轮：宽兜底不许悄悄涨）—— 其余异常照旧往上冒，
+        # 由 writeback 写盘后那段 `except BaseException` 兜底回滚，语义只会更严。
+        return {'status': 'spawn_failed', 'verified': None, 'detail': str(e),
+                'stderr': '', 'rc': None, 'basis': None,
+                'fallback_reason': '验证子进程起不来（%s）' % e}
+    stderr = (r.stderr or b'').decode('utf-8', 'replace')
+    try:
+        with open(out_path, 'r', encoding='utf-8') as f:
+            envelope = json.load(f)
+    except (OSError, ValueError):
+        _unlink(out_path)
+        # 子进程没留下信封：它可能被脚本带走了（os._exit / 段错误），也可能状态文件
+        # 被清掉。这一层判不了 → 交给调用方回退两遍（fail-closed）。
+        return {'status': 'no_state', 'verified': None,
+                'detail': stderr.strip()[-300:], 'stderr': stderr[-2000:],
+                'rc': r.returncode, 'basis': None,
+                'fallback_reason': '验证子进程没有留下状态（exit %d）' % r.returncode}
+    _unlink(out_path)
+    if not envelope.get('script_ok', True):
+        return {'status': 'script_failed', 'verified': None,
+                'detail': envelope.get('script_error') or stderr.strip()[-300:],
+                'stderr': stderr[-2000:], 'rc': r.returncode, 'basis': None,
+                'fallback_reason': ''}
+    if not envelope.get('ok') or not isinstance(envelope.get('state'), dict):
+        why = envelope.get('error') or '未能取到图状态（exit %d）' % r.returncode
+        return {'status': 'no_state', 'verified': None,
+                'detail': '未能取到图状态（%s）' % why, 'stderr': stderr[-2000:],
+                'rc': r.returncode, 'basis': None, 'fallback_reason': why}
+    actual = envelope['state']
+    snapshot = envelope.get('snapshot')
+    if not isinstance(snapshot, dict):
+        snapshot = None
+    # 判据**仍走同一个入口**（verify_semantic）：只是把这次已经拿到的实测状态喂进去，
+    # 不再起第二个子进程。这样"一遍"与"两遍"的判据永远不可能分叉，而且现有的
+    # 打桩测试（把 verify_semantic 换成恒不一致）依然能拦住这条路径。
+    ok, detail = verify_semantic(script, data, python, timeout,
+                                 fields_by_axis=fields_by_axis,
+                                 figsize_edited=figsize_edited,
+                                 actual=actual, snapshot=snapshot)
+    return {'status': 'ok', 'verified': ok, 'detail': detail or '',
+            'stderr': stderr[-2000:], 'rc': r.returncode,
+            'basis': envelope.get('basis') or 'live', 'fallback_reason': ''}
+
+
 def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = None,
                     timeout: float = 300,
                     out_path: Optional[str] = None,
                     fields_by_axis: Optional[Dict[int, set]] = None,
                     figsize_edited: bool = False,
-                    script_args: Optional[List[str]] = None
+                    script_args: Optional[List[str]] = None,
+                    actual: Optional[Dict[str, Any]] = None,
+                    snapshot: Optional[Dict[str, Any]] = None
                     ) -> Tuple[Optional[bool], str]:
     """子进程重跑脚本 → dump 目标图状态 → 与参数比对。
 
     返回 ``(ok, detail)``：True 一致 / False 不一致（detail 为明细）/ None 无法判定。
+
+    ``actual`` / ``snapshot``（t39 单遍路径）：**给了 ``actual`` 就不再起子进程** ——
+    状态已由 ``verify_once`` 在同一次跑里带回来（脚本只跑一遍），这里只做比对。
+
+      * ``actual``   = 脚本跑完时**图对象**的状态（与旧口径逐项一致，主判据）；
+      * ``snapshot`` = 目标图**最后一次 savefig 时刻**的状态（磁盘上那张图的来源）。
+        给了它就在主判据之外**追加**一次同口径比对：这次改动必须也出现在磁盘上那张图里
+        （旧口径会放过"改动只落在最后一次 savefig 之后"的情况 —— 图其实一个像素没变）。
+        两条都过才算过 ⇒ 判据**只严不松**。
 
     ``script_args``：透传给用户脚本的 ``sys.argv[1:]``（bug #6）。验证子进程的
     命令行在 ``--`` 之后追加这些参数（``verify.py main`` 把 ``--`` 之后的内容
     原样交给用户脚本），依赖 ``sys.argv`` 的脚本（``python fig.py --data x.npz``）
     重跑时才能拿到与基线一致的参数，否则行为不一致 → 误回滚 + 误归因。
     """
+    if actual is not None:
+        bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
+                                  figsize_edited=figsize_edited)
+        if snapshot is not None:
+            _sbad, _ = _compare_state(data, snapshot,
+                                      fields_by_axis=fields_by_axis,
+                                      figsize_edited=figsize_edited)
+            # 标注来源，别让人误读成"脚本跑完后的状态不对"
+            bad += ['磁盘上那张图（最后一次 savefig）%s' % x for x in _sbad]
+        if bad:
+            return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
+        return True, _uj
     python = python or sys.executable
     if out_path is None:
         d = os.path.dirname(os.path.abspath(script))
@@ -1144,31 +1453,17 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
             actual = json.load(f)
     except Exception as e:                       # noqa: BLE001
         return None, '读取状态失败: %s' % e
-    unjudged: List[str] = []
-    bad = compare(data.get('axes') or [], actual.get('axes') or [],
-                  fields_by_axis=fields_by_axis, unjudged=unjudged)
-    # figsize 也必须比对：它同样会被写回，而"改到另一张图"恰恰在这条线上最容易
-    # 静默通过（块路径的 edit_figsize 曾不传 fig_index，见 t1-A / t6-M1）。
-    # 只在这次确实原位改了 figsize 时才比 —— 否则参数里的目标值本来就与当前
-    # 代码不一致，会把"本图不改画布"误判成失败。
-    if figsize_edited:
-        ev_fs, av_fs = data.get('figsize_in'), actual.get('figsize_in')
-        if ev_fs and av_fs and any(abs(float(a) - float(b)) > 0.01
-                                   for a, b in zip(ev_fs, av_fs)):
-            bad.append('figsize %s≠%s' % (_r(ev_fs), _r(av_fs)))
-    # T75b：已请求但**判不了**的字段必须如实列出来（不许"没比却说通过"）。
-    # 注意 ok 仍然只由 bad 决定：判不了 ≠ 判失败。
-    _uj = ''
-    if unjudged:
-        _uj = '未判定字段（已请求但比不了）: %s' % ', '.join(
-            sorted(set(unjudged))[:8])
+    # 判据与单遍路径（verify_once）**共用同一个** _compare_state —— 两条路不可能分叉。
+    bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
+                              figsize_edited=figsize_edited)
     if bad:
         return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
     return True, _uj
 
 
 _USAGE = ('用法: python -m mpltweak.verify <script> <out.json> [fig_index] '
-          '[--fig N] [--all-figs] [--text] [--envelope] [-- <脚本参数...>]\n')
+          '[--fig N] [--all-figs] [--text] [--envelope] [--onepass] '
+          '[-- <脚本参数...>]\n')
 
 
 def _int_or_none(v):
@@ -1190,13 +1485,19 @@ def main(argv=None) -> int:
       ``{"ok": bool, "error": str, ...}``，父进程据此拿失败原因（子进程的 stderr
       混着用户脚本自己的 print，没法拿来解析）。
 
+    ``--onepass``（t39，``verify_once`` 在用）：信封模式 + 两点不同 ——
+    ① 状态优先取"该图最后一次 ``savefig`` 时刻的快照"（磁盘上那张图的来源），
+    取不到才退回图对象当前状态；② 信封里额外回报**脚本自身**的成败
+    （``script_ok`` / ``script_exit`` / ``script_error``）—— 子进程自己的退出码
+    必须留给"这次有没有取到状态"，脚本的成败只能靠字段带出来。
+
     ``--`` 分隔（bug #6）：``--`` 之后的内容不再当成本工具的开关/位置参数，
     原样收进 ``script_args`` 并透传给用户脚本的 ``sys.argv`` —— 依赖
     ``sys.argv`` 的脚本在验证重跑里才能拿到与基线一致的参数。
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     pos = []
-    all_figs = with_text = envelope = False
+    all_figs = with_text = envelope = onepass = False
     fig: Optional[int] = None
     script_args: List[str] = []
     passthrough = False
@@ -1213,6 +1514,8 @@ def main(argv=None) -> int:
             with_text = True
         elif a == '--envelope':
             envelope = True
+        elif a == '--onepass':
+            onepass = True
         elif a == '--fig':
             i += 1
             if i >= len(argv):
@@ -1231,19 +1534,34 @@ def main(argv=None) -> int:
     script, out = pos[0], pos[1]
     if fig is None and len(pos) > 2:
         fig = _int_or_none(pos[2])
+    if onepass:
+        envelope = True            # 单遍要回报"脚本跑成了没有"，只能走信封
 
+    outcome: Dict[str, Any] = {}
+    info: Dict[str, Any] = {}
     if all_figs:
         states, err = collect_all(script, with_text=with_text,
-                                  script_args=script_args)
+                                  script_args=script_args,
+                                  outcome=outcome if onepass else None)
         state = None
     else:
         state, err = collect(script, fig, with_text=with_text,
-                             script_args=script_args)
+                             script_args=script_args,
+                             outcome=outcome if onepass else None,
+                             info=info if onepass else None)
         states = None
     ok = not err
 
     if envelope:
         payload = {'ok': ok, 'error': '' if ok else err, 'all_figs': all_figs}
+        if onepass:
+            # 脚本自身成败：runpy 捕掉的异常不会出现在子进程退出码上，必须显式带出。
+            payload['script_ok'] = bool(outcome.get('script_ok', ok))
+            payload['script_exit'] = outcome.get('script_exit')
+            payload['script_error'] = outcome.get('error') or ('' if ok else err)
+            payload['basis'] = info.get('basis')
+            # 写盘那一刻的快照：父进程拿它做"磁盘上那张图里也必须体现这次改动"的追加检查
+            payload['snapshot'] = info.get('snapshot')
         if ok:
             if all_figs:
                 payload['states'] = states

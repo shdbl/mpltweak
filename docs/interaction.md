@@ -55,6 +55,16 @@ flowchart TD
 从打开窗口到 `mpltweak apply --write`，中间任何一步（包括关窗之后）脚本一个字符都不会变；
 写回是你在第三步显式点头后的动作。
 
+关窗时如果**真的拖过东西**（参数确实存下来了），终端会直接打出下一条命令，照抄即可：
+
+```text
+[launch] 参数已存到 .tweak_params/fig1.json（脚本未改动）；要写回源码：
+  mpltweak apply fig1.py --write
+```
+
+只是把命令**打出来**：写回仍然要你自己跑、自己确认，工具**不会**自动改你的源码。
+没拖过（参数与打开时一模一样）时不会打这一段 —— 没有改动就没有下一步。
+
 ## 窗口后端：Qt（推荐）还是 Tk（默认可用）
 
 开窗必须有一个图形后端。mpltweak 依次尝试 **QtAgg（需要 PyQt5）→ Qt5Agg → Qt6Agg（PyQt6 / PySide6）→ TkAgg（需要 `tkinter`）**，用第一个 import 得动的：
@@ -86,9 +96,22 @@ pip install "mpltweak[qt]"
 
 ---
 
-回退到 Tk 时工具会在 **stderr** 打一句人话提示（`MPLTWEAK_NO_HINT=1` 可静默），并按顺序
+回退到 Tk 时工具会在 **stderr** 打一句人话提示，并按顺序
 QtAgg → Qt5Agg → Qt6Agg → TkAgg 逐个真建 canvas 探测；`doctor` 会多报一行当前开窗后端
 （实测：`开窗后端   : Tk（未装 Qt；想要 Qt 界面：pip install "mpltweak[qt]"）`）。
+
+这句提示**每个用户只打一次**（0.1.11 起）：第一次用 Tk 开窗时提醒，之后不再重复念，
+免得每次开窗都刷一行。它记在一个戳文件里：
+
+```text
+~/.mpltweak/tk_hint_shown          # 家目录可用 MPLTWEAK_HOME 改
+```
+
+想再看一次那条提示：删掉这个文件即可。`MPLTWEAK_NO_HINT=1` 是"这次别说话"
+（静默，且**不落戳** —— 批量脚本里用它，下次你手敲时仍会提示一次）。
+
+> **"怎么装 Qt"没有被藏起来**：`mpltweak doctor` 的「开窗后端」那行**永远**照打
+> （不是每个用户一次，是每次都报），本节也一直写着 `pip install "mpltweak[qt]"`。
 
 ## 如果没反应
 
@@ -98,7 +121,7 @@ QtAgg → Qt5Agg → Qt6Agg → TkAgg 逐个真建 canvas 探测；`doctor` 会�
 |---|---|
 | 没弹窗 | 运行 `mpltweak doctor` 看诊断 |
 | 敲了 `mpltweak launch fig1.py` | 现在这两种写法等价（`launch` 是显式子命令），参数与 `mpltweak fig1.py` 完全相同 |
-| 用 `--params` 写回过，`revert` 却说"还没有可回退的备份" | 备份放在**参数文件旁边**，而 `revert` 默认只找 `.tweak_params/`；把同一个 `--params` 也传给 `revert` |
+| `revert` 说"还没有可回退的备份" | 这条报错的含义是"这份备份不存在"：还没对这个脚本做过 `apply --write`，或者备份被删过。备份**恒定留在脚本旁**的 `.tweak_params/<脚本>.tweak.bak`（锚点是**脚本**，**不跟 `--params` 走**）⇒ `revert` **不用**再传 `--params`；0.1.8 遗留在参数文件旁的旧备份会作为兜底被找到 |
 | 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
 | 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
 | 脚本要读数据 / 跑很久 | 先试 `--timeout 600` **放宽**等待。`--no-verify` 会**完全跳过重跑验证**——那是写坏代码时唯一的自动安全网，只在脚本确实无法在无头环境重跑时才用，且用前请确认脚本已在版本控制里 |

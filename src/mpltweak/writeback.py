@@ -2097,9 +2097,13 @@ def _backup_path_legacy(script, params_path):
 def _prune_backups(script, params_path, keep=5):
     """裁掉多余带 pid 的备份 —— 但**永远保留最早那一份**；固定名那份也不动。
 
-    保留最早一份是 ``revert --first`` 的前提：固定名备份只代表"最近一次写回之前"，
-    反复 apply 之后"最初的原文"就再也拿不回来了（审计 RC-7：这是 M6 可逆性
-    全灭的级联源头）。多留一份的成本是几十 KB。
+    保留最早一份是 ``revert --first`` 的前提：固定名备份虽然自 T71 起也是"首份优先"
+    （``_make_backup`` 里已存在就不再复制，见 ``:2156-2165``），但**它可能被删 / 被
+    别的工具覆盖**，同一个进程复用 pid 时那份副本也只代表"该进程最近一次写回之前"
+    （文件名带 pid）—— 只有这份"最早"才真正代表最初那次写回之前。所以裁备份时
+    **保留最近 ``keep`` 份 + 最早 1 份**，裁掉的是**中间**的；丢了这份"最早"，
+    反复 apply 之后"最初的原文"就再也拿不回来了（审计 RC-7：这是 M6 可逆性全灭的
+    级联源头）。多留一份的成本是几十 KB。
     """
     d = _backup_dir(script, params_path)
     stem = os.path.splitext(os.path.basename(script))[0]
@@ -2147,8 +2151,8 @@ def _long_path(p):
 def _make_backup(script, params_path, keep=5, warnings=None):
     """写备份并返回固定名路径；失败抛 OSError。
 
-    写两份：固定名（最近一次，兼容既有约定）+ 带 pid 的专属副本（并发时不互相
-    覆盖），并把旧的 pid 副本裁到最近 keep 份。
+    写两份：固定名（**首份优先**：只在不存在时创建，兼容既有约定）+ 带 pid 的专属
+    副本（并发时不互相覆盖），并把旧的 pid 副本裁到最近 keep 份。
 
     ``warnings``（T41）：pid 副本失败时**不再静默吞掉**（过去是 `except OSError: pass`，
     长路径下副本根本写不出来而无人知晓）—— 把路径与 errno 记进调用方的 warning 列表。
@@ -2980,9 +2984,31 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                         'verified': False})
             return res
     if verify:
+        # 原位覆盖了字段 → 语义只比对被覆盖的字段。**每个轴**都要在
+        # fields_by_axis 里有条目（未覆盖的轴给空集 = 什么都不比）——
+        # 否则 compare 会把没列出的轴当"全字段比对"，colorbar 等未覆盖
+        # 轴的 clim/位置会误报不一致而回滚。
+        fba = {}
+        for _a in data.get('axes') or []:
+            _i = _a.get('index')
+            if isinstance(_i, int):
+                fba[_i] = set(covered.get(_i, ()))
+                # T73（船长裁决 #2）：**拆开 x/y 的耦合** —— 原来"改了 y 就把
+                # x 的门也打开"（`fba |= {label_fontsize,…}` → 再 add
+                # 'label_fontsize'），于是自检比渲染更宽松（x 的字段顺带把 y 的
+                # 字段纳入检查）。现在 `fba[_i]` 只含**真正写进去的那些字段**。
+                # 已知边界（记 0.1.10，不在本任务扩范围）：verify.compare 目前
+                # 只认 'label_fontsize'/'tick_fontsize'，所以纯 y 侧的改动在语义
+                # 层仍是"不判"（不是判过）——宁可如实不判，也不假装覆盖。
+        _sem_needed = bool(semantic and (covered or figsize_edited))
         try:
-            vok, verr = verify_run(script, python, timeout,
-                                   script_args=script_args)
+            # t39：**默认一遍**（这一次同时回答"脚本还跑得通吗"与"改动真生效了吗"）。
+            # 只有单遍拿不到状态时 `_verify_script` 才回退到"原样跑 + 套壳跑"两遍，
+            # 并把回退原因写进 warnings（用户可见，不静默）。
+            _vp = _verify_script(script, data, python, timeout,
+                                 semantic=_sem_needed, fields_by_axis=fba,
+                                 figsize_edited=figsize_edited,
+                                 script_args=script_args, warnings=warnings)
         except BaseException as e:                         # noqa: BLE001
             # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：脚本已经写盘了 →
             # 这里起任何异常都必须回滚，窄化会漏掉下一种未知异常（E3 的现场）。
@@ -2993,43 +3019,37 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                                   _rollback_note(backup, script,
                                                  expect=in_src))})
             return res
+        vok, verr = _vp['vok'], _vp['verr']
+        # t39：这次验证跑了几个脚本进程（1 = 单遍省下一遍；2 = 回退）与状态取自
+        # 哪儿（savefig 快照 / 活图对象）——如实回报，供 --json 与报告核对。
+        res['verify_passes'] = _vp['passes']
+        if _vp.get('basis'):
+            res['semantic_basis'] = _vp['basis']
         res['verified'] = vok
         # T23：三层验证各自的状态（rerun 这一层就是"重跑"）
         res['layers'] = dict(res.get('layers') or {}, rerun=vok)
         if vok is True and semantic:
             if covered or figsize_edited:
-                # 原位覆盖了字段 → 语义只比对被覆盖的字段。**每个轴**都要在
-                # fields_by_axis 里有条目（未覆盖的轴给空集 = 什么都不比）——
-                # 否则 compare 会把没列出的轴当"全字段比对"，colorbar 等未覆盖
-                # 轴的 clim/位置会误报不一致而回滚。
-                fba = {}
-                for _a in data.get('axes') or []:
-                    _i = _a.get('index')
-                    if isinstance(_i, int):
-                        fba[_i] = set(covered.get(_i, ()))
-                        # T73（船长裁决 #2）：**拆开 x/y 的耦合** —— 原来"改了 y 就把
-                        # x 的门也打开"（`fba |= {label_fontsize,…}` → 再 add
-                        # 'label_fontsize'），于是自检比渲染更宽松（x 的字段顺带把 y 的
-                        # 字段纳入检查）。现在 `fba[_i]` 只含**真正写进去的那些字段**。
-                        # 已知边界（记 0.1.10，不在本任务扩范围）：verify.compare 目前
-                        # 只认 'label_fontsize'/'tick_fontsize'，所以纯 y 侧的改动在语义
-                        # 层仍是"不判"（不是判过）——宁可如实不判，也不假装覆盖。
-                sok, sdetail = None, '语义验证未执行'
-                try:
-                    sok, sdetail = _verify.verify_semantic(
-                        script, data, python, timeout, fields_by_axis=fba,
-                        figsize_edited=figsize_edited,
-                        script_args=script_args)
-                except BaseException as e:                 # noqa: BLE001
-                    # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：写盘之后
-                    # 任何异常都必须回滚，窄化会漏掉下一种未知异常（E3；块路径同款）。
-                    res.update({'reason': FAIL, 'verified': True,
-                                'applied': False,
-                                'err': '写回后语义验证异常（%s: %s）：%s'
-                                       % (type(e).__name__, e,
-                                          _rollback_note(backup, script,
-                                                         expect=in_src))})
-                    return res
+                if _vp['sok'] is not _UNSET:
+                    # 单遍路径已经在**同一次跑**里把状态比对做完了
+                    sok, sdetail = _vp['sok'], _vp['sdetail']
+                else:
+                    sok, sdetail = None, '语义验证未执行'
+                    try:
+                        sok, sdetail = _verify.verify_semantic(
+                            script, data, python, timeout, fields_by_axis=fba,
+                            figsize_edited=figsize_edited,
+                            script_args=script_args)
+                    except BaseException as e:                 # noqa: BLE001
+                        # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：写盘之后
+                        # 任何异常都必须回滚，窄化会漏掉下一种未知异常（E3；块路径同款）。
+                        res.update({'reason': FAIL, 'verified': True,
+                                    'applied': False,
+                                    'err': '写回后语义验证异常（%s: %s）：%s'
+                                           % (type(e).__name__, e,
+                                              _rollback_note(backup, script,
+                                                             expect=in_src))})
+                        return res
                 res['semantic'] = sok
                 if sok is False:
                     res.update({'reason': FAIL,
@@ -4275,6 +4295,78 @@ def verify_run(script, python=None, timeout=300, script_args=None):
         return False, str(e)
 
 
+# t39：语义层"还没有结论"的哨兵 —— 与 None（= 跑过了但取不到状态）必须分开。
+_UNSET = object()
+
+
+def _verify_script(script, data, python, timeout, semantic, fields_by_axis,
+                   figsize_edited, script_args, warnings):
+    """t39：**默认一遍**同时回答"脚本还跑得通吗"与"改动真的生效了吗"。
+
+    返回 dict：
+      * ``passes``：这次验证跑了几个脚本进程（1 = 单遍；2 = 回退到两遍）
+      * ``vok``   ：脚本还跑得通吗（True/False/None）—— 与旧 ``verify_run`` 同义
+      * ``verr``  ：失败文案（stderr 尾部）
+      * ``sok``   ：语义层结论（True/False/None）；``_UNSET`` = 还没有结论，
+                    调用方照旧再跑 ``verify_semantic``
+      * ``sdetail``：语义层明细
+      * ``basis`` ：'savefig'（状态取自写盘那一刻的快照）/ 'live'（取自仍活着的图）
+
+    **为什么能省掉一遍**：旧路径第 2 遍（``verify_semantic``）只是为了"跑完还能拿到
+    图对象"，于是另起一个套壳进程，而套壳为了取数**必须改脚本行为**（拦 ``plt.close``
+    ——阶段 1 双向实测它会静默改坏用户图片），所以第 1 遍的"原样跑"不敢省。现在取数
+    改成"钩 ``Figure.savefig`` 抓写盘那一刻的快照 + 创建顺序注册表持强引用"（都不改
+    行为，见 ``verify._FigureRegistry``），一次跑就能同时给出两个答案。
+
+    **判据一个字没放松**：状态比对仍走 ``verify._compare_state``（与
+    ``verify_semantic`` 共用同一个函数）；"跑得通吗"在判不了时一律回退到
+    **原样重跑**这个旧判据。取不到状态**绝不**静默判"通过"。
+    """
+    out = {'passes': 1, 'vok': None, 'verr': '', 'sok': _UNSET, 'sdetail': '',
+           'basis': None}
+    if not semantic:
+        # 本来只要"跑得通"这一层（--no-semantic / 原位没覆盖任何字段）：只有一遍，没得省
+        out['vok'], out['verr'] = verify_run(script, python, timeout,
+                                             script_args=script_args)
+        return out
+    op = _verify.verify_once(script, data, python, timeout,
+                             fields_by_axis=fields_by_axis,
+                             figsize_edited=figsize_edited,
+                             script_args=script_args)
+    status = op.get('status')
+    if status == 'ok':
+        out.update({'vok': True, 'verr': '',
+                    'sok': op.get('verified'),
+                    'sdetail': op.get('detail') or '',
+                    'basis': op.get('basis')})
+        return out
+    if status == 'timeout':
+        # 与旧 verify_run 超时同口径：判不了 → 不否决、也不再跑（重跑还会超时）
+        out.update({'vok': None, 'verr': op.get('detail') or '语义验证超时'})
+        return out
+    # ------------------------------------------------------------------
+    # 下面都是"这一次没给出结论" → **fail-closed 回退**（绝不静默判通过）
+    # ------------------------------------------------------------------
+    why = op.get('fallback_reason') or op.get('detail') or str(status)
+    out['passes'] = 2
+    if status == 'no_state':
+        # 单遍已经知道"状态取不到"，这与旧路径 verify_semantic 的结论**同源同码**
+        # （都来自 collect() 的 err 文案）→ 直接落成 sok=None（= 跑过但没验到），
+        # 不必再跑第三遍。语义层的三态语义因此与旧路径完全一致。
+        out['sok'] = None
+        out['sdetail'] = op.get('detail') or '未能取到图状态'
+        warnings.append('单遍验证未取到目标图状态（%s）→ 已回退到两遍口径：'
+                        '脚本按原样重跑判定"还跑得通吗"，语义层如实记为"没有验到"'
+                        % why)
+    else:
+        # 脚本在套壳里失败 / 子进程起不来：单遍的"跑不通"不能直接当结论 ——
+        # **一律以原样重跑为准**（与旧路径 pass 1 同一个判据）。
+        warnings.append('单遍验证没拿到结论（%s）→ 已回退到原样重跑判定' % why)
+    out['vok'], out['verr'] = verify_run(script, python, timeout,
+                                         script_args=script_args)
+    return out
+
+
 # --------------------------------------------------------------------------
 # 主入口
 # --------------------------------------------------------------------------
@@ -4741,8 +4833,17 @@ def writeback(script, data, params_path, verify=True, python=None,
                                      rerun=None, semantic=None)
                 break
             try:
-                vok, verr = verify_run(script, python, timeout,
-                                       script_args=script_args)
+                # t39：默认**一遍** —— 这一次同时回答"脚本还跑得通吗"与"改动真的
+                # 落到目标图上了吗"。语义层的数据与旧路径**同源**（同一份
+                # `_prune_refused` + 同一个 figsize_edited），判据不许分叉。
+                # 单遍拿不到状态时 `_verify_script` 自己回退两遍并打印原因。
+                _vp = _verify_script(
+                    script,
+                    _prune_refused(data, _unexpressed) if semantic else data,
+                    python, timeout, semantic=bool(semantic),
+                    fields_by_axis=None,
+                    figsize_edited=bool(figsize_in_block or data.get('figsize_in')),
+                    script_args=script_args, warnings=warnings)
             except BaseException as e:                     # noqa: BLE001
                 # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：E3 的现场 ——
                 # 脚本**已经写盘**了 → 这一步之后任何异常都必须回滚，绝不能把
@@ -4755,6 +4856,10 @@ def writeback(script, data, params_path, verify=True, python=None,
                                       _rollback_note(backup, script,
                                                      expect=content))})
                 return res
+            vok, verr = _vp['vok'], _vp['verr']
+            res['verify_passes'] = _vp['passes']
+            if _vp.get('basis'):
+                res['semantic_basis'] = _vp['basis']
             attempts.append({'anchor': cand[0],
                              'line': cand[1].lineno if cand[1] is not None else None,
                              'ok': vok})
@@ -4772,29 +4877,33 @@ def writeback(script, data, params_path, verify=True, python=None,
                 if semantic:
                     # 块路径会把画布尺寸写进块里（set_size_inches），所以只要参数
                     # 带了 figsize 就该比对，而不是只在"原位替换过 figsize"时才比。
-                    try:
-                        # T70：语义层只对**真正写进去的**目标负责（证不出/块表达
-                        # 不了的字段已进 pending，见 _prune_refused 的说明）。
-                        sok, sdetail = _verify.verify_semantic(
-                            script, _prune_refused(data, _unexpressed),
-                            python, timeout,
-                            figsize_edited=bool(figsize_in_block
-                                                or data.get('figsize_in')),
-                            script_args=script_args)
-                    except BaseException as e:                 # noqa: BLE001
-                        # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：E3 的
-                        # 现场 —— 参数里 xlim 带 null 时 verify.compare 里
-                        # `float(None)` 抛 TypeError → 块已写进脚本、异常却穿到顶层
-                        # 兜底（rc=1 + internal_error，无回滚）。写盘之后**任何**
-                        # 异常都必须走 _rollback_note。
-                        res.update({'reason': FAIL, 'attempts': attempts,
-                                    'verified': False, 'applied': False,
-                                    'err': '写回后语义验证异常（%s: %s）：%s'
-                                           % (type(e).__name__, e,
-                                              _rollback_note(
-                                                  backup, script,
-                                                  expect=content))})
-                        return res
+                    if _vp['sok'] is not _UNSET:
+                        # 单遍路径已经在**同一次跑**里把状态比对做完了
+                        sok, sdetail = _vp['sok'], _vp['sdetail']
+                    else:
+                        try:
+                            # T70：语义层只对**真正写进去的**目标负责（证不出/块表达
+                            # 不了的字段已进 pending，见 _prune_refused 的说明）。
+                            sok, sdetail = _verify.verify_semantic(
+                                script, _prune_refused(data, _unexpressed),
+                                python, timeout,
+                                figsize_edited=bool(figsize_in_block
+                                                    or data.get('figsize_in')),
+                                script_args=script_args)
+                        except BaseException as e:                 # noqa: BLE001
+                            # **回滚兜底，必须宽**（棘轮登记的 9 处宽捕获之一）：E3 的
+                            # 现场 —— 参数里 xlim 带 null 时 verify.compare 里
+                            # `float(None)` 抛 TypeError → 块已写进脚本、异常却穿到顶层
+                            # 兜底（rc=1 + internal_error，无回滚）。写盘之后**任何**
+                            # 异常都必须走 _rollback_note。
+                            res.update({'reason': FAIL, 'attempts': attempts,
+                                        'verified': False, 'applied': False,
+                                        'err': '写回后语义验证异常（%s: %s）：%s'
+                                               % (type(e).__name__, e,
+                                                  _rollback_note(
+                                                      backup, script,
+                                                      expect=content))})
+                            return res
                     attempts[-1]['semantic'] = sok
                     res['semantic'] = sok
                     res.setdefault('layers', {'syntax': True})['semantic'] = sok

@@ -235,6 +235,25 @@ def main():
         check(all(f.get('external_modified') is False for f in r['files']),
               '每条 files[] 都带 external_modified 布尔键（正常路径 false）',
               [f.get('external_modified') for f in r['files']])
+        # t45 / t39：这两个键**恒存在**（agent 不必再从 warnings 文本里猜
+        # "这次为什么回退到两遍"）。预览没有写回、也没有重跑 → 0 / 空串，
+        # 而且类型固定（int / str），不是缺键、也不是 None。
+        check(all('verify_passes' in f and 'semantic_basis' in f
+                  for f in r['files']),
+              '每条 files[] 恒有 verify_passes + semantic_basis（t45）',
+              [sorted(k for k in f if 'verif' in k or 'semantic' in k)
+               for f in r['files']])
+        check(all(isinstance(f.get('verify_passes'), int)
+                  and not isinstance(f.get('verify_passes'), bool)
+                  for f in r['files']),
+              'verify_passes 类型是 int（不是 bool/None）',
+              [f.get('verify_passes') for f in r['files']])
+        check(all(f.get('verify_passes') == 0 for f in r['files']),
+              '预览（没写回、没重跑）时 verify_passes=0',
+              [f.get('verify_passes') for f in r['files']])
+        check(all(f.get('semantic_basis') == '' for f in r['files']),
+              '语义依据未知时 semantic_basis 是空串（不是缺键）',
+              [f.get('semantic_basis') for f in r['files']])
     except Exception as e:                                        # noqa: BLE001
         check(False, 'apply --json 输出可解析', '%s / %r' % (e, out[:120]))
 
@@ -264,6 +283,14 @@ def main():
         check(res['files'][0].get('style') == 'inplace',
               '--json 如实回报 style（写回路径原先漏设 → 人读消息永远说"插入调整块"）',
               res['files'][0].get('style'))
+        # t45 / t39：正常原位写回**只跑 1 遍**（这一遍同时回答"还跑得通吗"与
+        # "改动真落到目标图上了吗"），并给出语义判定依据。
+        check(res['files'][0].get('verify_passes') == 1,
+              '正常原位写回只重跑 1 遍（verify_passes=1，t39 起的单遍口径）',
+              res['files'][0].get('verify_passes'))
+        check(res['files'][0].get('semantic_basis') in ('live', 'live+savefig'),
+              '语义依据如实回报 live / live+savefig',
+              res['files'][0].get('semantic_basis'))
         src = open(script, encoding='utf-8').read()
         check('[0.1, 0.6, 0.35, 0.3]' in src,
               '源码里的位置被原位改写', [l for l in src.splitlines()
@@ -589,6 +616,92 @@ def main():
         check(r13.get('verify_mode') == 'fast' and r13.get('verified') is None,
               '--json 如实回报 verify_mode=fast / verified=None（不谎称验证过）',
               (r13.get('verify_mode'), r13.get('verified')))
+        # t45：快速档**没有为验证跑脚本** → verify_passes=0 且语义无依据（空串）。
+        # 这两个键仍然恒存在（消费方不必分支处理"键在不在"）。
+        check(r13.get('verify_passes') == 0,
+              '--verify-fast 没重跑 → verify_passes=0（不是缺键、不是 None）',
+              r13.get('verify_passes'))
+        check(r13.get('semantic_basis') == '',
+              '--verify-fast 没有语义判定依据 → semantic_basis 空串',
+              repr(r13.get('semantic_basis')))
+
+        # ---- §13c 回退场景的机器可读取值（走 --json 用的同一段白名单）----
+        # 为什么不用 CLI 测：`apply` 先要能**定位到图**才能走到验证层，而"取不到
+        # 目标图状态"的脚本（OO 风格 Figure / 压根没画图）在更早的采集阶段就
+        # no_fig 了 —— 拿不到那条路径（t39 已把它记成 0.1.11 的残留项）。
+        # 所以这里从模块级入口（writeback + apply._emit_json）走同一段白名单代码：
+        # 判据一字不放宽 —— 断言的是"回退被如实回报"，不是"回退也算通过"。
+        print('§13c 取不到目标图状态 → 回退两遍：verify_passes=2 / 语义无依据 / 原因可见')
+        tmp13c = None
+        try:
+            from mpltweak import apply as _apply13c
+            from mpltweak import messages as _msg13c
+            from mpltweak import writeback as _wb13c
+            tmp13c = tempfile.mkdtemp(prefix='mpltweak_twopass_')
+            s13c = os.path.join(tmp13c, 'oo.py')
+            with open(s13c, 'w', encoding='utf-8') as f:
+                f.write(textwrap.dedent('''
+                    import matplotlib
+                    matplotlib.use('Agg')
+                    from matplotlib.figure import Figure
+                    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+                    fig = Figure(figsize=(8, 4))
+                    ax = fig.add_axes([0.08, 0.55, 0.40, 0.35])
+                    ax.plot([1, 2, 3], [4, 5, 6])
+                    ax.set_title('t', fontsize=12)
+                    FigureCanvasAgg(fig)
+                    fig.savefig('oo.png', dpi=80)
+                '''))
+            _p13c = os.path.join(tmp13c, '.tweak_params')
+            os.makedirs(_p13c, exist_ok=True)
+            _pp13c = os.path.join(_p13c, 'oo.json')
+            _d13c = {'fig_index': 0, 'axes': [{'index': 0,
+                                               'title_fontsize': 21.0}]}
+            with open(_pp13c, 'w', encoding='utf-8') as f:
+                json.dump(_d13c, f, ensure_ascii=False)
+            _res13c = _wb13c.writeback(s13c, _d13c, _pp13c, python=PY,
+                                       timeout=180, style='inplace')
+            check(_res13c.get('verify_passes') == 2,
+                  '取不到状态 → writeback 如实回报 verify_passes=2（回退两遍）',
+                  _res13c.get('verify_passes'))
+            check(_res13c.get('verified') is None
+                  and _res13c.get('semantic') is None,
+                  '没验到就不许说验过：verified/semantic 都是 None',
+                  (_res13c.get('verified'), _res13c.get('semantic')))
+            check(any('回退' in str(w) for w in (_res13c.get('warnings') or [])),
+                  '回退原因在 warnings 里可见（用户与 agent 都读得到）',
+                  _res13c.get('warnings'))
+            check('fontsize=21' in open(s13c, encoding='utf-8').read(),
+                  '回退不代表放弃写回（字号仍然落盘）',
+                  [ln.strip() for ln in open(s13c, encoding='utf-8')
+                   if 'set_title' in ln])
+            # 同一段白名单：emit_json 自己直写 fd1（UTF-8，绕过 redirect_stdout），
+            # 所以这里替换 messages.emit_json 抓 payload —— 构造逻辑仍是产品代码。
+            _cap13c = {}
+            _orig13c = _msg13c.emit_json
+            _msg13c.emit_json = lambda payload: _cap13c.update(payload)
+            try:
+                _apply13c._emit_json(s13c, [(_pp13c, _res13c)], sys.stdout,
+                                     ok=True)
+            finally:
+                _msg13c.emit_json = _orig13c
+            _f13c = _cap13c['files'][0]
+            check(_f13c.get('verify_passes') == 2
+                  and isinstance(_f13c.get('verify_passes'), int),
+                  '--json 白名单里回退场景仍是 int 2（键恒存在、类型固定）',
+                  _f13c.get('verify_passes'))
+            check(_f13c.get('semantic_basis') == '',
+                  '回退时 semantic_basis 是空串（从 None 归一，不是缺键）',
+                  repr(_f13c.get('semantic_basis')))
+            check(any('回退' in str(w) for w in (_f13c.get('warnings') or [])),
+                  '回退原因也进了 --json 的 warnings（机器可读通道能追）',
+                  _f13c.get('warnings'))
+        except Exception as _e13c:                                # noqa: BLE001
+            check(False, '§13c 回退场景执行', _e13c)
+        finally:
+            if tmp13c:
+                shutil.rmtree(tmp13c, ignore_errors=True)
 
         _setup13()
         # 语言由测试自己钉住（见 run() 的说明）：两种语言都断言，两个分支都真被覆盖。
@@ -1244,7 +1357,8 @@ print("RESULT " + "|".join([
 
     print('§22 可重跑预检：写回/开窗前静态预警五类重跑风险（绝不执行脚本）')
     # 背景（用户视角评审 2026-10-12 拍板进 0.1.10）：本工具的安全网要求**在你的环境里
-    # 反复重跑脚本**（一次 apply 默认跑 2~5 遍），于是「要参数 / 要联网 / 等人输入 /
+    # 重跑脚本**（0.1.10 起写回默认只重跑 1 遍，取不到目标图状态时才回退 2 遍），于是
+    # 「要参数 / 要联网 / 等人输入 /
     # 要弹窗 / 缺依赖」的脚本会无声撞墙，用户事后归因成"这工具不行"。
     # t11 管的是**失败之后**怎么说（四类归因），本节钉住**失败之前**的预警：
     #   ① 五类各一条：人读提示（含可照抄的下一步）+ --json 的 preflight.risks；

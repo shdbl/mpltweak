@@ -10,7 +10,7 @@ mpltweak apply —— 「落实」助手（CLI：mpltweak apply <脚本.py>）
   mpltweak apply <脚本.py> --write             # AST 确定性写回（见 mpltweak.writeback）
   mpltweak apply <脚本.py> --write --timeout 600   # 写回；脚本跑得久就放宽验证等待
   mpltweak apply <脚本.py> --write -- --data x.npz # 写回；`--` 后的参数透传给重跑验证
-  mpltweak apply <脚本.py> --write --no-verify     # 完全跳过重跑验证（安全网，慎用）
+  mpltweak apply <脚本.py> --write --no-verify     # 跳过重跑与语义验证：跑不通/布局不对都不会被发现，也不会回滚（一般不要用）
   mpltweak apply <脚本.py> --params X          # 指定参数文件
 
 它默认**不改脚本**（只读 + 只打印）：落实交给 AI 按脚本自身风格完成；
@@ -273,6 +273,27 @@ def _auto_should_fallback(res):
     return bool(res.get('needs_block'))
 
 
+def _success_tail(res):
+    """成功路径收敛行的**后缀**（无感化②，2026-10-13 用户认可）。
+
+    只在 ``verified is True``（重跑层真的跑过且通过）时才给结论：
+
+      * ``semantic is True``  → "；图已更新（重跑 + 语义验证通过）"；
+      * 其余（语义未判定/没跑）→ "；已重跑验证" —— **不许**说"图已更新"，
+        那是第③层的结论；未判定的披露行随后照旧打印。
+
+    ``verified`` 不是 True（None=没跑 / False=跑失败）时返回空串：此时要么本来就
+    没有验证可报（`--no-verify` / `--verify-fast`，随后的分层提示行照旧打印），
+    要么是失败/保底保留 —— 那条路径**不收敛**，必须照旧"响"。
+    退出码与 `--json` 的字段集不受这里影响。
+    """
+    if res.get('verified') is not True:
+        return ''
+    if res.get('semantic') is True:
+        return _msg.t('written_tail_ok')
+    return _msg.t('written_tail_run')
+
+
 def _all_params_files(script, override=None):
     """收集脚本的全部参数文件（主文件 + ``<stem>.fig<k>.json``），按图号排序。
 
@@ -369,6 +390,24 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              'backup': r.get('backup'),
              'verified': r.get('verified'),
              'verify_mode': r.get('verify_mode'),
+             # t45 / t39：这次验证在**写回后的脚本**上跑了几遍，以及语义判定的
+             # 依据。两个键**恒存在**（agent 不必再从 warnings 的文本里猜"这次
+             # 为什么回退到两遍"）：
+             #   * verify_passes：1 = 默认单遍（t39 起）；2 = 单遍取不到目标图
+             #     状态 → 已回退两遍；0 = 这次没有为验证跑脚本（--no-verify /
+             #     --verify-fast / 预览 / 没有可写字段）。类型恒为 int。
+             #   * semantic_basis：'live+savefig' = 图对象状态 + 磁盘那张图的
+             #     追加判据；'live' = 只有图对象状态；'' = 这次没有语义判定依据
+             #     （没跑 / 回退后如实记"没验到"）。类型恒为 str。
+             # 值来自 writeback 的 res（那里可能是 None 或整键缺失），这里只做
+             # 类型归一 —— 不改任何行为，退出码与其余字段一律不动。
+             'verify_passes': (r.get('verify_passes')
+                               if isinstance(r.get('verify_passes'), int)
+                               and not isinstance(r.get('verify_passes'), bool)
+                               else 0),
+             'semantic_basis': (r.get('semantic_basis')
+                                if isinstance(r.get('semantic_basis'), str)
+                                else ''),
              'semantic': r.get('semantic'),
              'warnings': r.get('warnings') or [],
              'layout_conflicts': r.get('layout_conflicts') or [],
@@ -488,8 +527,10 @@ def main(argv=None):
     ap.add_argument('--write', action='store_true',
                     help='AST 确定性写回脚本（零 LLM）')
     ap.add_argument('--no-verify', action='store_true',
-                    help='写回后跳过 Agg 无头重跑验证（注意：这是写坏代码时唯一的自动'
-                         '安全网，仅在脚本确实无法无头重跑时使用；用前请先提交到版本控制）')
+                    help='写回后跳过重跑与语义验证（写盘后的语法检查仍会做）：脚本跑不通、'
+                         '布局没落到位都不会被发现，也不会自动回滚；这是写坏代码时唯一的'
+                         '自动安全网，一般不建议用；仅在脚本确实无法无头重跑时使用，'
+                         '用前请先提交到版本控制')
     ap.add_argument('--no-semantic', action='store_true',
                     help='跳过语义验证（默认会重跑并比对目标图的位置/字号等是否真的等于参数）')
     ap.add_argument('--verify-fast', action='store_true',
@@ -520,6 +561,9 @@ def main(argv=None):
                     help='只生成调整块预览，不落盘（调试用）')
     ap.add_argument('--json', action='store_true',
                     help='以 JSON 输出结果（给 agent / 脚本消费；过程信息改走 stderr）')
+    ap.add_argument('-v', '--verbose', action='store_true',
+                    help='展开细节（逐处改动清单 / 备份路径 / 验证分层结论）；'
+                         '默认成功只报一行，失败与降级信息一直都在')
     ap.add_argument('--force', action='store_true',
                     help='即便脚本在参数保存之后被改过，也照样套用参数（默认会跳过，'
                          '以免静默覆盖你的手动改动）')
@@ -529,6 +573,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     _msg.set_lang(args.lang)
+    # 无感化②：成功路径默认只报一行（含关键数字），细节进 `-v`。
+    # 只影响**成功**路径的人读输出：失败 / 回滚 / 降级 / 守卫命中 / 未判定
+    # 一律照旧打印，退出码与 `--json` 字段集不变。
+    _verbose = bool(getattr(args, 'verbose', False))
 
     # --json：人读的过程信息全部走 stderr，stdout 只留最后那一段 JSON
     _stdout = sys.stdout
@@ -544,7 +592,7 @@ def main(argv=None):
             _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
                        error=_err)
         sys.stderr.write('[apply] --no-verify 与 --verify-fast 不能同时用：\n'
-                         '  --no-verify   = 完全不做检查（连语法都不查）；\n'
+                         '  --no-verify   = 跳过重跑与语义验证（写盘后的语法检查仍会做）；\n'
                          '  --verify-fast = 只做语法检查。二选一。\n')
         return 2
 
@@ -574,8 +622,9 @@ def main(argv=None):
         print('发现 %d 份参数文件（一次会话改过多张图）——逐张落实：' % len(files))
 
     # 0.1.10 可重跑预检（pre-flight）：**在写回之前**把"这个脚本重跑会卡在哪"讲清楚。
-    # 用户视角评审指出的最大留存瓶颈 —— 安全网要求在你的环境里反复重跑脚本（一次
-    # apply 默认跑 2~5 遍），而「要参数 / 要联网 / 等人输入 / 要弹窗 / 缺依赖」的脚本
+    # 用户视角评审指出的最大留存瓶颈 —— 安全网要求在你的环境里重跑脚本（0.1.10 起
+    # 写回默认只重跑 1 遍，取不到目标图状态时才回退 2 遍），而「要参数 / 要联网 /
+    # 等人输入 / 要弹窗 / 缺依赖」的脚本
     # 会无声撞墙，用户事后归因成"这工具不行"。
     # 纪律（见 mpltweak.preflight）：纯静态（ast + find_spec，**绝不执行脚本**）、
     # **默认静默**（没风险一个字都不说）、**失败即放行**（预检自身出岔子当无风险）。
@@ -665,7 +714,7 @@ def main(argv=None):
         if not args.no_verify and not args.dry_run:
             # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
             # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
-            print('  正在验证（子进程重跑脚本，最长 %gs；不想等可加 --no-verify）'
+            print('  正在验证（子进程重跑脚本，最长 %gs）'
                   % args.timeout)
         # --verify-fast **隐含** --no-verify：快速档要的就是"不重跑"。
         # 若 verify 仍为 True，writeback 里 `if fast_check and not verify` 的分支
@@ -766,13 +815,22 @@ def main(argv=None):
                     print(_t_new('dryrun_inplace', _FALLBACK_DRYRUN_INPLACE,
                                  n=len(ch), items=', '.join(ch)[:160]))
                 elif _applied and ch:
-                    print(_msg.t('written_inplace', script=script))
-                    print(_msg.t('written_inplace_count', n=len(ch),
-                                 items=', '.join(ch)[:160]))
+                    # 无感化②：默认收成一行（含"几处"这个关键数字），逐处清单进 -v。
+                    if _verbose:
+                        print(_msg.t('written_inplace', script=script))
+                        print(_msg.t('written_inplace_count', n=len(ch),
+                                     items=', '.join(ch)[:160]))
+                    else:
+                        print(_msg.t('written_inplace_summary', n=len(ch),
+                                     script=script, tail=_success_tail(res)))
                 elif _applied:
                     # T68：`applied=true` 但没有逐字段原位改动记录（改动是块通道做的）——
                     # 文件确实被动过，仍如实说"已写回"，只是没有"原位修改 N 处"可报。
-                    print(_msg.t('written_inplace', script=script))
+                    if _verbose:
+                        print(_msg.t('written_inplace', script=script))
+                    else:
+                        print(_msg.t('written_inplace_summary_any',
+                                     script=script, tail=_success_tail(res)))
                 else:
                     # T68：一个字节都没写（applied=false）⇒ 绝不许说"已写回"。
                     # 如实报"未写回"+ 原因码；没能落地的字段由下面的 needs_block 提示列出。
@@ -794,7 +852,12 @@ def main(argv=None):
                 elif _applied:
                     # T68：**只有真的写进文件**才说"已写回"（旧实现只看 reason，
                     # 于是 applied=false 的拒绝路径也报 `[OK] 已写回`）。
-                    print(_msg.t('written_block', script=script))
+                    # 无感化②：默认收成一行；fig 变量名/插入点/figsize 这些细节进 -v。
+                    if _verbose:
+                        print(_msg.t('written_block', script=script))
+                    else:
+                        print(_msg.t('written_block_summary', script=script,
+                                     tail=_success_tail(res)))
                 else:
                     # T68：块没写（例如"运行时轴数证不出 ⇒ 拒绝写位置块"的 fail-closed
                     # 路径）⇒ 如实报"未写回"+ 原因码。
@@ -804,15 +867,20 @@ def main(argv=None):
                     if res.get('pending'):
                         _print_snippet_fields(data, res.get('pending'), res)
                 if res.get('auto_fallback'):
+                    # 降级披露（原位改不了 → 退块）：**不收敛**，两种模式都照打。
                     print(_msg.t('fallback_to_block'))
-                print(_msg.t('block_info', fig_var=res.get('fig_var'),
-                             anchor=res.get('anchor'),
-                             figsize=res.get('figsize_edited')))
+                if _verbose:
+                    print(_msg.t('block_info', fig_var=res.get('fig_var'),
+                                 anchor=res.get('anchor'),
+                                 figsize=res.get('figsize_edited')))
             for _line in res.get('layout_conflicts', []):
                 print(_line)
-            if res.get('backup'):
+            if res.get('backup') and _verbose:
+                # 备份路径是细节（revert 一条命令自己会找到它）→ 进 -v；
+                # 注意"备份失败/没备份"这类异常仍由 writeback 的 warnings 通道响亮报出。
                 print(_msg.t('backup_at', path=res['backup']))
             if res.get('verify_mode') == 'fast':
+                # 降级披露：`--verify-fast` 到底验了什么（**不收敛**）
                 print(_msg.t('verify_fast_note'))
                 # T23 / 3(d)：快速档实际只有"语法"这一层 —— 如实说清哪几层没跑，
                 # 别让人从"fast"两字反推出"验证过"。
@@ -825,11 +893,13 @@ def main(argv=None):
                         and _ly.get('rerun') is not None:
                     print(_LAYERS_NO_SEMANTIC)
             if res.get('verified') is True:
-                print(_msg.t('verify_run_ok'))
+                if _verbose:
+                    print(_msg.t('verify_run_ok'))      # 成功确认 → 收敛行已含结论
             elif res.get('verified') is False:
-                print(_msg.t('verify_run_fail'))
+                print(_msg.t('verify_run_fail'))        # 失败必须仍"响"
             if res.get('semantic') is True:
-                print(_msg.t('semantic_ok'))
+                if _verbose:
+                    print(_msg.t('semantic_ok'))        # 成功确认 → 收敛行已含结论
             elif res.get('semantic') is None and not args.no_semantic:
                 # `semantic is None` 有两种来源：真跑过但取不到状态、以及**压根没跑**
                 # （原位一个字段都没落地时提前返回）。后者不该打印"未能判定"这种

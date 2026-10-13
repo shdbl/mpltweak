@@ -66,10 +66,30 @@ def _backend_tk_hint():
     return hint
 
 
+def _tk_hint_stamp_path(environ=None):
+    '''"Tk 提示已经打过一次"的戳文件路径。
+
+    默认 ``~/.mpltweak/tk_hint_shown``；``MPLTWEAK_HOME`` 可改这个家目录
+    （测试隔离 / 多环境共用一台机器时用）。命名与位置是**对外行为**，见
+    ``docs/interaction.md``「窗口后端」一节。
+    '''
+    environ = os.environ if environ is None else environ
+    home = environ.get('MPLTWEAK_HOME') or os.path.join(
+        os.path.expanduser('~'), '.mpltweak')
+    return os.path.join(home, 'tk_hint_shown')
+
+
 def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
     '''无 PyQt5 → Tk 开窗时向 stderr 打一句人话；返回是否打出。
 
-    dry-run 不开窗不提示；``MPLTWEAK_NO_HINT=1`` 静默。'''
+    **每个用户 / 每次安装只打一次**（无感化③，2026-10-13 用户认可）：每次开窗都念
+    一遍只会变成噪音，而"怎么装 Qt"并没有被藏起来 —— ``mpltweak doctor`` 的
+    「开窗后端」那行**永远**照打（见 ``doctor()``），``docs/interaction.md`` 也照写。
+    打过的戳文件见 ``_tk_hint_stamp_path()``（删掉它即可让提示再出现一次）。
+
+    dry-run 不开窗不提示（也**不落戳**）；``MPLTWEAK_NO_HINT=1`` 静默（批量脚本用，
+    同样不落戳 —— 那是"这次别说话"，不是"已经说过了"）。
+    '''
     environ = os.environ if environ is None else environ
     if dry_run or environ.get('MPLTWEAK_NO_HINT') == '1':
         return False
@@ -78,8 +98,28 @@ def _emit_backend_hint(backend_name, dry_run=False, environ=None, stderr=None):
     hint = _backend_tk_hint()
     if not hint:
         return False
+    # 只在真的第一次提示时说话；判断失败（权限/IO）= 当作没打过（宁可多说一次，
+    # 也不能因为戳文件读不了就把提示彻底吞掉）。
+    stamp = _tk_hint_stamp_path(environ)
+    try:
+        if os.path.exists(stamp):
+            return False
+    except OSError:                                # noqa: BLE001
+        pass
     _out = sys.stderr if stderr is None else stderr
-    _out.write(hint + '\n')
+    try:
+        _out.write(hint + '\n')
+    except (OSError, ValueError):                  # noqa: BLE001 - 输出失败也不许影响开窗
+        return False
+    # best-effort 落戳：写不了也照常开窗（代价只是下次再说一遍）。
+    try:
+        _dir = os.path.dirname(stamp)
+        if _dir:
+            os.makedirs(_dir, exist_ok=True)
+        with open(stamp, 'w', encoding='utf-8') as _f:
+            _f.write('1\n')
+    except OSError:                                # noqa: BLE001
+        pass
     return True
 
 
@@ -125,6 +165,41 @@ def _params_path(script, override=None):
 def _summarize(fig):
     X, Y = fig.canvas.get_width_height()
     return '图 %dx%dpx，%d 个轴' % (X, Y, len(fig.axes))
+
+
+def _rel_for_shell(path, base):
+    '''把绝对路径表达成"相对 base（用户敲命令时所在的目录）"的样子，便于复制粘贴。
+
+    只要**同盘**就给相对路径（含 ``..`` 形式，例如用户从 ``proj/`` 里开的
+    ``../fig2.py``）—— 用户就在那个终端里粘贴，相对形式最短也最好认；
+    跨盘符没有相对路径（``ValueError``）时才退回绝对路径。
+    '''
+    try:
+        return os.path.relpath(path, base)
+    except ValueError:                  # Windows 跨盘符：没有相对路径
+        return path
+
+
+def _quote_arg(s):
+    '''含空格的参数加双引号（cmd / PowerShell / bash 都能直接粘贴）。'''
+    return '"%s"' % s if any(c in s for c in ' \t') else s
+
+
+def _next_step_cmd(script, params, script_args=(), params_given=False, base=None):
+    '''关窗后那条**可直接复制**的写回命令（无感化①，省掉"记住怎么写回"）。
+
+    只是把命令**打出来**：动作仍然要用户自己确认，**绝不自动写回用户源码**（红线）。
+    ``script_args`` 是 launch 收到的透传参数（``--`` 之后的用户脚本参数）—— 写回时
+    重跑验证要用同一份 argv，所以一并带上（bug #6 的口径）。
+    '''
+    base = os.getcwd() if base is None else base
+    parts = ['mpltweak', 'apply', _quote_arg(_rel_for_shell(script, base)),
+             '--write']
+    if params_given:
+        parts += ['--params', _quote_arg(_rel_for_shell(params, base))]
+    if script_args:
+        parts += ['--'] + [_quote_arg(str(a)) for a in script_args]
+    return ' '.join(parts)
 
 
 def _prune_fig_params(tmps, keep_keys, protect=()):
@@ -706,6 +781,18 @@ def main(argv=None):
                 print('[launch]   第 %d 张 -> %s%s'
                       % (k + 1, os.path.basename(tmps[k]),
                          '（并另存主文件）' if k == chosen else ''), flush=True)
+        # 无感化①（0.1.11，用户 2026-10-13 认可）：关窗后给一条**可直接复制**的
+        # 写回命令，省掉"记住怎么写回"这一步。只在**这次真的存过参数**时打
+        # （没拖过时上面那支 `chosen is None` 直接走开，零噪音）。
+        # 注意：这里只是把命令**打出来** —— 写回仍然要用户自己确认，
+        # **绝不自动改用户源码**（红线）。
+        from . import messages as _msgs
+        print(_msgs.t('next_step_apply',
+                      params=_rel_for_shell(params, old_cwd),
+                      cmd=_next_step_cmd(script, params,
+                                         script_args=passthrough,
+                                         params_given=bool(args.params),
+                                         base=old_cwd)), flush=True)
     _clean_temps([k for _, k in changed])
 
     # 3) 变化摘要（只读，不写代码）

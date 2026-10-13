@@ -106,9 +106,37 @@ MESSAGES = {
         'zh': '  原位修改 %(n)d 处: %(items)s',
         'en': '  %(n)d in-place edits: %(items)s',
     },
+    # 无感化（0.1.11，用户 2026-10-13 认可）：**成功路径收成一行**，细节（逐处清单 /
+    # 备份路径 / 验证分层结论）挪到 `-v/--verbose`。
+    # 约束（红线）：这一行必须仍然如实说明"验证到哪一层" —— 只有 verified 与
+    # semantic 都真为 true 才说"图已更新"；verified 为 None（未跑）时后缀留空、
+    # 为 True 而 semantic 未判定时只说"已重跑验证"，让下面那些"未判定 / 没跑 /
+    # 保底保留"的披露行照旧出现。**失败与降级路径一个字都不收敛。**
+    'written_inplace_summary': {
+        'zh': '[OK] 已原位写回 %(n)d 处（%(script)s）%(tail)s',
+        'en': '[OK] wrote back %(n)d edit(s) in place (%(script)s)%(tail)s',
+    },
+    'written_inplace_summary_any': {
+        # applied=true 但没有逐字段原位记录（改动是块通道做的）：别丢了"已写回"。
+        'zh': '[OK] 已原位写回（%(script)s）%(tail)s',
+        'en': '[OK] wrote back in place (%(script)s)%(tail)s',
+    },
+    'written_tail_ok': {
+        'zh': '；图已更新（重跑 + 语义验证通过）',
+        'en': '; figure updated (re-run + semantic check passed)',
+    },
+    'written_tail_run': {
+        # 只重跑过、语义层没给出结论 —— 不许说"图已更新"（那是语义层的结论）。
+        'zh': '；已重跑验证',
+        'en': '; re-run verified',
+    },
     'written_block': {
         'zh': '[OK] 已写回: %(script)s',
         'en': '[OK] Written back: %(script)s',
+    },
+    'written_block_summary': {
+        'zh': '[OK] 已写回（插入调整块，%(script)s）%(tail)s',
+        'en': '[OK] written back (adjustment block inserted, %(script)s)%(tail)s',
     },
     # T68：**没写盘**的人读行。块通道旧实现只看 reason 不看 applied，于是"拒绝写回"
     # （applied=false，例如位置块目标轴证不出而 fail-closed）也打 `[OK] 已写回` ——
@@ -618,6 +646,17 @@ MESSAGES = {
         'en': 'using the Tk backend (less polished than Qt); for the Qt UI: '
               'pip install "mpltweak[qt]"',
     },
+    # --- launch 关窗后的下一步（无感化①：省掉"记住怎么写回"这一步）---
+    # 只在**这次真的存过参数**（用户拖过东西）时打；没拖过零噪音。
+    # 动作仍要用户自己确认 —— 绝不自动写回用户源码（红线）。
+    # 命令行单独占一行、**不带任何前缀**，确保能整行复制粘贴；
+    # 路径按"用户敲命令时所在的目录"表达（见 launch._next_step_cmd）。
+    'next_step_apply': {
+        'zh': '[launch] 参数已存到 %(params)s（脚本未改动）；要写回源码：\n'
+              '  %(cmd)s',
+        'en': '[launch] params saved to %(params)s (script untouched); to write '
+              'them back into the source:\n  %(cmd)s',
+    },
     # --- schema（CH-9：schema 不再忽略参数）---
     'schema_usage': {
         'zh': '用法: mpltweak schema [--compact]\n'
@@ -627,13 +666,17 @@ MESSAGES = {
               'what they generate.',
     },
     # --- 可重跑预检（0.1.10 pre-flight；两个入口：apply 写回前 / launch 开窗前）---
-    # 用户视角评审的最大留存瓶颈：本工具要求"在你的环境里反复重跑脚本"（一次 apply
-    # 默认跑 2~5 遍），而「要参数 / 要联网 / 等人输入 / 要弹窗 / 缺依赖」的脚本会全线
-    # 卡住。这里**事前**讲清楚 + 各给一句可照抄的下一步（与 t11 的事后归因同一风格）。
+    # 用户视角评审的最大留存瓶颈：本工具要求"在你的环境里重跑脚本"。0.1.10（t39 起）
+    # 的口径是**写回默认只重跑 1 遍**（这一遍同时判定"脚本还跑得通吗"与"改动真落到
+    # 目标图上了吗"），**只有目标图取不到状态时才回退 2 遍**并把原因打进 warnings，
+    # 失败归因最多 3 遍。而「要参数 / 要联网 / 等人输入 / 要弹窗 / 缺依赖」的脚本会
+    # 全线卡住。这里**事前**讲清楚 + 各给一句可照抄的下一步（与 t11 的事后归因同风格）。
     'preflight_head': {
-        'zh': '[预检] 这个脚本重跑验证时可能失败或卡住（apply 默认会重跑 2~5 遍）：',
+        'zh': '[预检] 这个脚本重跑验证时可能失败或卡住（apply 默认只重跑 1 遍；'
+              '目标图取不到状态时才回退 2 遍）：',
         'en': '[preflight] rerun verification may fail or hang on this script '
-              '(apply reruns it 2-5 times by default):',
+              '(apply reruns it once by default, twice only when the target '
+              "figure's state cannot be captured):",
     },
     'preflight_missing_dependency': {
         'zh': '  [!] 缺依赖：找不到 %(packages)s —— 重跑验证会失败；建议先装依赖，'

@@ -58,6 +58,11 @@ SUITES = [
     ('test_property_writeback', {}),          # ④ 写回 property 不变量
     ('test_sandbox', {}),                     # 文件系统沙箱（自建 env、子进程串行）
     ('test_launch', {}),                      # 开窗前置链路（不建窗）
+    # --- t39 挂入：写回验证「默认只跑一遍」的回归网（单遍 + savefig 快照 +
+    #     fail-closed 回退；零窗口、秒级；见 tests/test_verify_onepass.py 文件头）---
+    ('test_verify_onepass', {}),
+    # --- t35 挂入：文档锚点/相对链接回归网（纯文本、零网络、秒级；见 tests/test_docs.py 文件头）---
+    ('test_docs', {}),                        # 锚点/相对链接/相对图片/外链格式 + slug 自证 + 歧义标题棘轮
     # 12 图 × 100 次 = 1,200 次离屏矩阵：**降档回归档**（船长 t24 裁定：从 200 降到 100，
     # 让 pytest 总时长回到目标区间；交付证据档 1000 = 12,000 次见文件头，单独跑、不进 pytest）
     ('test_figure_matrix', {'MPLTWEAK_MATRIX_N': '100'}),

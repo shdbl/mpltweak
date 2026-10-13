@@ -243,8 +243,14 @@ def test_detect_backend_tk_fallback(monkeypatch):
     assert calls == ['QtAgg', 'Qt5Agg', 'Qt6Agg', 'TkAgg']
 
 
-def test_emit_backend_hint_cases(monkeypatch):
-    """提示只在"Tk 且非 dry-run 且未静默"时出现；Qt / dry-run / NO_HINT 都静默。"""
+def test_emit_backend_hint_cases(monkeypatch, tmp_path):
+    """提示只在"Tk 且非 dry-run 且未静默"时出现；Qt / dry-run / NO_HINT 都静默。
+
+    另加无感化③（0.1.11，用户 2026-10-13 认可）：**同一个用户只提示一次** ——
+    打过的戳文件落在 ``~/.mpltweak/tk_hint_shown``（``MPLTWEAK_HOME`` 可改，
+    文档 docs/interaction.md 里写明）。这里用隔离家目录断言三件事：
+    第一次打、第二次静默、``MPLTWEAK_NO_HINT`` **不落戳**（"这次别说话" ≠ "说过了"）。
+    """
     import mpltweak.launch as launch
     import mpltweak.messages as _msg
     lines = []
@@ -258,16 +264,35 @@ def test_emit_backend_hint_cases(monkeypatch):
     monkeypatch.setattr(_msg, 'MESSAGES', {
         'backend_tk_hint': {'zh': 'HINT-ZH', 'en': 'HINT-EN'}})
 
+    env = {'MPLTWEAK_HOME': str(tmp_path)}
+    stamp = os.path.join(str(tmp_path), 'tk_hint_shown')
+    # 戳文件路径是对外行为（文档里写了它；删掉它 = 让提示再来一次）
+    assert launch._tk_hint_stamp_path(env) == stamp
+
     sink = _Sink()
-    assert launch._emit_backend_hint('TkAgg', environ={}, stderr=sink) is True
+    assert launch._emit_backend_hint('TkAgg', environ=env, stderr=sink) is True
     assert ''.join(lines) in ('HINT-ZH\n', 'HINT-EN\n')
+    assert os.path.exists(stamp)                  # 打过一次就落戳
+
+    # 无感化③：同一个用户（同一个家目录）第二次不再念
+    lines.clear()
+    assert launch._emit_backend_hint('TkAgg', environ=env, stderr=sink) is False
+    assert lines == []
+
+    # MPLTWEAK_NO_HINT=1 = "这次别说话"，**不落戳**；换个家目录仍该提示一次
+    env2 = {'MPLTWEAK_HOME': str(tmp_path / 'h2')}
+    lines.clear()
+    assert launch._emit_backend_hint(
+        'TkAgg', environ=dict(env2, MPLTWEAK_NO_HINT='1'), stderr=sink) is False
+    assert lines == []
+    assert not os.path.exists(os.path.join(str(tmp_path / 'h2'), 'tk_hint_shown'))
 
     lines.clear()
-    assert launch._emit_backend_hint('QtAgg', environ={}, stderr=sink) is False
+    assert launch._emit_backend_hint('QtAgg', environ=env, stderr=sink) is False
     assert lines == []
 
     lines.clear()
-    assert launch._emit_backend_hint('TkAgg', dry_run=True, environ={},
+    assert launch._emit_backend_hint('TkAgg', dry_run=True, environ=env,
                                      stderr=sink) is False
     assert lines == []
 

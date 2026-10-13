@@ -90,19 +90,44 @@ ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
 
 ```python
 # ===== auto layout (generated) - do not edit inside =====
-# 本块由 mpltweak 自动生成于 2026-10-10 16:45（可手动微调，勿删上下两行标记）
+# 本块由 mpltweak 自动生成于 2026-10-13 16:10（可手动微调，勿删上下两行标记）
 # 轴身份（调图时）：ax0=网格[2, 2, 0, 0]，ax1=网格[2, 2, 0, 1]，ax2=网格[2, 2, 1, 0]，ax3=网格[2, 2, 1, 1]
-for _ax, _p in zip(fig.axes, [
-    [0.0728, 0.5363, 0.4418, 0.4015],
-    [0.5394, 0.5363, 0.4418, 0.4015],
-    [0.0728, 0.0645, 0.4418, 0.4015],
-    [0.5394, 0.0645, 0.4418, 0.4015],
-]):
-    _ax.set_position(_p)
-fig.axes[0].title.set_fontsize(12)
-fig.axes[0].grid(False)
+axes[0, 0].set_position([0.0728, 0.5363, 0.4418, 0.4015])
+axes[0, 1].set_position([0.5394, 0.5363, 0.4418, 0.4015])
+axes[1, 0].set_position([0.0728, 0.0645, 0.4418, 0.4015])
+axes[1, 1].set_position([0.5394, 0.0645, 0.4418, 0.4015])
+axes[0, 0].title.set_fontsize(12)
+axes[0, 1].title.set_fontsize(11)
+axes[1, 0].title.set_fontsize(11)
+axes[1, 1].title.set_fontsize(11)
 # ===== end auto layout =====
 ```
+
+> 上面这段是**实测真实输出**，不是示意：脚本是 `fig, axes = plt.subplots(2, 2, figsize=(8, 6))`
+> （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
+> `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
+> （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
+> （`writeback.py:3955`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:3885`，
+> T70 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:3614`）；
+> "轴身份"注释里恒为中文。
+> 你实际拿到的数字与轴数会跟着你的布局变。
+
+**块里的定位必须是"静态可证"的**：`axes[0, 0]` 这种**字面量下标**能证明它指向哪条轴；而
+`fig.axes[i]` / `plt.gca()` / `plt.gcf().axes[i]` / `zip(fig.axes, [...])` 属于**运行期才知道指向谁**
+的写法（运行期 `fig.axes` 还混着色条轴、嵌入轴与双轴），**已被禁用**：
+
+```python
+# 反面例子（**不要这样写**，也不要照它理解块形态 —— 这是 0.1.9 之前的老写法）
+for _ax, _p in zip(fig.axes, [...]):
+    _ax.set_position(_p)
+fig.axes[0].title.set_fontsize(12)
+```
+
+证不出"作用在哪张图 / 哪条轴"时工具**拒绝写盘**（`applied=false`、脚本字节不变、`rc=1`，人读输出
+"未写回 + 原因"）。实测（本机 2026-10-13）：把上面那张 2×2 图改成用
+`for r in range(2): for c in range(2): axes[r, c]...` **循环建轴**之后，块路径直接放弃写盘，
+warning 原文是：`块内只能按静态可证的变量名定位目标对象；这些字段证不出目标（……）⇒ 按 fail-closed
+处理，本次不写：ax0.pos …`。所以块要落地，容器元素得能被静态认出来（字面量下标 / 明确的变量名）。
 
 上下两行标记是**真写进你脚本的**，`grep auto layout` 就能定位。块是**自包含**的：不加 `import`、不依赖 matplotlib 之外的东西、不改你原有的逻辑；重复写回会**整体替换**它。想只走一条路：`--style inplace`（一处都不插块，写不了的字段 `rc=1` 明确失败）或 `--style block`（一律插块）。
 

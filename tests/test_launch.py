@@ -34,7 +34,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 界面语言钉死（与其它七个套件一致）：断言的是中文文案，别让宿主 locale 决定结论。
 os.environ['MPLTWEAK_LANG'] = 'zh'
 sys.path.insert(0, os.path.join(ROOT, 'src'))
-from mpltweak.launch import _apply_saved            # noqa: E402
+from mpltweak.launch import (_apply_saved,            # noqa: E402
+                             _next_step_cmd, _rel_for_shell)
+from mpltweak import messages as _msgs                # noqa: E402
 
 # GBK 控制台兜底（同 test_check.py / test_fuzz_params.py）：CI 是 UTF-8，
 # 本地 cp936 上一次 UnicodeEncodeError 就把整套从 ALL PASS 打成 rc=1 的假红。
@@ -141,10 +143,106 @@ def run_guards():
           ('raised=%s' % _gbk_safe(repr(raised))[:200]) if raised else 'n=%s' % n)
 
 
+def run_next_step():
+    """t44 无感化①：关窗后打印的那条命令怎么拼。
+
+    契约（审阅者会按这些查）：
+      * **相对路径**（与用户敲命令时所在的目录一致）→ 可直接复制；
+      * 不在那个目录之下（要写一串 `..` / 跨盘）→ 保留绝对路径（同样能复制）；
+      * 含空格的路径加双引号（cmd / PowerShell / bash 都能粘贴）；
+      * `--params` 只在用户**自定义过**参数路径时才带（默认路径不必写）；
+      * launch 收到的脚本参数要**原样透传**（`-- <参数...>`）—— 写回重跑要用同一份 argv；
+      * 文案跟随 `--lang`、GBK 可编码、命令行**独立成行且不带前缀**（整行可复制）。
+    """
+    base = os.path.join(_TMPROOT, 'proj')
+    script = os.path.join(base, 'fig1.py')
+    params = os.path.join(base, '.tweak_params', 'fig1.json')
+
+    cmd = _next_step_cmd(script, params, base=base)
+    check('next_step_cmd 同目录：相对路径 + --write',
+          cmd == 'mpltweak apply fig1.py --write', cmd)
+
+    # 脚本在 base 的上一级 → 相对路径（不写绝对路径，更好认）
+    up = _next_step_cmd(os.path.join(os.path.dirname(base), 'fig2.py'),
+                        params, base=base)
+    check('next_step_cmd 上一级目录：写成 ..%s 形式（仍是可复制的相对路径）'
+          % os.sep,
+          up == 'mpltweak apply ..%sfig2.py --write' % os.sep, up)
+
+    # 更深一层（常见：脚本在子目录里）
+    sub = _next_step_cmd(os.path.join(base, 'sub', 'fig5.py'), params, base=base)
+    check('next_step_cmd 子目录：写成 sub%sfig5.py 形式' % os.sep,
+          sub == 'mpltweak apply sub%sfig5.py --write' % os.sep, sub)
+
+    # 跨盘符（Windows 才有）：没有相对路径可言 → 退回绝对路径
+    drv = os.path.splitdrive(base)[0]
+    if os.name == 'nt':
+        other = ('Z:' if drv.upper() != 'Z:' else 'Y:') + os.sep
+        far = os.path.join(other, 'other', 'fig3.py')
+        far_cmd = _next_step_cmd(far, params, base=base)
+        check('next_step_cmd 跨盘符：退回绝对路径（没有 .. 可言）',
+              far in far_cmd, far_cmd)
+        check('_rel_for_shell 跨盘符原样返回',
+              _rel_for_shell(far, base) == far, _rel_for_shell(far, base))
+    else:
+        check('next_step_cmd POSIX：不存在跨盘，远亲路径仍是相对路径（可直接复制）',
+              _rel_for_shell('/other/fig3.py', base).startswith('..'))
+
+    # 空格 → 双引号
+    sp = os.path.join(base, 'my figs', 'fig4.py')
+    sp_cmd = _next_step_cmd(sp, params, base=base)
+    check('next_step_cmd 含空格的路径加双引号（cmd / PowerShell / bash 都能粘贴）',
+          '"my figs%sfig4.py"' % os.sep in sp_cmd, sp_cmd)
+
+    # --params 只在用户自定义过路径时才带
+    check('next_step_cmd 默认参数路径：不带 --params',
+          '--params' not in cmd, cmd)
+    p2 = os.path.join(base, 'custom.json')
+    check('next_step_cmd 自定义参数路径：带 --params',
+          _next_step_cmd(script, p2, params_given=True, base=base)
+          == 'mpltweak apply fig1.py --write --params custom.json',
+          _next_step_cmd(script, p2, params_given=True, base=base))
+
+    # 脚本参数透传（bug #6 的口径：写回重跑必须拿到同一份 argv）
+    check('next_step_cmd 透传脚本参数：`-- <参数...>`',
+          _next_step_cmd(script, params, script_args=('--n', '7'),
+                         base=base)
+          == 'mpltweak apply fig1.py --write -- --n 7',
+          _next_step_cmd(script, params, script_args=('--n', '7'), base=base))
+
+    # 文案：跟随 --lang、GBK 可编码、命令行独立成行且不带前缀
+    for lang, needle in (('zh', '要写回源码'), ('en', 'to write')):
+        line = _msgs_next_step(lang)
+        check('next_step_apply 跟随 --lang（%s）' % lang, needle in line,
+              _gbk_safe(line.replace('\n', '\\n')))
+        tail = line.split('\n')[-1]
+        check('next_step_apply（%s）命令行独立成行、不带前缀 ⇒ 可整行复制'
+              % lang,
+              tail.strip() == 'mpltweak apply fig1.py --write'
+              and not tail.lstrip().startswith('[launch]'), repr(tail))
+        try:
+            line.encode('gbk')
+            ok_gbk = True
+        except UnicodeEncodeError:
+            ok_gbk = False
+        check('next_step_apply（%s）GBK 可编码（cp936 控制台不许崩）' % lang,
+              ok_gbk, _gbk_safe(line.replace('\n', '\\n')))
+    _msgs.set_lang('zh')                       # 复位，别影响后面的用例
+
+
+def _msgs_next_step(lang):
+    _msgs.set_lang(lang)
+    return _msgs.t('next_step_apply', params='.tweak_params/fig1.json',
+                   cmd='mpltweak apply fig1.py --write')
+
+
 def main():
     os.makedirs(_TMPROOT, exist_ok=True)
     print('launch._apply_saved 顶层非对象 JSON 守卫回归（0.1.10）')
     run_guards()
+    print()
+    print('t44 无感化①：关窗后那条"可直接复制"的写回命令（纯函数级，不建窗）')
+    run_next_step()
     shutil.rmtree(_TMPROOT, ignore_errors=True)
     print()
     if _fails:

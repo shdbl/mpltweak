@@ -6,11 +6,13 @@
 * **备份在哪**：每次 `apply --write` 都会先 `_make_backup()`，在
   ``.tweak_params/<脚本名>.tweak.bak`` 留一份**写回前**的原文（并发时另有带 pid 的
   副本）。revert 就是把它拿回来 —— 不需要额外机制，这个备份一直存在。
-* **可逆的范围要说清楚（RC-7）**：默认只回退**最近一次**写回 —— 固定名备份代表
-  "上一次写回之前的原文"，所以 `apply` 跑过 N 次之后，默认 revert 只能回到第
-  N 次之前的中间状态，**不是**最初的原文。要回到**最早**那次写回之前，用
-  `--first`（它读的是 pid 备份里最早的一份；0.1.9 起 `_prune_backups` 会永久
-  保留那一份，不会再被裁掉）。
+* **可逆的范围要说清楚（RC-7）**：默认 revert 用的是**固定名**备份
+  ``.tweak_params/<脚本名>.tweak.bak``，而它是**首份优先**的（T71：已存在就不再覆盖）
+  → 它保存的是这份备份**建立那一刻**的原文，一般就是你**第一次对它做
+  ``apply --write`` 之前**的原件 —— 不是"最近一次写回之前"的中间态。要拿"跨很多次
+  写回 / 跨进程"的**最早**那一份，用 ``--first``（读 pid 副本里最早的一份；
+  ``_prune_backups`` 永久保留最早那份、只裁中间的）。pid 副本写不出来时（典型是
+  Windows 长路径），``--first`` **明确失败 rc=2**，不会拿固定名备份冒充"最早"（T41）。
 * **默认只预览**：与 `apply` 一致，`revert` 不加 `--write` 只打印"会改回什么"，
   一个字节都不动。要真回退必须显式 `--write`。
 * **revert 自身也可逆**：覆盖前先把当前文件另存为
@@ -130,15 +132,16 @@ def _rel_time(path: str) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog='mpltweak revert',
-        description='把脚本回退到上一次 apply --write 之前的状态（用 '
-                    '.tweak_params/<脚本名>.tweak.bak）')
+        description='把脚本回退到备份里的状态（默认用固定名 '
+                    '.tweak_params/<脚本名>.tweak.bak；该备份首份优先 → 通常是'
+                    '你第一次改这张图之前的原件）')
     ap.add_argument('script')
     ap.add_argument('--params', default=None, help='参数文件（默认 .tweak_params/<脚本>.json）')
     ap.add_argument('--write', action='store_true',
                     help='真的回退（不加这个只预览，不动代码）')
     ap.add_argument('--first', action='store_true',
-                    help='回到**最早**那次写回之前（读最早一份 pid 备份）——'
-                         '默认只回退最近一次写回')
+                    help='回到**最早**那次写回之前（读最早一份 pid 备份）；'
+                         '默认回退用固定名备份（首份优先 → 通常是第一次改之前）')
     ap.add_argument('--json', action='store_true', help='机器可读输出')
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -162,8 +165,9 @@ def main(argv=None) -> int:
                   '无法回到**最早**状态。\n'
                   '  · 常见原因：备份目录路径过长（Windows MAX_PATH 260），'
                   'pid 副本没写出来 —— 本次写回会给出相应 warning。\n'
-                  '  · 固定名备份只能回到"最近一次 apply --write 之前"，'
-                  '不要拿它当 --first 用；确实只想回退最近一次，请去掉 --first。'
+                  '  · 固定名备份回到的是它建立那一刻的原文（通常是你第一次改'
+                  '这张图之前），不要拿它当 --first 用；只想要这个默认回退，'
+                  '请去掉 --first。'
                   % _d)
             if args.json:
                 _msg.fail_json('no_first_backup', _m)
@@ -221,9 +225,12 @@ def main(argv=None) -> int:
     }
     human = ['回退预览：%s  ←  %s（备份于 %s）'
              % (os.path.basename(script), backup, _rel_time(backup)),
-             '  可逆范围：本次用的是%s备份 —— revert 默认只能回退**最近一次**'
-             '写回，反复 apply 过的脚本要回到最早那次之前加 --first'
-             % ('最早一份' if args.first else '最近一次'),
+             '  可逆范围：本次用的是%s —— 默认回退用**固定名**备份，它**首份优先**'
+             '（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图'
+             '之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 '
+             '--first'
+             % ('最早一份专属副本（最早那次写回之前）'
+                if args.first else '固定名备份（它建立那一刻的原文）'),
              # added = unified_diff(current → backup) 的 '+' 行 = **会被恢复**的行；
              # removed = '-' 行 = 会被删掉的行。这两个参数曾经写反：块写回后
              # 当前 40 行 / 备份 9 行时打印成"将改回 31 行、去掉 0 行"（独立审阅 F3）。
