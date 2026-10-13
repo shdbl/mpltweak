@@ -55,6 +55,6 @@
 | 慢脚本，想先快速落实、马上自己看图 | `--verify-fast` | 只做语法检查：**不重跑脚本**、不证明布局落到了目标图上（`--json` 里如实标 `verify_mode: "fast"`） |
 | 不想执行脚本，先做静态体检 | `mpltweak check <脚本> --static` | 只看代码：量不了真实渲染尺寸，**`--static` 通过不等于图没问题** |
 
-真改坏了也不用慌：**默认已经回滚到批前状态**，备份留在 `.tweak_params/<脚本>.tweak.bak`，`mpltweak revert <脚本> --write` 退回写回前（预览 + 可逆，见主 README 的「后悔了」一节与 [verify.md](verify.md)）。`--no-verify` 连语法都不查 —— 那等于关掉唯一的安全网，不建议。
+真改坏了也不用慌：**默认已经回滚到批前状态**，备份留在 `.tweak_params/<脚本>.tweak.bak`，`mpltweak revert <脚本> --write` 退回写回前（预览 + 可逆，见主 README 的「后悔了」一节与 [verify.md](verify.md)）。`--no-verify` 跳过的是**重跑与语义验证**（写盘后的语法检查仍会做）：跑不通、布局没落到位都不会被发现，也不会自动回滚 —— 那等于关掉唯一的安全网，不建议。
 
 > 细节：三层验证各查什么、`--json` 的 `layers` 怎么读，见 [verify.md](verify.md)；哪些命令会跑你的脚本、退出码怎么算、四类归因的完整表，见 [exec-boundaries.md](exec-boundaries.md)。

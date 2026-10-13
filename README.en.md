@@ -23,7 +23,7 @@ Docs linked from this file (`docs/*.md`) are currently written in Chinese.
 - [2. Demo](#2-demo)
 - [3. 5-minute quick start](#3-5-minute-quick-start)
 - [4. Install + quick start](#4-install--quick-start)
-- [5. Using it with AI and agents](#5-using-it-with-ai-and-agents)
+- [5. Using it with Agents](#5-using-it-with-agents)
 - [6. Workflow](#6-workflow)
 - [7. Is it reliable?](#7-is-it-reliable)
 - [8. Key map](#8-key-map)
@@ -54,7 +54,7 @@ When you lay out a multi-panel figure, the trouble is usually the layout rather 
 
 **It only handles style and position; it does not invent content**: text, data and graphics are still decided by your code.
 
-> If you write figures with AI (have an agent read the layout, propose a plan, write back), go to [Using it with AI and agents](#5-using-it-with-ai-and-agents).
+> If you write figures with an Agent (have an agent read the layout, propose a plan, write back), go to [Using it with Agents](#5-using-it-with-agents).
 
 ---
 
@@ -97,14 +97,14 @@ You do not have to read this README to use it; go through the steps below once a
 |---|---|---|
 | **1 · Install** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | the core package plus whichever graphics library lets the figure open in a window (which one, and the difference, is under "Window backend" below); command-line-only use (`describe` / `check` / `apply`) skips the second line |
 | **2 · Open the window and drag** | `mpltweak fig1.py` | the layout window: **drag** panels, drag **edges / corners** to resize, **hover text** and press `+` / `-` for font size, **space** for wireframe speed, **Ctrl+F** to trim margins; press **`?`** for the full key map |
-| **3 · Close the window** | —— | the script has **not changed by a single character**; the params land in `.tweak_params/fig1.json` (open the window again to keep adjusting) |
+| **3 · Close the window** | —— | the script has **not changed by a single character**; the params land in `.tweak_params/fig1.json` (open the window again to keep adjusting). If you **really dragged something**, closing the window prints the next command for you to copy (`mpltweak apply fig1.py --write`) — nothing to memorise |
 | **4 · See what it intends to change** | `mpltweak apply fig1.py` | a per-axis list of positions and font sizes, plus whether it will **edit a number / insert a layout block / refuse**; read-only: it does not execute the script and writes no file |
-| **5 · Write back** | `mpltweak apply fig1.py --write` | **three stages: preview (read-only, does not run the script) → you decide → write back**; the write-back **backs the file up** (`.tweak_params/fig1.tweak.bak`), lists **N in-place edits**, and **one command undoes it** (`mpltweak revert fig1.py --write`). The **"numbers only"** real sample is in step 4 of "Install + quick start" |
+| **5 · Write back** | `mpltweak apply fig1.py --write` | **three stages: preview (read-only, does not run the script) → you decide → write back**; the write-back **backs the file up** (`.tweak_params/fig1.tweak.bak`), reports success in **one line** (`N edits written in place; figure updated` — add `-v` for the per-field list), and **one command undoes it** (`mpltweak revert fig1.py --write`). The **"numbers only"** real sample is in step 4 of "Install + quick start" |
 | **6 · Re-run and look** | `python fig1.py` | the figure looks the way you dragged it; not happy? `mpltweak revert fig1.py --write` goes back to before the write-back (without `--write` it is a preview) |
 
 A sample of **one real write-back** is in step 4 of "Install + quick start" below — that is the "numbers only" case: how many axes and how many edits you actually see depends on your script, and if the script has fields the source does not mention (line width / colour, say), it appends one self-contained layout block at the end of the file, says so in the output, and prints the backup path.
 
-**The write-back has three stages**: `mpltweak apply fig1.py` is the **preview** (read-only — it does not run the script and writes no file) → you look and decide → only then `--write`. The write-back **makes a backup** (`.tweak_params/fig1.tweak.bak`), lists the **N in-place edits** one by one, and **one command undoes it**: `mpltweak revert fig1.py --write` (without `--write` that is a preview).
+**The write-back has three stages**: `mpltweak apply fig1.py` is the **preview** (read-only — it does not run the script and writes no file) → you look and decide → only then `--write`. The write-back **makes a backup** (`.tweak_params/fig1.tweak.bak`), reports success in **one line** (only the write-back knows how many fields it touched, so that line carries "N edits written in place; figure updated"; the per-field list / backup path / per-layer verdicts need `-v`), and **one command undoes it**: `mpltweak revert fig1.py --write` (without `--write` that is a preview).
 
 **Built the figure with `plt.subplots()` / `GridSpec`?** Then the source often has no number you can edit directly — so it **appends one marked block of code** at the end of the file, and **`mpltweak revert fig1.py --write` takes it away again**; the code you wrote is not rewritten.
 
@@ -112,7 +112,7 @@ A sample of **one real write-back** is in step 4 of "Install + quick start" belo
 
 1. Does the script end with `input()` / wait for you to type? Both the window and the re-run will sit there — comment that line out for now.
 2. Does the script take arguments (the kind you normally run as `python fig1.py --data x.npz`)? Pass them through after `--`: `mpltweak fig1.py -- --data x.npz`.
-3. Still nothing: paste the whole output into your AI assistant and ask what the problem is.
+3. Still nothing: paste the whole output to your Agent and ask what the problem is.
 
 If none of the three fits, see [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (dragging does nothing / the panel snaps back / an error — each one is "symptom → the reason in one line → what to do").
 
@@ -190,23 +190,29 @@ It prints the position and font-size inventory of every axis, and writes no file
 
 ### 4 · Write back
 
-**The write-back has three stages: preview (read-only, does not run the script) → you decide → write back.** The write-back **makes a backup** first (`.tweak_params/fig1.tweak.bak`), lists the **N in-place edits** in the output, and **one command undoes it**: `mpltweak revert fig1.py --write` (without `--write` that is a preview).
+**The write-back has three stages: preview (read-only, does not run the script) → you decide → write back.** The write-back **makes a backup** first (`.tweak_params/fig1.tweak.bak`), reports success in **one line** (how many fields + the figure is updated), and **one command undoes it**: `mpltweak revert fig1.py --write` (without `--write` that is a preview).
 
 ```bash
 mpltweak apply fig1.py --write
 ```
 
 ```text
-  正在验证（子进程重跑脚本，最长 300s；不想等可加 --no-verify）
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] wrote back 3 edit(s) in place (fig1.py); figure updated (re-run + semantic check passed)
+```
+
+The block above is the output of **one real write-back** (paths are shown without their directory prefix; you will see absolute paths); "re-run / semantic verification" re-runs the script **in your environment** (if it cannot run, or the semantics do not match, the file is rolled back; see "Three verification layers").
+**On language**: the first line is written in **Chinese** by the current version regardless of `--lang`; the result line follows the interface language.
+
+For the **per-field list / backup path / per-layer verdicts**, add `-v` (success-path detail lives there; failures and downgrades are printed without `-v` too):
+
+```text
 [OK] Written back in place: fig1.py
   3 in-place edits: ax0.pos, ax1.pos, ax2.pos
   backup: .tweak_params/fig1.tweak.bak
   [OK] Agg re-run check passed
   [OK] Semantic check passed (target figure matches params)
 ```
-
-The block above is the output of **one real write-back** (paths are shown without their directory prefix; you will see absolute paths); "re-run / semantic verification" re-runs the script **in your environment** (if it cannot run, or the semantics do not match, the file is rolled back; see "Three verification layers").
-**On language**: the first line is written in **Chinese** by the current version regardless of `--lang` — it says the script is being re-run in a subprocess, that it waits up to 300s, and that `--no-verify` skips the wait. The remaining lines follow the interface language.
 
 **If your script takes its own arguments** (depends on `sys.argv`, e.g. `python fig1.py --data x.npz`): put them after `--`; the write-back's re-run verification passes them through to the script unchanged, so the re-run matches your baseline and is not mis-rolled-back:
 
@@ -232,53 +238,52 @@ If you are stuck, see [docs/troubleshooting.md](https://github.com/shdbl/mpltwea
 
 ---
 
-## 5. Using it with AI and agents
+## 5. Using it with Agents
 
-[`skills/mpltweak/SKILL.md`](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) in this repository is an operating manual written for AI (Agent Skills format): the commands, the rules, and the human-machine workflow. Drop it into your client's skills directory (for example `~/.dsh/skills/`), or paste its content to the AI.
+**You do not need to know any command line — just hand this to an Agent.** (Or type the commands yourself: dragging gets it right, and **you never hand-write those position numbers**.)
+(It has to be one that can read and write files on your machine directly; a plain web chat window cannot.)
 
-**How the two sides fit together**: the AI decides what the figure should look like (reading the output of `describe`, editing the params file), and mpltweak decides **whether the change actually landed** (three verification layers + rollback on error + `revert`) — it does not rely on the AI saying "I fixed it". mpltweak itself contains no AI model; it provides commands and a verdict. The `--json` output carries `ok` / `reason` / `changes` / `pending` for the AI to read.
+Send this link to the Agent you already use (Claude / ChatGPT / Cursor / DeepSeek — anything that can read and write files on your machine), and it will set itself up and do the tweaking for you:
 
-MCP (the optional adapter layer) and the JSON contract: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
+- **Operating manual for the Agent**: https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md
+  (If your Agent cannot reach the internet: ask it to open `skills/mpltweak/SKILL.md` in this repository, or paste that file's content to it.)
 
+### The recommended flow: six steps (just talk to your Agent)
 
-Large models write correct plotting code, but **layout numbers are mostly guesswork** for them. mpltweak turns that part from guessing into writing a file: the **params file is a public JSON format (with a JSON Schema)**, so an agent can generate or edit it directly and `mpltweak apply --write` applies it.
+1. **Ask the Agent to draw the figure.** You only say what you want ("plot these two groups as a comparison bar chart"); the Agent writes the script and runs it.
+   *What you see*: the Agent shows you the figure it drew.
+2. **First check that the content is right** (do not start on the layout yet). Are the axes, labels and data what you meant? If not, say so now.
+   *What you see*: a finalised version of the content — from here on you are only tweaking layout, not what is drawn.
+3. **Tell the Agent "I want to tweak it interactively".** It opens the layout window itself (you install nothing and type no commands).
+   *What you see*: a window pops up with your figure in it, ready to drag and zoom.
+4. **You make the changes in the window.** Drag panels and legends, adjust font sizes, align, space evenly (press `?` in the window to bring up the full key legend at any time).
+   *What you see*: a translucent preview while dragging; the change lands when you let go.
+5. **The Agent tells you in plain words what it changed and waits for your confirmation.** For example: "panel (a) moved slightly to the right; title font size 12 → 14". At this point **nothing in your code has changed yet** — if you disagree, keep talking and it keeps adjusting.
+   *What you see*: a plain-language list of what changed + one question: "shall I write it into the code?"
+6. **Only after you say yes does the Agent write the change into the code, and then re-run it for you.** Compare the re-run against step 2 to make sure nothing was broken.
+   *What you see*: the new figure plus which spots changed; if you are not happy, keep tweaking, or ask it to undo the last write-back (`revert`).
 
-```bash
-mpltweak describe fig1.py -o layout.json   # read: export the current layout (--all-figs exports several figures at once)
-mpltweak apply fig1.py --write --json      # write: apply into the source (with --json all progress output goes to stderr)
-mpltweak check fig1.py --json              # check: layout health check; the exit code is the CI gate
-```
-
-`--json` is for machines: the `style` / `applied` / `changes` / `needs_block` / `pending` fields inside `files[]` tell whether this run landed; the `schema` subcommand prints the JSON Schema of the params file so an agent can validate what it generated.
-
-The table of the four subcommands, exit-code semantics, the read → modify → write → check loop, and the parameter signatures of the four MCP tools: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
-
-### Also available as an MCP server (optional adapter layer)
-
-**A client that can run shell commands does not need MCP**; MCP targets clients that cannot run shell commands (Claude Desktop and similar). Optional dependency (Python ≥ 3.10): `pip install "mpltweak[mcp]"`, then `mpltweak mcp` starts the stdio server; add to the client config: `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`.
-It exposes a subset of the CLI: `describe_layout` / `check_layout` / `params_schema` / `apply_layout` (`write=False`); `revert`, `--style`, `--verify-fast`, `--strict` and others exist only in the CLI. The actual parameter signatures of the four tools and the best-effort maintenance policy: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
-
-### How humans and agents split the work
-Two common splits: **human drags → agent applies** (you finish dragging in the window and say "apply it"; the AI runs `apply --write`); **agent drafts → human fine-tunes** (the AI lays out a first version → you keep adjusting in the window, the params continue from there → you confirm the write-back).
-
-The rule: **an agent can decide which numbers to change; whether the change is correct is decided by the product** (`check` and the three verification layers return the verdict, and a failing run is rolled back).
-
-The other three collaboration modes (agent self-check / one figure as a template / human drags then agent summarises): [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
+> **You never open a command line and never memorise a command** — you look at figures and talk.
 
 ```mermaid
 flowchart LR
-    C[".tweak_params/fig1.json"]:::script --> T{{"either path works"}}:::check
-    T -->|let the tool write| W["mpltweak apply --write"]:::win
-    T -->|write it yourself| H(["human / agent edits the script"]):::win
-    H --> V{"tool as judge<br/>check --static (no execution) / check"}:::check
-    V -->|not good enough| H
-    V -->|good enough| Z(["commit"]):::ok
+    A["1. Tell the Agent<br/>what figure you want"]:::script --> B["2. The Agent writes the script<br/>and runs it"]:::win
+    B --> C{"3. You look: is the content right?"}:::check
+    C -->|no| B
+    C -->|yes| D["4. Say: tweak it interactively<br/>the Agent opens the layout window"]:::win
+    D --> E["You drag things in the window<br/>(press ? for the key legend)"]:::win
+    E --> F{"5. The Agent explains in plain words<br/>what it changed"}:::check
+    F -->|not happy| E
+    F -->|happy| G["6. The Agent writes it into the code<br/>and re-runs it"]:::win
+    G --> Z(["You look at the new figure - done"]):::ok
 
     classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
     classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
     classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
     classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
 ```
+
+**Technical pointers (all in `docs/`)** — MCP (the optional adapter layer) and the JSON contract, **the three read → modify → write → check commands**, the table of the four subcommands with exit-code semantics, the parameter signatures of the four MCP tools, **the ways humans and agents split the work**, and **the layout-engine conflicts to look at before touching the layout** — all of them: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
 ---
 
@@ -474,30 +479,28 @@ Exit-code semantics, the effect of a script calling `sys.exit()` itself, and the
 
 **Answer two questions first**:
 
-1. **How long does one run of your script take?** More than a minute is a poor fit (every write-back re-runs it; `--timeout 600` widens the wait but does not remove it).
+1. **Can your script run on its own, with nobody watching?** No clicking, no typing, no window on screen — the write-back's verification **really runs your script** in a **headless** environment, and there is nobody there to help it along.
 2. **Does it need network, a password, or a very large file?** If so, do not use write-back.
 
-If neither applies, it is probably a good fit. These are the cases that do not fit (a more detailed list):
+If both pass, it is probably a good fit. **The only real threshold: can it run headlessly, unattended?**
 
-Write-back verification re-runs the whole script **on your machine, in your environment**; that is part of the mechanism, not an optional step (`--no-verify` skips it, which amounts to switching off the safety net). So the following scripts are out of scope:
-
-| Script property | Why |
+| Script property | What happens |
 |---|---|
-| Takes a long time to run once (minutes or more) | every write-back re-runs it; `--timeout 600` only widens the wait, it does not remove it |
-| Reads large data / needs a heavy environment / needs network or credentials | a headless re-run stalls or fails |
-| Needs human input midway (`input()`, interactive choices) | a headless re-run blocks |
+| Reads large data / needs a heavy environment / needs network or credentials | the headless re-run stalls or fails → the write-back is rolled back |
+| Needs human input midway (`input()`, interactive choices) | the headless re-run blocks → the write-back is rolled back |
 | A figure that is only meaningful under a specific interactive backend | verification always uses the headless Agg backend |
 
 Such scripts take the read-only route (`mpltweak describe` / `mpltweak check`, neither writes back), or you edit the code by hand.
 Its target users are **small and medium research plotting scripts that run locally**.
 
+> The mechanics of verification are in [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md).
 > The concentrated version of the boundaries and the exact wording behind every number (when it does not apply / execution boundaries / exit codes / what verification does not claim / corpus denominators) is in [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md).
 
 ---
 
 ## 13. Params file
 
-The params file is a **public format**: you can edit it by hand, or let an AI / agent generate it, and `--write` applies it either way. The top-level `version` marks the format version (currently 4):
+The params file is a **public format**: you can edit it by hand, or let an Agent generate it, and `--write` applies it either way. The top-level `version` marks the format version (currently 4):
 
 ```jsonc
 { "version": 4, "script": "fig1.py",

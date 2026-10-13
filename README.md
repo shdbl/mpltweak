@@ -21,7 +21,7 @@
 - [2. 演示](#2-演示)
 - [3. 5 分钟上手](#3-5-分钟上手)
 - [4. 安装 + 快速开始](#4-安装--快速开始)
-- [5. 给 AI 和 agent 用](#5-给-ai-和-agent-用)
+- [5. 给 Agent 用](#5-给-agent-用)
 - [6. 工作流](#6-工作流)
 - [7. 它可靠吗](#7-它可靠吗)
 - [8. 键位速查](#8-键位速查)
@@ -52,7 +52,7 @@
 
 **它只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
 
-> 如果你是用 AI 写图的（让 agent 来读排版 / 出计划 / 写回），直接看 [给 AI 和 agent 用](#5-给-ai-和-agent-用)。
+> 如果你是用 Agent 写图的（让 agent 来读排版 / 出计划 / 写回），直接看 [给 Agent 用](#5-给-agent-用)。
 
 ---
 
@@ -95,14 +95,14 @@ cd 你的文件夹          # ← 换成你放 fig1.py 的那个目录（整行�
 |---|---|---|
 | **1 · 装** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | 核心包 + 让图能在窗口里打开的那个图形库（装哪个、什么区别见下面「窗口后端」）；只跑命令行（`describe` / `check` / `apply`）不用装第二条 |
 | **2 · 开窗拖** | `mpltweak fig1.py` | 调图窗口：**拖**面板移动、拖**边 / 角**缩放、鼠标**悬停文字**按 `+` `-` 调字号、**空格**切线框提速、**Ctrl+F** 裁白边；按 **`?`** 出全部键位 |
-| **3 · 关窗** | —— | 脚本**一个字符都没变**；参数落在 `.tweak_params/fig1.json`（没调好就再开窗接着调） |
+| **3 · 关窗** | —— | 脚本**一个字符都没变**；参数落在 `.tweak_params/fig1.json`（没调好就再开窗接着调）。**真拖过东西**的话，关窗时终端会直接给你下一条可复制的命令（`mpltweak apply fig1.py --write`），不用记 |
 | **4 · 看它打算改什么** | `mpltweak apply fig1.py` | 逐轴列出位置与字号，并说明**改哪个数字 / 要不要插调整块 / 会不会拒绝**；只读，不执行脚本、不写文件 |
-| **5 · 写回** | `mpltweak apply fig1.py --write` | **三段式：预览（只读，不执行脚本）→ 你确认 → 写回**；写回**自动备份**（`.tweak_params/fig1.tweak.bak`）、输出里逐处列出**原位修改 N 处**、**不满意一条命令就撤回**（`mpltweak revert fig1.py --write`）。**只改数字**那一类的真实样张见「安装 + 快速开始」第 4 步；其余细节见下面两段 |
+| **5 · 写回** | `mpltweak apply fig1.py --write` | **三段式：预览（只读，不执行脚本）→ 你确认 → 写回**；写回**自动备份**（`.tweak_params/fig1.tweak.bak`）、成功**只报一行**（`已原位写回 N 处；图已更新`，要看逐处清单加 `-v`）、**不满意一条命令就撤回**（`mpltweak revert fig1.py --write`）。**只改数字**那一类的真实样张见「安装 + 快速开始」第 4 步；其余细节见下面两段 |
 | **6 · 重跑看图** | `python fig1.py` | 图就是你拖完的样子；不满意：`mpltweak revert fig1.py --write` 退回写回前（先不带 `--write` 是预览） |
 
 **一次真实写回**的输出样张在下面「安装 + 快速开始」的第 4 步 —— 那是"只改数字"那一种：你实际看到几个轴、几处改动取决于你的脚本；如果脚本里还有源码没写到的字段（比如线宽 / 颜色），它会在文件末尾再追加一段自包含调整块，输出里会说明，并给出备份路径。
 
-**写回是三段式**：`mpltweak apply fig1.py` 是**预览**（只看，不执行脚本、不写文件）→ 你看完自己决定 → 才跑 `--write` 那一条。写回时它**自动备份**（`.tweak_params/fig1.tweak.bak`）、把**原位修改 N 处**逐处列出来、**不满意一条命令就撤回**：`mpltweak revert fig1.py --write`（不带 `--write` 是预览）。
+**写回是三段式**：`mpltweak apply fig1.py` 是**预览**（只看，不执行脚本、不写文件）→ 你看完自己决定 → 才跑 `--write` 那一条。写回时它**自动备份**（`.tweak_params/fig1.tweak.bak`）、成功后**只报一行**（写完才知道几处，所以那行里有"已原位写回 N 处；图已更新"；逐处清单 / 备份路径 / 分层结论用 `-v` 展开）、**不满意一条命令就撤回**：`mpltweak revert fig1.py --write`（不带 `--write` 是预览）。
 
 **图是用 `plt.subplots()` / `GridSpec` 画的？** 源码里往往没有能直接改的数字 —— 那它会在文件末尾**追加一段带标记的代码**（自包含调整块），**不满意 `mpltweak revert fig1.py --write` 一键删掉**；你原来写的那些代码一行都没被改写。
 
@@ -110,7 +110,7 @@ cd 你的文件夹          # ← 换成你放 fig1.py 的那个目录（整行�
 
 1. 脚本末尾是不是有 `input()` / 要等你输入？开窗或重跑都会卡在那儿 —— 先临时注释掉那一行。
 2. 脚本要参数吗（平时敲的是 `python fig1.py --data x.npz` 那种）？命令后面用 `--` 把参数原样带上：`mpltweak fig1.py -- --data x.npz`。
-3. 还不行：把终端里的输出**整段**贴给 AI 助手，问一句"这是什么问题"。
+3. 还不行：把终端里的输出**整段**贴给你的 Agent，问一句"这是什么问题"。
 
 三条都不中，见 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md)（拖了没反应 / 拖了弹回去 / 报错怎么办，每条都是「现象 → 一句话原因 → 怎么做」）。
 
@@ -188,22 +188,28 @@ mpltweak apply fig1.py
 
 ### 4 · 写回
 
-**写回是三段式：预览（只读，不执行脚本）→ 你确认 → 写回。** 写回前**自动备份**（`.tweak_params/fig1.tweak.bak`）；输出里会逐处列出**原位修改 N 处**；**不满意一条命令就撤回**：`mpltweak revert fig1.py --write`（不带 `--write` 是预览）。
+**写回是三段式：预览（只读，不执行脚本）→ 你确认 → 写回。** 写回前**自动备份**（`.tweak_params/fig1.tweak.bak`）；成功后**只报一行**（几处 + 图已更新）；**不满意一条命令就撤回**：`mpltweak revert fig1.py --write`（不带 `--write` 是预览）。
 
 ```bash
 mpltweak apply fig1.py --write
 ```
 
 ```text
-  正在验证（子进程重跑脚本，最长 300s；不想等可加 --no-verify）
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 3 处（fig1.py）；图已更新（重跑 + 语义验证通过）
+```
+
+上面是**真实一次写回**的输出（路径省了目录前缀；你看到的会是绝对路径）；其中"重跑 / 语义验证"是在**你的环境**里重跑脚本得到的（跑不起来或语义不符都会回滚，见「三层验证」）。
+
+要看**逐处清单 / 备份路径 / 验证分层结论**，加 `-v`（成功路径的细节都在这里；失败与降级信息不加 `-v` 也会打）：
+
+```text
 [OK] 已原位写回: fig1.py
   原位修改 3 处: ax0.pos, ax1.pos, ax2.pos
   备份: .tweak_params/fig1.tweak.bak
   [OK] Agg 重跑验证通过
   [OK] 语义验证通过（目标图状态 == 参数）
 ```
-
-上面是**真实一次写回**的输出（路径省了目录前缀；你看到的会是绝对路径）；其中"重跑 / 语义验证"是在**你的环境**里重跑脚本得到的（跑不起来或语义不符都会回滚，见「三层验证」）。
 
 **脚本自己带参数时**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）：把参数放在 `--` 后面，写回的重跑验证会原样透传给脚本，保证与基线一致、不误回滚：
 
@@ -229,65 +235,54 @@ python fig1.py
 
 ---
 
-## 5. 给 AI 和 agent 用
+## 5. 给 Agent 用
 
-仓库里的 [`skills/mpltweak/SKILL.md`](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) 是写给 AI 的操作手册（Agent Skills 格式）：
-命令、使用铁律、人机协作方式。放进客户端的 skills 目录（如 `~/.dsh/skills/`），或直接把内容贴给 AI 即可。
+**你不需要懂命令行 —— 把这件事交给 Agent 就行。**（自己敲命令也行：拖一下就到位，**不用手写那些位置数字**。）
+（**要能直接读写你电脑上文件的那种 Agent**；只在网页聊天窗口里聊天的，做不到。）
 
-**它是怎么配合的**：AI 决定这张图要改成什么样（读 `describe` 的输出、改参数文件），
-mpltweak 负责判断"到底改对了没有"（三层验证 + 出错回滚 + `revert`）——**不靠 AI 自己说"我改好了"**。
-所以 mpltweak 本身不含任何 AI 模型，它只提供命令和判断；`--json` 输出的
-`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果。
+把下面这条链接发给你正在用的 Agent（Claude / ChatGPT / Cursor / DeepSeek 等，只要它能读写你电脑上的文件），
+它自己就会照着这份手册把环境配好、帮你调图：
 
+- **给 Agent 的操作手册**：https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md
+  （Agent 不能联网时：让它打开仓库里的 `skills/mpltweak/SKILL.md`，或者把那份文件的内容直接贴给它。）
 
-MCP（可选适配层）与 JSON 契约见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
+### 首推流程：六步（照着跟 Agent 说就行）
 
+1. **让 Agent 帮你画图。** 你只用说你要什么（"把这两组数据画成对比柱状图"），脚本和图都由 Agent 来写、来跑。
+   *你会看到*：Agent 把画好的图贴给你看。
+2. **先确认图的内容对不对**（这一步别急着调排版）。坐标轴、标签、数据是不是你要的？不对就现在说，让 Agent 改。
+   *你会看到*：内容定稿的版本 —— 后面要调的只是"排版"，不是"画什么"。
+3. **跟 Agent 说一句"我要交互式修改"。** 它会自己把调图窗口弹出来（你不用装东西、也不用打任何命令）。
+   *你会看到*：一个窗口弹出来，里面就是你的图，可以用鼠标拖、缩放。
+4. **你在窗口里改。** 拖面板、拖图例、调字号、对齐、均分（**在窗口里按 `?`，随时调出全部键位说明**）。
+   *你会看到*：拖动时是半透明预览，松手才落位。
+5. **Agent 用人话告诉你它改了什么，并等你确认。** 比如"子图 (a) 往右挪了一点、标题字号从 12 调到 14"。
+   这一步**代码还没动** —— 你不同意就继续说，它接着改。
+   *你会看到*：一份"改了什么"的人话清单 + 一句"要不要写进代码？"
+6. **你说"可以"，Agent 才把改动写回代码，然后重跑给你看。** 重跑之后对着第 2 步的内容再看一眼，确认没被改坏。
+   *你会看到*：重跑出来的新图 + 它改了哪几处；不满意可以接着调，或者让它退回上一次（`revert`）。
 
-大模型能写出正确的绘图代码，但**排版数字基本靠猜**。mpltweak 把这部分从"猜"变成"写文件"：**参数文件是公开 JSON 格式（带 JSON Schema）**，agent 直接生成或修改它，`mpltweak apply --write` 负责落实。
-
-```bash
-mpltweak describe fig1.py -o layout.json   # 读：拿到当前排版（--all-figs 一次导出多张图）
-mpltweak apply fig1.py --write --json      # 写：落回源码（--json 时过程信息全走 stderr）
-mpltweak check fig1.py --json              # 查：排版体检，退出码即 CI 门禁
-```
-
-`--json` 给机器读：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
-
-> **agent 读排版前先看布局引擎冲突**：`describe` 的产物带 `layout_engine` 字段（脚本里
-> `constrained_layout` / `figure.autolayout` 的冲突点，带行号），MCP 的 `describe_layout` /
-> `check_layout` 同样带。**非空就先 `mpltweak check <脚本> --static` 看一眼再动位置**——
-> 这些引擎会在每次绘制时重算轴位置，你排好的布局会被它覆盖（表现为"验证不一致"）。
-> 这是 0.1.9 实机调图会话踩出来的：人类开窗有终端提示，agent 通道却没有，白调一轮。
-
-四个子命令的作用表、退出码口径、读 → 改 → 写 → 查回路、以及 MCP 四个工具的参数签名见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
-
-### 也可以接进 AI 客户端（MCP）——**可选适配层**
-
-**能跑 shell 的客户端不需要 MCP**；它面向拿不到 shell 的客户端（如 Claude Desktop）。可选依赖（Python ≥ 3.10）：`pip install "mpltweak[mcp]"`，然后 `mpltweak mcp` 起 stdio server；客户端配置加 `{"mcpServers": {"mpltweak": {"command": "mpltweak", "args": ["mcp"]}}}`。
-它暴露 CLI 的子集：`describe_layout` / `check_layout` / `params_schema` / `apply_layout`（`write=False`）；`revert`、`--style`、`--verify-fast`、`--strict` 等只在 CLI 上。四个工具的实际参数签名与 best-effort 维护策略见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
-
-### 人 + agent 怎么分工
-两种常见分工：**人拖 → agent 落盘**（你开窗拖完说一句"落盘"，AI 跑 `apply --write`）；**agent 起草 → 人微调**（先按规则排一版 → 你开窗接着调，参数会续上 → 确认落盘）。
-
-原则：**"改哪个数字"可以交给 agent，"改完对不对"由产品判定**（`check` 与三层验证给出结论，失败回滚）。
-
-其余三种协作方式（agent 自检 / 一张图当模板 / 人拖完 agent 总结）见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
-
+> **全程你不需要打开命令行、不需要记任何命令** —— 你只需要看图 + 说话。
 
 ```mermaid
 flowchart LR
-    C[".tweak_params/fig1.json"]:::script --> T{{"两条路都行"}}:::check
-    T -->|让工具写| W["mpltweak apply --write"]:::win
-    T -->|自己写| H(["人 / agent 直接编辑脚本"]):::win
-    H --> V{"工具当裁判<br/>check --static（不执行）/ check"}:::check
-    V -->|没达标| H
-    V -->|达标| Z(["提交"]):::ok
+    A["① 你对 Agent 说：我要什么图"]:::script --> B["② Agent 写脚本 + 跑出图"]:::win
+    B --> C{"③ 你看图：内容对不对？"}:::check
+    C -->|不对| B
+    C -->|对| D["④ 你说：要交互式修改<br/>Agent 弹出调图窗口"]:::win
+    D --> E["你在窗口里拖着改<br/>（按 ? 看键位）"]:::win
+    E --> F{"⑤ Agent 用人话说明改了哪些地方"}:::check
+    F -->|不满意| E
+    F -->|满意| G["⑥ Agent 写回代码 + 重跑"]:::win
+    G --> Z(["你看新图，完事"]):::ok
 
     classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
     classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
     classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
     classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
 ```
+
+**技术指针（都在仓库的 `docs/` 里）**：MCP（可选适配层）与 JSON 契约、**读 → 改 → 写 → 查的三行命令**、四个子命令的作用表与退出码口径、MCP 四个工具的参数签名、**人 + agent 的几种分工**，以及**排版前要先看的布局引擎冲突**，都在 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
 
 ---
 
@@ -473,31 +468,28 @@ mpltweak revert fig1.py --write    # 真的回退到"上次写回之前"
 
 **先回答两个问题**：
 
-1. **单独跑一遍要多久？** 超过 1 分钟就不太合适（每次写回都要重跑一遍；`--timeout 600` 只是放宽等待，不能免除）。
+1. **你的脚本能不能"没人管"地自己跑完？** 不用你点、不用你输、不靠屏幕上的窗口 —— 写回时的验证会在**无头环境**里**真的跑你的脚本**，旁边没有人在帮它。
 2. **要联网、要输密码、要读很大的文件吗？** 有就别用写回。
 
-两个都不涉及，它多半帮得上。下面这些情况才不适用（更细的清单）：
+两个都过得去，它多半帮得上。**真正的门槛只有一条：能不能在无头环境里无人值守跑通。**
 
-写回验证要在**你的机器上、用你的环境把整个脚本重跑一遍**——这是机制的一部分，不是可选步骤
-（`--no-verify` 能跳过，但那等于关掉唯一的安全网）。所以下面这些脚本它帮不上忙：
-
-| 脚本特征 | 为什么 |
+| 脚本特征 | 会怎样 |
 |---|---|
-| 跑一次要很久（分钟级以上） | 每次写回都要重跑；`--timeout 600` 只是放宽等待，不能免除 |
-| 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
-| 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
+| 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 → 写回被回滚 |
+| 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 → 写回被回滚 |
 | 需要在特定交互后端才有意义的图 | 验证固定用 Agg 无头后端 |
 
 这类脚本走只读路线（`mpltweak describe` / `mpltweak check`，都不跑写回），或者手动改代码。
 它的目标用户是**本地跑得动的小中型科研绘图脚本**。
 
+> 验证的机制细节见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md)。
 > 门槛与口径的集中版（不适用场景 / 执行边界 / 退出码 / 验证的不声称项 / 语料口径）在 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md)。
 
 ---
 
 ## 13. 参数文件
 
-参数文件是**公开格式**，可以手工改，也可以让 AI / agent 直接生成，`--write` 一样能落实。顶层 `version` 标记格式版本（当前为 4）：
+参数文件是**公开格式**，可以手工改，也可以让 Agent 直接生成，`--write` 一样能落实。顶层 `version` 标记格式版本（当前为 4）：
 
 ```jsonc
 { "version": 4, "script": "fig1.py",

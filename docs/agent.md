@@ -63,6 +63,12 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 `audit_018/promo/t16_probe2.log`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
+**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
+
+**mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
+
+> **读排版前先看布局引擎冲突**：`describe` 的产物带 `layout_engine` 字段（脚本里 `constrained_layout` / `figure.autolayout` 的冲突点，带行号），MCP 的 `describe_layout` / `check_layout` 同样带。**非空就先 `mpltweak check <脚本> --static` 看一眼再动位置** —— 这些引擎会在每次绘制时重算轴位置，你排好的布局会被它覆盖（表现为"验证不一致"）。这是 0.1.9 实机调图会话踩出来的：人类开窗有终端提示，agent 通道却没有，白调一轮。
+
 ## 也可以接进 AI 客户端（MCP）——**可选适配层**
 
 **先看这句**：只要你的客户端 / agent **能跑 shell**，直接用上面的命令行就够了，**不必配置 MCP**。
@@ -98,7 +104,7 @@ mpltweak mcp                    # 启动 stdio server
 
 仓库里的 `skills/mpltweak/SKILL.md` 是一份**写给 AI 的操作手册**（Agent Skills 格式）：
 命令、使用铁律、以及几种人机协作方式。想让自己的 AI 助手学会用 mpltweak，
-把这份文件喂给它就行 —— 不用你每次解释一遍怎么用。
+把这份文件喂给它就行 —— 不用你每次解释一遍怎么用。放进客户端的 skills 目录（如 `~/.dsh/skills/`）也能用。
 
 ## 人 + agent 怎么分工
 
@@ -111,3 +117,5 @@ mpltweak mcp                    # 启动 stdio server
 | **人拖完，agent 总结** | AI 读参数 JSON，用大白话说明改了什么（可当 commit message 或图注） |
 
 原则很简单：**"好不好看"归你，"精确落实"归它。**
+
+另一条口径：**"改哪个数字"可以交给 agent，"改完对不对"由产品判定**（`check` 与三层验证给出结论，失败回滚）。
