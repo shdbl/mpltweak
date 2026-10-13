@@ -76,12 +76,19 @@ async def run():
                   'version = SCHEMA_VERSION(%d)' % _params.SCHEMA_VERSION,
                   d.get('version'))
             check(len(d.get('axes', [])) >= 1, '带 axes', len(d.get('axes', [])))
+            # 0.1.10#3-①：describe_layout 也必须带 layout_engine 字段
+            # （与 CLI describe 同一扫描 —— FIX 无布局引擎 → 空数组）
+            check('layout_engine' in d and isinstance(d.get('layout_engine'), list),
+                  'describe_layout 带 layout_engine 字段', d.get('layout_engine'))
 
             print('§4 check_layout')
             r = await session.call_tool('check_layout', {'script': FIX})
             d = json.loads(r.content[0].text)
             check('ok' in d and 'problems' in d and 'warnings' in d,
                   '返回 ok/problems/warnings', sorted(d))
+            # 0.1.10#3-②：check_layout 与 CLI check 对齐补 layout_engine
+            check('layout_engine' in d and isinstance(d.get('layout_engine'), list),
+                  'check_layout 带 layout_engine 字段', d.get('layout_engine'))
 
             print('§5 params_schema + apply_layout')
             r = await session.call_tool('params_schema', {})

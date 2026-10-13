@@ -15,6 +15,8 @@
 §12 轴范围 xlim：describe 采集 → 改数字 → apply 原位写回 → 语义验证通过
 """
 import json
+import importlib.util
+import io
 import locale
 import os
 import re
@@ -228,6 +230,11 @@ def main():
         r = json.loads(out)                     # stdout 必须只有 JSON
         check('ok' in r and 'files' in r, '含 ok/files', sorted(r))
         check(len(r['files']) >= 1, '预览也算一条结果', r['files'])
+        # 0.1.10 外部改动守卫：files[] 上必须有**逐字布尔键**（agent 靠它判断
+        # "这次没成是不是因为用户在验证窗口里自己保存过"）；正常路径恒为 false。
+        check(all(f.get('external_modified') is False for f in r['files']),
+              '每条 files[] 都带 external_modified 布尔键（正常路径 false）',
+              [f.get('external_modified') for f in r['files']])
     except Exception as e:                                        # noqa: BLE001
         check(False, 'apply --json 输出可解析', '%s / %r' % (e, out[:120]))
 
@@ -446,6 +453,15 @@ def main():
             check(_d.get('ok') is False
                   and _d.get('error_code') == 'internal_error',
                   '异常路径仍给出结构化 JSON', _d)
+            # 0.1.10 失败归因：internal_error = **工具自身**的错（tool_bug），
+            # 必须与"脚本跑不起来"分开报 —— agent 凭 attribution 自动分支。
+            check(_d.get('attribution') == 'tool_bug',
+                  'internal_error 带 attribution=tool_bug（工具侧，不是脚本侧）', _d)
+            # next_step 走机器可读通道 → 一律英文（t_en），不跟随界面语言。
+            check(bool(_d.get('next_step'))
+                  and all(ord(c) < 128 for c in _d['next_step']),
+                  'next_step 是可直接执行的英文指引（机器可读通道不跟随语言）',
+                  repr(_d.get('next_step'))[:120])
         except Exception as _e:                                  # noqa: BLE001
             check(False, '异常路径仍给出结构化 JSON', _e)
         # 只看 ASCII 片段：stderr 是 locale 编码（GBK），中文解码不可靠
@@ -466,6 +482,12 @@ def main():
             f.write(CLAYOUT)
         rc, out, err = run('describe', s11)
         d11 = json.loads(out)
+        # 0.1.10#3-①：describe 产物必须带 layout_engine（agent 读排版第一步
+        # 就知道 constrained_layout 会覆盖位置，不用等 apply 才发现）。
+        _le11 = d11.get('layout_engine') or []
+        check(len(_le11) >= 1 and any(
+            'constrained_layout' in (f.get('how') or '') for f in _le11),
+            'describe 产物带 layout_engine（constrained_layout 冲突）', _le11)
         for _a in d11['axes']:
             _a['title_fontsize'] = 14.0     # 只改字号：网格轴的位置本来就改不了
         pdir11 = os.path.join(tmp11, '.tweak_params')
@@ -956,6 +978,475 @@ print("RESULT " + "|".join([
         check(False, '§20 执行', _e)
     finally:
         shutil.rmtree(_tmp20, ignore_errors=True)
+
+    print('§21 失败归因：脚本跑不起来 vs 工具改坏了，四类各给一句下一步')
+    # 背景（独立评审 + 用户 2026-10-12 拍板）：写回验证失败时用户只看到
+    # 「验证失败，已回滚」—— 不知道**是谁的错**、也不知道下一步做什么。这里把
+    # 「你的脚本跑不起来」和「工具把代码改坏了」彻底分开报，并各给一句可照抄的
+    # 下一步；--json 用 attribution 给 agent 自动分支。
+    # 退出码数值语义**不变**（0.1.9 已对外文档化，用户 CI 依赖）——只改文案与字段。
+    _tmp21 = tempfile.mkdtemp(prefix='mpltweak_attr_')
+    _made21 = []
+    _env21 = dict(os.environ)
+    _env21['PYTHONPATH'] = os.path.join(ROOT, 'src')
+
+    def _has21(name):
+        """这个名字在本环境此刻能不能被导入（只用来判断夹具是否成立）。"""
+        try:
+            return importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            return False
+
+    def _mk21(name, body, params=None):
+        """造脚本；params 给了就同时写 `.tweak_params/<stem>.json`。"""
+        p = os.path.join(_tmp21, name)
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write(body)
+        _made21.append(p)
+        if params is not None:
+            d = os.path.join(_tmp21, '.tweak_params')
+            os.makedirs(d, exist_ok=True)
+            # 用 `w` 重写 → mtime 变新：否则上一次失败写回留下的"脚本被外部
+            # 修改过"判定会让第二次调用直接 rc=1 reason=stale（不是归因路径）。
+            with open(os.path.join(d, name[:-3] + '.json'), 'w',
+                      encoding='utf-8') as f:
+                f.write(params)
+        return p
+
+    def _apply21(script, extra=()):
+        """真跑一次 `apply --write --style inplace --json`。
+
+        每次调用前重写参数文件（见 _mk21 的注释），所以同一个脚本可以跑多次。
+        """
+        _e = dict(_env21)
+        if extra:
+            _e.update(extra)
+        _stem = os.path.basename(script)[:-3]
+        _pd = os.path.join(_tmp21, '.tweak_params')
+        os.makedirs(_pd, exist_ok=True)
+        _pj = os.path.join(_pd, _stem + '.json')
+        _cur = ''
+        try:
+            with open(_pj, 'r', encoding='utf-8') as f:
+                _cur = f.read()
+        except OSError:
+            pass
+        if _cur:
+            with open(_pj, 'w', encoding='utf-8') as f:
+                f.write(_cur)
+        r = subprocess.run([PY, '-m', 'mpltweak.cli', 'apply', script,
+                            '--write', '--style', 'inplace', '--json'],
+                           cwd=_tmp21, capture_output=True, env=_e)
+        _o, _er = _dec(r.stdout), _dec(r.stderr)
+        try:
+            _j = json.loads(_o)
+        except Exception:                                         # noqa: BLE001
+            _j = {}
+        _f0 = (_j.get('files') or [{}])[0]
+        return r.returncode, _f0, _er
+
+    _move21 = ('{"version": %d, "fig_index": 0, "figsize_in": [6.0, 4.0], '
+               '"axes": [{"index": 0, "pos": [0.2, 0.2, 0.5, 0.5], '
+               '"xscale": "linear", "yscale": "linear", "grid": false, '
+               '"spines": {}, "cell": null}]}' % _params.SCHEMA_VERSION)
+    _head21 = ("import matplotlib\nmatplotlib.use('Agg')\n"
+               "import matplotlib.pyplot as plt\n"
+               "fig = plt.figure(figsize=(6, 4))\n"
+               "ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n"
+               "ax.plot([1, 2, 3])\n")
+
+    def _attr_lines(text):
+        """只取归因那两行（第 2 段）—— 上面通用的 write_failed 文案里本来就写着
+        "缺数据/依赖"（writeback 的 Case A 笼统文案），拿整段 stderr 断言"不含缺数据"
+        会误伤，所以判据只看分类本身。"""
+        _i = text.find('归因：')
+        return text[_i:] if _i >= 0 else ''
+
+    try:
+        # ---- ① script_cannot_run：脚本自己缺依赖 ----
+        # 事后校验"这个名字此刻真的导不进来"—— 版本太新的环境里刚好装了同名包时
+        # 用例自降为跳过，而不是给出一个假的绿色。
+        if _has21('t11_gone_pkg'):
+            print('  --  跳过：t11_gone_pkg 在本环境可被导入，缺依赖夹具造不出来')
+        else:
+            _s1 = _mk21('attr_missing_dep.py',
+                        _head21 + 'import t11_gone_pkg\n'
+                        "fig.savefig('o.png')\n", _move21)
+            _rc1, f1, e1 = _apply21(_s1)
+            _a1 = _attr_lines(e1)
+            check(f1.get('attribution') == 'script_cannot_run',
+                  '①缺依赖 → attribution=script_cannot_run', f1.get('attribution'))
+            check(f1.get('attribution_detail') in ('missing_dependency',
+                                                   'missing_data', 'unknown'),
+                  '①缺依赖 → detail 是稳定英文短原因', f1.get('attribution_detail'))
+            check('脚本跑不起来' in _a1,
+                  '①人读输出印出分类「脚本跑不起来」', _a1[-300:])
+            check('已回滚' in _a1 and 'mpltweak check' in _a1 and '--static' in _a1,
+                  '①下一步：明说没改源码 + `check <脚本> --static`', _a1[-300:])
+            check((f1.get('next_step') or '').endswith('--static'),
+                  '①--json 的 next_step 可直接执行', f1.get('next_step'))
+            check('需要参数' not in _a1,
+                  '①缺依赖**不**被伪装成"需要参数"（不许乱猜）', _a1[:200])
+
+        # ---- ② script_needs_args：脚本依赖 sys.argv，本次没透传 ----
+        _s2 = _mk21('attr_needs_args.py',
+                    _head21 + "import sys\ndata = sys.argv[1]\n"
+                    "fig.savefig('o.png')\n", _move21)
+        _rc2, f2, e2 = _apply21(_s2)
+        _a2 = _attr_lines(e2)
+        check(f2.get('attribution') == 'script_needs_args',
+              '②脚本要 argv → attribution=script_needs_args', f2.get('attribution'))
+        # ★ 评审点名的伪装问题：脚本需要参数时**不能说成"缺数据"**
+        check('缺数据' not in _a2 and '缺依赖' not in _a2,
+              '②★「需要参数」不得伪装成「缺数据/缺依赖」', _a2[-300:])
+        check('脚本需要命令行参数' in _a2, '②人读输出印出分类「脚本需要命令行参数」',
+              _a2[-300:])
+        check('你的脚本需要参数' in _a2 and '-- <' in _a2,
+              '②下一步给出可照抄的 `apply <脚本> --write -- <参数...>`（原文含 `<`）',
+              _a2[-300:])
+        check('<your args...>' in (f2.get('next_step') or ''),
+              '②--json 的 next_step 带 `-- <your args...>` 写法',
+              f2.get('next_step'))
+
+        # ---- ③ script_needs_gui_or_headless_impossible：要开窗口，无头跑不通 ----
+        # 夹具如实模拟"本机没有可用窗口"：真 import tkinter（静态证据来源），而
+        # 打不开窗口时的报错文本与 Linux/CI 无头机上一模一样。
+        #
+        # ★ 团队硬规则（船长 2026-10-12，用户报"有人抢鼠标"后定）：测试夹具
+        #   **禁止创建任何真实 GUI 对象** —— tk.Tk() / Toplevel() / QApplication() /
+        #   QWidget() / plt.show() / use('TkAgg') 后建图 一律不许。tkinter 直接建
+        #   窗口，MPLBACKEND=Agg **挡不住**，会真抢焦点与鼠标。需要"脚本里有 GUI
+        #   调用"这类证据时，只用**静态文本/AST 层面的构造**（写进临时文件的源码
+        #   字符串），不要真执行。
+        #
+        # 在真有窗口的机器上，MPLTWEAK_GUI_OK=1 就跳过这段 → 反向对照证明红/绿
+        # 来自分类而不是夹具恒坏。
+        _s3 = _mk21(
+            'attr_needs_gui.py',
+            _head21 + (
+                "import os\n"
+                "import tkinter as tk        # noqa: F401  真需要窗口的脚本\n"
+                "if not os.environ.get('MPLTWEAK_GUI_OK'):\n"
+                "    raise SystemExit('TclError: no display name and no '\n"
+                "                     '$DISPLAY environment variable')\n"
+                "fig.savefig('o.png')\n"), _move21)
+        _rc3, f3, e3 = _apply21(_s3)
+        _a3 = _attr_lines(e3)
+        check(f3.get('attribution') == 'script_needs_gui_or_headless_impossible',
+              '③无头跑不通 → attribution=script_needs_gui_or_headless_impossible',
+              f3.get('attribution'))
+        check('无头环境跑不通' in _a3, '③人读输出印出分类「无头环境跑不通」', _a3[-300:])
+        check('mpltweak check' in _a3 and '--static' in _a3
+              and '--verify-fast' in _a3 and '--keep-unverified' in _a3,
+              '③下一步：--static + 确要写回时的两个弱保证开关', _a3[-400:])
+        # 反向对照：同一条路径在"有窗口"时应当**正常写回**。
+        _rc3b, _f3b, _e3b = _apply21(_s3, extra={'MPLTWEAK_GUI_OK': '1'})
+        check(_f3b.get('reason') != 'fail',
+              '③反向对照：给了窗口后同一脚本正常写回（不是夹具恒失败）',
+              (_rc3b, _f3b.get('reason'), _e3b[-160:]))
+
+        # ---- ④ tool_bug：internal_error（工具自身异常），与脚本失败彻底分开 ----
+        _code21 = (
+            'import sys\n'
+            'sys.path.insert(0, %r)\n'
+            'from mpltweak import messages as _msg\n'
+            '@_msg.guard_json_main\n'
+            'def boom(argv=None):\n'
+            '    raise RuntimeError("boom-t11")\n'
+            'sys.exit(boom(["--json"]))\n'
+        ) % os.path.join(ROOT, 'src')
+        _r4 = subprocess.run([PY, '-c', _code21], capture_output=True)
+        _o4, _e4 = _dec(_r4.stdout), _dec(_r4.stderr)
+        check(_r4.returncode == 2, '④工具自身异常 → 退出码仍是 2（数值语义不变）',
+              _r4.returncode)
+        try:
+            _j4 = json.loads(_o4)
+        except Exception as _e:                                   # noqa: BLE001
+            _j4 = {}
+        check(_j4.get('error_code') == 'internal_error'
+              and _j4.get('attribution') == 'tool_bug',
+              '④--json：error_code=internal_error + attribution=tool_bug', _j4)
+        check('一个字节都未修改' in _e4 and '这是工具的 bug' in _e4,
+              '④人读输出明说「源码一个字节都未修改」+「这是工具的 bug」', _e4[-200:])
+
+        # ---- ⑤ cli 帮助：合并表述消失（脚本侧 / 工具侧分开写）----
+        _u = subprocess.run([PY, '-m', 'mpltweak.cli', '--help'],
+                            capture_output=True, env=dict(os.environ))
+        _ut = _dec(_u.stdout) + _dec(_u.stderr)
+        check('脚本报错或工具自身异常' not in _ut,
+              '⑤cli 帮助不再出现"脚本报错或工具自身异常"的合并表述')
+        check('internal_error' in _ut and '与你的脚本无关' in _ut,
+              '⑤cli 帮助把工具侧 internal_error 单列并点明与用户脚本无关',
+              _ut[_ut.find('工具侧'):][:120] if '工具侧' in _ut else _ut[:120])
+        check('tool_bug' in _ut and 'script_cannot_run' in _ut,
+              '⑤cli 帮助列出 attribution 的取值（agent 可据此分支）')
+        check('0.1.9' in _ut and '数值语义不变' in _ut,
+              '⑤cli 帮助仍声明退出码数值语义不变（CI 依赖）')
+
+        # ---- ⑥ 英文分支（文案走 messages.py，中英各一份）----
+        _s6 = _mk21('attr_needs_args_en.py',
+                    _head21 + "import sys\ndata = sys.argv[1]\n"
+                    "fig.savefig('o.png')\n", _move21)
+        _rc6, f6, e6 = _apply21(_s6, extra={'MPLTWEAK_LANG': 'en'})
+        check('script needs command-line arguments' in e6,
+              '⑥英文界面：归因分类也出英文', e6[-300:])
+        check(all(ord(c) < 128 for c in (f6.get('next_step') or 'x')),
+              '⑥英文下 next_step 仍是 ASCII 可执行命令', f6.get('next_step'))
+        check(f6.get('attribution') == 'script_needs_args',
+              '⑥英文分支的 attribution 取值与中文一致（机器可读值不翻译）',
+              f6.get('attribution'))
+
+        # ---- ⑦ 纯函数判据（不跑子进程）：保守性 + 不误报 tool_bug ----
+        from mpltweak import verify as _verify21
+        _noisy = os.path.join(_tmp21, 'static_probe.py')
+        with open(_noisy, 'w', encoding='utf-8') as _f:
+            _f.write('import sys\n_x = sys.argv[1]\n')
+        check(_verify21.classify_verify_failure(
+            "usage: p.py [-h]\nerror: the following arguments are required: --data",
+            script_path=_noisy, args_passed=False)
+            == (_verify21.VERIFY_FAIL_NEEDS_ARGS, 'argparse'),
+            '⑦stderr 命中 argparse 强证据 → script_needs_args/argparse')
+        # 已经传过参数、重跑仍报用法错误 → 仍归 needs_args，但 detail 换成
+        # configured_args（apply 换一句"参数已透传"的文案，不再叫你再传一遍）。
+        check(_verify21.classify_verify_failure(
+            'error: the following arguments are required: --data',
+            script_path=_noisy, args_passed=True)
+            == (_verify21.VERIFY_FAIL_NEEDS_ARGS, 'configured_args'),
+            '⑦参数已透传时不再叫他"去传参数"（detail=configured_args）')
+        # 保守性：无 stderr 且参数已给 → **不**归 needs_args（不强猜）
+        check(_verify21.classify_verify_failure(
+            '', script_path=_noisy, args_passed=True)
+            == (_verify21.VERIFY_FAIL_CANNOT_RUN, 'unknown'),
+            '⑦无 stderr + 参数已给 → 保守归 script_cannot_run/unknown')
+        check(_verify21.classify_verify_failure('', script_path=_noisy,
+                                               args_passed=False)
+              == (_verify21.VERIFY_FAIL_NEEDS_ARGS, 'static_args'),
+              '⑦无 stderr + sys.argv[1] 强证据 + 未传参 → static_args')
+        # 判不出时**绝不**误报 tool_bug（会把用户吓到）
+        _kinds21 = set()
+        for _t in ('', 'Traceback (most recent call last):\nValueError: nope',
+                   'TclError: no display name and no $DISPLAY environment '
+                   'variable', 'ModuleNotFoundError: No module named "pandas"',
+                   'FileNotFoundError: [Errno 2] data.csv'):
+            _kinds21.add(_verify21.classify_verify_failure(
+                _t, script_path=_noisy, args_passed=False)[0])
+        check(_verify21.VERIFY_FAIL_TOOL_BUG not in _kinds21,
+              '⑦分类器永不从脚本 stderr 判出 tool_bug（只有 internal_error 才是）',
+              sorted(_kinds21))
+        check(_kinds21 <= {_verify21.VERIFY_FAIL_CANNOT_RUN,
+                           _verify21.VERIFY_FAIL_NEEDS_ARGS,
+                           _verify21.VERIFY_FAIL_NEEDS_GUI},
+              '⑦分类器只产出三类（工具侧那类由 guard 产出）', sorted(_kinds21))
+    except Exception as _e:                                       # noqa: BLE001
+        check(False, '§21 执行', _e)
+    finally:
+        shutil.rmtree(_tmp21, ignore_errors=True)
+
+    print('§22 可重跑预检：写回/开窗前静态预警五类重跑风险（绝不执行脚本）')
+    # 背景（用户视角评审 2026-10-12 拍板进 0.1.10）：本工具的安全网要求**在你的环境里
+    # 反复重跑脚本**（一次 apply 默认跑 2~5 遍），于是「要参数 / 要联网 / 等人输入 /
+    # 要弹窗 / 缺依赖」的脚本会无声撞墙，用户事后归因成"这工具不行"。
+    # t11 管的是**失败之后**怎么说（四类归因），本节钉住**失败之前**的预警：
+    #   ① 五类各一条：人读提示（含可照抄的下一步）+ --json 的 preflight.risks；
+    #   ② **干净脚本必须一个字都不说**（不能变成新噪音）；
+    #   ③ 预检自身异常一律当无风险放行（绝不成为新的失败点）；
+    #   ④ 预检**绝不执行脚本**（金丝雀：脚本里的模块级写盘不得发生）。
+    from mpltweak import preflight as _pf22
+    from mpltweak import verify as _v22
+    from mpltweak import messages as _messages22
+    _tmp22 = tempfile.mkdtemp(prefix='mpltweak_preflight_')
+    _p22 = {'version': _params.SCHEMA_VERSION, 'fig_index': 0,
+            'figsize_in': [6.0, 4.0],
+            'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5],
+                      'xscale': 'linear', 'yscale': 'linear', 'grid': False,
+                      'spines': {}, 'cell': None}]}
+    _head22 = ("import matplotlib\nmatplotlib.use('Agg')\n"
+               "import matplotlib.pyplot as plt\n"
+               "fig = plt.figure(figsize=(6, 4))\n"
+               "ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n"
+               "ax.plot([1, 2, 3])\n")
+    # 下面两串**故意**运行时拼接：本文件里不出现"真实创建 GUI 对象"的字面量
+    # （t18 的 hygiene 棘轮会扫 tests/ 下的真实窗口创建；连字符串也别留）。
+    _CREATE22 = 'tkinter.' + 'Tk' + '()'
+    _SHOW22 = 'plt.' + 'show()'
+
+    def _mk22(name, body, params=True):
+        p = os.path.join(_tmp22, name)
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write(body)
+        if params:
+            d = os.path.join(_tmp22, '.tweak_params')
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, name[:-3] + '.json'), 'w',
+                      encoding='utf-8') as f:
+                json.dump(_p22, f)
+        return p
+
+    _fx22 = {}
+    _env22 = {'MPLBACKEND': 'Agg', 'MPLTWEAK_LANG': 'zh'}
+    try:
+        # ① 缺依赖：这个名字先确认"此刻真的导不进来"，否则该条自降为跳过
+        if importlib.util.find_spec('t12_gone_pkg_zzz') is None:
+            _fx22['missing_dependency'] = _mk22(
+                'pf_dep.py', _head22 + 'import t12_gone_pkg_zzz\n')
+        # ② 需要参数：sys.argv[1]（强证据）+ argparse required=True
+        _fx22['needs_args'] = _mk22(
+            'pf_args.py',
+            "import sys\nimport argparse\n" + _head22
+            + "if len(sys.argv) > 1:\n    _data = sys.argv[1]\n"
+            + "_ap = argparse.ArgumentParser()\n"
+            + "_ap.add_argument('--x', required=True)\n")
+        # ③ 联网：只 import 不发请求（预检只看静态足迹）
+        _fx22['network'] = _mk22('pf_net.py', _head22 + 'import urllib.request\n')
+        # ④ 人工输入：input() 藏在环境变量守卫后面 —— 静态看得见、**真重跑不会卡**
+        _fx22['stdin'] = _mk22(
+            'pf_stdin.py',
+            "import os\n" + _head22
+            + "if os.environ.get('T12_PF_ASK'):\n    _n = input('name? ')\n")
+        # ⑤ GUI/弹窗：import tkinter + 受守卫保护的创建调用 + plt.show()
+        _fx22['gui'] = _mk22(
+            'pf_gui.py',
+            "import os\nimport tkinter\n" + _head22
+            + "if os.environ.get('T12_PF_GUI'):\n    " + _CREATE22 + "\n"
+            + _SHOW22 + "\n")
+        _clean22 = _mk22('pf_clean.py', _head22 + "fig.savefig('o.png')\n")
+        _canary22 = os.path.join(_tmp22, 'T12_PF_CANARY.txt')
+        _canary_script = _mk22(
+            'pf_canary.py',
+            _head22 + "open(%r, 'w').write('boom')\n" % _canary22, params=False)
+        _bad22 = _mk22('pf_bad.py', 'def broken(:\n', params=False)
+
+        # ---- 五类各一条（人读 + JSON 字段） ----
+        _want22 = {
+            'missing_dependency': ('缺依赖', '--verify-fast'),
+            'needs_args': ('需要参数', '--write -- <你的参数...>'),
+            'network': ('联网', '--verify-fast'),
+            'stdin': ('等输入', '--verify-fast'),
+            'gui': ('弹窗', '--verify-fast'),
+        }
+        for _kind, (_word, _step) in _want22.items():
+            if _kind not in _fx22:
+                print('  --  跳过：%s 的夹具在本环境造不出来' % _kind)
+                continue
+            _res = _pf22.analyze(_fx22[_kind])
+            _ks = [x['kind'] for x in _res['risks']]
+            _txt = '\n'.join(_pf22.message_lines(_res, _fx22[_kind]))
+            check(_kind in _ks, '§22-%s 静态判出该风险' % _kind, _ks)
+            check(_txt.startswith('[预检]') and _word in _txt
+                  and _step in _txt and '--keep-unverified' in _txt,
+                  '§22-%s 人读提示含风险名 + 可照抄的下一步' % _kind,
+                  _txt[:300])
+            # 用 next(..., {}) 而不是 [0]：万一某类检测被关掉，这里要**干净地判红**，
+            # 而不是抛 IndexError 把整节变成"§22 执行"（反转验证实测踩到）。
+            _r0 = next((x for x in _res['risks'] if x['kind'] == _kind), {})
+            check(bool(_r0.get('next_step')) and bool(_r0.get('attribution'))
+                  and bool(_r0.get('hint')) and bool(_r0.get('evidence')),
+                  '§22-%s JSON 字段齐（next_step/attribution/hint/evidence）'
+                  % _kind, _r0)
+        check(_v22.VERIFY_FAIL_NEEDS_ARGS == _pf22.ATTRIBUTION['needs_args']
+              and _v22.VERIFY_FAIL_CANNOT_RUN == _pf22.ATTRIBUTION['missing_dependency']
+              and _v22.VERIFY_FAIL_NEEDS_GUI == _pf22.ATTRIBUTION['gui'],
+              '§22 预检标签与 t11 的四类归因同值（agent 可用同一套标签分支）')
+        for _k, _mk in _pf22.MSG_KEY.items():
+            _item = _messages22.MESSAGES.get(_mk) or {}
+            check(bool(_item.get('zh')) and bool(_item.get('en')),
+                  '§22 文案双语句柄存在: %s' % _mk, sorted(_item))
+
+        # ---- 不误报 / 静默 ----
+        _rc22 = _pf22.analyze(_clean22)
+        check(_rc22['risks'] == []
+              and _pf22.message_lines(_rc22, _clean22) == [],
+              '§22 干净脚本静默通过（risks=[] 且一条提示都不打）', _rc22)
+        _local22 = _mk22('pf_local.py', 'import pf_helper_local\n', params=False)
+        with open(os.path.join(_tmp22, 'pf_helper_local.py'), 'w',
+                  encoding='utf-8') as f:
+            f.write('x = 1\n')
+        check(_pf22.analyze(_local22)['risks'] == [],
+              '§22 同目录本地模块（import 旁边那个 .py）不算缺依赖 —— 不误报')
+        check(_pf22.analyze(_fx22['needs_args'], args_passed=True)['risks'] == [],
+              '§22 参数已透传 → 不再叫用户去传参数（不重复、不误导）')
+
+        # ---- 绝不执行脚本（金丝雀）+ 失败即放行 ----
+        _pf22.analyze(_canary_script)
+        check(not os.path.exists(_canary22),
+              '§22 预检**绝不执行脚本**（金丝雀的模块级写盘没有发生）')
+        check(_pf22.analyze(os.path.join(_tmp22, 'nope.py'))
+              == {'ok': True, 'risks': []}
+              and _pf22.analyze(_tmp22) == {'ok': True, 'risks': []}
+              and _pf22.analyze(_bad22)['risks'] == [],
+              '§22 失败即放行：文件不存在 / 传目录 / 语法错误 → 一律当无风险，绝不抛')
+
+        # ---- 入口 A：apply（写回前） ----
+        if 'missing_dependency' in _fx22:
+            _rc, _out, _err = run('apply', _fx22['missing_dependency'],
+                                  '--write', '--style', 'inplace',
+                                  cwd=_tmp22, env=_env22)
+            check('[预检]' in _out and '缺依赖' in _out and '--verify-fast' in _out,
+                  '§22-apply 写回前打印人读预检（含下一步）', _out[-400:])
+            _rc, _out, _err = run('apply', _fx22['missing_dependency'],
+                                  '--write', '--style', 'inplace', '--json',
+                                  cwd=_tmp22, env=_env22)
+            try:
+                _j22 = json.loads(_out)
+            except Exception:                                     # noqa: BLE001
+                _j22 = {}
+            _pfj = (_j22.get('preflight') or {})
+            _rk = [x.get('kind') for x in (_pfj.get('risks') or [])]
+            check('missing_dependency' in _rk and _pfj.get('ok') is False,
+                  '§22-apply --json 带顶层 preflight.risks（机器可读）',
+                  _out[:300])
+            check('[预检]' in _err,
+                  '§22-apply --json 时人读预检走 stderr（stdout 只有 JSON）',
+                  _err[-200:])
+            _r0 = (_pfj.get('risks') or [{}])[0]
+            check(bool(_r0.get('next_step')) and bool(_r0.get('attribution')),
+                  '§22-apply --json 每条风险带 next_step/attribution', _r0)
+            # 不重跑的档位不该提示（说了只是噪音）
+            _rc, _out, _err = run('apply', _fx22['missing_dependency'], '--write',
+                                  '--verify-fast', '--json', cwd=_tmp22,
+                                  env=_env22)
+            try:
+                _jf = json.loads(_out)
+            except Exception:                                     # noqa: BLE001
+                _jf = {}
+            check('[预检]' not in _out and _jf.get('preflight') is None,
+                  '§22 --verify-fast（这次不重跑）→ 预检静默、JSON 不带 preflight')
+        _rc, _out, _err = run('apply', _clean22, '--write', '--style', 'inplace',
+                              '--json', cwd=_tmp22, env=_env22)
+        try:
+            _jc = json.loads(_out)
+        except Exception:                                         # noqa: BLE001
+            _jc = {}
+        check('[预检]' not in _out
+              and (_jc.get('preflight') or {}).get('risks') == [],
+              '§22-apply 干净脚本静默（人读无提示、JSON risks 为空）', _out[:200])
+
+        # ---- 入口 B：launch 开窗前（直接调内部函数，**不真开窗**） ----
+        from mpltweak import launch as _launch22
+        _buf = io.StringIO()
+        _emitted = _launch22._emit_preflight_hint(_fx22['stdin'], stderr=_buf)
+        check(_emitted is True and '[预检]' in _buf.getvalue()
+              and '等输入' in _buf.getvalue(),
+              '§22-launch 开窗前向 stderr 给一次提示（不阻塞）',
+              _buf.getvalue()[:200])
+        _buf2 = io.StringIO()
+        check(_launch22._emit_preflight_hint(_clean22, stderr=_buf2) is False
+              and _buf2.getvalue() == '',
+              '§22-launch 干净脚本静默（stderr 一个字不打）')
+        _buf3 = io.StringIO()
+        check(_launch22._emit_preflight_hint(
+            _fx22['stdin'], stderr=_buf3,
+            environ={'MPLTWEAK_NO_HINT': '1'}) is False
+            and _buf3.getvalue() == '',
+            '§22-launch MPLTWEAK_NO_HINT=1 静默（批量脚本开关）')
+        _buf4 = io.StringIO()
+        check(_launch22._emit_preflight_hint(_tmp22, stderr=_buf4) is False
+              and _buf4.getvalue() == '',
+              '§22-launch 预检无风险/出岔子 → 返回 False，绝不影响开窗')
+    except Exception as _e:                                       # noqa: BLE001
+        check(False, '§22 执行', _e)
+    finally:
+        shutil.rmtree(_tmp22, ignore_errors=True)
 
     print()
     if _fails:

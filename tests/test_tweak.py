@@ -656,6 +656,426 @@ check('T25-#2c：fig.legend() 明确提示不接管',
       ('fig.legend' in _bufL2.getvalue()) or ('图级图例' in _bufL2.getvalue()),
       repr(_bufL2.getvalue()))
 
+# ---- 27. 0.1.10#1：fit 裁白边三缺陷回归 ----
+# ① suptitle / fig.text 必须进内容盒（旧实现只并轴框 ∪ ax.tightbbox ∪ 图例，
+#    主标题被裁掉一块）；② 新 figsize 按英寸直算、与 dpi/dpr 完全解耦
+#    （旧实现「canvas 逻辑 px ÷ fig.dpi」在 Windows 200% + HiDPI 下缩小一半）。
+def _mk_fit_fig(dpi=100.0, suptitle=None):
+    _f = plt.figure(figsize=(10, 8))
+    _f.set_dpi(dpi)
+    _a = _f.add_axes([0.1, 0.1, 0.8, 0.8])
+    _a.plot([0, 1], [0, 1])
+    if suptitle:
+        _f.suptitle(suptitle, fontsize=16)
+    _f.canvas.draw()
+    return _f
+
+# ① suptitle 进内容盒：有 suptitle 的图 fit 后高度 > 无 suptitle 的图
+_fitA = _mk_fit_fig(suptitle=None)
+_twA = Tweak(_fitA, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_fit_a.json'), heavy=False)
+_twA._fit_to_content()
+_h_no_title = _fitA.get_size_inches()[1]
+plt.close(_fitA)
+_fitB = _mk_fit_fig(suptitle='A TITLE THAT MUST SURVIVE THE FIT')
+_twB = Tweak(_fitB, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_fit_b.json'), heavy=False)
+_twB._fit_to_content()
+_h_with_title = _fitB.get_size_inches()[1]
+check('0.1.10#1-① fit 内容盒含 suptitle（有标题的高度更大，不被裁）',
+      _h_with_title > _h_no_title + 0.05,
+      'no-title=%.3f with-title=%.3f' % (_h_no_title, _h_with_title))
+plt.close(_fitB)
+
+# ② dpi 解耦：模拟 Qt HiDPI（get_width_height 返回逻辑 px，fig.dpi=物理 200）
+#    —— 旧实现会用逻辑 px÷200 把图缩成一半；新实现按英寸直算不缩水。
+_fitC = _mk_fit_fig(dpi=200.0, suptitle='HI DPI FIT')
+# 模拟 Qt 行为：canvas.get_width_height 给逻辑 px（物理的一半）
+_real_gwh = _fitC.canvas.get_width_height
+_fitC.canvas.get_width_height = lambda: (
+    _real_gwh()[0] // 2, _real_gwh()[1] // 2)
+_twC = Tweak(_fitC, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_fit_c.json'), heavy=False)
+_twC._fit_to_content()
+_wi, _hi = _fitC.get_size_inches()
+check('0.1.10#1-② fit 与 dpi 解耦（HiDPI 下不再缩一半：宽≈8.3 而非 ≈4.15）',
+      7.5 < _wi < 9.5, 'fiw=%.3f' % _wi)
+_fitC.canvas.get_width_height = _real_gwh
+plt.close(_fitC)
+
+# ---- 28. 0.1.10#2-②：拖拽用归一化锚点（fig.bbox 变化后增量仍正确）----
+# 旧实现：motion 用 `(event.x - _press_xy[0]) / X`，X 是**当前** fig.bbox 宽度；
+# 若按下后被钳制/缩窗（fig.bbox 变了），旧像素锚点错位 → ghost 蓝框对不上。
+# 新实现：按下记归一化锚点 _press_norm，motion 只算归一化增量。
+_figN = plt.figure(figsize=(10, 8))
+_axN = _figN.add_axes([0.1, 0.1, 0.4, 0.4])
+_axN.plot([0, 1], [0, 1])
+_figN.canvas.draw()
+_twN = Tweak(_figN, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_drag_norm.json'), heavy=False)
+_X0, _Y0 = _figN.bbox.width, _figN.bbox.height
+_b0 = _bbox(_axN)
+# 按下（面板中心）
+_px0, _py0 = (_b0[0] + _b0[2] / 2) * _X0, (_b0[1] + _b0[3] / 2) * _Y0
+from matplotlib.backend_bases import MouseEvent as _ME
+_ev = _ME('button_press_event', _figN.canvas, _px0, _py0, button=1)
+_ev.inaxes = _axN
+_twN._on_press(_ev)
+check('0.1.10#2-② 按下记录归一化锚点',
+      abs(_twN._press_norm[0] - (_b0[0] + _b0[2] / 2)) < 1e-9
+      and abs(_twN._press_norm[1] - (_b0[1] + _b0[3] / 2)) < 1e-9,
+      str(_twN._press_norm))
+# 模拟窗口被钳制：fig.bbox 中途变化（motion 前缩窗）
+_figN.set_size_inches(6, 5)
+_X1, _Y1 = _figN.bbox.width, _figN.bbox.height
+# motion：目标 = 归一化锚点 + 0.05 增量（不管 fig.bbox 多大，增量都该是 0.05）
+_ev = _ME('motion_notify_event', _figN.canvas,
+          (_twN._press_norm[0] + 0.05) * _X1,
+          _twN._press_norm[1] * _Y1)
+_ev.inaxes = _axN
+_twN._on_motion(_ev)
+# 松手落位（重图模式 bbox 在 release 才真正 set_position）
+_ev = _ME('button_release_event', _figN.canvas,
+          (_twN._press_norm[0] + 0.05) * _X1,
+          _twN._press_norm[1] * _Y1, button=1)
+_twN._on_release(_ev)
+_b1 = _bbox(_axN)
+check('0.1.10#2-② fig.bbox 变化后拖拽增量仍正确（x 移 0.05）',
+      abs(_b1[0] - _b0[0] - 0.05) < 1e-6,
+      'b0=%s b1=%s' % ([round(v, 4) for v in _b0], [round(v, 4) for v in _b1]))
+plt.close(_figN)
+
+# ---- 29. t19：超屏请求不许被窗口钳制改形（长宽比守恒）----
+# 根因（t16 真窗口实测）：Tweak.__init__ 里 w.show() 过去跑在 _fit_to_screen()
+# 之前 → Windows 钳制窗口时 backend_qt.py:395-399 的 resizeEvent 按"钳制后的画布
+# 像素"逐轴 set_size_inches，figsize 被改成**非等比**（请求 30×22in 长宽比 1.364 →
+# 画布 1601×496px 即 3.234）；随后那次等比缩放把这个**已变形**的尺寸整体缩到 57%
+# （→ 912×282）—— 变形被固化，_figsize_open 记的也是变形值。
+# 本用例在 Agg 后端（**绝不开窗**）里用假 window 复现同一条路径：
+#   ① 开窗**前**就必须已经等比缩到屏内，且 _figsize_open 记的是等比尺寸；
+#   ② 即使窗口管理器**仍然**把画布钳制成非等比，resizeEvent 守卫也必须恢复等比。
+_AVAIL = (960, 516)                      # 模拟 t16 那台机器的屏幕可用区
+_REQ_W, _REQ_H = 30.0, 22.0              # 请求 30×22in
+_RATIO_REQ = _REQ_W / _REQ_H             # 1.3636…
+_CLAMP_PX = (1601, 496)                  # t16 实测的"钳制后画布像素"（3.234）
+
+
+class _FakeWin:
+    '''假窗口：模拟 w.show()/raise_() 与 backend_qt resizeEvent 的改形行为。'''
+
+    def __init__(self, fig, clamp_px=None):
+        self.fig = fig
+        self.clamp_px = clamp_px
+        self.shown = None            # 开窗瞬间的 figsize（证明"开窗前已等比缩放"）
+
+    def show(self):
+        self.shown = tuple(self.fig.get_size_inches())
+        if self.clamp_px is not None:
+            _dpi = float(self.fig.dpi)
+            # backend_qt.py:395-399 的等价物：按"钳制后的画布像素"逐轴换算
+            self.fig.set_size_inches(self.clamp_px[0] / _dpi,
+                                     self.clamp_px[1] / _dpi)
+            # 与 backend_qt 一样：改完尺寸触发 resize_event（钳制守卫在那里）
+            self.fig.canvas.callbacks.process('resize_event', None)
+
+    def raise_(self):
+        pass
+
+
+def _oversized_fig(dpi=100.0):
+    _f = plt.figure(figsize=(_REQ_W, _REQ_H))
+    _f.set_dpi(dpi)
+    _f.add_axes([0.1, 0.1, 0.8, 0.8]).plot([0, 1], [0, 1])
+    _f.canvas.draw()
+    return _f
+
+
+_avail_real = Tweak._screen_available
+Tweak._screen_available = lambda self: _AVAIL      # 无头下钉死"屏幕可用区"
+try:
+    # ① 开窗前就已等比缩到屏内（长宽比守恒）—— 旧实现此处 shown=30×22（未缩）
+    _f19a = _oversized_fig()
+    _w19a = _FakeWin(_f19a)
+    _f19a.canvas.manager.window = _w19a
+    _tw19a = Tweak(_f19a, export_path=os.path.join(
+        tempfile.gettempdir(), 'test_oversize_a.json'), heavy=False)
+    _shown = _w19a.shown or (0.0, 1.0)
+    _r_open = _shown[0] / _shown[1]
+    check('t19① 开窗瞬间的 figsize 长宽比守恒（未被窗口钳制改形，偏离 <2%）',
+          _w19a.shown is not None
+          and abs(_r_open - _RATIO_REQ) / _RATIO_REQ < 0.02,
+          'shown=%s ratio=%.4f req=%.4f'
+          % ([round(v, 3) for v in _shown], _r_open, _RATIO_REQ))
+    check('t19①b 缩到屏内（画布 ≤ 可用区 95%）',
+          _shown[0] * _f19a.dpi <= _AVAIL[0] * 0.95 + 1e-6
+          and _shown[1] * _f19a.dpi <= _AVAIL[1] * 0.95 + 1e-6,
+          'px=%s avail=%s' % ([round(_shown[0] * _f19a.dpi),
+                               round(_shown[1] * _f19a.dpi)], list(_AVAIL)))
+    check('t19①c _figsize_open 记的是等比尺寸（不再是钳制后的变形值）',
+          bool(_tw19a._figsize_open)
+          and abs(_tw19a._figsize_open[0] / _tw19a._figsize_open[1]
+                  - _RATIO_REQ) / _RATIO_REQ < 0.02,
+          str([round(v, 3) for v in (_tw19a._figsize_open or [])]))
+    plt.close(_f19a)
+
+    # ② 窗口管理器**仍然**钳制（画布 1601×496）→ 守卫必须恢复等比，且画布回屏内
+    _f19b = _oversized_fig()
+    _w19b = _FakeWin(_f19b, clamp_px=_CLAMP_PX)
+    _f19b.canvas.manager.window = _w19b
+    _tw19b = Tweak(_f19b, export_path=os.path.join(
+        tempfile.gettempdir(), 'test_oversize_b.json'), heavy=False)
+    _r_cl = _f19b.get_size_inches()
+    check('t19② 窗口仍把画布钳制成 1601x496（3.234）时，守卫恢复等比（偏离 <2%）',
+          abs(_r_cl[0] / _r_cl[1] - _RATIO_REQ) / _RATIO_REQ < 0.02,
+          'after-clamp=%s ratio=%.4f'
+          % ([round(v, 3) for v in _r_cl], _r_cl[0] / _r_cl[1]))
+    check('t19②b 钳制守卫确实触发过（提示只打一次）+ 恢复后画布回到屏内',
+          _tw19b._warned_offscreen is True
+          and _r_cl[0] * _f19b.dpi <= _AVAIL[0] * 0.95 + 1e-6
+          and _r_cl[1] * _f19b.dpi <= _AVAIL[1] * 0.95 + 1e-6,
+          'warned=%s px=%s' % (_tw19b._warned_offscreen,
+                               [round(_r_cl[0] * _f19b.dpi),
+                                round(_r_cl[1] * _f19b.dpi)]))
+    plt.close(_f19b)
+finally:
+    Tweak._screen_available = _avail_real
+
+# ---- 30. t20：Tk 回退路径的单位/时序缺陷（屏幕物理 px vs 画布逻辑 px + dpr 两态）----
+# t16 实测（--backend tk --scenario huge，30×22in@dpi100）：
+#   日志「画布 3000x2200 超出屏幕可用区 3840x2160，已自动缩放到屏内 (93%)」
+#   → 映射后客户区 5596×2119 物理 px（> 屏 3840×2160）→ WM 钳制 →
+#   最终 figsize 27.98×10.275in（长宽比 2.723 vs 请求 1.3636，偏 +99.7%）且**永久固化**
+#   （全程无 _CLAMP_HINT，说明钳制守卫根本没触发）。
+# 根因：① Tk 的 winfo_screen* 是**物理** px（逻辑屏其实 1920×1080），而引擎其余部分
+#      （fig.canvas.get_width_height() / Tk 的 <Configure> 客户区）用**逻辑** px；
+#      ② device_pixel_ratio 未映射时是 1.0（matplotlib 在 <Map> 才更新它）；
+#      ③ 钳制判据把逻辑画布比物理屏幕 ⇒ 条件恒假 ⇒ 永不恢复。
+# 本用例仍用**假 window**（Agg，绝不开窗）复现这条时序，不依赖真开窗。
+_TK_PHYS = (3840, 2160)           # Tk 报的物理屏（= 本机 200% 缩放下的真分辨率）
+_TK_DPR = 2.0                     # 映射后 matplotlib 读出的 device_pixel_ratio
+_TK_LOGICAL = (1920, 1080)        # 折算后的逻辑屏（= 引擎与画布的口径）
+_TK_CLAMP_PHYS = (5596, 2055)     # t16 实测的"钳制后客户区"（**物理** px，见下）
+
+
+def _set_dpr(fig, ratio):
+    '''设置画布 dpr：matplotlib 只提供 `_set_device_pixel_ratio()`
+    （`device_pixel_ratio` 是只读 property；Tk 后端 :272 / Qt :249 都走它）。
+    注意：它同时会把 `fig.dpi` 重设为 ``ratio × _original_dpi``
+    （backend_bases.py:1941-1943）—— 这正是"物理 dpi"，测试里必须按它换算。
+    '''
+    fig.canvas._set_device_pixel_ratio(ratio)
+
+
+class _FakeTkWin:
+    '''假 Tk 窗口：winfo_screen* 报**物理** px；show() 模拟 <Map>（dpr 变真实值）。
+
+    说明：`_screen_available()` 会先试 Qt 分支 —— 本类**没有** `screen()`，
+    而 Agg 进程里没有 QApplication，所以自然落到 Tk 分支（= 真实 Tk 场景）。
+    '''
+
+    def __init__(self, fig, dpr_before=1.0, dpr_after=_TK_DPR, clamp_phys=None):
+        self.fig = fig
+        self.dpr_after = dpr_after
+        self.clamp_phys = clamp_phys       # 模拟 WM 钳制后的客户区（**物理** px）
+        self.before_show = None            # 映射前的 figsize（开窗瞬间）
+        self.clamped_to = None             # 被钳制后的 figsize（修正前的中间态）
+        _set_dpr(fig, dpr_before)
+        fig.canvas.manager.window = self
+
+    def winfo_screenwidth(self):
+        return _TK_PHYS[0]
+
+    def winfo_screenheight(self):
+        return _TK_PHYS[1]
+
+    def show(self):
+        self.before_show = tuple(self.fig.get_size_inches())
+        _set_dpr(self.fig, self.dpr_after)                       # <Map>
+        if self.clamp_phys is not None:
+            # backend_tk.py:279-286 的等价物：resize() 拿 <Configure> 的客户区像素
+            # （Tk 这边是**物理** px，widget 按 physical 尺寸建）除以 fig.dpi。
+            _dpi = float(self.fig.dpi)
+            self.fig.set_size_inches(self.clamp_phys[0] / _dpi,
+                                     self.clamp_phys[1] / _dpi)
+            self.clamped_to = tuple(self.fig.get_size_inches())
+        self.fig.canvas.callbacks.process('resize_event', None)   # <Configure>
+
+    def raise_(self):
+        pass
+
+
+def _huge_tk_fig(dpi=100.0):
+    _f = plt.figure(figsize=(_REQ_W, _REQ_H))        # 30×22in（长宽比 1.3636）
+    _f.set_dpi(dpi)
+    _f.add_axes([0.1, 0.1, 0.8, 0.8]).plot([0, 1], [0, 1])
+    _f.canvas.draw()
+    return _f
+
+
+def _ratio_dev(fig):
+    _w, _h = fig.get_size_inches()
+    return abs((_w / _h) - _RATIO_REQ) / _RATIO_REQ
+
+
+def _dev_of(ratio):
+    return abs(ratio - _RATIO_REQ) / _RATIO_REQ
+
+
+# ① 映射前：只能按 dpr=1.0 折算（= 把物理屏当逻辑屏）→ 目标偏大（t16 实测 93%）
+_f20a = _huge_tk_fig()
+_w20a = _FakeTkWin(_f20a)                            # dpr 1.0 → 2.0，不钳制
+_tw20a = Tweak(_f20a, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_tk_huge_a.json'), heavy=False)
+check('t20① 映射前按 dpr=1.0 折算（目标=27.98×20.52，与 t16 trace 一致；长宽比守恒）',
+      _w20a.before_show is not None
+      and abs(_w20a.before_show[0] - 27.9818) < 0.01
+      and abs(_w20a.before_show[1] - 20.52) < 0.01
+      and _dev_of(_w20a.before_show[0] / _w20a.before_show[1]) < 0.02,
+      'before_show=%s' % ([round(v, 3) for v in (_w20a.before_show or ())],))
+
+# ② 映射后（dpr=2.0）：dpr 自检必须**用正确口径重算等比目标** → 真的缩进屏内
+_fin20a = _f20a.get_size_inches()
+# 口径：引擎用的是 canvas.get_width_height()（**逻辑** px = 英寸×dpi÷dpr，
+# backend_bases.py:1967），所以这里直接用同一个 API，别自己乘 dpi。
+_px20a = _f20a.canvas.get_width_height()
+check('t20② 映射后自检修正：最终 figsize≈13.99×10.26、长宽比偏差 ≤2%',
+      abs(_fin20a[0] - 13.9916) < 0.05 and abs(_fin20a[1] - 10.2605) < 0.05
+      and _ratio_dev(_f20a) < 0.02,
+      'final=%s ratio=%.4f dev=%.4f'
+      % ([round(v, 3) for v in _fin20a], _fin20a[0] / _fin20a[1], _ratio_dev(_f20a)))
+check('t20②b 画布（逻辑 px）真的落在逻辑屏内（≤ 逻辑屏 95%）+ _figsize_open 同步',
+      _px20a[0] <= _TK_LOGICAL[0] * 0.95 + 1e-6
+      and _px20a[1] <= _TK_LOGICAL[1] * 0.95 + 1e-6
+      and abs(_tw20a._figsize_open[0] - _fin20a[0]) < 1e-6
+      and abs(_tw20a._fit_dpr - _TK_DPR) < 1e-9,
+      'px=%s logical=%s open=%s dpr=%s'
+      % ([round(v) for v in _px20a], list(_TK_LOGICAL),
+         [round(v, 3) for v in _tw20a._figsize_open], _tw20a._fit_dpr))
+plt.close(_f20a)
+
+# ③ 钳制守卫在 Tk 上必须能触发（旧代码因"逻辑画布 vs 物理屏幕"混单位而恒假）
+_f20b = _huge_tk_fig()
+_w20b = _FakeTkWin(_f20b, dpr_before=_TK_DPR, clamp_phys=_TK_CLAMP_PHYS)
+_tw20b = Tweak(_f20b, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_tk_huge_b.json'), heavy=False)
+check('t20③ Tk 上钳制守卫会触发（_warned_offscreen=True）且恢复等比（偏差 ≤2%）',
+      _tw20b._warned_offscreen is True
+      and _w20b.clamped_to is not None
+      and _dev_of(_w20b.clamped_to[0] / _w20b.clamped_to[1]) > 0.5   # 先真的被改形
+      and _ratio_dev(_f20b) < 0.02,
+      'clamped=%s final=%s warned=%s'
+      % ([round(v, 3) for v in (_w20b.clamped_to or ())],
+         [round(v, 3) for v in _f20b.get_size_inches()], _tw20b._warned_offscreen))
+plt.close(_f20b)
+
+# ④ 映射瞬间被钳制 + dpr 同时变化：自检要能一次纠回（复现 t16 的 2.723 中间态）
+_f20c = _huge_tk_fig()
+_w20c = _FakeTkWin(_f20c, dpr_before=1.0, clamp_phys=_TK_CLAMP_PHYS)
+_tw20c = Tweak(_f20c, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_tk_huge_c.json'), heavy=False)
+_cl = _w20c.clamped_to or (0.0, 1.0)
+check('t20④ 映射即被钳制：中间态复现 t16 的 27.98×10.27（比值 2.723）→ 修正到 ≤2%',
+      abs(_cl[0] - 27.98) < 0.05 and abs(_cl[1] - 10.275) < 0.02
+      and _dev_of(_cl[0] / _cl[1]) > 0.9
+      and _ratio_dev(_f20c) < 0.02,
+      'intermediate=%s ratio=%.4f | final=%s dev=%.4f'
+      % ([round(v, 3) for v in _cl], _cl[0] / _cl[1],
+         [round(v, 3) for v in _f20c.get_size_inches()], _ratio_dev(_f20c)))
+plt.close(_f20c)
+
+
+# ⑤ 不得回归 Qt：availableGeometry() 已是逻辑 px → **不折算**
+class _FakeQtScr:
+    def availableGeometry(self):
+        class _AG:
+            def width(self):
+                return _TK_LOGICAL[0]
+
+            def height(self):
+                return _TK_LOGICAL[1]
+        return _AG()
+
+
+class _FakeQtWin:
+    def screen(self):
+        return _FakeQtScr()
+
+
+_f20d = _huge_tk_fig()
+_set_dpr(_f20d, _TK_DPR)                               # Qt 上 dpr 也可能是 2.0
+_f20d.canvas.manager.window = _FakeQtWin()
+_tw20d = Tweak(_f20d, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_tk_huge_d.json'), heavy=False)
+_av20d = _tw20d._screen_available()
+check('t20⑤ Qt 分支不折算（要么 (1920,1080)，要么本机无 Qt → None；绝不能是 960×540）',
+      _av20d in (None, _TK_LOGICAL), 'avail=%s' % (_av20d,))
+try:
+    from matplotlib.backends import qt_compat as _qc      # noqa: F401
+    _has_qt = True
+except Exception:                                          # noqa: BLE001
+    _has_qt = False
+if _has_qt:
+    check('t20⑤b 本机有 Qt binding → 走 availableGeometry 分支且原样返回（不除 dpr）',
+          _av20d == _TK_LOGICAL, str(_av20d))
+plt.close(_f20d)
+
+# ---- 31. t24：带约束的吸附 —— 吸附不得把已夹到 MIN_SIZE 的边拉过下限（面板塌成一条线）----
+# 真缺陷（t21 的 12,000 次离屏矩阵抓到，确定性种子；图 11 = tight_layout 2×2）：
+#   press(673,191) → motion(-1541,842) → release(1071,550)，高度 0.45094 → 0.01411（223.7→7.0px）。
+# 最小复现（2 面板，3 事件）：A 的 y1=0.70，B 的中线 y=0.6841；按 A 的下边沿往下拖出画布外松手。
+# 机理：`_resize_frac` 先把边夹到 h=MIN_SIZE(0.02)，随后 `_snap_resize` 又把它吸到 B 的中线
+#   → h = 0.70 - 0.6841 = 0.0159 < MIN_SIZE ⇒ A 只剩 ~9.5px（本机 800px 画布）。
+# 修法：`_snap_resize(..., min_size=...)` **过滤掉会造成越界的候选线**（宁可不吸）+ 出口保险。
+_fig31 = plt.figure(figsize=(8, 6))
+_A31 = _fig31.add_axes([0.10, 0.30, 0.40, 0.40])          # y1 = 0.70
+_B31 = _fig31.add_axes([0.60, 0.6041, 0.30, 0.16])        # B 中线 y = 0.6841
+_fig31.canvas.draw()
+_tw31 = Tweak(_fig31, export_path=os.path.join(
+    tempfile.gettempdir(), 'test_snap_min_size.json'), heavy=False)
+_X31, _Y31 = _fig31.bbox.width, _fig31.bbox.height
+_b31 = _bbox(_A31)
+from matplotlib.backend_bases import MouseEvent as _ME31     # noqa: E402
+_cx31 = (_b31[0] + _b31[2] / 2) * _X31
+_ev31 = _ME31('button_press_event', _fig31.canvas, _cx31, (_b31[1] + 0.006) * _Y31,
+              button=1)
+_ev31.inaxes = _A31
+_tw31._on_press(_ev31)
+_ev31 = _ME31('motion_notify_event', _fig31.canvas, _cx31, 1.7 * _Y31)
+_ev31.inaxes = _A31
+_tw31._on_motion(_ev31)
+_ev31 = _ME31('button_release_event', _fig31.canvas, _cx31, 1.7 * _Y31, button=1)
+_tw31._on_release(_ev31)
+_h31 = _bbox(_A31)[3]
+check('t24① 往下拖出画布外松手：A 高度 ≥ MIN_SIZE（吸附不得拉过下限）',
+      _h31 >= MIN_SIZE - 1e-9,
+      'h=%.5f (%.1fpx) MIN_SIZE=%.3f' % (_h31, _h31 * _Y31, MIN_SIZE))
+# ② 单测：会造成越界的候选线必须被**跳过**（0.6800 距 B 中线 0.6841 仅 0.0041 < tol，
+#    但吸过去会让 h=0.0159 < MIN_SIZE ⇒ 宁可不吸）
+_b31b, _gx31b, _gy31b = _snap_resize(
+    [0.10, 0.6800, 0.50, 0.70], 'bottom', [[0.60, 0.6841, 0.90, 0.8441]],
+    min_size=MIN_SIZE)
+check('t24② 越界候选线被跳过（宁可不吸）：y0 保持 0.6800、h=0.02 ≥ MIN_SIZE',
+      abs(_b31b[1] - 0.6800) < 1e-9 and (_b31b[3] - _b31b[1]) >= MIN_SIZE - 1e-9,
+      'b=%s h=%.5f' % (_b31b, _b31b[3] - _b31b[1]))
+# ③ 不回归吸附本身：合法候选线（吸过去仍 ≥ MIN_SIZE）照样吸得上
+_b31c, _gx31c, _gy31c = _snap_resize(
+    [0.10, 0.6000, 0.50, 0.70], 'bottom', [[0.60, 0.6041, 0.90, 0.7441]],
+    min_size=MIN_SIZE)
+check('t24③ 合法候选线仍吸附（0.6000 → 0.6041，tol=0.006 内）',
+      abs(_b31c[1] - 0.6041) < 1e-9 and _gy31c == [0.6041],
+      'b=%s gy=%s' % (_b31c, _gy31c))
+# ④ 向后兼容：不传 min_size 时行为与历史版本一致（既有调用方/用例不受影响）
+_b31d, _gx31d, _gy31d = _snap_resize(
+    [0.10, 0.6800, 0.50, 0.70], 'bottom', [[0.60, 0.6841, 0.90, 0.8441]])
+check('t24④ min_size 缺省=None 时行为不变（仍会吸到 0.6841，供旧调用方）',
+      abs(_b31d[1] - 0.6841) < 1e-9, str(_b31d))
+# ⑤ 画布边界候选线同样受约束（0 这条线也能把面板压到下限以下）
+_b31e, _gx31e, _gy31e = _snap_resize([0.10, 0.9850, 0.50, 1.0], 'top',
+                                    [], min_size=MIN_SIZE)
+check('t24⑤ 边界线上边吸附仍受 min_size 约束（吸到 1.0 后 h ≥ MIN_SIZE）',
+      (_b31e[3] - _b31e[1]) >= MIN_SIZE - 1e-9, 'b=%s h=%.5f' % (_b31e, _b31e[3] - _b31e[1]))
+plt.close(_fig31)
+
 print('----')
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)

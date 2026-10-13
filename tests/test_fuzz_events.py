@@ -1,0 +1,989 @@
+# -*- coding: utf-8 -*-
+"""随机手势 fuzz（猴子乱改图）—— 交互层事件序列不变量测试。
+
+评审批评：产品卖点是「像 PPT 一样拖拽调图」，但交互层（拖拽/吸附/撤销）没有自动化
+测试兜底，导致本版 #1（Ctrl+F 裁白边）、#2（拖拽错位）两个交互 bug 漏到实机。
+本套件补这块：**让程序随机乱按鼠标键盘**，喂给 toolbox 的合成事件管线，验证四条
+不变量在任意手势序列下都成立。
+
+基础设施（照抄 tests/test_events.py，全程 Agg 无头、不弹窗、不抢鼠标）：
+  send(canvas, name, x, y, ...) 构造 MouseEvent/KeyEvent 走 canvas.callbacks.process，
+  与真实 mpl_connect 路径一致。
+
+不变量（本套件钉死的四条铁律）：
+  ① 不崩（no-crash）：任意序列跑完不抛异常（捕获即 FAIL，并打印触发序列）。
+  ② 撤销/重做往返一致（undo round-trip）：记录初始布局 → 随机序列 → 反复 Ctrl+Z 到
+     栈底 → 布局 == 初始（±1e-9）；再反复 Ctrl+Y → 布局 == 撤销前（画布尺寸也还原）。
+  ③ 松手落位（drag landing）：完整拖拽（按下→多次移动→松开）结束后，面板位置 ==
+     最后 motion 对应的期望位置（吸附命中时按 _snap_box 的吸附规则算）。
+  ④ 几何合法（geometry）：所有面板 w/h > MIN_SIZE（colorbar 用 MIN_SIZE_CB）、
+     坐标不含 NaN/Inf、轴数量与初始一致（没有面板丢失）。
+
+覆盖的随机手势（确定性命名用例 + hypothesis 生成）：
+  拖拽（按下→1~8 次 motion（含越界：负坐标/超画布）→松开，松开位置可能≠最后 motion）、
+  单击（按下即抬起）、Ctrl/Shift 多选 + 多选拖拽、贴边/贴邻吸附、悬停标题/轴标签/
+  刻度 + +/- 调字号、方向键微调、Shift+方向键微调尺寸、空格切线框模式、Ctrl+Z/Ctrl+Y
+  撤销重做、图例拖拽与 8 位吸附、colorbar 拖端点调长度、无意义乱序（裸 motion、
+  两键同按、连按不松开、无按下就松开）。
+
+关键口径：
+* **事件坐标一律整数像素**：matplotlib 合成 MouseEvent 会把小数像素坐标截断成 int
+  （实测 493.5 -> 493），松手落位期望值必须用整数像素差反推，否则假红。
+* 松手落位期望：origin + (最后 motion 像素 - 按下像素)/画布；吸附开启时再套
+  _snap_box（与引擎同一条纯函数路径，验证"引擎确实按吸附规则落位"）。
+* 撤销往返的 `_restore_snap` 顺带还原画布尺寸（Ctrl+F 改过的画布也能全撤回去）。
+* hypothesis 只生成"固定结构 + 参数随机"的手势（模板保证能跑，不随机拼代码）。
+
+关键口径 · 铁律②第 2 条腿的基线：**历史末端**（t26 实测，2026-10-12）：
+* 第 2 条腿（Ctrl+Y 到栈顶）的期望 = **历史末端状态** `forward_end`（每执行完一个 op，
+  若 `tw._redo` 为空就记一次实测布局），**不是**"跑完 ops 时游标处的状态"（`post`）。
+* 两者在"ops 末尾没有 undo/redo"时**逐字节相等**（所以平时全绿）；**末尾含显式 undo**
+  时不同：游标停在半路，抽干 `_redo` 走到的是末端（Ctrl+Y 本来就该往前走）——
+  拿游标态当期望必然假红。这是**测试口径**问题，不是引擎缺陷（别再去查 src）。
+* 实测（脚本与原始日志见 t26 交付物；下面是 `ax0` 的 y0；hypothesis 反例
+  `[('two_keys', 0, 'up', '+'), ('undo',)]`，seed 52571158591668349824887539026665539149）：
+
+  | 变体 | ①全撤销==初始 | ②全重做==游标态(旧) | ③全重做==末端(新) |
+  |---|---|---|---|
+  | 反例原样 | PASS | FAIL | PASS |
+  | 按键间插一次 draw | PASS | FAIL | PASS |
+  | 按键间插 0.7s（打破 0.6s seal 合并窗口） | PASS | FAIL | PASS |
+  | 只按 up + undo | PASS | FAIL | PASS |
+  | 只按 '+' + undo | PASS | PASS | PASS |
+  | 两次按键不 undo | PASS | PASS | PASS |
+
+  ⇒ 与**负载/时序无关**（插 draw、插 0.7s 结果逐位相同）；触发条件是"**末尾含一次
+  显式 undo**"这一**结构**（与按什么键无关）。③ 在全部 6 个变体 PASS，且末尾无 undo
+  的两例里 `post == forward_end` ⇒ **新基线是等价替换，不是放宽**（`teeth ②b` 另有
+  反向验证：真把重做弄坏，它照样红）。
+* 附带：hypothesis 命中反例后会**收缩**，撞 5 分钟上限时同一次失败从 ~68s 变成 ~362s
+  （"并发下慢 8 倍"的真成因）。本套件默认关掉 shrink 阶段（`MPLTWEAK_FZ_SHRINK=1` 开回）
+  ⇒ 命中反例**秒级报错**，让"pytest 全绿"不再依赖机器闲不闲。
+
+若 fuzz 发现真实交互层缺陷：**不弱化/删除断言**，用显式 pin（写明缺陷 + 最小复现，
+标注已知缺陷）或在 output 报告船长派修复任务。本文件不改 src/ 下任何产品代码。
+"""
+
+import ast
+import contextlib
+import io
+import math
+import os
+import shutil
+import sys
+import tempfile
+import time
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.backend_bases import MouseEvent, KeyEvent
+
+from mpltweak.toolbox import (Tweak, _bbox, _set_bbox, _snap_box,
+                              MIN_SIZE, MIN_SIZE_CB, LEGEND_LOCS,
+                              _clim_of, _is_colorbar_ax)
+import mpltweak.toolbox as _tb
+
+
+# ---- 输出兜底（T13 纪律）：GBK 控制台 / 管道下 print 中文不崩 ----
+def _install_console_fallback():
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_install_console_fallback()
+
+
+def _gbk_safe(s):
+    s = str(s)
+    enc = getattr(sys.stdout, 'encoding', None) or 'utf-8'
+    try:
+        return s.encode(enc, 'replace').decode(enc, 'replace')
+    except (LookupError, UnicodeDecodeError):
+        return s.encode('ascii', 'backslashreplace').decode('ascii')
+
+
+def _decode_out(raw):
+    for enc in ('utf-8', 'gbk', 'gb18030'):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode('utf-8', 'replace')
+
+
+# ---- 语言 / 后端钉死 + 安静模式（别让宿主 locale 决定结论）----
+os.environ['MPLTWEAK_LANG'] = 'zh'
+os.environ['MPLBACKEND'] = 'Agg'
+_tb.QUIET = True            # 静默拖拽日志，只剩 _info（模式判定）与测试自身输出
+
+fail = 0
+
+
+def check(name, cond, detail=''):
+    global fail
+    print(('PASS' if cond else 'FAIL') + ' | ' + _gbk_safe(name)
+          + ((' | ' + _gbk_safe(detail)) if detail else ''))
+    if not cond:
+        fail += 1
+
+
+# ---- 临时区：沙箱拦真实 %TEMP%，把 TEMP/TMP 指到可写目录 ----
+_TMPROOT = None
+
+
+def _ensure_tmp_writable():
+    global _TMPROOT
+    base = tempfile.gettempdir()
+    root = os.path.join(base, '.mpltweak_fz_%d' % os.getpid())
+    try:
+        os.makedirs(root, exist_ok=True)
+        probe = os.path.join(root, '.w')
+        open(probe, 'w').close()
+        os.unlink(probe)
+    except OSError:
+        root = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            '.tmp_fuzz_%d' % os.getpid())
+        os.makedirs(root, exist_ok=True)
+    _TMPROOT = root
+    os.environ['TEMP'] = root
+    os.environ['TMP'] = root
+    tempfile.tempdir = root
+
+
+_ensure_tmp_writable()
+
+_case_no = [0]
+
+
+def send(canvas, name, x=None, y=None, button=None, key=None):
+    '''构造事件对象并走回调管线。KeyEvent 必须显式传 x/y。坐标一律整数像素。
+
+    关键坑（实测 mpl 3.10）：canvas.callbacks.process 会把 ``canvas._key``（最近
+    按下的键）**注入**鼠标事件 —— 合成事件必须先重置 ``canvas._key``，否则上次按
+    的 ctrl+f / ctrl+z / shift+up 会把下一次按下误判成 Ctrl/Shift+点击（选择切换
+    而不是拖拽），真实 GUI 里修饰键状态本来就该这样，但合成事件必须显式表达。
+    '''
+    x = int(x) if x is not None else None
+    y = int(y) if y is not None else None
+    if name == 'key_press_event':
+        ev = KeyEvent('key_press_event', canvas, key, x, y)
+    else:
+        try:
+            canvas._key = key or None
+        except AttributeError:
+            pass
+        ev = MouseEvent(name, canvas, x, y, button=button, key=(key or None))
+    canvas.callbacks.process(name, ev)
+    return ev
+
+
+# ---------------------------------------------------------------------------
+# 夹具：固定可运行面板图（2x2 add_axes + scatter + 标题 + 轴标签 + 一个图例），
+# 以及 imshow + 水平 colorbar 的独立图（拖端点调长度用）。
+# ---------------------------------------------------------------------------
+def _make_fig():
+    fig = plt.figure(figsize=(9, 7))
+    pos = [[0.07, 0.55, 0.40, 0.38], [0.54, 0.55, 0.40, 0.38],
+           [0.07, 0.07, 0.40, 0.38], [0.54, 0.07, 0.40, 0.38]]
+    axes = [fig.add_axes(p) for p in pos]
+    for k, ax in enumerate(axes):
+        ax.scatter([0.1, 0.2, 0.3], [0.1, 0.4, 0.9], label='s%d' % k)
+        ax.set_title('panel %d' % k, fontsize=10)
+        ax.set_xlabel('XLAB_%d' % k, fontsize=10)
+        ax.set_ylabel('YLAB_%d' % k, fontsize=10)
+    axes[0].legend(loc='upper right', fontsize=8)
+    fig.canvas.draw()
+    return fig, axes
+
+
+def _make_cb_fig():
+    '''主数据轴 + 手工 cax 水平 colorbar（与 test_events §16 同款，左右端与父轴
+    不重合，拖端点不会被吸附到父轴边线而看不出变化）。'''
+    fig = plt.figure(figsize=(8, 5))
+    ax = fig.add_axes([0.10, 0.45, 0.80, 0.45])
+    im = ax.imshow([[0.0, 1.0], [2.0, 3.0]], cmap='viridis')
+    cbax = fig.add_axes([0.20, 0.20, 0.50, 0.04])
+    cb = fig.colorbar(im, cax=cbax, orientation='horizontal')
+    fig.canvas.draw()
+    cb.ax.set_axes_locator(None)
+    cb.ax.set_box_aspect(None)
+    fig.canvas.draw()
+    return fig, fig.axes
+
+
+# ---------------------------------------------------------------------------
+# 执行环境：一个 fig + 一个 Tweak，坐标换算 / 手势分发都在这里。
+# ---------------------------------------------------------------------------
+class _Env:
+    def __init__(self, fig, axes, tag):
+        self.fig = fig
+        self.axes = axes
+        self.refresh_px()
+        # Tweak 构造会打 [mpltweak] 模式判定日志（_info 不随 QUIET 静默），
+        # 每用例两条会刷屏 —— 构造期间把 stdout 暂时接管掉。
+        _buf = io.StringIO()
+        with contextlib.redirect_stdout(_buf):
+            self.tw = Tweak(fig,
+                            export_path=os.path.join(_TMPROOT, tag + '.json'),
+                            heavy=False)
+        self.tw.snap = True
+
+    def refresh_px(self):
+        # 引擎在 _on_press/_on_motion 里用 fig.bbox.size 归一化（**浮点**像素），
+        # 而 canvas.get_width_height() 会 int 截断 —— set_size_inches 之后两者
+        # 相差 ~0.3px（实测 864.2778 vs 864），期望落位必须跟引擎同口径。
+        try:
+            self.W, self.H = (float(v) for v in self.fig.bbox.size)
+        except Exception:                                    # noqa: BLE001
+            self.W, self.H = (float(v) for v in
+                              self.fig.canvas.get_width_height())
+
+    def px(self, ax, fx, fy):
+        p = ax._position
+        return (int(round((p.x0 + p.width * fx) * self.W)),
+                int(round((p.y0 + p.height * fy) * self.H)))
+
+    def pos(self, ax):
+        return [float(v) for v in _bbox(ax)]
+
+    def center(self, ax):
+        return self.px(ax, 0.5, 0.5)
+
+    def _hover_target(self, target, ax):
+        '''悬停目标中心像素：标题/轴标签/刻度/图例；没有就退回面板中心。'''
+        if target == 'title':
+            t = ax.title
+        elif target == 'xlabel':
+            t = ax.xaxis.label
+        elif target == 'ylabel':
+            t = ax.yaxis.label
+        elif target == 'xtick':
+            tls = ax.get_xticklabels()
+            t = tls[0] if tls else None
+        elif target == 'ytick':
+            tls = ax.get_yticklabels()
+            t = tls[0] if tls else None
+        elif target == 'legend':
+            leg = ax.get_legend()
+            if leg is not None:
+                we = leg.get_window_extent()
+                return (int(round((we.x0 + we.x1) / 2)),
+                        int(round((we.y0 + we.y1) / 2)))
+            return self.center(ax)
+        else:
+            return self.center(ax)
+        if t is None or not t.get_text():
+            return self.center(ax)
+        we = t.get_window_extent()
+        return (int(round((we.x0 + we.x1) / 2)),
+                int(round((we.y0 + we.y1) / 2)))
+
+    def exec_op(self, op):
+        '''执行一个手势，返回待验的 (ax_i, 期望落位) 列表（只有完整拖拽会产生）。'''
+        landings = []
+        f, canvas = self.fig, self.fig.canvas
+        kind = op[0]
+        if kind == 'drag':
+            # ('drag', ax_i, press_frac, [绝对像素偏移...], release偏移, snap_ov)
+            _, ax_i, press_f, offs, roff, snap_ov = op
+            ax = self.axes[ax_i]
+            if snap_ov is not None:
+                self.tw.snap = bool(snap_ov)
+            ref = [float(v) for v in _bbox(ax)]      # Bbox 不可迭代，走 _bbox
+            X, Y = float(self.W), float(self.H)
+            px0, py0 = self.px(ax, press_f[0], press_f[1])
+            send(canvas, 'button_press_event', px0, py0, button=1)
+            origin = self.pos(ax)                  # 按下不改位置
+            # 确认这次按下真的拖到了目标轴（面板重叠/画布外按下会被引擎路由成
+            # 空白框选或别的轴 —— 合成事件在画布外拿不到 inaxes，真实 GUI 也点
+            # 不到画布外）。
+            dragged = (bool(getattr(self.tw, '_drag', False))
+                       and self.tw._ax is ax)
+            # 限制最终 motion：面板中心留在画布内（否则下一次按下面板中心会在
+            # 画布外，拖拽退化成框选；也避免面板重叠把 press 路由到别的轴）。
+            # 用「面板中心像素」算最终偏移，且只在真正越界时才 clamp——重推导会
+            # 引入浮点误差（-8px → -7.9999…，int() 截断成 -7 落位差 1px）。
+            last = [int(round(float(v))) for v in offs[-1]]
+            cpx = (origin[0] + origin[2] / 2) * X
+            cpy = (origin[1] + origin[3] / 2) * Y
+            npx = max(0.06 * X, min(0.94 * X, cpx + last[0]))
+            npy = max(0.06 * Y, min(0.94 * Y, cpy + last[1]))
+            lx = int(round(npx - cpx))
+            ly = int(round(npy - cpy))
+            for (odx, ody) in offs[:-1]:            # 中间步可越界（负/超画布）
+                send(canvas, 'motion_notify_event', px0 + int(odx),
+                     py0 + int(ody))
+            send(canvas, 'motion_notify_event', px0 + lx, py0 + ly)
+            # 松开位置可与最后 motion 不同（含越界）——落位只由最后 motion 决定
+            send(canvas, 'button_release_event',
+                 px0 + int(roff[0]), py0 + int(roff[1]), button=1)
+            target = [origin[0] + lx / X, origin[1] + ly / Y,
+                      origin[2], origin[3]]
+            if self.tw.snap:
+                others = [_bbox(a) for a in f.axes if a is not ax]
+                target, _, _ = _snap_box(target, others)
+            landings.append((ax_i, [float(v) for v in target], dragged))
+            if snap_ov is not None:
+                self.tw.snap = True
+        elif kind == 'click':
+            _, ax_i, frac, mods = op
+            ax = self.axes[ax_i]
+            x, y = self.px(ax, frac[0], frac[1])
+            send(canvas, 'button_press_event', x, y, button=1,
+                 key=(mods or None))
+            send(canvas, 'button_release_event', x, y, button=1)
+        elif kind == 'key':
+            _, key, target, ax_i = op
+            ax = self.axes[ax_i]
+            x, y = self._hover_target(target, ax)
+            send(canvas, 'key_press_event', x, y, key=key)
+        elif kind == 'nudge':
+            _, ax_i, key = op
+            ax = self.axes[ax_i]
+            x, y = self.center(ax)
+            send(canvas, 'motion_notify_event', x, y)     # 设 _last_ax
+            send(canvas, 'key_press_event', x, y, key=key)
+        elif kind == 'two_keys':
+            _, ax_i, k1, k2 = op
+            ax = self.axes[ax_i]
+            x, y = self.center(ax)
+            send(canvas, 'key_press_event', x, y, key=k1)
+            send(canvas, 'key_press_event', x, y, key=k2)
+        elif kind in ('undo', 'redo', 'space', 'snap_toggle', 'fit'):
+            ax = self.axes[0]
+            x, y = self.center(ax)
+            keymap = {'undo': 'ctrl+z', 'redo': 'ctrl+y', 'space': ' ',
+                      'snap_toggle': 'n', 'fit': 'ctrl+f'}
+            if kind == 'fit':
+                # _fit_to_content 的 _info 不随 QUIET 静默，接管 stdout 压掉
+                _buf = io.StringIO()
+                with contextlib.redirect_stdout(_buf):
+                    send(canvas, 'key_press_event', x, y, key=keymap[kind])
+                self.refresh_px()
+            else:
+                send(canvas, 'key_press_event', x, y, key=keymap[kind])
+        elif kind == 'legend_drag':
+            _, ax_i, dx, dy = op
+            ax = self.axes[ax_i]
+            leg = ax.get_legend()
+            if leg is None:
+                return landings
+            we = leg.get_window_extent()
+            lx = int(round((we.x0 + we.x1) / 2))
+            ly = int(round((we.y0 + we.y1) / 2))
+            send(canvas, 'button_press_event', lx, ly, button=1)
+            send(canvas, 'motion_notify_event', lx + int(dx), ly + int(dy))
+            send(canvas, 'button_release_event', lx + int(dx), ly + int(dy),
+                 button=1)
+        elif kind == 'motion':
+            _, frac = op
+            ax = self.axes[0]
+            x, y = self.px(ax, frac[0], frac[1])
+            send(canvas, 'motion_notify_event', x, y)
+        elif kind == 'double_press':
+            _, ax_i, frac = op
+            ax = self.axes[ax_i]
+            x, y = self.px(ax, frac[0], frac[1])
+            send(canvas, 'button_press_event', x, y, button=1)
+            send(canvas, 'button_press_event', x + 5, y + 5, button=1)
+            send(canvas, 'button_release_event', x + 5, y + 5, button=1)
+        elif kind == 'release_alone':
+            _, frac = op
+            ax = self.axes[0]
+            x, y = self.px(ax, frac[0], frac[1])
+            send(canvas, 'button_release_event', x, y, button=1)
+        else:
+            raise ValueError('未知手势 %r' % (op,))
+        return landings
+
+
+# ---------------------------------------------------------------------------
+# 四条铁律的检测器（独立函数，teeth 探针直接调用它们验证"确实在测"）。
+# ---------------------------------------------------------------------------
+def _snapshot_pos(fig):
+    return [[float(v) for v in _bbox(ax)] for ax in fig.axes]
+
+
+def _close(a, b, tol=1e-9):
+    return len(a) == len(b) and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def _close_all(pa, pb, tol=1e-9):
+    return len(pa) == len(pb) and all(_close(a, b, tol) for a, b in zip(pa, pb))
+
+
+def _fmt_box(b):
+    return '[%.4f,%.4f,%.4f,%.4f]' % tuple(float(v) for v in b)
+
+
+def _check_geometry(fig, n0):
+    '''铁律④：轴数不变 + 每轴 w/h 不塌 + 坐标有限。'''
+    if len(fig.axes) != n0:
+        return False, '轴数 %d != 初始 %d（面板丢失或新增）' % (len(fig.axes), n0)
+    for j, ax in enumerate(fig.axes):
+        try:
+            x0, y0, w, h = (float(v) for v in _bbox(ax))
+        except Exception as e:                                   # noqa: BLE001
+            return False, 'ax%d bbox 读取失败: %s' % (j, e)
+        if not all(math.isfinite(v) for v in (x0, y0, w, h)):
+            return False, 'ax%d 坐标非有限值 %s' % (j, _fmt_box([x0, y0, w, h]))
+        mn = MIN_SIZE_CB if _is_colorbar_ax(ax) else MIN_SIZE
+        if w < mn - 1e-9 or h < mn - 1e-9:
+            return False, 'ax%d 过小 w=%.5f h=%.5f（min=%.4f）' % (j, w, h, mn)
+    return True, ''
+
+
+def _check_undo_roundtrip(env, fig, init, forward_end, init_px, post=None):
+    '''铁律②：Ctrl+Z 到栈底 == 初始布局 + 初始画布；Ctrl+Y 到栈顶 == **历史末端**。
+
+    ⚠ 第 2 条腿的基线是"**历史末端状态**"（`forward_end`），**不是**"跑完 ops 时游标处
+    的状态"（`post`）。这对旧判据是**逐字节等价**的：ops 末尾没有 undo/redo 时游标就在
+    末端，`forward_end == post`；只有**末尾含显式 undo** 时两者才不同 —— 那时抽干
+    `_redo` 走到的是历史末端（Ctrl+Y 本来就该往前走），拿游标态当期望必然假红。
+    t26 实测反例 `[('two_keys', 0, 'up', '+'), ('undo',)]`（见文件头"六变体判读表"）。
+    `post` 只用于失败信息里做对照，不参与判定。
+    '''
+    tw = env.tw
+    n = 0
+    while tw._undo and n < 500:
+        tw._undo_once()
+        n += 1
+    undo = _snapshot_pos(fig)
+    if not _close_all(undo, init):
+        return False, '全撤销后布局 != 初始（撤 %d 步）' % n
+    W, H = (int(v) for v in fig.canvas.get_width_height())
+    if abs(W - init_px[0]) > 2 or abs(H - init_px[1]) > 2:
+        return False, '全撤销后画布 %dx%d != 初始 %dx%d' % (W, H, init_px[0], init_px[1])
+    m = 0
+    while tw._redo and m < 500:
+        tw._redo_once()
+        m += 1
+    redo = _snapshot_pos(fig)
+    if not _close_all(redo, forward_end):
+        return False, ('全重做后布局 != 历史末端（旧判据拿"游标态"当期望：'
+                       '游标态=%s 末端=%s）'
+                       % (_fmt_box(post[0]) if post else '?',
+                          _fmt_box(forward_end[0])))
+    return True, 'undo=%d redo=%d' % (n, m)
+
+
+# ---------------------------------------------------------------------------
+# 通用用例执行器：跑一串手势 -> 逐条验铁律。
+# ---------------------------------------------------------------------------
+def _exec_ops(env, ops, check_landing, fwd=None):
+    '''跑一串手势。
+
+    `fwd`（可选，单元素 list）用来记**历史末端状态**：每跑完一个 op，若 `tw._redo` 为空
+    （= 游标在历史末端）就把当前实测布局记进去。为什么第 2 条腿必须用它当基线，见
+    `_check_undo_roundtrip` 的说明（末尾含显式 undo 时"游标态"并不是末端）。
+    '''
+    crash = None
+    land_fail = None
+    for idx, op in enumerate(ops):
+        try:
+            lds = env.exec_op(op)
+        except Exception as e:                                   # noqa: BLE001
+            return (idx, op, e), land_fail
+        if fwd is not None and not env.tw._redo:
+            fwd[0] = _snapshot_pos(env.fig)
+        if check_landing:
+            for ax_i, exp, dragged in lds:
+                if not dragged:
+                    continue        # 未真正拖到目标轴（画布外/重叠路由）→ 不算拖拽
+                got = env.pos(env.axes[ax_i])
+                if not _close(got, exp, 1e-9):
+                    land_fail = (idx, ax_i, got, exp)
+    return crash, land_fail
+
+
+def _case(label, ops, make=None, check_landing=True, extra=None, pre=None,
+          quiet=False):
+    '''跑一个用例并逐条断言铁律；返回结果 dict 供 teeth 探针复用。'''
+    make = make or _make_fig
+    _case_no[0] += 1
+    fig, axes = make()
+    env = _Env(fig, axes, 'case_%d' % _case_no[0])
+    pre_state = pre(env) if pre is not None else None
+    init = _snapshot_pos(fig)
+    init_px = (int(env.W), int(env.H))
+    fwd = [None]
+    crash, land_fail = _exec_ops(env, ops, check_landing, fwd)
+    post = _snapshot_pos(fig)
+    # 历史末端状态（铁律②第 2 条腿的基线）：ops 末尾不含 undo/redo 时它 == post
+    # （与旧判据逐字节等价）；末尾含显式 undo 时它才是"抽干 _redo 后该落到的样子"。
+    forward_end = fwd[0] if fwd[0] is not None else init
+    why1 = why2 = why3 = why4 = ex_why = ''
+    ok1 = crash is None
+    if crash is not None:
+        idx, op, e = crash
+        why1 = '第 %d 个手势 %r 抛异常: %s' % (idx, op, _gbk_safe(e))
+    ok3 = True
+    if ok1 and check_landing and land_fail is not None:
+        idx, ax_i, got, exp = land_fail
+        ok3 = False
+        why3 = '第%d手势后 ax%d 落位 %s != 期望 %s' % (
+            idx, ax_i, _fmt_box(got), _fmt_box(exp))
+    ok4 = True
+    if ok1:
+        ok4, why4 = _check_geometry(fig, len(axes))
+    ex_ok = True
+    if ok1 and extra is not None:
+        try:
+            ex_ok, ex_why = extra(env, fig, axes, init, post, pre_state)
+        except Exception as e:                                   # noqa: BLE001
+            ex_ok, ex_why = False, 'extra 抛异常 %r' % (e,)
+    ok2 = True
+    if ok1:
+        ok2, why2 = _check_undo_roundtrip(env, fig, init, forward_end, init_px,
+                                          post)
+    allok = ok1 and ok2 and ok3 and ok4 and ex_ok
+    detail = ' | '.join(x for x in (why1, why3, why4, ex_why, why2) if x)
+    if not quiet:
+        check(label, allok, detail)
+    plt.close(fig)          # 每个用例独立图，用完即关（防图对象堆积吃内存）
+    return dict(ok1=ok1, ok2=ok2, ok3=ok3, ok4=ok4, ex_ok=ex_ok,
+                detail=detail, env=env, crash=crash)
+
+
+# ---------------------------------------------------------------------------
+# hypothesis：随机手势序列。只用固定结构 + 参数随机（模板保证能跑）。
+# ---------------------------------------------------------------------------
+try:
+    from hypothesis import given, settings, HealthCheck, Phase, strategies as st
+
+    _HAS_HYPOTHESIS = True
+except Exception:                                            # noqa: BLE001
+    _HAS_HYPOTHESIS = False
+
+
+@st.composite
+def st_drag(draw):
+    '''完整拖拽：按下（面板内）→ 1~8 次 motion（像素偏移，大步常越界）→ 松开
+    （位置可能 == 或 != 最后 motion）。'''
+    ax_i = draw(st.integers(0, 3))
+    pfx = draw(st.floats(0.25, 0.75))
+    pfy = draw(st.floats(0.25, 0.75))
+    n = draw(st.integers(1, 8))
+    ox = oy = 0
+    offs = []
+    for _ in range(n):
+        rng = 1000 if draw(st.booleans()) else 90      # 大步 ≈ 越界
+        ox += draw(st.integers(-rng, rng))
+        oy += draw(st.integers(-rng, rng))
+        offs.append((ox, oy))
+    rdx = draw(st.integers(-60, 60))
+    rdy = draw(st.integers(-60, 60))
+    snap_ov = draw(st.sampled_from([None, True, False]))
+    return ('drag', ax_i, (pfx, pfy), offs, (offs[-1][0] + rdx,
+                                             offs[-1][1] + rdy), snap_ov)
+
+
+@st.composite
+def st_mixed_op(draw):
+    '''任意手势：拖拽/单击/悬停字号/方向键/撤销重做/空格/吸附开关/裸 motion/
+    双按下/无按下松开/图例拖拽/两键同按。'''
+    kind = draw(st.integers(0, 13))
+    ax_i = draw(st.integers(0, 3))
+    if kind == 0:
+        return draw(st_drag())
+    if kind == 1:
+        frac = (draw(st.floats(0.2, 0.8)), draw(st.floats(0.2, 0.8)))
+        mods = draw(st.sampled_from(['', 'ctrl', 'shift']))
+        return ('click', ax_i, frac, mods)
+    if kind == 2:
+        tgt = draw(st.sampled_from(
+            ['title', 'xlabel', 'ylabel', 'xtick', 'ytick', None]))
+        k = draw(st.sampled_from(['+', '-']))
+        return ('key', k, tgt, ax_i)
+    if kind == 3:
+        k = draw(st.sampled_from(
+            ['up', 'down', 'left', 'right', 'shift+up', 'shift+right']))
+        return ('nudge', ax_i, k)
+    if kind == 4:
+        return ('undo',)
+    if kind == 5:
+        return ('redo',)
+    if kind == 6:
+        return ('space',)
+    if kind == 7:
+        return ('snap_toggle',)
+    if kind == 8:
+        return ('motion', (draw(st.floats(-0.3, 1.3)),
+                           draw(st.floats(-0.3, 1.3))))
+    if kind == 9:
+        return ('double_press', ax_i,
+                (draw(st.floats(0.2, 0.8)), draw(st.floats(0.2, 0.8))))
+    if kind == 10:
+        return ('release_alone', (draw(st.floats(0.1, 0.9)),
+                                  draw(st.floats(0.1, 0.9))))
+    if kind == 11:
+        return ('legend_drag', ax_i, draw(st.integers(-120, 120)),
+                draw(st.integers(-120, 120)))
+    if kind == 12:
+        return ('two_keys', ax_i,
+                draw(st.sampled_from(['up', 'down', 'left', 'right'])),
+                draw(st.sampled_from(['+', '-'])))
+    return ('fit',)
+
+
+# 默认**不做收缩（shrink）**：命中反例时秒级报错，而不是卡在 hypothesis 的 5 分钟
+# 收缩上限上。t26 实测同一个反例：带收缩 362s、不收缩 68s —— "并发下慢 8 倍"的真成因
+# 就是收缩本身，与机器负载无关（详情见文件头"六变体判读表"）。
+# 需要收缩来把反例最小化时：设 MPLTWEAK_FZ_SHRINK=1。
+_FZ_PHASES = ([Phase.explicit, Phase.generate, Phase.shrink]
+              if os.environ.get('MPLTWEAK_FZ_SHRINK') == '1'
+              else [Phase.explicit, Phase.generate])
+_FZ_CFG = dict(deadline=None, database=None,
+               suppress_health_check=[HealthCheck.too_slow,
+                                      HealthCheck.data_too_large],
+               report_multiple_bugs=False,
+               phases=_FZ_PHASES)
+
+
+@settings(max_examples=6, **_FZ_CFG)
+@given(st.lists(st_mixed_op(), min_size=1, max_size=25))
+def prop_fuzz_mixed(ops):
+    res = _case('fuzz-mixed', ops, check_landing=False, quiet=True)
+    assert res['ok1'] and res['ok2'] and res['ok4'] and res['ex_ok'], \
+        res['detail'] + (' | 序列=%r' % (ops,))
+
+
+@settings(max_examples=6, **_FZ_CFG)
+@given(st.lists(st_drag(), min_size=1, max_size=5))
+def prop_fuzz_drag(ops):
+    res = _case('fuzz-drag', ops, check_landing=True, quiet=True)
+    assert res['ok1'] and res['ok2'] and res['ok3'] and res['ok4'], \
+        res['detail'] + (' | 序列=%r' % (ops,))
+
+
+def _run_hyp(label, prop):
+    global fail
+    t0 = time.time()
+    try:
+        prop()
+        check(label, True, '%.0fs' % (time.time() - t0))
+    except Exception as e:                                   # noqa: BLE001
+        check(label, False, 'property 被反例击穿: %s' % _gbk_safe(e)[:500])
+
+
+# ---------------------------------------------------------------------------
+# 确定性命名用例：覆盖验收点列出的每一种交互。
+# ---------------------------------------------------------------------------
+def _run_named():
+    # ① 拖拽语义：多步 motion + 越界坐标（中间步）+ 松手位置≠最后 motion
+    _case('拖拽：3 步 motion（含越界）+ 松手≠最后motion → 落位=最后motion',
+          [('drag', 1, (0.5, 0.5), [(50, -20), (1050, -40), (120, -20)],
+            (950, -60), False),
+           ('drag', 2, (0.5, 0.5), [(-200, 30)], (-200, 30), False)],
+          check_landing=True)
+
+    # ② 贴边吸附（画布左缘 0 / 右缘 1）
+    _case('贴边吸附：ax3 左缘拖到画布左缘（x0→0.0）',
+          [('drag', 3, (0.5, 0.5), [(-485, 0)], (-485, 0), True)],
+          check_landing=True)
+    _case('贴边吸附：ax1 右缘拖到画布右缘（x1→1.0）',
+          [('drag', 1, (0.5, 0.5), [(54, 0)], (54, 0), True)],
+          check_landing=True)
+
+    # ③ 贴邻吸附：ax2 左缘拖近 ax1 左缘（0.54）
+    _case('贴邻吸附：ax2 左缘 → ax1 左缘（0.54）',
+          [('drag', 2, (0.5, 0.5), [(428, 0)], (428, 0), True)],
+          check_landing=True)
+
+    # ④ 单击：位置不变 + 不压幽灵撤销步（F1 行为）
+    def _ex_click(env, fig, axes, init, post, pre):
+        return (len(env.tw._undo) == 0, 'undo=%d' % len(env.tw._undo))
+
+    _case('单击（按下即抬起）：位置不变 + 无幽灵撤销步',
+          [('click', 0, (0.5, 0.5), '')], extra=_ex_click, check_landing=False)
+
+    # ⑤ Ctrl 多选 + 多选拖拽（两面板同位移、尺寸不变）
+    def _ex_multi(env, fig, axes, init, post, pre):
+        dx = 36.0 / env.W
+        dy = 18.0 / env.H
+        ok0 = _close([post[0][0] - init[0][0], post[0][1] - init[0][1]],
+                     [dx, dy], 1e-9)
+        ok1 = _close([post[1][0] - init[1][0], post[1][1] - init[1][1]],
+                     [dx, dy], 1e-9)
+        sz0 = _close([post[0][2], post[0][3]], [init[0][2], init[0][3]], 1e-9)
+        sz1 = _close([post[1][2], post[1][3]], [init[1][2], init[1][3]], 1e-9)
+        return (ok0 and ok1 and sz0 and sz1,
+                'ax0 移=%.4f,%.4f ax1 移=%.4f,%.4f' % (
+                    post[0][0] - init[0][0], post[0][1] - init[0][1],
+                    post[1][0] - init[1][0], post[1][1] - init[1][1]))
+
+    _case('Ctrl 多选 + 多选拖拽：两面板同位移（尺寸不变）',
+          [('click', 0, (0.5, 0.5), 'ctrl'),
+           ('click', 1, (0.5, 0.5), 'ctrl'),
+           ('drag', 0, (0.5, 0.5), [(36, 18)], (36, 18), False)],
+          extra=_ex_multi, check_landing=True)
+
+    # ⑥ 悬停标题/轴标签/刻度 + +/- 调字号
+    def _pre_font(env):
+        a2 = env.axes[2]
+        return dict(t0=env.axes[0].title.get_fontsize(),
+                    x0=env.axes[1].xaxis.label.get_fontsize(),
+                    y0=(a2.get_yticklabels()[0].get_fontsize()
+                        if a2.get_yticklabels() else None))
+
+    def _ex_font(env, fig, axes, init, post, pre):
+        t1 = axes[0].title.get_fontsize()
+        x1 = axes[1].xaxis.label.get_fontsize()
+        y1 = axes[2].get_yticklabels()[0].get_fontsize()
+        ok = (t1 == pre['t0'] + 1 and x1 == pre['x0'] + 1
+              and pre['y0'] is not None and y1 == pre['y0'] + 1)
+        return (ok, 'title %s→%s xlabel %s→%s ytick %s→%s'
+                % (pre['t0'], t1, pre['x0'], x1, pre['y0'], y1))
+
+    _case('悬停标题/x轴标签/y刻度 + +/-：字号各 ±1',
+          [('key', '+', 'title', 0), ('key', '+', 'title', 0),
+           ('key', '-', 'title', 0), ('key', '+', 'xlabel', 1),
+           ('key', '+', 'ytick', 2)],
+          extra=_ex_font, pre=_pre_font, check_landing=False)
+
+    # ⑦ 方向键微调：↑/→ 移动 0.005，Shift+↑ 加高 0.025（中心不动）
+    def _pre_nudge(env):
+        return dict(b0=list(_bbox(env.axes[0])))
+
+    def _ex_nudge(env, fig, axes, init, post, pre):
+        b = [float(v) for v in _bbox(axes[0])]
+        b0 = pre['b0']
+        exp = [b0[0] + 0.005, b0[1] + 0.005 - 0.0125, b0[2], b0[3] + 0.025]
+        return (_close(b, exp, 1e-9),
+                '%s -> %s（期望 %s）' % (_fmt_box(b0), _fmt_box(b), _fmt_box(exp)))
+
+    _case('方向键：↑/→ 移动 0.005，Shift+↑ 加高 0.025（中心不动）',
+          [('nudge', 0, 'up'), ('nudge', 0, 'right'),
+           ('nudge', 0, 'shift+up')],
+          extra=_ex_nudge, pre=_pre_nudge, check_landing=False)
+
+    # ⑧ 空格切线框模式：开→关 后布局不变、退出线框态
+    def _ex_wire(env, fig, axes, init, post, pre):
+        return (env.tw._wire is False, 'wire=%s' % env.tw._wire)
+
+    _case('空格 切线框模式：开→关 后布局不变、状态复原',
+          [('space',), ('space',)], extra=_ex_wire, check_landing=False)
+
+    # ⑨ Ctrl+Z / Ctrl+Y 撤销重做：深序列 + 中途撤销重做后仍往返一致
+    _case('Ctrl+Z/Ctrl+Y：深序列 + 中途撤销重做 → 全撤/全重做仍往返一致',
+          [('drag', 0, (0.5, 0.5), [(40, 10)], (40, 10), False),
+           ('drag', 1, (0.5, 0.5), [(-30, -15)], (-30, -15), False),
+           ('key', '+', 'title', 2),
+           ('undo',), ('undo',), ('redo',),
+           ('drag', 3, (0.5, 0.5), [(25, 25)], (25, 25), False)],
+          check_landing=True)
+
+    # ⑩ 图例拖拽 + 8 位吸附
+    def _ex_leg(env, fig, axes, init, post, pre):
+        st = env.tw.leg_state.get(id(axes[0]), {})
+        ok = (st.get('loc') in LEGEND_LOCS and st.get('anchor') is None
+              and axes[0].get_legend() is not None)
+        return (ok, 'loc=%s anchor=%s' % (st.get('loc'), st.get('anchor')))
+
+    _case('图例拖拽：松手吸附 8 标准位之一（loc 有效 + anchor 清空）',
+          [('legend_drag', 0, -40, -20)], extra=_ex_leg, check_landing=False)
+
+    # ⑪ 无意义乱序：不崩 + 往返 + 几何
+    _case('无意义乱序：裸 motion / 双按下 / 无按下就松开 / 两键同按 / 越界拖拽',
+          [('motion', (0.9, 0.9)), ('motion', (-0.2, 1.2)),
+           ('release_alone', (0.5, 0.5)),
+           ('double_press', 1, (0.5, 0.5)),
+           ('two_keys', 0, 'up', '+'),
+           ('drag', 2, (0.5, 0.5), [(-300, 0), (300, 200)], (0, 0), False),
+           ('click', 3, (0.5, 0.5), 'shift')],
+          check_landing=True)
+
+    # ⑫ Ctrl+F 裁白边：画布变化 → 全撤销后画布与布局都还原
+    def _pre_fit(env):
+        return dict(W0=int(env.W), H0=int(env.H))
+
+    def _ex_fit(env, fig, axes, init, post, pre):
+        W, H = (int(v) for v in fig.canvas.get_width_height())
+        changed = (W != pre['W0'] or H != pre['H0'])
+        return (True, '画布 %dx%d → %dx%d（changed=%s）'
+                % (pre['W0'], pre['H0'], W, H, changed))
+
+    _case('Ctrl+F 裁白边：全撤销后画布/布局还原',
+          [('fit',), ('drag', 0, (0.5, 0.5), [(30, 15)], (30, 15), False)],
+          extra=_ex_fit, pre=_pre_fit, check_landing=True)
+
+
+def _case_mixed_legend_panel():
+    '''图例按下未松开就改按面板（状态混合）：不崩 + 往返一致 + 几何合法。'''
+    fig, axes = _make_fig()
+    env = _Env(fig, axes, 'mixleg')
+    leg = axes[0].get_legend()
+    we = leg.get_window_extent()
+    lx = int(round((we.x0 + we.x1) / 2))
+    ly = int(round((we.y0 + we.y1) / 2))
+    x, y = env.px(axes[2], 0.5, 0.5)
+    init = _snapshot_pos(fig)
+    init_px = (int(env.W), int(env.H))
+    try:
+        send(fig.canvas, 'button_press_event', lx, ly, button=1)
+        send(fig.canvas, 'motion_notify_event', lx - 40, ly - 30)
+        send(fig.canvas, 'button_press_event', x, y, button=1)   # 未松开图例按面板
+        send(fig.canvas, 'motion_notify_event', x + 30, y + 20)
+        send(fig.canvas, 'button_release_event', x + 30, y + 20, button=1)
+        send(fig.canvas, 'button_release_event', lx - 40, ly - 30, button=1)
+    except Exception as e:                                       # noqa: BLE001
+        check('图例未松开改按面板：不崩', False, '抛异常 %s' % _gbk_safe(e))
+        return
+    post = _snapshot_pos(fig)
+    # 这条用例的手势里没有 undo/redo op ⇒ 游标一直在历史末端，末端态 == post
+    # （与旧判据等价；传 post 即正确基线）
+    ok2, why2 = _check_undo_roundtrip(env, fig, init, post, init_px, post)
+    ok4, why4 = _check_geometry(fig, len(axes))
+    check('图例未松开改按面板：往返一致 + 几何合法',
+          ok2 and ok4, (why2 + ' ' + why4).strip())
+    plt.close(fig)
+
+
+def _case_colorbar():
+    '''colorbar 拖端点：长度变长 + clim 不变（#8 手势方向锁死）。'''
+    fig, axes = _make_cb_fig()
+    env = _Env(fig, axes, 'cb')
+    cb_ax = axes[-1]
+    w0 = float(_bbox(cb_ax)[2])
+    clim0 = _clim_of(cb_ax)
+    init = _snapshot_pos(fig)
+    init_px = (int(env.W), int(env.H))
+
+    def _tip():
+        bb = cb_ax.get_position().transformed(fig.transFigure)
+        return (int(round(bb.x1 - 3.0)), int(round((bb.y0 + bb.y1) / 2)))
+
+    crash = None
+    try:
+        x, y = _tip()
+        send(fig.canvas, 'button_press_event', x, y, button=1)
+        send(fig.canvas, 'motion_notify_event', x + 70, y)
+        send(fig.canvas, 'button_release_event', x + 70, y, button=1)
+    except Exception as e:                                       # noqa: BLE001
+        crash = e
+    ok1 = crash is None
+    w1 = float(_bbox(cb_ax)[2])
+    clim1 = _clim_of(cb_ax)
+    ok_sp = ok1 and w1 > w0 + 1e-6 and clim1 == clim0
+    post = _snapshot_pos(fig)
+    # 同 _case_mixed_legend_panel：本条也没有 undo/redo op ⇒ 末端态 == post
+    ok2, why2 = _check_undo_roundtrip(env, fig, init, post, init_px, post) \
+        if ok1 else (True, '')
+    ok4, why4 = _check_geometry(fig, len(axes)) if ok1 else (True, '')
+    detail = ('长度 %.4f→%.4f clim %s→%s' % (w0, w1, clim0, clim1))
+    if crash is not None:
+        detail += ' 抛异常 %s' % _gbk_safe(crash)
+    check('colorbar 拖端点：长度变长 + clim 不变 + 往返一致 + 几何合法',
+          ok1 and ok_sp and ok2 and ok4, detail)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# teeth 探针：故意破坏一条不变量 -> 对应检测器必须变红（证明确实在测）。
+# ---------------------------------------------------------------------------
+def _teeth_probes():
+    _orig_restore_snap = Tweak._restore_snap
+    _orig_on_motion = Tweak._on_motion
+    _orig_set_bbox = _tb._set_bbox
+    drag_op = [('drag', 1, (0.5, 0.5), [(40, 20)], (40, 20), False)]
+
+    # ② 撤销往返：_restore_snap 失效 → 检测器红
+    r_clean = _case('teeth-②-正对照', drag_op, quiet=True)
+    Tweak._restore_snap = lambda self, snap: None
+    try:
+        r_bad = _case('teeth-②-破坏（预期FAIL）：_restore_snap 失效', drag_op,
+                      quiet=True)
+    finally:
+        Tweak._restore_snap = _orig_restore_snap
+    check('teeth ② 撤销往返检测器活着（_restore_snap 失效 → ok2 变红）',
+          r_clean['ok2'] and not r_bad['ok2'], 'clean=%s bad=%s'
+          % (r_clean['ok2'], r_bad['ok2']))
+
+    # ②b **只打第 2 条腿**（重做 → 历史末端）：让 `_redo_once` 失效 → 新基线必须红。
+    #     ①ops 必须**末尾含一次显式 undo**，否则重做栈为空、这条腿无事可做 —— 那也正是
+    #       旧判据（拿游标态当期望）看不出差别的原因；
+    #     ②这条探针证明"新基线与旧判据等价"不是"放宽"：重做一旦真的失效，它照样红。
+    undo_op = [('nudge', 0, 'up'), ('undo',)]
+    r_clean = _case('teeth-②b-正对照', undo_op, quiet=True)
+    _orig_redo_once = Tweak._redo_once
+    Tweak._redo_once = lambda self: None
+    try:
+        r_bad = _case('teeth-②b-破坏（预期FAIL）：_redo_once 失效', undo_op,
+                      quiet=True)
+    finally:
+        Tweak._redo_once = _orig_redo_once
+    check('teeth ②b 第 2 条腿（重做→历史末端）检测器活着'
+          '（_redo_once 失效 → ok2 变红）',
+          r_clean['ok2'] and not r_bad['ok2'], 'clean=%s bad=%s'
+          % (r_clean['ok2'], r_bad['ok2']))
+
+    # ③ 松手落位：_set_bbox 篡改 x（+0.01）→ 检测器红
+    r_clean = _case('teeth-③-正对照', drag_op, quiet=True)
+
+    def _bad_sb(ax, box):
+        _orig_set_bbox(ax, [box[0] + 0.01, box[1], box[2], box[3]])
+
+    _tb._set_bbox = _bad_sb
+    try:
+        r_bad = _case('teeth-③-破坏（预期FAIL）：落位被篡改', drag_op, quiet=True)
+    finally:
+        _tb._set_bbox = _orig_set_bbox
+    check('teeth ③ 松手落位检测器活着（落位被篡改 → ok3 变红）',
+          r_clean['ok3'] and not r_bad['ok3'], 'clean=%s bad=%s'
+          % (r_clean['ok3'], r_bad['ok3']))
+
+    # ④ 几何合法：_set_bbox 写"宽 < MIN_SIZE"（有限值，不把管线打崩）→ 检测器红
+    def _tiny_sb(ax, box):
+        _orig_set_bbox(ax, [box[0], box[1], MIN_SIZE / 2.0, box[3]])
+
+    _tb._set_bbox = _tiny_sb
+    try:
+        r_bad = _case('teeth-④-破坏（预期FAIL）：面板宽被压到 MIN_SIZE 以下',
+                      drag_op, quiet=True)
+    finally:
+        _tb._set_bbox = _orig_set_bbox
+    check('teeth ④ 几何合法检测器活着（面板过小 → ok4 变红）',
+          not r_bad['ok4'], 'ok4=%s' % r_bad['ok4'])
+
+    # ① 不崩：_on_motion 抛异常 → 检测器红
+    def _boom_motion(self, ev):
+        raise RuntimeError('teeth boom')
+
+    Tweak._on_motion = _boom_motion
+    try:
+        r_bad = _case('teeth-①-破坏（预期FAIL）：_on_motion 抛异常', drag_op,
+                      quiet=True)
+    finally:
+        Tweak._on_motion = _orig_on_motion
+    check('teeth ① 不崩检测器活着（事件处理器抛异常 → ok1 变红）',
+          not r_bad['ok1'], 'ok1=%s' % r_bad['ok1'])
+
+
+# ---------------------------------------------------------------------------
+def main():
+    check('hypothesis 可用（pyproject [dev] 应含 hypothesis>=6.0）',
+          _HAS_HYPOTHESIS,
+          'hypothesis %s' % (__import__('hypothesis').__version__
+                             if _HAS_HYPOTHESIS else '未安装'))
+
+    _run_named()
+    _case_mixed_legend_panel()
+    _case_colorbar()
+    _teeth_probes()
+
+    if _HAS_HYPOTHESIS:
+        _run_hyp('hypothesis 任意乱序手势：不崩/往返/几何（不验落位）',
+                 prop_fuzz_mixed)
+        _run_hyp('hypothesis 完整拖拽序列：不崩/往返/落位/几何（全验）',
+                 prop_fuzz_drag)
+
+    shutil.rmtree(_TMPROOT, ignore_errors=True)
+    print('FAILED: %d' % fail if fail else 'ALL PASS')
+    return 1 if fail else 0
+
+
+sys.exit(main())

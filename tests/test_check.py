@@ -22,6 +22,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # LANG=C) 走英文、本地(zh-CN)走中文 —— 不钉住就会"本地全绿、CI 全红"（0.1.8 真栽过）。
 # 需要英文分支的用例，自行 run(..., env={'MPLTWEAK_LANG': 'en'}) 覆盖即可。
 os.environ['MPLTWEAK_LANG'] = 'zh'
+
+# 后端也钉死 Agg（0.1.10 补，船长 2026-10-12 审计：本文件原先**缺**这个 pin）。
+# 本机同时装了 PyQt5 与 tkinter：后端若落到 Qt/Tk，被执行的用户脚本里一次
+# plt.show() / 开窗就真抢焦点和鼠标（用户当天报"有人抢鼠标"）。Agg 是纯无头、
+# 不弹窗的后端。模块级这一行覆盖 `subprocess` 不传 env 的路径，`run()` 里再显式
+# 写进 env 字典覆盖传参路径 —— 两层都不依赖"外层环境碰巧设了"。
+os.environ['MPLBACKEND'] = 'Agg'
 PY = sys.executable
 
 # GBK 控制台兜底（T13/T15）：CI 是 UTF-8 永远绿，本地 cp936 上一次 UnicodeEncodeError
@@ -199,10 +206,16 @@ def run(*args, env=None):
     messages 的语言探测顺序是 ``--lang > MPLTWEAK_LANG > locale > LANG > en``：
     CI（Linux，LANG=C）走英文、本地（Windows zh-CN）走中文。断言人读文案却不钉住
     语言，就会"本地全绿、CI 全红"（0.1.8 发布时真栽过，见 test_agent_api 同款说明）。
+
+    **后端也必须钉死 Agg**（0.1.10 补，船长 2026-10-12 审计）：本机同时装了 PyQt5
+    与 tkinter，一旦后端落到 Qt/Tk，被执行的用户脚本里任何 ``plt.show()`` / 开窗都会
+    真抢焦点与鼠标（用户当天报"有人抢鼠标"）。Agg 是**不弹窗**的无头后端，测试必须
+    显式写进 env，不依赖外层环境或默认值。这里写两处（模块级 + 本函数）与
+    test_agent_api.py 同款，见文件顶部 ``os.environ['MPLBACKEND']`` 的说明。
     """
-    _env = None
+    _env = dict(os.environ)
+    _env['MPLBACKEND'] = 'Agg'          # ← 硬钉：子进程一律无头，绝不开窗
     if env:
-        _env = dict(os.environ)
         _env.update(env)
     r = subprocess.run([PY, '-m', 'mpltweak.cli', *args], cwd=ROOT,
                        capture_output=True, env=_env)
@@ -568,6 +581,72 @@ def main():
               '--lang zh → 中文（默认行为不变）', _msgs_zh[:1])
         rc, out, err = run('describe', paths['tidy'], '--lang', 'en')
         check(rc == 0, 'describe 也接受 --lang（SKILL.md 一直列着它）', rc)
+
+        print('§15 归因改动不越界：check 的失败路径与退出码语义都不变')
+        # 背景（0.1.10 t11）：失败的**归因**（谁错了 + 下一步）只属于 apply 的
+        # 写回验证重跑那一条链。check 的失败路径（跑不起来 / 语法错 / 文件不存在）
+        # 必须**保持原样**，尤其不能凭空长出一个 attribution 字段让消费方误判
+        # "这是写回失败"。这里钉住三件事：① 退出码数值语义不变（0.1.9 已对外
+        # 文档化，用户 CI 依赖）；② check 的失败 JSON 仍只有 error_code；
+        # ③ 分类器不会把"脚本需要参数"说成"缺数据"（评审点名的伪装问题）。
+        _s15 = os.path.join(tmp, 'attr_gone_dep.py')
+        with open(_s15, 'w', encoding='utf-8') as f:
+            f.write("import matplotlib\nmatplotlib.use('Agg')\n"
+                    "import matplotlib.pyplot as plt\n"
+                    "import t11_check_gone_pkg          # 本环境没有这个包\n"
+                    "fig, ax = plt.subplots()\n"
+                    "fig.savefig('x.png')\n")
+        rc, out, err = run('check', _s15, '--json')
+        _d15 = json.loads(out)
+        check(rc == 2 and _d15.get('error_code') == 'collect_failed',
+              '脚本跑不起来 → rc=2 + error_code=collect_failed（数值语义不变）',
+              (rc, _d15.get('error_code')))
+        check('attribution' not in _d15 and 'failure_kind' not in _d15,
+              'check 的失败 JSON **不带**写回归因字段（归因只属于 apply 那条链）',
+              sorted(_d15)[:8])
+        rc, out, err = run('check', _s15, '--static', '--json')
+        _st15 = json.loads(out)
+        check(rc == 0 and _st15.get('static') is True,
+              '--static 是"脚本跑不起来"时的出路：不执行脚本 → rc=0',
+              (rc, _st15.get('static')))
+        rc, out, err = run('check', _s15, '--static', '--json', '--lang', 'en')
+        check(rc == 0, '--static + --lang en 同样可用', rc)
+
+        rc, out, err = run('check',
+                           os.path.join(tmp, 'definitely_missing_t11.py'),
+                           '--json')
+        check(rc == 2 and json.loads(out).get('error_code') == 'file_not_found',
+              '文件不存在 → 仍 rc=2 + file_not_found', rc)
+
+        # 分类器（纯函数）保守性：这条链上判不出原因时**绝不**说"缺依赖/缺数据"
+        # —— 那正是评审点名的"把需要参数伪装成缺数据"。
+        _attr15 = os.path.join(tmp, 'attr_probe.py')
+        with open(_attr15, 'w', encoding='utf-8') as f:
+            f.write('import sys\n_x = sys.argv[1]\n')
+        sys.path.insert(0, os.path.join(ROOT, 'src'))
+        try:
+            from mpltweak import verify as _v15
+            _miss = ("usage: attr_probe.py [-h]\n"
+                     "attr_probe.py: error: the following arguments are "
+                     "required: --data")
+            check('缺数据' not in _miss and '缺依赖' not in _miss,
+                  '§15 夹具的"需要参数"报错文本本身**不含**缺数据字样（断言可信）')
+            check(_v15.classify_verify_failure(_miss, script_path=_attr15,
+                                               args_passed=False)
+                  != (_v15.VERIFY_FAIL_CANNOT_RUN, 'missing_dependency'),
+                  '§15 需要参数的报错**不**被归成缺依赖（伪装问题的反向锁）',
+                  _v15.classify_verify_failure(_miss, script_path=_attr15))
+            _k15 = _v15.classify_verify_failure(
+                _miss, script_path=_attr15, args_passed=False)[0]
+            check(_k15 in (_v15.VERIFY_FAIL_NEEDS_ARGS,
+                           _v15.VERIFY_FAIL_CANNOT_RUN),
+                  '§15 判据只会落在 needs_args / cannot_run 两档之一', _k15)
+            check(_v15.VERIFY_FAIL_TOOL_BUG not in (
+                _v15.classify_verify_failure('', script_path=_attr15,
+                                             args_passed=False)[0], _k15),
+                  '§15 判不出原因时**绝不**误报 tool_bug（不吓用户）')
+        except ImportError as _e:                                  # noqa: BLE001
+            print('  --  跳过分类器断言：%s' % _e)
     except Exception as e:                                        # noqa: BLE001
         check(False, '测试执行', e)
     finally:

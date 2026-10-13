@@ -4733,6 +4733,553 @@ check('86② 磁盘与 src 不一致（编辑器保存过）⇒ 拒绝写盘（�
       isinstance(_g86b, str) and '外部修改' in _g86b, repr(_g86b))
 shutil.rmtree(_d86, ignore_errors=True)
 
+# =====================================================================
+# §87 bug #6：apply --write 验证重跑透传用户脚本参数（`--` 分隔）
+# =====================================================================
+# 复现：依赖 sys.argv 的脚本（python fig.py --n 7）在写回验证重跑里拿不到
+# 自己的参数 → 与基线行为不一致 → 默认回滚 + 误归因"缺数据/依赖"
+# （verify.py:907 的子进程命令行 [python, -m, mpltweak.verify, script, out,
+#  idx] 不带用户脚本参数；runpy 只覆盖 argv[0]、argv[1:] 是 verify 自己的）。
+# 修法：`mpltweak apply <脚本> --write -- <脚本参数...>` —— `--` 后的参数沿
+# apply → writeback → verify_run / verify_semantic → 子进程 `--` 分隔 → collect
+# 的 sys.argv 全链透传。§87① 对本用例是"先写会失败的"：修前它必然像 §87②
+# 一样缺参跑不通、默认回滚（对修前代码必红）。
+_SRC87 = ('import sys\n'
+          'import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'if "--n" not in sys.argv:\n'
+          '    raise SystemExit("bug6: missing --n")\n'
+          '_n = int(sys.argv[sys.argv.index("--n") + 1])\n'
+          'fig, ax = plt.subplots()\n'
+          'ax.plot(range(_n))\n'
+          'ax.grid(False)\n'
+          'fig.savefig("out87.png")\n')
+_PAR87 = {'version': 4, 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'grid': True}]}
+_d87a, _s87a, _p87a = _mk15('t87a', _SRC87, _PAR87)
+_d87b, _s87b, _p87b = _mk15('t87b', _SRC87, _PAR87)
+
+
+def _cli87(s, p, *extra):
+    """E2E：`mpltweak apply <脚本> --params <p> --write [-- <脚本参数...>]`。"""
+    r = subprocess.run(
+        [sys.executable, '-m', 'mpltweak', 'apply', s, '--params', p,
+         '--write'] + list(extra),
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        env=dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8',
+                 PYTHONPATH=os.path.dirname(os.path.dirname(
+                     os.path.abspath(writeback.__file__)))))
+    return (r.stdout or '') + (r.stderr or ''), r.returncode
+
+
+# ① 带参脚本 + `-- --n 7` 透传 ⇒ 重跑拿到参数、语义验证通过、真实写回
+_o87, _rc87 = _cli87(_s87a, _p87a, '--', '--n', '7')
+check('87① apply --write -- --n 7：脚本参数透传给重跑，验证通过并写回（rc=0）',
+      _rc87 == 0 and '已原位写回' in _o87 and '语义验证通过' in _o87,
+      'rc=%r %s' % (_rc87, str([_l.strip() for _l in _o87.splitlines()
+                                if '写回' in _l or '验证' in _l][:3])))
+check('87① 源码真的被改：ax.grid(False) → ax.grid(True)',
+      'ax.grid(True)' in read(_s87a) and 'ax.grid(False)' not in read(_s87a),
+      str([_l.strip() for _l in read(_s87a).splitlines() if 'grid' in _l][:2]))
+# ② 对照：**不带**脚本参数（修前行为）⇒ 脚本因缺参跑不通 → 回滚 + 写回失败
+_o87b, _rc87b = _cli87(_s87b, _p87b)
+check('87② 对照（不带参数）：脚本缺参跑不通 → 写回失败（rc≠0，未落地）',
+      _rc87b != 0,
+      'rc=%r %s' % (_rc87b, str([_l.strip() for _l in _o87b.splitlines()
+                                 if '写回' in _l or '跑不通' in _l][:3])))
+check('87② 回滚后源码原样（ax.grid(False) 还在、没有 ax.grid(True)）',
+      'ax.grid(False)' in read(_s87b) and 'ax.grid(True)' not in read(_s87b),
+      str([_l.strip() for _l in read(_s87b).splitlines() if 'grid' in _l][:2]))
+# ③ 块路径（auto 退块）同样透传：pos 原位写不了 → 块 + 带参重跑验证通过
+_SRC87C = ('import sys\n'
+           'import matplotlib\n'
+           'matplotlib.use("Agg")\n'
+           'import matplotlib.pyplot as plt\n'
+           'if "--n" not in sys.argv:\n'
+           '    raise SystemExit("bug6: missing --n")\n'
+           '_n = int(sys.argv[sys.argv.index("--n") + 1])\n'
+           'fig, ax = plt.subplots()\n'
+           'ax.plot(range(_n))\n'
+           'fig.savefig("out87c.png")\n')
+_PAR87C = {'version': 4, 'fig_index': 0, 'n_figs': 1,
+           'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]}
+_d87c, _s87c, _p87c = _mk15('t87c', _SRC87C, _PAR87C)
+_o87c, _rc87c = _cli87(_s87c, _p87c, '--', '--n', '3')
+check('87③ 块路径透传：原位写不了 pos → auto 退块，带参重跑 + 语义验证通过',
+      _rc87c == 0 and '已写回' in _o87c and '语义验证通过' in _o87c
+      and 'set_position' in read(_s87c),
+      'rc=%r %s' % (_rc87c, str([_l.strip() for _l in _o87c.splitlines()
+                                 if '写回' in _l or '验证' in _l][:3])))
+# ④ 库级：writeback.writeback(..., script_args=...) 直通（无 CLI 也能用）
+_d87d, _s87d, _p87d = _mk15('t87d', _SRC87, _PAR87)
+_r87d = writeback.writeback(_s87d, _params.load(_p87d), _p87d, verify=True,
+                            semantic=True, style='inplace', timeout=120,
+                            script_args=['--n', '5'])
+check('87④ 库级 writeback(script_args=...)：验证通过、语义通过、真实写回',
+      _r87d.get('verified') is True and _r87d.get('semantic') is True
+      and _r87d.get('applied') is True
+      and 'ax.grid(True)' in read(_s87d),
+      'reason=%r verified=%r semantic=%r err=%r'
+      % (_r87d.get('reason'), _r87d.get('verified'), _r87d.get('semantic'),
+         _r87d.get('err')))
+shutil.rmtree(_d87a, ignore_errors=True)
+shutil.rmtree(_d87b, ignore_errors=True)
+shutil.rmtree(_d87c, ignore_errors=True)
+shutil.rmtree(_d87d, ignore_errors=True)
+
+# =====================================================================
+# §88 bug：无赋值名的 plt.subplot(1,2,1) 让 apply 崩成 internal_error
+# =====================================================================
+# 根因（t7 全量静态筛选发现、船长实测复现）：_axes_binding_entries 里
+#   _sig = '%s|%s' % (attr, ast.dump(_call_sig(node)))
+# 把 _call_sig(node) 返回的**字符串列表**喂给 ast.dump（只接受 AST 节点）→
+# TypeError: expected AST, got 'list' → 任何模式都 internal_error。
+# 触发路径：attr in _AXES_RETURNING 且该调用**没有赋值名**、又不是 add_axes /
+# add_subplot（那两条在 3607-3613 提前处理）时落到这一行 —— plt.subplot(1,2,1)
+# 是极常见写法。修法：列表 join 成字符串 `'|'.join(_call_sig(node))`。
+# 该行语义=「槽位签名」去重（同一槽位=复用、不新建轴），修完必须保持：
+# 相同 subplot 重复调用仍判复用（1 条轴）；参数不同的 subplot 仍各自新建轴。
+# §88① 对本用例是"先写会失败的"：修前它必然 internal_error（对修前代码必红）。
+_SRC88 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'plt.subplot(1, 2, 1)\n'
+          'plt.plot([1, 2], [1, 2])\n'
+          'plt.savefig("out88.png")\n')
+_PAR88 = {'version': 4, 'fig_index': 0, 'figsize_in': [8.5, 5.5]}
+
+
+def _cli88(s, p):
+    """E2E：`mpltweak apply <脚本> --params <p> --write --dry-run --no-verify --json`。"""
+    r = subprocess.run(
+        [sys.executable, '-m', 'mpltweak', 'apply', s, '--params', p,
+         '--write', '--dry-run', '--no-verify', '--json'],
+        capture_output=True, text=True, encoding='utf-8', errors='replace',
+        env=dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8',
+                 PYTHONPATH=os.path.dirname(os.path.dirname(
+                     os.path.abspath(writeback.__file__)))))
+    return (r.stdout or '') + (r.stderr or ''), r.returncode
+
+
+def _axes_entries88(src, fig_index=0):
+    """静态建轴条目：无赋值名 subplot 序列 → (entries, ok, suspect)。"""
+    return writeback._axes_binding_entries(_ast.parse(src), fig_index)
+
+
+# ① 无赋值 subplot 不崩（端到端：--dry-run --no-verify --json 返回正常报告）
+_d88, _s88, _p88 = _mk15('t88', _SRC88, _PAR88)
+_o88, _rc88 = _cli88(_s88, _p88)
+check('88① 无赋值 plt.subplot(1,2,1) 不再崩：apply --json 返回正常报告（非 internal_error）',
+      'internal_error' not in _o88 and '"ok":' in _o88,
+      'rc=%r %s' % (_rc88, str(_o88.strip().splitlines()[-1:])))
+shutil.rmtree(_d88, ignore_errors=True)
+# ② 复用判定仍正确：相同 subplot(1,2,1) 重复调用 = 同槽位复用 → 仍只 1 条轴
+_e88b = _axes_entries88('import matplotlib.pyplot as plt\n'
+                        'plt.subplot(1, 2, 1)\n'
+                        'plt.subplot(1, 2, 1)\n')
+check('88② 槽位复用：相同 plt.subplot(1,2,1) 重复调用仍判为复用（1 条轴，不新建）',
+      _e88b[1] is True and len(_e88b[0]) == 1,
+      'entries=%d ok=%r' % (len(_e88b[0]), _e88b[1]))
+# ③ 参数不同 → 新建轴：subplot(1,2,1) + subplot(1,2,2) = 2 条轴
+_e88c = _axes_entries88('import matplotlib.pyplot as plt\n'
+                        'plt.subplot(1, 2, 1)\n'
+                        'plt.subplot(1, 2, 2)\n')
+check('88③ 槽位不同：subplot(1,2,1) + subplot(1,2,2) 仍是 2 条新建轴',
+      _e88c[1] is True and len(_e88c[0]) == 2,
+      'entries=%d ok=%r' % (len(_e88c[0]), _e88c[1]))
+
+# =====================================================================
+# §89 外部改动守卫（0.1.10）：验证期间用户在编辑器保存 → 工具绝不覆盖
+# =====================================================================
+# 风险现场：`apply --write` 读源码在流程**开头**，落盘要等（重跑验证的）几十秒到
+# 几分钟。用户在这段时间回编辑器保存一次是很自然的动作（他以为工具已经改完），
+# 而工具的后续落盘（验证失败后的**回滚**、块重试的**二次写盘**）会把它静默覆盖
+# —— 对科研用户这是最不可接受的一类数据丢失。
+# 判据 = sha256 内容指纹：读源码时记一份，落盘前重算，不一致就停手。
+import threading                                                     # noqa: E402
+from mpltweak import messages as _messages89                         # noqa: E402
+
+_d89 = os.path.join(_TMPROOT, 'case_89')
+os.makedirs(os.path.join(_d89, '.tweak_params'), exist_ok=True)
+
+_SRC89 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig = plt.figure(figsize=(6, 4))\n'
+          'ax = fig.add_axes((0.10, 0.10, 0.40, 0.40))\n'
+          'ax.plot([1, 2, 3])\n'
+          'fig.savefig("out89.png")\n')
+# "用户在编辑器里保存"后的内容：编辑器缓冲区里通常还是**工具改动之前**那些字符
+_USER89 = _SRC89 + '# USER-EDIT-89 用户在验证期间自己加的一行\n'
+_PAR89 = {'version': 4, 'fig_index': 0, 'figsize_in': [6.0, 4.0],
+          'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5],
+                    'xscale': 'linear', 'yscale': 'linear', 'grid': False,
+                    'spines': {}, 'cell': None}]}
+
+
+def _mk89(name, body, params=_PAR89):
+    p = os.path.join(_d89, name)
+    with open(p, 'w', encoding='utf-8', newline='') as f:
+        f.write(body)
+    pp = os.path.join(_d89, '.tweak_params', name[:-3] + '.json')
+    with open(pp, 'w', encoding='utf-8') as f:
+        json.dump(params, f)
+    return p, pp
+
+
+def _sha89(p):
+    with open(p, 'rb') as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+# ---- ① 单元：指纹判据本身 ----
+_s89, _p89 = _mk89('fig89a.py', _SRC89)
+check('89① 磁盘内容未变 ⇒ _check_external_edit 放行（None）',
+      writeback._check_external_edit(_s89, _SRC89) is None)
+with open(_s89, 'w', encoding='utf-8', newline='') as f:
+    f.write(_USER89)
+# 用 `or {}` 包一层：守卫一旦被关掉（反面验证）这里会拿到 None，必须**干净判红**
+# 而不是抛 AttributeError 把整节后续断言全跳过（反验证实测踩到）。
+_r89u = writeback._check_external_edit(_s89, _SRC89) or {}
+check('89② 磁盘内容变过 ⇒ 拒绝，并给机器可读字段（reason/external_modified/指纹）',
+      isinstance(_r89u, dict)
+      and _r89u.get('reason') == writeback.EXTERNAL_MODIFIED
+      and _r89u.get('external_modified') is True
+      and _r89u.get('sha256_expected') != _r89u.get('sha256_found'),
+      repr(_r89u)[:200])
+check('89③ 人读文案含"你的改动未被覆盖"+下一步（--write）',
+      '外部修改' in (_r89u.get('err') or '')
+      and '未被覆盖' in (_r89u.get('err') or '')
+      and _r89u.get('next_step', '').endswith('--write'),
+      repr(_r89u.get('err')))
+check('89④ 兼容入口 _guard_external_edit 仍返回一句原因文本（§86 的旧契约）',
+      isinstance(writeback._guard_external_edit(_s89, _SRC89), str))
+check('89⑤ messages 的 external_modified 中英齐备、且都 GBK 可编码（终端不炸）',
+      all('外部修改' in _messages89.MESSAGES['external_modified']['zh']
+          and _messages89.MESSAGES['external_modified']['en']
+          and _messages89.MESSAGES['external_modified']['zh'].encode('gbk')
+          and _messages89.MESSAGES['external_modified']['en'].encode('gbk')
+          for _ in (0,)))
+shutil.rmtree(_d89, ignore_errors=True)
+
+# ---- ② 正向写盘：备份步骤里被外部改过 → 拒绝覆盖（monkeypatch 注入一次外部写入）----
+_d89b = os.path.join(_TMPROOT, 'case_89b')
+os.makedirs(os.path.join(_d89b, '.tweak_params'), exist_ok=True)
+
+
+def _mk89b(name, body, params=_PAR89):
+    p = os.path.join(_d89b, name)
+    with open(p, 'w', encoding='utf-8', newline='') as f:
+        f.write(body)
+    pp = os.path.join(_d89b, '.tweak_params', name[:-3] + '.json')
+    with open(pp, 'w', encoding='utf-8') as f:
+        json.dump(params, f)
+    return p, pp
+
+
+_s89b, _p89b = _mk89b('fig89b.py', _SRC89)
+_orig_backup89 = writeback._make_backup
+
+
+def _backup_then_user_save89(*a, **k):
+    """备份照做，但备完之后"用户保存了" —— 落盘前的守卫必须拦住。"""
+    _bk = _orig_backup89(*a, **k)
+    with open(_s89b, 'w', encoding='utf-8', newline='') as f:
+        f.write(_USER89)
+    return _bk
+
+
+writeback._make_backup = _backup_then_user_save89
+try:
+    _res89b = writeback.writeback(_s89b, _PAR89, _p89b, verify=True,
+                                  semantic=True, style='inplace', timeout=120)
+finally:
+    writeback._make_backup = _orig_backup89
+_src89b = read(_s89b)
+check('89⑥ 落盘前发现外部改动 ⇒ 本次写回放弃（reason=external_modified）',
+      _res89b.get('reason') == writeback.EXTERNAL_MODIFIED
+      and _res89b.get('external_modified') is True
+      and _res89b.get('applied') is False,
+      'reason=%r external_modified=%r' % (_res89b.get('reason'),
+                                          _res89b.get('external_modified')))
+check('89⑦ 用户的改动**一个字都没被覆盖**（我们的写回没落盘）',
+      _src89b == _USER89 and '0.2, 0.2, 0.5, 0.5' not in _src89b,
+      _src89b[-60:])
+check('89⑧ 结论里如实说明（人读/JSON 同一个 err）',
+      '外部修改' in (_res89b.get('err') or '')
+      and '未被覆盖' in (_res89b.get('err') or ''),
+      repr(_res89b.get('err')))
+shutil.rmtree(_d89b, ignore_errors=True)
+
+# ---- ③ 回滚路径：写盘后、验证期间被外部改过 → **不回滚**（保留用户版本）----
+_d89c = os.path.join(_TMPROOT, 'case_89c')
+os.makedirs(os.path.join(_d89c, '.tweak_params'), exist_ok=True)
+_s89c = os.path.join(_d89c, 'fig89c.py')
+with open(_s89c, 'w', encoding='utf-8', newline='') as f:
+    f.write(_SRC89)
+_p89c = os.path.join(_d89c, '.tweak_params', 'fig89c.json')
+with open(_p89c, 'w', encoding='utf-8') as f:
+    json.dump(_PAR89, f)
+_orig_verify89 = writeback.verify_run
+
+
+def _verify_then_user_save89(*a, **k):
+    """验证"跑"的期间用户保存了，且这次验证以失败告终（正常路径会回滚）。"""
+    with open(_s89c, 'w', encoding='utf-8', newline='') as f:
+        f.write(_USER89)
+    return (False, 'boom 89')
+
+
+writeback.verify_run = _verify_then_user_save89
+try:
+    _res89c = writeback.writeback(_s89c, _PAR89, _p89c, verify=True,
+                                  semantic=False, style='inplace', timeout=120)
+finally:
+    writeback.verify_run = _orig_verify89
+_src89c = read(_s89c)
+check('89⑨ 验证失败要回滚、但磁盘已被外部改过 ⇒ **跳过回滚**，保留用户版本',
+      _src89c == _USER89 and 'USER-EDIT-89' in _src89c,
+      'reason=%r | %s' % (_res89c.get('reason'), _src89c[-50:]))
+check('89⑩ 回滚被跳过这件事写进了结论（不是静默）',
+      '外部修改' in (_res89c.get('err') or '')
+      and '未回滚' in (_res89c.get('err') or ''),
+      repr((_res89c.get('err') or '')[-160:]))
+shutil.rmtree(_d89c, ignore_errors=True)
+
+# ---- ④ 对照：全程没人动过 ⇒ 行为与以前完全一致 ----
+_d89d = os.path.join(_TMPROOT, 'case_89d')
+os.makedirs(os.path.join(_d89d, '.tweak_params'), exist_ok=True)
+_s89d = os.path.join(_d89d, 'fig89d.py')
+with open(_s89d, 'w', encoding='utf-8', newline='') as f:
+    f.write(_SRC89)
+_p89d = os.path.join(_d89d, '.tweak_params', 'fig89d.json')
+with open(_p89d, 'w', encoding='utf-8') as f:
+    json.dump(_PAR89, f)
+_shab = _sha89(_s89d)
+_res89d = writeback.writeback(_s89d, _PAR89, _p89d, verify=True,
+                              semantic=False, style='inplace', timeout=120)
+check('89⑪ 对照：无外部改动 ⇒ 正常写回成功、且没有外部改动标记（正常路径零变化）',
+      _res89d.get('reason') == 'ok' and _res89d.get('verified') is True
+      and _res89d.get('external_modified') is None
+      and _sha89(_s89d) != _shab,
+      'reason=%r verified=%r' % (_res89d.get('reason'), _res89d.get('verified')))
+check('89⑫ 对照：守卫在正常路径上确实放行（源码真的被改了）',
+      '0.2, 0.2, 0.5, 0.5' in read(_s89d),
+      str([l.strip() for l in read(_s89d).splitlines()
+           if 'add_axes' in l][:1]))
+shutil.rmtree(_d89d, ignore_errors=True)
+
+# ---- ⑤ 端到端（真 CLI + 慢脚本 + 并发线程）：用户在验证窗口里保存 ----
+_d89e = os.path.join(_TMPROOT, 'case_89e')
+os.makedirs(os.path.join(_d89e, '.tweak_params'), exist_ok=True)
+_s89e = os.path.join(_d89e, 'fig89e.py')
+# 慢脚本：验证重跑要花几秒（模拟"读数据/出图慢"的真实窗口）；跑完故意失败，
+# 好让正常路径**一定会尝试回滚** —— 那正是会覆盖用户保存的那一步。
+_SRC89E = (_SRC89.replace('fig.savefig("out89.png")\n',
+                          'fig.savefig("out89.png")\n'
+                          'import time; time.sleep(1.2)\n'
+                          'raise SystemExit(9)\n'))
+with open(_s89e, 'w', encoding='utf-8', newline='') as f:
+    f.write(_SRC89E)
+_p89e = os.path.join(_d89e, '.tweak_params', 'fig89e.json')
+with open(_p89e, 'w', encoding='utf-8') as f:
+    json.dump(_PAR89, f)
+_saved89e = [False]
+
+
+def _user_saves_during_verify():
+    """盯着磁盘：等工具把新的 pos 写进去之后，"用户在编辑器按了保存"。"""
+    import time as _t
+    _deadline = _t.time() + 60
+    while _t.time() < _deadline:
+        try:
+            with open(_s89e, encoding='utf-8') as f:
+                _cur = f.read()
+        except OSError:
+            _cur = ''
+        if '0.2, 0.2, 0.5, 0.5' in _cur:
+            try:
+                with open(_s89e, 'w', encoding='utf-8', newline='') as f:
+                    f.write(_USER89)          # 编辑器缓冲区里那一版（工具改动之前）
+                _saved89e[0] = True
+            except OSError:
+                pass
+            return
+        _t.sleep(0.02)
+
+
+_th89 = threading.Thread(target=_user_saves_during_verify, daemon=True)
+_th89.start()
+_env89e = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(
+    os.path.abspath(writeback.__file__))), MPLBACKEND='Agg',
+    MPLTWEAK_LANG='zh', PYTHONIOENCODING='utf-8')
+_run89e = subprocess.run(
+    [sys.executable, '-m', 'mpltweak', 'apply', _s89e, '--write',
+     '--style', 'inplace', '--timeout', '60', '--json'],
+    capture_output=True, env=_env89e, cwd=_d89e)
+_th89.join(timeout=30)
+_out89e = _decode_out(_run89e.stdout + _run89e.stderr)
+try:
+    _json89e = json.loads(_run89e.stdout.decode('utf-8', 'replace'))
+except Exception:                                                    # noqa: BLE001
+    _json89e = {}
+_src89e = read(_s89e)
+check('89⑬ E2E：慢脚本验证窗口里用户保存 → 保存这一版仍在磁盘上（未被回滚覆盖）',
+      _saved89e[0] is True and 'USER-EDIT-89' in _src89e,
+      'saved=%r | tail=%s' % (_saved89e[0], _src89e[-50:]))
+check('89⑭ E2E：人读/JSON 都如实报出"外部修改、你的改动未被覆盖"',
+      '外部修改' in _out89e and '未被覆盖' in _out89e
+      and '外部修改' in ((_json89e.get('files') or [{}])[0].get('err') or ''),
+      'rc=%r | %s' % (_run89e.returncode, _out89e[-200:]))
+check('89⑮ E2E：退出码仍是非 0（写回没成功，用户必须知道）',
+      _run89e.returncode != 0, 'rc=%r' % _run89e.returncode)
+shutil.rmtree(_d89e, ignore_errors=True)
+
+# ---- ⑥ --json 的**逐字布尔键**（agent 侧判据）：真命中时必须是 true ----
+# 为什么走进程内 apply.main + fd 级捕获：守卫的"写盘前"那条路只在「读源码之后、
+# 写盘之前」那一小段被触发，跨进程无法确定性构造（靠线程轮询是 flaky 的）；
+# 而 messages.emit_json 是 **fd 级直写**（刻意绕过 redirect_stdout），所以要 dup2。
+_d89f = os.path.join(_TMPROOT, 'case_89f')
+os.makedirs(os.path.join(_d89f, '.tweak_params'), exist_ok=True)
+_s89f = os.path.join(_d89f, 'fig89f.py')
+with open(_s89f, 'w', encoding='utf-8', newline='') as f:
+    f.write(_SRC89)
+_p89f = os.path.join(_d89f, '.tweak_params', 'fig89f.json')
+with open(_p89f, 'w', encoding='utf-8') as f:
+    json.dump(_PAR89, f)
+_USER89F = _SRC89 + '# USER-EDIT-89F 用户在验证期间保存\n'
+
+
+def _capture_fd1_89(fn):
+    """把 fd1 临时重定向到文件，跑 fn() 后读回它写出的内容。
+
+    两个坑都踩过：① 必须先 `sys.stdout.flush()` —— 否则测试自己**缓冲区里**的输出
+    会在 dup2 之后才落盘，混进捕获文件、把 JSON 解析毁掉；② 解析时从第一个 `{`
+    开始（万一还有别的字节混进来，也不至于整条断言变成"空 dict"）。
+    """
+    sys.stdout.flush()
+    _saved = os.dup(1)
+    _cap = os.path.join(_d89f, '_json_cap.txt')
+    _fd = os.open(_cap, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+    try:
+        os.dup2(_fd, 1)
+        fn()
+        sys.stdout.flush()
+    finally:
+        os.dup2(_saved, 1)
+        os.close(_fd)
+        os.close(_saved)
+    with open(_cap, encoding='utf-8') as f:
+        return f.read()
+
+
+def _json_from_text_89(text):
+    """从捕获文本里取 JSON（容忍前面可能混进来的非 JSON 字节）。"""
+    i = text.find('{')
+    if i < 0:
+        return {}
+    try:
+        return json.loads(text[i:])
+    except Exception:                                                # noqa: BLE001
+        return {}
+
+
+def _apply_inproc_89():
+    _ob = writeback._make_backup
+
+    def _b_save(*a, **k):
+        _bk = _ob(*a, **k)
+        with open(_s89f, 'w', encoding='utf-8', newline='') as f:
+            f.write(_USER89F)
+        return _bk
+    writeback._make_backup = _b_save
+    try:
+        apply.main([_s89f, '--write', '--style', 'inplace', '--json'])
+    finally:
+        writeback._make_backup = _ob
+
+
+_txt89f = _capture_fd1_89(_apply_inproc_89)
+_j89f = _json_from_text_89(_txt89f)
+_f89f = (_j89f.get('files') or [{}])[0]
+check('89⑯ apply --json 逐字布尔键：真命中时 files[0].external_modified is true',
+      _f89f.get('external_modified') is True, str(_f89f)[:220])
+check('89⑰ apply --json 三条机器可读线索齐（reason + err + next_step）',
+      _f89f.get('reason') == 'external_modified'
+      and '未被覆盖' in (_f89f.get('err') or '')
+      and (_f89f.get('next_step') or '').endswith('--write'),
+      str(_f89f)[:220])
+check('89⑱ JSON 报的是"已放弃"：files[0].applied is False（没写盘）',
+      _f89f.get('applied') is False, str(_f89f.get('applied')))
+shutil.rmtree(_d89f, ignore_errors=True)
+
+# =====================================================================
+# §90 t27 回归：块模式"报未写却留下块"（no-tamper 违约）
+# =====================================================================
+# 违约现场（t23 全量真跑 1,837 份里 3 例同签名，增量**都恰好 +231 字节** = 一个调整块）：
+#   候选①写盘成功 → 验证失败（**原脚本单独跑得通**）→ 没回滚就换锚点重试
+#   → 候选②的"外部改动守卫"拿**入口读的 src** 去比磁盘（此刻磁盘上已是"我们刚写的块"）
+#   → 误报 external_modified，且命中分支**不回滚就 return** ⇒ apply 说"没写"、磁盘 +231。
+# 本用例用 monkeypatch 把触发条件（我们的写回版跑不通 / 原脚本跑得通）钉死，断言不变量：
+# **最终字节 == 原始字节**（且不得报 external_modified、applied 必须 False）。
+_d90 = os.path.join(_TMPROOT, 'case_90')
+os.makedirs(os.path.join(_d90, '.tweak_params'), exist_ok=True)
+_SRC90 = ('import matplotlib\n'
+          'matplotlib.use("Agg")\n'
+          'import matplotlib.pyplot as plt\n'
+          'fig1, ax1 = plt.subplots(figsize=(6, 4))\n'
+          'ax1.plot([1, 2, 3])\n'
+          'fig1.savefig("o1.png")\n'
+          'fig2, ax2 = plt.subplots(figsize=(6, 4))\n'
+          'ax2.plot([3, 2, 1])\n'
+          'fig2.savefig("o2.png")\n')
+_s90 = os.path.join(_d90, 'fig90.py')
+with open(_s90, 'w', encoding='utf-8', newline='') as f:
+    f.write(_SRC90)
+_p90 = os.path.join(_d90, '.tweak_params', 'fig90.json')
+_p90data = {'version': 4, 'fig_index': 0, 'figsize_in': [6.0, 4.0],
+            'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5],
+                      'xscale': 'linear', 'yscale': 'linear', 'grid': False,
+                      'spines': {}, 'cell': None}]}
+with open(_p90, 'w', encoding='utf-8') as f:
+    json.dump(_p90data, f)
+_orig90 = open(_s90, 'rb').read()
+_orig_verify90 = writeback.verify_run
+
+
+def _fake_verify90(path, *a, **k):
+    """写回版跑不通、原脚本（备份路径）跑得通 → 必然走"换锚点重试"分支。"""
+    if os.path.abspath(path) == os.path.abspath(_s90):
+        return (False, '写回版跑不通（§90 夹具）')
+    return (True, '')
+
+
+writeback.verify_run = _fake_verify90
+try:
+    _res90 = writeback.writeback(_s90, _p90data, _p90, verify=True,
+                                 semantic=False, style='block', timeout=60)
+finally:
+    writeback.verify_run = _orig_verify90
+_after90 = open(_s90, 'rb').read()
+check('90① 块模式"验证失败 → 换锚点重试"之后：**磁盘字节 == 原始字节**（no-tamper 不变量）',
+      _after90 == _orig90,
+      'before=%d after=%d（差 %+d 字节）'
+      % (len(_orig90), len(_after90), len(_after90) - len(_orig90)))
+check('90② 不再把"我们自己刚写的块"误报成外部改动',
+      _res90.get('reason') != 'external_modified'
+      and not _res90.get('external_modified'),
+      'reason=%r external_modified=%r' % (_res90.get('reason'),
+                                          _res90.get('external_modified')))
+check('90③ 如实报"没写"（applied=False）且磁盘上不留调整块',
+      _res90.get('applied') is False
+      and writeback.BLOCK_START not in _after90.decode('utf-8', 'replace'),
+      'applied=%r reason=%r' % (_res90.get('applied'), _res90.get('reason')))
+check('90④ 夹具确实走到了"换锚点重试"（≥2 个候选），否则本用例会退化成空跑',
+      len(_res90.get('attempts') or []) >= 2,
+      'attempts=%r' % (_res90.get('attempts'),))
+shutil.rmtree(_d90, ignore_errors=True)
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)
 
