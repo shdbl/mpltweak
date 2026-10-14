@@ -6121,7 +6121,12 @@ check('99③ 命名 colormap（viridis）在 mpl.colormaps → 判据照记（�
       'viridis' in _mpl99.colormaps, list(_mpl99.colormaps)[:3])
 check('99④【有牙】改回旧判据（直接取 `.name`）→ 自定义 cmap 会被记成 %r，'
       '而它编不进 mpl.colormaps（= 99② 在改前代码上必假）' % _s99_custom.name,
-      _s99_custom.name == 'from_list' and _s99_custom.name not in _mpl99.colormaps,
+      # t105（CI 3.11/3.12 红）：**不要**把 matplotlib 给"无名 ListedColormap"的
+      # 默认名硬编码进来 —— 旧版给 'from_list'，新版（3.11/3.12 装到的那支）给
+      # 'unnamed'（CI 原始日志：`FAIL | 99④… | unnamed`）。这条 teeth 要证的是
+      # "这个名字**编不进 mpl.colormaps** ⇒ 旧判据会记下一个不可用的名字"，
+      # 与具体默认名无关 ⇒ 只留这一条（同场景下 99② 也用它，且在红 job 上是 PASS ✓）。
+      _s99_custom.name not in _mpl99.colormaps,
       _s99_custom.name)
 check('99⑤ 参数里 `cmap: null` 合法（= 该字段不出现，apply 不报它；报告附录 B #6 后半）',
       _params.validate_errors({'version': 4, 'script': 'f.py', 'fig_index': 0,
