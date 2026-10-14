@@ -129,9 +129,16 @@ def test_suite(name, extra):
             continue
     if out is None:
         out = raw.decode('utf-8', 'replace')
+    # t109：CI 上这条断言的消息**会被截断**（`tools/ci_pytest_summary.py` 只把最后 8000
+    # 字符发成注解，而这里原本只嵌 `out[-4000:]`）⇒ 失败时逐条 `FAIL |` 行常被截掉，
+    # 排查只能靠猜（t109 实测：CI 只留下 5 条断言的**名字**，值全丢）。这里把失败行
+    # 单独抽出来放消息里（短、必落在注解窗口内）⇒ 下一次 CI 红**自带**可读证据。
+    _fails = [l.strip() for l in out.splitlines()
+              if l.startswith('FAIL') or l.startswith('FAILED')]
+    _ftxt = '\n'.join(_fails[-40:]) or '（输出里没有 FAIL 行 —— 可能是中途崩了）'
     assert r.returncode == 0, (
-        '%s 退出码 %s（期望 0）\n---- 输出尾巴 ----\n%s'
-        % (name, r.returncode, out[-4000:]))
+        '%s 退出码 %s（期望 0）\n---- 失败行 ----\n%s\n---- 输出尾巴 ----\n%s'
+        % (name, r.returncode, _ftxt, out[-3000:]))
     assert 'ALL PASS' in out, (
-        '%s 没有打印 ALL PASS（可能中途崩了）\n---- 输出尾巴 ----\n%s'
-        % (name, out[-4000:]))
+        '%s 没有打印 ALL PASS（可能中途崩了）\n---- 失败行 ----\n%s\n'
+        '---- 输出尾巴 ----\n%s' % (name, _ftxt, out[-3000:]))
