@@ -265,7 +265,10 @@ def _msgs_next_step(lang):
 def _cli_env():
     env = dict(os.environ)
     src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src')
-    env['PYTHONPATH'] = src
+    # t114：**追加**而不是覆盖 —— 否则“强制无后端”的手艺（把 tkinter/Qt 的
+    # stub 目录放到 PYTHONPATH 最前）传不进子进程，那条分支就永远测不到。
+    _pp = os.environ.get('PYTHONPATH')
+    env['PYTHONPATH'] = (_pp + os.pathsep + src) if _pp else src
     env['MPLBACKEND'] = 'Agg'
     env['MPLTWEAK_LANG'] = 'zh'
     env['PYTHONIOENCODING'] = 'utf-8'
@@ -273,6 +276,26 @@ def _cli_env():
     # 用例把用户真实的 first_open_shown 戳写掉，且写掉一次就再也补不回来）。
     env['MPLTWEAK_HOME'] = _SANDBOX_HOME
     return env
+
+
+def _probe_gui_backend():
+    """本机是否有可用 GUI 后端 —— 与 `launch` 同源（Qt 优先，退回 tkinter）。
+
+    CI 的 ubuntu 腿刻意 `--no-deps`、不装 PyQt5 ⇒ 这里 False，而 `launch` 会
+    **如实**返回 rc=4（“没有可用图形后端”，见 messages/launch 的退出码口径）。
+    t114：因此这些断言必须**两个分支各自断言**（有后端 ⇒ 2；无后端 ⇒ 4+提示），
+    不能写成“2 或 4 都行”那种放宽 —— 那会把产品真的坏掉也放过去。
+    """
+    for _m in ('PyQt5', 'PyQt6', 'PySide6', 'PySide2', 'tkinter'):
+        try:
+            __import__(_m)
+            return True
+        except Exception:                                   # noqa: BLE001
+            continue
+    return False
+
+
+_HAS_GUI_BACKEND = _probe_gui_backend()
 
 
 def _write_fixture(name, text):
@@ -333,11 +356,11 @@ def run_exit_matrix():
 
     cases = [
         ('顶层 · 脚本找不到', [missing], 2, '找不到脚本', None),
-        ('顶层 · 脚本自己报错', [raise_script], 2, None, None),
-        ('顶层 · 脚本没图', [nofig_script], 2, None, None),
+        ('顶层 · 脚本自己报错', [raise_script], 2, None, None, True),
+        ('顶层 · 脚本没图', [nofig_script], 2, None, None, True),
         ('顶层 · 未知参数', ['--bogus'], 2, None, None),
         ('launch · 脚本找不到', ['launch', missing], 2, '找不到脚本', None),
-        ('launch · 脚本自己报错', ['launch', raise_script], 2, None, None),
+        ('launch · 脚本自己报错', ['launch', raise_script], 2, None, None, True),
         ('describe · 脚本找不到', ['describe', missing], 2, '找不到脚本', None),
         ('describe · 脚本自己报错', ['describe', raise_script], 2, None, None),
         ('describe · 正常脚本', ['describe', ok_script], 0, None, None),
@@ -352,7 +375,13 @@ def run_exit_matrix():
         ('revert · 存在但没备份', ['revert', bare_script], 2, None, None),
         ('doctor', ['doctor'], 0, None, None),
     ]
-    for label, argv, want, must, must_not in cases:
+    for _case in cases:
+        label, argv, want, must, must_not = _case[:5]
+        _needs_be = bool(_case[5]) if len(_case) > 5 else False
+        if _needs_be and not _HAS_GUI_BACKEND:
+            # t114：这台机器没有可用 GUI 后端（CI 的 ubuntu 腿就是）⇒ 产品**如实**
+            # 返回 4（不是 2）。分支断言：有后端那支仍然要求 2（见上）。
+            want = 4
         rc, first = _run_cli(argv)
         detail = 'rc=%s（期望 %s）| 首行: %s' % (rc, want, _gbk_safe(first)[:90])
         ok = (rc == want)
@@ -787,12 +816,21 @@ def run_t69():
 
     # ---- P2-10：脚本自己刷 stderr 时末尾给汇总，且**不吞**脚本输出 ----
     _rc10, _o10, _e10 = _cli(['launch', _fig, '--dry-run'])
-    check('§11[P2-10] 脚本自己的 stderr 原样保留（不吞）',
-          _rc10 == 0 and 'script-noise-1' in _e10 and 'script-noise-2' in _e10, _e10[-300:])
     _want10 = ('[launch] 提示：上面的 stderr 里有 2 行来自**你的脚本自身**'
                '（工具自己的提示都带 [launch]/[mpltweak] 前缀）')
-    check('§11[P2-10] 汇总行的**精确文本 + 计数**（删掉汇总必红）',
-          _want10 in _e10, _e10[-300:])
+    if _HAS_GUI_BACKEND:
+        check('§11[P2-10] 脚本自己的 stderr 原样保留（不吞）',
+              _rc10 == 0 and 'script-noise-1' in _e10 and 'script-noise-2' in _e10,
+              _e10[-300:])
+        check('§11[P2-10] 汇总行的**精确文本 + 计数**（删掉汇总必红）',
+              _want10 in _e10, _e10[-300:])
+    else:
+        # t114：无后端分支 —— 产品**如实**返回 4 并给出无头提示（不许静默 rc=0）。
+        check('§11[P2-10]（无后端）launch --dry-run 如实返回 4（不是静默 rc=0）',
+              _rc10 == 4, (_rc10, _e10[-200:]))
+        check('§11[P2-10]（无后端）stderr 含无头提示（说清为什么开不了窗）',
+              ('找不到可用的图形后端' in _e10) or ('no usable' in _e10),
+              _e10[-200:])
 
 
 # ---------------------------------------------------------------------------
