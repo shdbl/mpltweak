@@ -131,12 +131,16 @@ def _rel_time(path: str) -> str:
         return '?'
 
 
+    # 【不许 i18n 的显式例外 · t85】预览/写回里回显的那行
+    # `-# 本块由 mpltweak 自动生成于 …（…勿删上下两行标记）` 是 **writeback 的
+    # 块标记哨兵**（写进用户源码、且是幂等替换锚点，t63 已定案必须保持 zh），
+    # 因此 en 下允许它仍是中文；i18n 棘轮请把它登记为豁免。
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog='mpltweak revert',
-        description='把脚本回退到备份里的状态（默认用固定名 '
+        description=_msg.t_ui('把脚本回退到备份里的状态（默认用固定名 '
                     '.tweak_params/<脚本名>.tweak.bak；该备份首份优先 → 通常是'
-                    '你第一次改这张图之前的原件）')
+                    '你第一次改这张图之前的原件）'))
     ap.add_argument('script')
     ap.add_argument('--params', default=None, help='参数文件（默认 .tweak_params/<脚本>.json）')
     ap.add_argument('--write', action='store_true',
@@ -151,7 +155,7 @@ def main(argv=None) -> int:
     if not os.path.exists(script):
         if args.json:
             _msg.fail_json('file_not_found', 'script not found: %s' % script)
-        sys.stderr.write('[revert] 找不到脚本: %s\n' % script)
+        sys.stderr.write(_msg.t_ui('[revert] 找不到脚本: %s\n') % script)
         return 2
     params_path = params.params_path(script, args.params)
     backup = backup_path(script, params_path)
@@ -163,17 +167,17 @@ def main(argv=None) -> int:
             # （长路径下 pid 副本写不出来时就是这个现场，语料复核 A/B 实测：
             #  深目录 pid 路径 261 > MAX_PATH → 副本 0 个 → --first 回不到原件）。
             _d = writeback._backup_dir(script, params_path)
-            _m = ('没有可用的 pid 备份（%s 下没有 `<脚本名>.tweak.<pid>.bak`）：'
+            _m = (_msg.t_ui('没有可用的 pid 备份（%s 下没有 `<脚本名>.tweak.<pid>.bak`）：'
                   '无法回到**最早**状态。\n'
                   '  · 常见原因：备份目录路径过长（Windows MAX_PATH 260），'
                   'pid 副本没写出来 —— 本次写回会给出相应 warning。\n'
                   '  · 固定名备份回到的是它建立那一刻的原文（通常是你第一次改'
                   '这张图之前），不要拿它当 --first 用；只想要这个默认回退，'
-                  '请去掉 --first。'
+                  '请去掉 --first。')
                   % _d)
             if args.json:
                 _msg.fail_json('no_first_backup', _m)
-            sys.stderr.write('[revert] %s\n' % _m)
+            sys.stderr.write(_msg.t_ui('[revert] %s\n') % _m)
             return 2
         backup = _first
     if not os.path.exists(backup):
@@ -192,12 +196,12 @@ def main(argv=None) -> int:
         return rc
 
     if not os.path.exists(backup):
-        msg = ('还没有可回退的备份：%s\n'
+        msg = (_msg.t_ui('还没有可回退的备份：%s\n'
                '  revert 只能回退"做过 mpltweak apply --write 的脚本"——'
-               '备份是写回时留下的写回前原文。' % backup)
+               '备份是写回时留下的写回前原文。') % backup)
         if args.json:
             _msg.fail_json('no_backup', msg)
-        sys.stderr.write('[revert] %s\n' % msg)
+        sys.stderr.write(_msg.t_ui('[revert] %s\n') % msg)
         return 2
 
     cur_text = _read_text(script)
@@ -208,7 +212,7 @@ def main(argv=None) -> int:
                      'backup': backup, 'ok': True, 'changed': False,
                      'diff': {'added': 0, 'removed': 0}, 'lines': [],
                      'written': False},
-                    ['已一致：%s 与备份内容相同（没有可回退的写回）。'
+                    [_msg.t_ui('已一致：%s 与备份内容相同（没有可回退的写回）。')
                      % os.path.basename(script)])
 
     added, removed, show = _diff_summary(cur_text, bak_text)
@@ -225,25 +229,25 @@ def main(argv=None) -> int:
         'lines': show,
         'written': False,
     }
-    human = ['回退预览：%s  ←  %s（备份于 %s）'
+    human = [_msg.t_ui('回退预览：%s  ←  %s（备份于 %s）')
              % (os.path.basename(script), backup, _rel_time(backup)),
-             '  可逆范围：本次用的是%s —— 默认回退用**固定名**备份，它**首份优先**'
+             _msg.t_ui('  可逆范围：本次用的是%s —— 默认回退用**固定名**备份，它**首份优先**'
              '（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图'
              '之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 '
-             '--first'
-             % ('最早一份专属副本（最早那次写回之前）'
-                if args.first else '固定名备份（它建立那一刻的原文）'),
+             '--first')
+             % (_msg.t_ui('最早一份专属副本（最早那次写回之前）')
+                if args.first else _msg.t_ui('固定名备份（它建立那一刻的原文）')),
              # added = unified_diff(current → backup) 的 '+' 行 = **会被恢复**的行；
              # removed = '-' 行 = 会被删掉的行。这两个参数曾经写反：块写回后
              # 当前 40 行 / 备份 9 行时打印成"将改回 31 行、去掉 0 行"（独立审阅 F3）。
-             '  将恢复 %d 行、删除 %d 行：' % (added, removed)]
+             _msg.t_ui('  将恢复 %d 行、删除 %d 行：') % (added, removed)]
     human += ['    ' + ln for ln in show]
     if len(show) >= MAX_DIFF_LINES:
         human.append('    …（只显示前 %d 行差异）' % MAX_DIFF_LINES)
 
     if not args.write:
-        human += ['', '  这是预览，你的代码没有被改动。确认回退：'
-                      'mpltweak revert %s --write' % os.path.basename(script)]
+        human += ['', _msg.t_ui('  这是预览，你的代码没有被改动。确认回退：'
+                      'mpltweak revert %s --write') % os.path.basename(script)]
         return _out(payload, human)
 
     lock = None
@@ -254,13 +258,13 @@ def main(argv=None) -> int:
         payload.update({'ok': False, 'error': str(e)})
         if args.json:
             _msg.emit_json(payload)
-        sys.stderr.write('[revert] 拿不到写回锁：%s\n' % e)
+        sys.stderr.write(_msg.t_ui('[revert] 拿不到写回锁：%s\n') % e)
         return 1
     except Exception as e:                                  # noqa: BLE001
         payload.update({'ok': False, 'error': str(e)})
         if args.json:
             _msg.emit_json(payload)
-        sys.stderr.write('[revert] 拿不到写回锁：%s\n' % e)
+        sys.stderr.write(_msg.t_ui('[revert] 拿不到写回锁：%s\n') % e)
         return 1
     try:
         keep = _snapshot_current(script, params_path)
@@ -270,14 +274,14 @@ def main(argv=None) -> int:
             payload.update({'ok': False, 'error': '写文件失败: %s' % e})
             if args.json:
                 _msg.emit_json(payload)
-            sys.stderr.write('[revert] 写文件失败: %s（原文件未改动）\n' % e)
+            sys.stderr.write(_msg.t_ui('[revert] 写文件失败: %s（原文件未改动）\n') % e)
             return 1
         # 回退后脚本比参数新 → 下次开窗会拒绝套用旧参数（防止静默覆盖）。
         # 想接着上次调，加 --force-resume。这里只把这个事实告诉用户。
-        human += ['', '√ 已回退：%s' % script,
-                  '  回退前的那份留档：%s（再回退一次就回到这里）' % keep,
-                  '  提示：脚本比参数新了，下次开窗不会自动套用旧参数；'
-                  '确要接着调加 --force-resume']
+        human += ['', _msg.t_ui('√ 已回退：%s') % script,
+                  _msg.t_ui('  回退前的那份留档：%s（再回退一次就回到这里）') % keep,
+                  _msg.t_ui('  提示：脚本比参数新了，下次开窗不会自动套用旧参数；'
+                  '确要接着调加 --force-resume')]
         payload.update({'written': True, 'revert_bak': keep})
         return _out(payload, human)
     finally:

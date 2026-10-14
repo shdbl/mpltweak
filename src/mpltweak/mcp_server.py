@@ -212,6 +212,9 @@ def main(argv=None) -> int:
         from . import messages as _msg
         sys.stderr.write('%s\n       (%s)\n' % (_msg.t('mcp_no_mcp_pkg'), e))
         return 2
+    # 【不许 i18n 的显式例外 · t78】这条启动行属于**协议/启动面**：
+    # 实测把它包进 messages 的语言表后 MCP 握手即断（test_mcp 红）。
+    # 将来做 i18n 棘轮时请把本行登记为豁免，不要"顺手翻掉"。
     sys.stderr.write('[mcp] mpltweak MCP server 已启动（stdio）\n')
     mcp.run()
     return 0

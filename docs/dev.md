@@ -37,3 +37,9 @@ src/mpltweak/
 
 `toolbox.py` 也可作**嵌入 API**（`from mpltweak.toolbox import gaitu`），
 但主推 CLI —— 用户脚本里不该出现本工具的任何痕迹。
+
+### `doctor` 的选项口径（t91）
+
+- `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
+- **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。
+- `-h` / `--help` ⇒ rc=0，打印 doctor 用法。

@@ -342,8 +342,21 @@ def main():
     #   第 0 张处理 → 走 README 主推的 agent 闭环时，参数会静默落到**另一张图**上，
     #   还 rc=0、"✓ 语义验证通过"、零警告。这条用例就是把它钉死。
     print('§8 多图闭环：fig_index 必须贯穿 describe → apply')
-    t8 = os.path.join(ROOT, 'tests', 'twofig_tmp.py')
-    pdir8 = os.path.join(ROOT, 'tests', '.tweak_params')
+    # t53：夹具**不许**写在被扫描的 tests/ 里。tests/test_hygiene.py 的 AST 调用点棘轮
+    # （audit_child_calls → _iter_py_files：先列出、再逐个打开读）会扫 tests/**/*.py；
+    # 本用例的 finally 在"列到之后、读到之前"把夹具删掉，就产生
+    # `FileNotFoundError: tests\twofig_tmp.py` —— V2 在 en 臂全量里实测到的那次偶发红，
+    # 原地重跑 2 次又全绿。这类竞态会让以后每次全量复核都不可信，必须从源头掐掉。
+    # 挪进独立临时目录后，tests/ 里不再出现"会消失的 .py"（与 test_hygiene 的
+    # _SKIP_DIR_PREFIXES 同一个思路：不让瞬时产物进扫描面；但那条只挡**目录**，
+    # 挡不住这个顶层文件，所以必须在夹具侧改）。
+    # 注意两件事：①脚本与它的 `.tweak_params/<stem>.json` 必须**同目录**（apply 不带
+    # --params 时按 params.canonical_path 从脚本目录自动发现），故两者一起挪；
+    # ②脚本里 savefig('a.png') 是相对路径，而 CLI 会 chdir 到脚本目录 ⇒ 图也落在
+    # 临时目录里，rmtree 一并收走（旧代码删的就是 tests/a.png、tests/b.png）。
+    tdir8 = tempfile.mkdtemp(prefix='mpltweak_twofig_')
+    t8 = os.path.join(tdir8, 'twofig_tmp.py')
+    pdir8 = os.path.join(tdir8, '.tweak_params')
     os.makedirs(pdir8, exist_ok=True)
     par8 = os.path.join(pdir8, 'twofig_tmp.json')
     try:
@@ -391,7 +404,11 @@ def main():
     except Exception as e:                                        # noqa: BLE001
         check(False, '§8 执行', e)
     finally:
-        for _p in (t8, par8, os.path.join(ROOT, 'tests', 'a.png'),
+        # t53：夹具、它的 .tweak_params、以及脚本 savefig 出的 a.png / b.png 全在
+        # 临时目录里 ⇒ 整棵删掉，tests/ 下零残留。仍按老习惯兜一遍那两个 png 路径：
+        # 万一将来有人把 cwd 改回仓库根，也不至于把残留丢进被扫描的目录。
+        shutil.rmtree(tdir8, ignore_errors=True)
+        for _p in (os.path.join(ROOT, 'tests', 'a.png'),
                    os.path.join(ROOT, 'tests', 'b.png')):
             try:
                 os.remove(_p)
@@ -1326,6 +1343,39 @@ print("RESULT " + "|".join([
         check(f6.get('attribution') == 'script_needs_args',
               '⑥英文分支的 attribution 取值与中文一致（机器可读值不翻译）',
               f6.get('attribution'))
+        # ⑥b t65：**中文**分支也要有归因（过去只在 zh 下顺手成立，没有断言守着），
+        #     且分类判据必须是 writeback 的**稳定信号**而不是 err 文案 —— 后者会随
+        #     界面语言变（t63 把 err 翻成 en 之后，旧的中文前缀匹配在 en 下永不成立
+        #     ⇒ 归因分类静默失效、attribution 变 null）。
+        #     反向验证（teeth）：把 apply._is_rerun_failure 改回按中文前缀匹配
+        #     ⇒ 下面第 2 条（"只给文案、不给信号 → 不分类"）与 en 的 §⑥ 必红。
+        _s6z = _mk21('attr_needs_args_zh.py',
+                     _head21 + "import sys\ndata = sys.argv[1]\n"
+                     "fig.savefig('o.png')\n", _move21)
+        _rc6z, f6z, e6z = _apply21(_s6z, extra={'MPLTWEAK_LANG': 'zh'})
+        check(f6z.get('attribution') == 'script_needs_args'
+              and '归因：脚本需要命令行参数' in e6z,
+              '⑥b中文分支同样有归因（attribution + 人读归因行）',
+              (f6z.get('attribution'), e6z[-200:]))
+        from mpltweak import apply as _apply65
+        from mpltweak import writeback as _wb65
+        from mpltweak import verify as _v65
+        check(_apply65._is_rerun_failure({'verify_fail_kind': _wb65.VF_HEADLESS})
+              and _apply65._is_rerun_failure({'verify_fail_kind': _wb65.VF_AFTER_WRITE})
+              and _apply65._is_rerun_failure({'verify_fail_kind': _wb65.VF_ANCHORS})
+              and not _apply65._is_rerun_failure({'verify_fail_kind': _wb65.VF_SEMANTIC})
+              and not _apply65._is_rerun_failure({}),
+              '⑥b分类判据=稳定信号（semantic/缺信号都不算重跑失败）')
+        check(not _apply65._is_rerun_failure(
+                  {'err': '脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），'
+                          '无法用 Agg 验证这次写回是否可用'}),
+              '⑥b只给文案、不给信号 ⇒ 不分类（判据不再依赖任何语言的文案）')
+        _tail65 = _apply65._classify_verify_failure(
+            {'verify_fail_kind': _wb65.VF_AFTER_WRITE,
+             'verify_fail_tail': 'ModuleNotFoundError: No module named t11_gone_pkg'},
+            None, ())
+        check(_tail65 == (_v65.VERIFY_FAIL_CANNOT_RUN, 'missing_dependency'),
+              '⑥b归因证据来自 verify_fail_tail（不再从 err 里切中文标记）', _tail65)
 
         # ---- ⑦ 纯函数判据（不跑子进程）：保守性 + 不误报 tool_bug ----
         from mpltweak import verify as _verify21
@@ -1579,6 +1629,153 @@ print("RESULT " + "|".join([
         check(False, '§22 执行', _e)
     finally:
         shutil.rmtree(_tmp22, ignore_errors=True)
+
+    # ------------------------------------------------------------------
+    # §23 B9 + B4（t33 / V1 的 F4+F5）：apply --json 的**每一条失败出口**都带稳定、
+    #     可分支的 error_code；`MPLTWEAK_LANG=en` 下人读输出**逐字节全 ASCII**。
+    # ------------------------------------------------------------------
+    # 背景（V1 实测，as-of 99fe55b）：只有"参数 JSON 语法坏"那条出口有 error_code；
+    # 脚本不存在 / 没有参数文件 / 互斥 flag 三条**缺** error_code，参数缺 version 那条
+    # 连 error 键都没有。B4 侧：en 下 `# p.json  （第 1 张图）`、`参数文件:`、`脚本:`、
+    # `画布:`、`  正在验证（…）` 等仍是硬编码中文（t33 改前实测 201 行非 ASCII）。
+    # 判据（本用例钉住的就是它）：四条失败路径各带稳定 error_code（值域见 apply.py 的
+    # _FAIL_ERROR_CODE 注释）；**成功载荷不加**这个键（既有键名/语义、退出码都不许变）；
+    # en 下人读输出全 ASCII（固定文案已全部走 messages 表 + 插入块注释语言化）。
+    # 反向验证（teeth）：把 `_emit_json` 里的 error_code 落键那两行删掉 ⇒ §23①-④ 必红。
+    _tmp23 = tempfile.mkdtemp(prefix='mpltweak_t23_')
+    try:
+        with open(os.path.join(_tmp23, 'fig.py'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write(DEMO)          # 已有夹具：Agg + add_axes（原位可写）+ savefig
+        with open(os.path.join(_tmp23, 'p.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            json.dump({'version': _params.SCHEMA_VERSION, 'script': 'fig.py',
+                       'fig_index': 0, 'n_figs': 1,
+                       'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]},
+                      _f, ensure_ascii=False)
+        with open(os.path.join(_tmp23, 'p_bad.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            json.dump({'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'axes': []}, _f, ensure_ascii=False)
+        # 参数 JSON 语法坏（t56 之前撞顶层 guard 变 tool_bug；现在归 bad_params）
+        with open(os.path.join(_tmp23, 'p_badjson.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write('{ this is not json')
+        # t56 的真实坏 JSON 三态 + 顶层非对象 + 编码坏（§23⑦/⑧）
+        with open(os.path.join(_tmp23, 'p_trunc.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write('{"version": 4, "script": "fig.py", "fig_index": 0,')
+        with open(os.path.join(_tmp23, 'p_comma.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write('{"version": 4, "script": "fig.py", "fig_index": 0, '
+                     '"n_figs": 1, "axes": [],}')
+        with open(os.path.join(_tmp23, 'p_toplist.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write('[1, 2, 3]')
+        with open(os.path.join(_tmp23, 'p_enc.json'), 'wb') as _f:
+            _f.write(b'\xff\xfe\x00\x00 not decodable')
+        _env23 = {'MPLBACKEND': 'Agg', 'MPLTWEAK_LANG': 'en',
+                  'PYTHONIOENCODING': 'utf-8'}
+
+        def _j23(*args):
+            _rc, _o, _e = run(*args, cwd=_tmp23, env=_env23)
+            try:
+                return _rc, json.loads(_o), _o, _e
+            except Exception:                                   # noqa: BLE001
+                return _rc, {}, _o, _e
+
+        # ① 脚本不存在 → file_not_found（与 describe/check/revert 同名，跨命令可统一分支）
+        _rc, _d, _o, _e = _j23('apply', 'nope.py', '--params', 'p.json', '--json')
+        check(_rc == 2 and _d.get('error_code') == 'file_not_found',
+              '§23① 脚本不存在：rc=2 + error_code=file_not_found',
+              (_rc, _d.get('error_code'), sorted(_d)))
+        # ② 没有参数文件 → no_params
+        _rc, _d, _o, _e = _j23('apply', 'fig.py', '--json')
+        check(_rc == 2 and _d.get('error_code') == 'no_params',
+              '§23② 没有参数文件：rc=2 + error_code=no_params',
+              (_rc, _d.get('error_code'), sorted(_d)))
+        # ③ 互斥 flag → mutually_exclusive_flags（rc 仍是 2：既有退出码不许变）
+        _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', 'p.json', '--write',
+                               '--no-verify', '--verify-fast', '--json')
+        check(_rc == 2 and _d.get('error_code') == 'mutually_exclusive_flags',
+              '§23③ --no-verify 与 --verify-fast 互斥：rc=2 + error_code',
+              (_rc, _d.get('error_code'), sorted(_d)))
+        # ④ 参数文件缺 version → bad_params（旧版连 error 键都没有；逐文件 reason 仍在）
+        _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', 'p_bad.json', '--write',
+                               '--json')
+        check(_rc == 2 and _d.get('error_code') == 'bad_params'
+              and bool(_d.get('files'))
+              and _d['files'][0].get('reason') == 'bad_params',
+              '§23④ 参数缺 version：rc=2 + error_code=bad_params（files[].reason 仍在）',
+              (_rc, _d.get('error_code'), _d.get('files', [{}])[0].get('reason')))
+        # ⑤ 成功载荷**不许**多出 error_code（键名/语义一字不变）
+        _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', 'p.json', '--write',
+                               '--json')
+        check(_rc == 0 and _d.get('ok') is True and 'error_code' not in _d,
+              '§23⑤ 成功载荷不加 error_code（既有键集/语义不变）',
+              (_rc, _d.get('ok'), sorted(_d)))
+        # ⑥ B4：en 下人读输出逐字节全 ASCII。
+        #    t33 收掉 apply/writeback 侧；t55 把 **params.py 的校验文案**也搬进
+        #    messages 表 ⇒ 原来被排除的「参数文件缺 version」那条路径现在也纳入断言
+        #    （它正是 V1-F5 的最后 5 行缺口；回归钉在这里，别再放宽回去）。
+        _bat23 = [('preview', ['apply', 'fig.py', '--params', 'p.json']),
+                  ('dry-run', ['apply', 'fig.py', '--params', 'p.json', '--write',
+                               '--dry-run']),
+                  ('write', ['apply', 'fig.py', '--params', 'p.json', '--write']),
+                  ('mutex', ['apply', 'fig.py', '--params', 'p.json', '--write',
+                             '--no-verify', '--verify-fast']),
+                  ('no params', ['apply', 'fig.py']),
+                  ('script missing', ['apply', 'nope.py', '--params', 'p.json']),
+                  ('params bad (no version)',
+                   ['apply', 'fig.py', '--params', 'p_bad.json', '--write']),
+                  ('params bad --json',
+                   ['apply', 'fig.py', '--params', 'p_bad.json', '--write',
+                    '--json']),
+                  ('params bad JSON',
+                   ['apply', 'fig.py', '--params', 'p_badjson.json', '--write'])]
+        for _nm23, _args23 in _bat23:
+            _rc, _o, _e = run(*_args23, cwd=_tmp23, env=_env23)
+            _bad23 = [l for l in (_o + _e).splitlines()
+                      if l.strip() and not l.isascii()]
+            check(not _bad23,
+                  '§23⑥ en 下「%s」的人读输出全 ASCII' % _nm23, _bad23[:2])
+        # ⑦ t56：参数文件**自己坏了**（截断 / 多余逗号 / 编码解不出来）必须归
+        #    bad_params（rc 仍 2），**绝不能**冒到顶层 guard 被报成
+        #    internal_error + attribution='tool_bug' —— 判不出原因时不许猜"工具 bug"，
+        #    那会把用户吓去报 issue，而不是修自己的参数文件。
+        #    反向验证（teeth）：把 apply 里那个 except 分支删掉 ⇒ 本组必红。
+        for _nm7, _par7 in (('截断', 'p_trunc.json'),
+                            ('多余逗号', 'p_comma.json'),
+                            ('编码坏', 'p_enc.json')):
+            _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', _par7,
+                                   '--write', '--json')
+            check(_rc == 2 and _d.get('error_code') == 'bad_params'
+                  and _d.get('attribution') != 'tool_bug'
+                  and bool(_d.get('files'))
+                  and _d['files'][0].get('reason') == 'bad_params',
+                  '§23⑦ 坏 JSON（%s）归 bad_params，不是 tool_bug' % _nm7,
+                  (_rc, _d.get('error_code'), _d.get('attribution'),
+                   _d.get('files', [{}])[0].get('reason')))
+        # ⑧ t56 附带实测发现：**顶层非对象**时 params.validate/_errors 返回的是
+        #    **一个字符串**（签名写的是 List[str]），旧 apply 于是
+        #    ① `for prob in ...` **逐字符**打印（实测 541 行，每行一个字符）；
+        #    ② `'; '.join(_errs)` 把字符用 "; " 串起来 ⇒ JSON 里的 err 是乱码。
+        #    调用侧归一成 list 后：结构警告只剩 1 行、err 是一句完整的话。
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p_toplist.json',
+                          '--write', env=_env23, cwd=_tmp23)
+        _w7 = [l for l in _o.splitlines() if 'structure warning' in l]
+        check(_rc == 2 and len(_w7) == 1,
+              '§23⑧ 顶层非对象：结构警告只有 1 行（旧版逐字符打了 541 行）',
+              (_rc, len(_w7)))
+        _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', 'p_toplist.json',
+                               '--write', '--json')
+        _err7 = str((_d.get('files') or [{}])[0].get('err') or '')
+        check(_d.get('error_code') == 'bad_params' and len(_err7) > 60
+              and _err7.count('; ') < 3,
+              '§23⑧ JSON 里的 err 是一句完整的话（旧版是逐字符用 "; " 拼的乱码）',
+              _err7[:70])
+    finally:
+        shutil.rmtree(_tmp23, ignore_errors=True)
 
     print()
     if _fails:

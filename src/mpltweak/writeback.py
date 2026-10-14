@@ -88,6 +88,27 @@ BAD_PARAMS = 'bad_params'
 # 'external_modified'；机器可读字段见 _external_result（reason + external_modified）。
 EXTERNAL_MODIFIED = 'external_modified'
 
+# ---------------------------------------------------------------------------
+# t65：**验证重跑失败**的稳定信号（给 apply 的归因分类用）。
+#
+# 为什么要有它：apply 过去按 `res['err']` 的**中文前缀**反推"这是不是重跑失败"
+# （'脚本本身在无头环境跑不通' / '所有锚点写回后 Agg 重跑均失败' / '写回后脚本跑不通'）。
+# t63 把 err 文案翻成 en 之后，en 下前缀永不成立 ⇒ 归因分类静默失效
+# （人读归因行消失、`--json` 的 attribution 变 null）——"判定靠文案"的老坑。
+# 现在由 writeback 给出**语言无关**的枚举，apply 只认这个信号（不匹配任何文案）。
+# 取值：
+#   VF_HEADLESS      原脚本自己就跑不通（缺数据/依赖/要 GUI）→ 验证证明不了写回
+#   VF_AFTER_WRITE   写回后跑不通（原脚本单独可跑通）
+#   VF_ANCHORS       所有锚点写回后 Agg 重跑均失败（原脚本单独可跑通）
+#   VF_SEMANTIC      语义回比不一致（**不是**重跑失败：脚本能跑通，只是目标值没达标）
+# `verify_fail_tail` 同步给出**已抽好的 stderr 尾部**（过去 apply 靠
+# 'stderr 尾部：' 这个中文标记从 err 里切）—— 于是 apply 侧再无任何文案依赖。
+# ---------------------------------------------------------------------------
+VF_HEADLESS = 'headless_impossible'
+VF_AFTER_WRITE = 'after_write_broken'
+VF_ANCHORS = 'anchors_all_failed'
+VF_SEMANTIC = 'semantic_mismatch'
+
 
 
 FIG_FACTORIES = ('figure', 'subplots', 'subplot_mosaic')
@@ -351,9 +372,7 @@ def _axis_index_beyond(tree, data) -> str:
         if isinstance(idx, bool) or not isinstance(idx, int):
             continue                      # 类型问题由 params.validate_errors 报
         if idx >= bound:
-            return ('axes[%d].index=%d 越界：这份参数里最多只有 %d 个轴槽'
-                    '（参数自报 %d 条 / 脚本里可寻址 %d 个），轴序号是 0 基。'
-                    '请用 `mpltweak describe <脚本>` 重新导出参数。'
+            return (_msg.t_wb('axes[%d].index=%d 越界：这份参数里最多只有 %d 个轴槽（参数自报 %d 条 / 脚本里可寻址 %d 个），轴序号是 0 基。请用 `mpltweak describe <脚本>` 重新导出参数。') 
                     % (i, idx, bound, len(axes), slots))
     return ''
 
@@ -372,10 +391,11 @@ def _fig_index_beyond(tree, data) -> str:
     if not isinstance(fi, int) or isinstance(fi, bool):
         return ''
     if fi < 0:
-        return ('fig_index=%d 为负：图号是 0 基（-1 会被 Python 当成"最后一张"，'
-                '静默写到别的图上）；拒写。' % fi)
+        return (_msg.t_wb('fig_index=%d 为负：图号是 0 基（-1 会被 Python 当成"最后一张"，静默写到别的图上）；拒写。') % fi)
     try:
-        n_static = count_figures(tree)
+        # t54：`fig.subplots(...)` 是"在这张图上建轴"、不新建 figure —— 数成 2 张会让
+        # fig_index=1 这种**真越界**的图号混过守卫（运行期只有 1 张）。
+        n_static = count_figures(tree, figure_only=True)
     except (SyntaxError, ValueError, AttributeError, TypeError):
         n_static = 0
     n_rec = data.get('n_figs')
@@ -383,18 +403,96 @@ def _fig_index_beyond(tree, data) -> str:
         n_rec = 0
     bound = max(n_static, n_rec)
     if bound >= 1 and fi >= bound:
-        return ('fig_index=%d 越界：脚本里只有 %d 张图'
-                '（参数自报 %s），图号是 0 基。请用 '
-                '`mpltweak describe <脚本> --all-figs` 重新导出。'
-                % (fi, bound, n_rec or '未记录'))
+        return (_msg.t_wb('fig_index=%d 越界：脚本里只有 %d 张图（参数自报 %s），图号是 0 基。请用 `mpltweak describe <脚本> --all-figs` 重新导出。') 
+                % (fi, bound, n_rec or _msg.t_wb('未记录')))
     return ''
 
 
-def count_figures(tree):
-    """脚本里 figure/subplots 调用次数（判断多图歧义）。"""
-    return sum(1 for n in ast.walk(tree)
-               if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-               and n.func.attr in FIG_FACTORIES)
+def _script_dpi(tree) -> float:
+    '''脚本里能**静态**看出的 figure dpi（看不出来按 100 —— 参数规范的设计口径）。
+
+    P0-1 止损（t66）用：``figsize_px`` 是"英寸 × fig.dpi"的像素数，所以把 px 折算回英寸
+    需要这个 dpi。覆盖三种写法：建图调用 ``dpi=`` 关键字、``fig.dpi = N``、``rcParams
+    ['figure.dpi'] = N``。看不出来就按 100（``params.py`` 顶部声明的设计口径）。
+    '''
+    dpi = 100.0
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            for kw in n.keywords:
+                if kw.arg == 'dpi' and isinstance(kw.value, ast.Constant) \
+                        and isinstance(kw.value.value, (int, float)) \
+                        and not isinstance(kw.value.value, bool):
+                    dpi = float(kw.value.value)
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant) \
+                and isinstance(n.value.value, (int, float)) \
+                and not isinstance(n.value.value, bool):
+            for t in n.targets:
+                if isinstance(t, ast.Attribute) and t.attr == 'dpi':
+                    dpi = float(n.value.value)
+                elif isinstance(t, ast.Subscript) \
+                        and isinstance(t.value, ast.Attribute) \
+                        and t.value.attr == 'rcParams':
+                    sl = t.slice
+                    if isinstance(sl, ast.Constant) and sl.value == 'figure.dpi':
+                        dpi = float(n.value.value)
+    return dpi
+
+
+def _figsize_inconsistent(tree, data) -> str:
+    '''P0-1 止损（t66）：``figsize_in`` 与 ``figsize_px``/脚本 dpi **成倍**矛盾 → 拒写理由。
+
+    报告的现场：``figsize_px=[1500, 950]`` 配 ``figsize_in=[7.5, 4.75]``（**正好 1/2**）
+    —— "dpi 换算错一倍"，写回会把用户的画布永久减半。判据**只拦成倍数**（1.5 / 2 / 3 倍，
+    任一方向）：参数 schema 里没有 dpi 键，只能按脚本里能静态看出的 dpi 折算，收窄到
+    "倍数"才不会误拒其它合法的尺寸差异（宁可少拦，不可误拒）。
+    '''
+    px, inch = data.get('figsize_px'), data.get('figsize_in')
+    if not (isinstance(px, (list, tuple)) and len(px) == 2
+            and isinstance(inch, (list, tuple)) and len(inch) == 2):
+        return ''
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+               for v in list(px) + list(inch)):
+        return ''
+    dpi = _script_dpi(tree)
+    for k in range(2):
+        exp = float(px[k]) / dpi
+        if exp <= 0:
+            continue
+        r = float(inch[k]) / exp
+        for f in (1.5, 2.0, 3.0):
+            if abs(r - f) <= 0.02 * f or abs(r - 1.0 / f) <= 0.02 / f:
+                return _msg.t_wb(
+                    'figsize 参数自相矛盾：figsize_px=%s 按 dpi=%s 折算应是 %s in，'
+                    '但 figsize_in=%s（差成倍）—— 这通常来自"dpi 换算错一倍"，写回会把'
+                    '画布永久改小/改大。请用 `mpltweak describe <脚本>` 重新导出参数，'
+                    '或手工修正 figsize_in。') % (
+                        list(px), dpi,
+                        [round(float(px[0]) / dpi, 4),
+                         round(float(px[1]) / dpi, 4)], list(inch))
+    return ''
+
+
+def count_figures(tree, figure_only=False):
+    """脚本里 figure/subplots 调用次数（判断多图歧义）。
+
+    ``figure_only``（t51，**默认 False = 既有口径一字不变**）：只数**真的新建 figure** 的
+    调用 —— ``fig.subplots(2, 2)`` 这类"Figure 方法建轴"不算新图（判据复用 t36 的
+    ``_is_axes_on_existing_figure``：接收者可证是 Figure 才算；``plt.subplots(...)`` 与
+    证不出的接收者照旧算）。形状 ``fig = plt.figure(); axs = fig.subplots(2,2);
+    a,b,c,d = axs.ravel()`` 过去被数成 **2** 张（运行期只有 1 张），于是块路径输出里出现
+    **不成立**的「脚本创建了 2 处图（运行期共 1 张），改用 plt.gcf() 定位第 1 张」、锚点退到
+    "最后一张 savefig"、``reason`` 停在 ``best_effort`` —— 拿假前提建议用户改自己的代码
+    （t51 修）。**只给块路径那两处**（:4582 的越界拒写、:4603 的多图分支）传 True：
+    原位路径（:1315 / :2851）与 ``_fig_index_beyond``（:378）保持既有口径，另案处理。
+    """
+    calls = [n for n in ast.walk(tree)
+             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+             and n.func.attr in FIG_FACTORIES]
+    if figure_only:
+        _fig_names = _fig_receiver_names(tree)
+        calls = [n for n in calls
+                 if not _is_axes_on_existing_figure(n, _fig_names)]
+    return len(calls)
 
 
 def find_mappable_names(tree):
@@ -454,9 +552,23 @@ def axis_var_index(tree):
 
       fig, ax = plt.subplots(...)          → ax → 0
       fig, axes = plt.subplots(1, 2, ...)  → axes 记为"轴序列名"
-      ax1, ax2 = axes / axes.flat|ravel|flatten()  → ax1→0, ax2→1
+      ax1, ax2 = axes / axes.flat / axes.ravel() / axes.flatten()  → ax1→0, ax2→1
       ax2 = axes[1]                        → ax2 → 1
       ax = fig.add_subplot(...) / fig.add_axes([...]) / plt.subplot(...) → 按创建序
+
+    ★ t52（2026-10-14，**已支持调用形式**）：``axes.ravel()`` / ``axes.flatten()`` 这两种
+    **调用**写法过去认不出来（分支②只匹配属性 ``ast.Attribute``；``.flat`` 是属性、
+    ``.ravel()`` 是 ``ast.Call`` —— 属性元组里虽写了 'ravel'/'flatten'，那只覆盖"当属性用"
+    的写法，拿不到数组）。后果是**静默错目标**：``fig, axs = plt.subplots(2,2)`` +
+    ``a, b, c, d = axs.ravel()`` + 按轴给 clim/cmap 时，块会把第 2 张图的 clim/cmap 也写到
+    **第 1 个** mappable 上（``im0``），而验证层仍报 ``verified=True``/``rc=0``（写后运行期
+    真值：ax0 拿到 plasma、ax1 停在默认 viridis）。t37 取证 + t52 修：分支②改走 t10 的
+    ``_ravel_receiver``（**同一份判据**：无 args/keywords 的 ``.ravel()``/``.flatten()`` 与
+    属性 ``.flat`` 都认；证不出容器就不认）。修后实测：全池 1,837 份里本表变化 46 份、
+    ``mappable_by_axis``/``_needed_block_fields`` 变化 0；那 46 份真跑 = 块路径 46/46 逐字节
+    一致、原位路径 5 份 ``pending`` 多出 ``ax0.cmap``（源码字节相同）；合成形状的块目标由
+    ``im0`` 变 ``im1``、``reason`` 由 ``best_effort`` 变 ``ok``，写后真值 ax0=viridis /
+    ax1=plasma ✓ 各就各位。
     """
     seq_names = set()
     out: Dict[str, int] = {}
@@ -503,15 +615,18 @@ def axis_var_index(tree):
                 for k, e in enumerate(elts):               # ax1, ax2 = subplots(...)
                     if isinstance(e, ast.Name):
                         out.setdefault(e.id, k)
-    # ② 解包轴序列：ax1, ax2 = axes / axes.flat / axes.ravel()
+    # ② 解包轴序列：ax1, ax2 = axes / axes.flat / axes.ravel() / axes.flatten()
+    #    （t52：调用形式也认 —— 判据复用 t10 的 `_ravel_receiver`，与本文件其它
+    #    "ravel 解包"的识别口径**同一份实现**，不另造判据。）
     for node in assigns:
         v = node.value
         base = None
         if isinstance(v, ast.Name):
             base = v.id
-        elif (isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name)
-                and v.attr in ('flat', 'ravel', 'flatten')):
-            base = v.value.id
+        else:
+            _rv = _ravel_receiver(v)                  # `.flat` / `.ravel()` / `.flatten()`
+            if _rv is not None:
+                base = _rv
         if base not in seq_names:
             continue
         for elts in _elts(node):
@@ -927,8 +1042,16 @@ def edit_figsize(src, tree, figsize_in, fig_index=None):
             v = kw.value
             # 等值短路：源码里已经是这两个数 → 本次**没有任何改动**
             _have = _seq_lit_nums(v)
-            if (_have is not None
-                    and _num_close(_have[0], figsize_in[0])
+            if _have is None:
+                # P0（t88，t77 抓到）：源码 figsize **不是两个字面量数字**（变量 /
+                # 表达式 / 函数调用 / 环境变量）⇒ **绝不把它替换成字面量** —— 那会
+                # ① 抹掉用户的变量与表达式；② 把动态配置（`os.environ`）钉死，改掉
+                # 运行期行为；③ 让 `changes` 谎称用户改过 figsize。
+                # 如实**拒写该字段**：返回未编辑 ⇒ 调用方 `_fs_handled=False` ⇒
+                # `pending`/`inplace_needs_block` 披露 + 人话警告；其余字段照常写。
+                # （块通道是另一条允许的路：它**追加** `set_size_inches`，不改写表达式。）
+                return src, False
+            if (_num_close(_have[0], figsize_in[0])
                     and _num_close(_have[1], figsize_in[1])):
                 return src, False
             new_txt = _fmt_figsize(v, figsize_in)
@@ -1041,11 +1164,40 @@ def _find_tick_axis_call(tree, recv_name, axis, after_lineno=0,
     return found
 
 
-def _fig_span(tree, fig_index):
-    """第 fig_index 个 figure 的源码区间 [lo, hi)：本图创建行 → 下一张图创建行。"""
+def _is_axes_on_existing_figure(node, fig_names):
+    """``X.subplots(...)`` 里 ``X`` 可证是 Figure ⇒ 这是"在这张图上建轴"，**不是**新图。
+
+    t36：Figure 自己的 ``subplots()`` 直接返回轴数组（一个 figure 都不建）。判据只用
+    "接收者可被证明是 Figure"（``fig = plt.figure(...)`` / ``fig, axs = plt.subplots(...)``
+    的 fig —— 复用 t10 的 ``_fig_receiver_names``）：**证不出就保持旧口径**（仍算"下一张
+    图"的分界），宁可不认，也不把目标图区间算错。
+    """
+    return (getattr(node.func, 'attr', None) == 'subplots'
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in fig_names)
+
+
+def _fig_span(tree, fig_index, figure_only=False):
+    """第 fig_index 个 figure 的源码区间 [lo, hi)：本图创建行 → 下一张图创建行。
+
+    ``figure_only``（t36，**默认 False = 既有口径一字不变**）：
+      只把"真的在新建 figure"的调用当分界。``fig.subplots(2, 2)`` 这类"Figure 方法建轴"
+      过去也被算成一张新图 ⇒ 本图区间被截在那一行上，而 ``fig.subplots`` 自己也落在区间
+      外 ⇒ 块的建轴枚举（``_axes_binding_entries`` :3718，t36 起传 ``figure_only=True``）
+      一条轴都数不到 —— 形状 ``fig = plt.figure(); axs = fig.subplots(2,2);
+      a,b,c,d = axs.ravel()`` 于是永远 best_effort 拒写（t10 定位、t36 修）。
+      **其余 5 个调用点保持既有口径**（``figsize_already_ok`` :879、``_figure_axes_for_index``
+      :1103、``apply_inplace`` :1292、``_pos_literal_equal`` :1998、
+      ``_runtime_axes_count`` :3277）：一次只动块建轴枚举这一条路，避免"改建图调用口径"
+      波及既有原位/块判定。
+    """
     fig_calls = [n for n in ast.walk(tree)
                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                  and n.func.attr in FIG_FACTORIES]
+    if figure_only:
+        _fig_names = _fig_receiver_names(tree)
+        fig_calls = [n for n in fig_calls
+                     if not _is_axes_on_existing_figure(n, _fig_names)]
     fig_calls.sort(key=lambda n: (n.lineno, n.col_offset))
     if not (isinstance(fig_index, int) and 0 <= fig_index < len(fig_calls)):
         return 0, 10 ** 9
@@ -1269,7 +1421,9 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
     #    add_axes 节点）。单图脚本里 axis_var_index 的序号就是本图的轴序，补上变量
     #    映射，让 set_title/tick_params/grid 能原位改（pos 仍是网格位置、进 skipped）。
     #    多图脚本怕跨图错配，不补（字段会进 skipped 警告，不静默）。
-    if count_figures(tree) <= 1:
+    #    t54：这里必须用 `figure_only=True` —— `fig.subplots(...)` 不新建图，把它数成
+    #    第 2 张会让**单图**脚本被当成多图、白白跳过这段补映射（title/tick/grid 少改）。
+    if count_figures(tree, figure_only=True) <= 1:
         _rev: Dict[int, str] = {}
         for _nm, _i in (idx_map or {}).items():
             _rev.setdefault(_i, _nm)
@@ -1335,8 +1489,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
         if pos and a.get('is_colorbar'):
             skipped.append((i, 'pos', pos))
         elif pos and nm is not None and nm in host_names:
-            skipped.append((i, 'pos（该轴是 colorbar 的宿主，位置由 colorbar 决定，'
-                               '保持原样；拖 colorbar 轴可调，或 --style block）', pos))
+            skipped.append((i, _msg.t_wb('pos（该轴是 colorbar 的宿主，位置由 colorbar 决定，保持原样；拖 colorbar 轴可调，或 --style block）') , pos))
         elif pos and nm is not None:
             lst = addaxes.get(nm)
             # 字面量判定要认带符号写法（-0.01 → UnaryOp）：见 _is_num_literal
@@ -1347,7 +1500,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                 if all(_oks):
                     covered.setdefault(i, set()).add('pos')
                 else:
-                    skipped.append((i, 'pos（替换位置重叠，已跳过）', pos))
+                    skipped.append((i, _msg.t_wb('pos（替换位置重叠，已跳过）'), pos))
             else:
                 skipped.append((i, 'pos', pos))
         if nm is None:
@@ -1362,9 +1515,14 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
             # `skipped` 是空的 ⇒ needs_block=false ⇒ auto 不退块 ⇒ 报 `no_change`、
             # 文件一个字节没改（语料 A 场景 486 个可测里 238 个落这一类）。
             # 这里把这些字段**无条件**记进 skipped：宁可退块，也不静默丢。
+            # t99：**`cmap` 也必须在列** —— colorbar 轴同样走这一支（`var_for` 不收
+            # colorbar 轴 ⇒ nm is None），而 `cmap` 正是"参数写在 colorbar 轴上、mappable
+            # 挂在别的轴"时唯一表达不了的字段。旧实现漏了它 ⇒ 用户拿到的报告里
+            # 只有 `clim` 没有 `cmap`，属**静默少做**（t87 §107 polar_cb 实测）。
+            # 与 `clim` 同等待遇：原位路表达不了就**如实进 pending**，绝不允许既不做也不说。
             for field in ('title_fontsize', 'label_fontsize', 'label_fontsize_y',
                           'tick_fontsize', 'tick_fontsize_y', 'xlim', 'ylim',
-                          'xscale', 'yscale', 'clim'):
+                          'xscale', 'yscale', 'clim', 'cmap'):
                 if a.get(field) is not None:
                     skipped.append((i, field, a[field]))
             if a.get('grid') is not None:
@@ -1393,7 +1551,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                 if _add(kw.value, _num(val), (i, field), val):
                     covered.setdefault(i, set()).add(field)
                 else:
-                    skipped.append((i, field + '（替换位置重叠，已跳过）', val))
+                    skipped.append((i, field + _msg.t_wb('（替换位置重叠，已跳过）'), val))
             elif field not in covered.get(i, ()):
                 skipped.append((i, field, val))
         # ④ tick_params(labelsize=)：x/y 刻度字号分开写（T23，与 label 同构）。
@@ -1419,12 +1577,12 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                     if _add(_xkw.value, _num(_tx), (i, 'tick_fontsize'), _tx):
                         covered.setdefault(i, set()).add('tick_fontsize')
                     else:
-                        skipped.append((i, 'tick_fontsize（替换位置重叠，已跳过）',
+                        skipped.append((i, _msg.t_wb('tick_fontsize（替换位置重叠，已跳过）'),
                                         _tx))
                 if _add(_ykw.value, _num(_ty), (i, 'tick_fontsize_y'), _ty):
                     covered.setdefault(i, set()).add('tick_fontsize_y')
                 else:
-                    skipped.append((i, 'tick_fontsize_y（替换位置重叠，已跳过）',
+                    skipped.append((i, _msg.t_wb('tick_fontsize_y（替换位置重叠，已跳过）'),
                                     _ty))
             else:
                 if _tx is not None:
@@ -1446,7 +1604,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                     if _add(kw.value, _num(tf), (i, 'tick_fontsize'), tf):
                         covered.setdefault(i, set()).add('tick_fontsize')
                     else:
-                        skipped.append((i, 'tick_fontsize（替换位置重叠，已跳过）', tf))
+                        skipped.append((i, _msg.t_wb('tick_fontsize（替换位置重叠，已跳过）'), tf))
                 else:
                     skipped.append((i, 'tick_fontsize', tf))
         # ⑤ grid：ax.grid(True/False)
@@ -1461,7 +1619,7 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                          (i, 'grid'), bool_value=bool(g)):
                     covered.setdefault(i, set()).add('grid')
                 else:
-                    skipped.append((i, 'grid（替换位置重叠，已跳过）', g))
+                    skipped.append((i, _msg.t_wb('grid（替换位置重叠，已跳过）'), g))
             else:
                 skipped.append((i, 'grid', g))
         # ⑤b 轴范围 set_xlim / set_ylim（外部审阅第 2 条：这类常见写法原先完全不在
@@ -2174,8 +2332,7 @@ def _make_backup(script, params_path, keep=5, warnings=None):
         # 专属副本是加强项（并发保护 / `revert --first` 的取数来源），失败不影响
         # 主流程，但**必须让人知道**：`--first` 会因此没有可用副本。
         if warnings is not None:
-            warnings.append('pid 专属备份写不出来（%s，errno=%s：%s）；'
-                            '`revert --first` 将没有可用副本，请用默认 revert'
+            warnings.append(_msg.t_wb('pid 专属备份写不出来（%s，errno=%s：%s）；`revert --first` 将没有可用副本，请用默认 revert')
                             % (_pid_bak, getattr(e, 'errno', '?'), e))
     _prune_backups(script, params_path, keep)
     return fixed
@@ -2250,8 +2407,7 @@ def script_lock(script, lock_dir=None, timeout=10.0, poll=0.2):
                 continue
             if time.time() >= deadline:
                 raise RuntimeError(
-                    '另一个 mpltweak 写回正在进行（pid=%s）。若确认它已不在运行，'
-                    '请手动删除 %s' % (holder, lock))
+                    _msg.t_wb('另一个 mpltweak 写回正在进行（pid=%s）。若确认它已不在运行，请手动删除 %s') % (holder, lock))
             time.sleep(poll)
             continue
         except OSError:
@@ -2327,7 +2483,7 @@ def _rollback_note(backup, script, expect=None):
         _now = _disk_fingerprint(script)
         if _now is not None and _now != _sha256_text(expect):
             # 外部改动守卫（0.1.10）：不回滚 = 磁盘上留下的是**用户保存的版本**。
-            return ('%s（本次未回滚；磁盘上保留的是你保存的版本，备份在 %s）'
+            return (_msg.t_wb('%s（本次未回滚；磁盘上保留的是你保存的版本，备份在 %s）')
                     % (_msg.t('external_modified'), backup))
     d = os.path.dirname(os.path.abspath(script)) or '.'
     try:
@@ -2347,14 +2503,15 @@ def _rollback_note(backup, script, expect=None):
             except OSError:
                 pass
         os.replace(tmp, script)
-        return '已回滚'
+        # t63：这个返回值会被**原样嵌进**给用户看的消息（`...：%s。`），所以它也走语言表；
+        # 与下面 `if _rnote == _msg.t_wb('已回滚')` **两侧一起翻**，判定语义逐字不变。
+        return _msg.t_wb('已回滚')
     except OSError as e:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        return ('回滚也失败了（%s: %s）—— 脚本目前是改坏的状态，'
-                '备份在 %s，请手动恢复' % (type(e).__name__, e, backup))
+        return (_msg.t_wb('回滚也失败了（%s: %s）—— 脚本目前是改坏的状态，备份在 %s，请手动恢复') % (type(e).__name__, e, backup))
 
 
 # ---------------------------------------------------------------------------
@@ -2805,7 +2962,9 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     figsize_in = data.get('figsize_in')
     # 多图脚本但参数没带 fig_index 时，"改哪张图的画布尺寸"无从确定：edit_figsize
     # 会退化成改第 1 张 —— 那正是"写错对象图"（t1-A / t6-M1）。宁可不改并说明。
-    _n_fig = count_figures(tree)
+    # t54：`figure_only=True` —— `fig.subplots(...)` 不新建图，数成第 2 张会**假报**
+    # 「脚本有 2 张图但参数没有 fig_index」并把本该做的画布尺寸改动整条跳过。
+    _n_fig = count_figures(tree, figure_only=True)
     _fig_idx = data.get('fig_index')
     _fs_ambiguous = bool(figsize_in) and _n_fig > 1 \
         and not isinstance(_fig_idx, int)
@@ -2814,9 +2973,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         else (edit_figsize(src, tree, figsize_in, _fig_idx)
               if figsize_in else (src, False)))
     if _fs_ambiguous:
-        warnings.append('脚本有 %d 张图但参数没有 fig_index，无法确定该改哪张的'
-                        '画布尺寸 → 保持原样；请用 describe --fig N 重新导出，'
-                        '或手动改' % _n_fig)
+        warnings.append(_msg.t_wb('脚本有 %d 张图但参数没有 fig_index，无法确定该改哪张的画布尺寸 → 保持原样；请用 describe --fig N 重新导出，或手动改') % _n_fig)
     # figsize 是否**已经在源码里正确**（这次原位改了、或者本来就是这几个数）：
     # 两种情况都不该再警告"尺寸没落地"，块模式也不该再补 set_size_inches
     # ——否则第二次 apply 的块会多一行 → 幂等破功（L0-1 的连带效应）。
@@ -2831,15 +2988,12 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             figsize_edited = False
             new_src, tree = src, ast.parse(src)
     if figsize_in and not _fs_handled:
-        warnings.append('画布尺寸保持原样（代码里 figsize 是位置参数或没有 '
-                        'figsize=）；用 --style block 或手动改')
+        warnings.append(_msg.t_wb('画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改') )
     _overlaps: List[tuple] = []
     in_src, covered, skipped = apply_inplace(new_src, tree, data,
                                              overlaps=_overlaps)
     if _overlaps:
-        warnings.append('有 %d 处替换位置重叠，已跳过以免写坏源码（同一个 figure 里'
-                        '同名轴变量被 add_axes 赋值多次时会出现）；涉及的位置保持'
-                        '原样，可用 --style block 或手动改' % len(_overlaps))
+        warnings.append(_msg.t_wb('有 %d 处替换位置重叠，已跳过以免写坏源码（同一个 figure 里同名轴变量被 add_axes 赋值多次时会出现）；涉及的位置保持原样，可用 --style block 或手动改') % len(_overlaps))
     changes = ['ax%d.%s' % (i, f) for i in sorted(covered)
                for f in sorted(covered[i])]
     if figsize_edited and in_src != src:
@@ -2852,10 +3006,9 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         for i, f, _v in skipped:
             by_axis.setdefault(i, set()).add(f)
         for i in sorted(by_axis):
-            warnings.append('ax%d 未原位应用：%s（原位写回只改代码里已有的数字，'
-                            '这些项代码里没有对应写法，保持原样；需要可用 '
-                            '--style block 或手动）'
-                            % (i, '、'.join(sorted(by_axis[i]))))
+            warnings.append(_msg.t(
+                'wb_inplace_skipped', ax=i,
+                fields=_msg.t('items_sep').join(sorted(by_axis[i]))))
     # ---- 逐字段三态判据（T15）------------------------------------------------
     # 每个"有目标值"的字段只有三种状态：
     #   ① 已原位落地（covered）
@@ -2895,14 +3048,15 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     if _fig_pending:
         _plist = sorted(_plist + ['figsize'])
     if _needs and _plist:
-        warnings.append('本图有 %d 处目标值无法原位写回（%s）→ 需要调整块才能落地（%s）'
-                        % (len(_plist), '、'.join(_plist),
-                           '实测不一致' if verify and semantic
-                           else '没重跑脚本，按保守判据'))
+        warnings.append(_msg.t(
+            'wb_needs_block', n=len(_plist),
+            fields=_msg.t('items_sep').join(_plist),
+            why=_msg.t('wb_needs_block_live' if verify and semantic
+                       else 'wb_needs_block_conservative')))
     if dry_run:
         res.update({'reason': OK, 'changes': changes,
-                    'block': ('原位修改：' + ', '.join(changes)) if changes
-                    else '（无改动）',
+                    'block': (_msg.t('wb_block_inplace', items=', '.join(changes))
+                              if changes else _msg.t('wb_block_none')),
                     'warnings': warnings, 'backup': None,
                     'figsize_edited': figsize_edited, 'anchor': 'inplace',
                     'applied': False, 'needs_block': _needs,
@@ -2935,7 +3089,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         # T41：pid 副本写不出来时不再静默（warnings 里会带上路径与 errno）。
         backup = backup or _make_backup(script, params_path, warnings=warnings)
     except OSError as e:
-        res['err'] = '备份失败: %s' % e
+        res['err'] = _msg.t_wb('备份失败: %s') % e
         return res
     res['backup'] = backup
     _guard = _check_external_edit(script, src, backup=backup)
@@ -2945,7 +3099,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     try:
         _atomic_write(script, in_src, encoding=encoding)
     except OSError as e:
-        res['err'] = '写文件失败: %s（%s）' % (e, _rollback_note(backup, script))
+        res['err'] = _msg.t_wb('写文件失败: %s（%s）') % (e, _rollback_note(backup, script))
         return res
     # T23 / 外部评审条目 3(c) 的廉价兜底：**写盘后无条件 ast.parse 一次**。
     # 语法坏了的写回绝不该留在磁盘上（"一次解析的钱"），而过去的语法检查只在
@@ -2959,7 +3113,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         except SyntaxError as e:
             res.update({'reason': FAIL, 'applied': False, 'verified': False,
                         'layers': dict(res.get('layers') or {}, syntax=False),
-                        'err': '写回后源码语法错误（%s）：%s'
+                        'err': _msg.t_wb('写回后源码语法错误（%s）：%s')
                                % (_rollback_note(backup, script, expect=in_src), e)})
             return res
     if fast_check and not verify:
@@ -2979,7 +3133,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             res.update({'reason': FAIL, 'verify_mode': 'fast',
                         'layers': {'syntax': False, 'rerun': None,
                                    'semantic': None},
-                        'err': '快速验证失败：写回后的源码语法错误（%s）：%s'
+                        'err': _msg.t_wb('快速验证失败：写回后的源码语法错误（%s）：%s')
                                % (_rollback_note(backup, script, expect=in_src), e),
                         'verified': False})
             return res
@@ -3014,7 +3168,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             # 这里起任何异常都必须回滚，窄化会漏掉下一种未知异常（E3 的现场）。
             # 与块路径同一条纪律。
             res.update({'reason': FAIL, 'verified': False, 'applied': False,
-                        'err': '写回后验证异常（%s: %s）：%s'
+                        'err': _msg.t_wb('写回后验证异常（%s: %s）：%s')
                                % (type(e).__name__, e,
                                   _rollback_note(backup, script,
                                                  expect=in_src))})
@@ -3034,7 +3188,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                     # 单遍路径已经在**同一次跑**里把状态比对做完了
                     sok, sdetail = _vp['sok'], _vp['sdetail']
                 else:
-                    sok, sdetail = None, '语义验证未执行'
+                    sok, sdetail = None, _msg.t_wb('语义验证未执行')
                     try:
                         sok, sdetail = _verify.verify_semantic(
                             script, data, python, timeout, fields_by_axis=fba,
@@ -3045,7 +3199,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                         # 任何异常都必须回滚，窄化会漏掉下一种未知异常（E3；块路径同款）。
                         res.update({'reason': FAIL, 'verified': True,
                                     'applied': False,
-                                    'err': '写回后语义验证异常（%s: %s）：%s'
+                                    'err': _msg.t_wb('写回后语义验证异常（%s: %s）：%s')
                                            % (type(e).__name__, e,
                                               _rollback_note(backup, script,
                                                              expect=in_src))})
@@ -3053,7 +3207,7 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                 res['semantic'] = sok
                 if sok is False:
                     res.update({'reason': FAIL,
-                                'err': '语义验证不一致（%s）：%s'
+                                'err': _msg.t_wb('语义验证不一致（%s）：%s')
                                        % (_rollback_note(backup, script,
                                                          expect=in_src),
                                           sdetail),
@@ -3064,16 +3218,12 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
                     # verified=True —— 那会让人读成"全都验证过了"。如实降成 None
                     # （三态：True 验证通过 / None 验证没跑 / False 验证不通过）。
                     res['verified'] = None
-                    warnings.append('语义验证未取到目标图状态（%s），'
-                                    '本次只确认了"脚本能跑通"，**没有**验证布局是否'
-                                    '落到目标图上' % sdetail)
+                    warnings.append(_msg.t_wb('语义验证未取到目标图状态（%s），本次只确认了"脚本能跑通"，**没有**验证布局是否落到目标图上') % sdetail)
             else:
                 # 原位没覆盖任何轴字段（如 add_subplot 网格轴 / colorbar 轴位置）：
                 # 位置本就没被改，语义比对必然失败无意义 → 跳过，Agg 跑通即可。
                 res['semantic'] = None
-                warnings.append('本图没有可原位写回的轴属性（轴是 add_subplot 网格位置 / '
-                                'colorbar / 无对应调用），只应用了画布尺寸；'
-                                '位置/字号请用 --style block 或手动改代码')
+                warnings.append(_msg.t_wb('本图没有可原位写回的轴属性（轴是 add_subplot 网格位置 / colorbar / 无对应调用），只应用了画布尺寸；位置/字号请用 --style block 或手动改代码') )
         elif vok is False:
             # T23 / 3(c)：先分清"我们把它写坏了"和"它本来就跑不通"（缺数据/依赖）。
             # 后者**证明不了**写回是否可用 → 默认回滚；显式 --keep-unverified 才保留。
@@ -3087,29 +3237,29 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
             if _base is False:
                 if keep_unverified:
                     warnings.append(
-                        '脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），'
-                        '无法用 Agg 验证写回结果；按 --keep-unverified 保留本次写回，'
-                        '请自行运行确认')
+                        _msg.t_wb('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证写回结果；按 --keep-unverified 保留本次写回，请自行运行确认') )
                     res['verified'] = None
                 else:
                     res.update({
                         'reason': FAIL, 'applied': False, 'verified': False,
-                        'err': ('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），'
-                                '无法用 Agg 验证这次写回是否可用 → 默认**不保留**：%s。'
-                                '确实要保留请显式加 --keep-unverified。'
+                        # t65：稳定信号（apply 按它分类，不按文案）
+                        'verify_fail_kind': VF_HEADLESS,
+                        'err': (_msg.t_wb('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证这次写回是否可用 → 默认**不保留**：%s。确实要保留请显式加 --keep-unverified。') 
                                 % _rollback_note(backup, script, expect=in_src))})
                     return res
             else:
                 res.update({'reason': FAIL,
-                            'err': '写回后脚本跑不通（%s）：%s'
+                            # t65：稳定信号 + 已抽好的 stderr 尾部
+                            'verify_fail_kind': VF_AFTER_WRITE,
+                            'verify_fail_tail': (verr or '').strip()[:300],
+                            'err': _msg.t_wb('写回后脚本跑不通（%s）：%s')
                                    % (_rollback_note(backup, script,
                                                      expect=in_src),
                                       (verr or '').strip()[:300]),
                             'verified': False})
                 return res
         elif vok is None:
-            warnings.append('验证超时（>%ss），未能自动验证；脚本保持写回后的状态，'
-                            '请手动重跑确认' % timeout)
+            warnings.append(_msg.t_wb('验证超时（>%ss），未能自动验证；脚本保持写回后的状态，请手动重跑确认') % timeout)
     res.update({'reason': BEST_EFFORT if warnings else OK,
                 'changes': changes, 'block': in_src, 'warnings': warnings,
                 'fig_var': None, 'gcf_fallback': False,
@@ -3442,11 +3592,11 @@ def _mappable_ref(ax_expr, axis_item, is_cb, mappables, cb_args, mappable_map=No
     if not multi_fig and mappables:
         nm = sorted(mappables)[0]
         if len(mappables) > 1:
-            return nm, ('ax%s 存在多个 mappable 变量(%s)，已用 %s，请人工确认其它轴'
+            return nm, (_msg.t_wb('ax%s 存在多个 mappable 变量(%s)，已用 %s，请人工确认其它轴')
                         % (i, ','.join(sorted(mappables)), nm))
         return nm, None
     return ('%s.collections[0]' % ax_expr,
-            'ax%s 的 mappable 未在赋值中解析到，用 %s.collections[0] 兜底，请人工确认'
+            _msg.t_wb('ax%s 的 mappable 未在赋值中解析到，用 %s.collections[0] 兜底，请人工确认')
             % (i, ax_expr))
 
 
@@ -3694,8 +3844,12 @@ def _axes_binding_entries(tree, fig_index, fig_var=None):
     网格尺寸不是字面量）；suspect=行号 ⇒ 该行之前没有认不出的建轴调用，之前之后的轴不可证。
     索引与运行期创建序一致：枚举按源码序、且把"会建轴的调用"都算上（含 pyplot 隐式建轴），
     "已有轴时 pyplot 只是复用当轴"的不重复计数。
+
+    t36：本图的区间按 ``figure_only=True`` 取 —— ``fig.subplots(...)`` 这种"Figure 方法
+    建轴"**不算**下一张图的分界（它本来就是本图内的建轴调用）；否则区间会被截在它自己
+    那一行上，这个函数一条轴都数不到（形状 A 的根因）。
     """
-    lo, hi = _fig_span(tree, fig_index)
+    lo, hi = _fig_span(tree, fig_index, figure_only=True)
     found = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -4079,20 +4233,17 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
     # 身份回比一遍，不匹配就直接回滚（verify.compare 里的 cell 比对）。
     _cells = [(a.get('index'), a.get('cell')) for a in axes if a.get('cell')]
     if _cells:
-        out.append('# 轴身份（调图时）：%s'
-                   % '，'.join('ax%s=网格%s' % (i, c) for i, c in _cells))
+        # 块注释跟随界面语言（原 t9；哨兵行仍固定 ASCII）
+        out.append(_msg.t('wb_block_cells', cells=_msg.t('wb_block_cells_sep').join(
+            _msg.t('wb_block_cell_item', ax=i, cell=c) for i, c in _cells)))
     if any('.axes[' in (v or '') for v in (targets or {}).values()):
         # T70-B / T74：为什么 `.axes[k]` 在这里是**可证**的（写进块里，人和审阅者都能核）
         if (fig_target or '').startswith('plt.figure('):
             # T74：多图纯 pyplot —— 编号可静态枚举，所以 `plt.figure(n)` 指的就是目标图
-            out.append('# 目标定位（T74）：建图调用可静态编号、模块层没有 close、'
-                       '也没有 colorbar/inset/twin/… 额外建轴，'
-                       '因此 %s.axes[k] 就是**目标图**静态第 k 条轴'
-                       % fig_target)
+            out.append(_msg.t('wb_block_anchor_static', fig=fig_target))
         else:
-            out.append('# 目标定位：本文件只有一次建图、没有 colorbar/inset/twin/… 额外建轴'
-                       '（也没有 close），因此 %s.axes[k] 就是静态第 k 条轴'
-                       % (fig_target or 'plt.gcf()'))
+            out.append(_msg.t('wb_block_anchor_single',
+                              fig=fig_target or 'plt.gcf()'))
     if figsize_in and fig_target:
         # T70：figure 级也**只认可证的 figure 变量名** —— `plt.gcf()` 在多图脚本里
         # 指的是"此刻的当前图"，可能根本不是目标图（T67 的 C 缺陷就是这么来的）。
@@ -4120,7 +4271,7 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
             continue
         is_cb = bool(a.get('is_colorbar'))
         if is_cb and _want(i, 'pos'):
-            out.append('# colorbar 轴：先解除自动定位/盒比，否则重绘会重置位置与宽度')
+            out.append(_msg.t('wb_block_colorbar'))
             out.append('%s.set_axes_locator(None)' % ax)
             out.append('%s.set_box_aspect(None)' % ax)
         if a.get('title_fontsize') is not None and _want(i, 'title_fontsize'):
@@ -4191,8 +4342,7 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
                 if _is_registered_cmap(a['cmap']):
                     out.append('%s.set_cmap(%r)' % (mref, a['cmap']))
                 else:
-                    warnings.append('ax%s 的 cmap %r 不是已注册 colormap'
-                                    '（ListedColormap 之类返回 from_list 名），已跳过'
+                    warnings.append(_msg.t_wb('ax%s 的 cmap %r 不是已注册 colormap（ListedColormap 之类返回 from_list 名），已跳过')
                                     % (i, a['cmap']))
         lg = a.get('legend') if _want(i, 'legend') else None
         if lg:
@@ -4211,7 +4361,7 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
             if not _ln.lstrip().startswith((BLOCK_START[:8], BLOCK_END[:8])):
                 # T51 STEP2 自检：块**自己**的哨兵行必须"行首即哨兵"（只查新插入的块体，
                 # 不在整份 content 上 find —— 那会命中本来就在的旧块哨兵/被替换块）。
-                return '', ['生成的块标记没有独占一行（未写盘）']
+                return '', [_msg.t_wb('生成的块标记没有独占一行（未写盘）')]
     return _txt, warnings
 
 
@@ -4383,7 +4533,7 @@ def verify_run(script, python=None, timeout=300, script_args=None):
         err = (r.stderr or b'').decode('utf-8', 'replace')[-2000:]
         return r.returncode == 0, err
     except subprocess.TimeoutExpired:
-        return None, '验证超时（>%ss）' % timeout
+        return None, _msg.t_wb('验证超时（>%ss）') % timeout
     except Exception as e:                       # noqa: BLE001
         return False, str(e)
 
@@ -4435,7 +4585,7 @@ def _verify_script(script, data, python, timeout, semantic, fields_by_axis,
         return out
     if status == 'timeout':
         # 与旧 verify_run 超时同口径：判不了 → 不否决、也不再跑（重跑还会超时）
-        out.update({'vok': None, 'verr': op.get('detail') or '语义验证超时'})
+        out.update({'vok': None, 'verr': op.get('detail') or _msg.t_wb('语义验证超时')})
         return out
     # ------------------------------------------------------------------
     # 下面都是"这一次没给出结论" → **fail-closed 回退**（绝不静默判通过）
@@ -4447,14 +4597,13 @@ def _verify_script(script, data, python, timeout, semantic, fields_by_axis,
         # （都来自 collect() 的 err 文案）→ 直接落成 sok=None（= 跑过但没验到），
         # 不必再跑第三遍。语义层的三态语义因此与旧路径完全一致。
         out['sok'] = None
-        out['sdetail'] = op.get('detail') or '未能取到图状态'
-        warnings.append('单遍验证未取到目标图状态（%s）→ 已回退到两遍口径：'
-                        '脚本按原样重跑判定"还跑得通吗"，语义层如实记为"没有验到"'
+        out['sdetail'] = op.get('detail') or _msg.t_wb('未能取到图状态')
+        warnings.append(_msg.t_wb('单遍验证未取到目标图状态（%s）→ 已回退到两遍口径：脚本按原样重跑判定"还跑得通吗"，语义层如实记为"没有验到"')
                         % why)
     else:
         # 脚本在套壳里失败 / 子进程起不来：单遍的"跑不通"不能直接当结论 ——
         # **一律以原样重跑为准**（与旧路径 pass 1 同一个判据）。
-        warnings.append('单遍验证没拿到结论（%s）→ 已回退到原样重跑判定' % why)
+        warnings.append(_msg.t_wb('单遍验证没拿到结论（%s）→ 已回退到原样重跑判定') % why)
     out['vok'], out['verr'] = verify_run(script, python, timeout,
                                          script_args=script_args)
     return out
@@ -4531,16 +4680,21 @@ def writeback(script, data, params_path, verify=True, python=None,
         res['reason'] = BAD_PARAMS
         res['err'] = _bad
         return res
+    # P0-1 止损（t66）：figsize 参数自相矛盾（成倍的 dpi 换算错）⇒ 拒写，别把画布
+    # 永久改小/改大写进用户源码（报告的现场：px=[1500,950] 配 in=[7.5,4.75]）。
+    _bad = _figsize_inconsistent(tree, data)
+    if _bad:
+        res['reason'] = BAD_PARAMS
+        res['err'] = _bad
+        return res
 
     # 多图脚本却没有 fig_index：候选搜索只能退化成"按第 0 张处理"，而语义验证
     # 看的是最后一张 → 参数会落到**另一张图**上（t6-B1 的 P0）。这种情况必须
     # 拒绝，不能猜：让调用方用 describe --fig N 重新导出，或手工补上图号。
-    _n_fig0 = count_figures(tree)
+    _n_fig0 = count_figures(tree, figure_only=True)      # t51：fig.subplots 不算新图
     if _n_fig0 > 1 and not isinstance(data.get('fig_index'), int):
         res['reason'] = NO_FIG
-        res['err'] = ('脚本有 %d 张图，但参数里没有 fig_index —— 无法确定这些改动'
-                      '该落到哪张上（凭猜会改错图）。请用 '
-                      '`mpltweak describe <脚本> --fig N` 重新导出参数后再写回。'
+        res['err'] = (_msg.t_wb('脚本有 %d 张图，但参数里没有 fig_index —— 无法确定这些改动该落到哪张上（凭猜会改错图）。请用 `mpltweak describe <脚本> --fig N` 重新导出参数后再写回。') 
                       % _n_fig0)
         return res
 
@@ -4556,53 +4710,50 @@ def writeback(script, data, params_path, verify=True, python=None,
     fig_var, _ = find_fig_var(tree)
     pre_warnings: List[str] = []
     gcf_fallback = False
-    n_fig = count_figures(tree)
+    n_fig = count_figures(tree, figure_only=True)        # t51：fig.subplots 不算新图
     has_plt = _has_pyplot_plt(tree)
     if fig_var is None:
         # 纯 pyplot 流（plt.figure() 不赋值）：用 plt.gcf() 兜底。
         if not has_plt:
             res['reason'] = NO_FIG
-            res['err'] = ('找不到 figure/subplots 的赋值目标，且脚本没有 '
-                          'import matplotlib.pyplot as plt（无法用 plt.gcf() 兜底）')
+            res['err'] = (_msg.t_wb('找不到 figure/subplots 的赋值目标，且脚本没有 import matplotlib.pyplot as plt（无法用 plt.gcf() 兜底）'))
             return res
         fig_var = 'plt.gcf()'
         gcf_fallback = True
         if n_fig > 1:
             pre_warnings.append(
-                '脚本创建了 %d 张图，纯 pyplot 流按"最后一张图"写回（与启动器默认一致）'
+                _msg.t_wb('脚本创建了 %d 张图，纯 pyplot 流按"最后一张图"写回（与启动器默认一致）')
                 % n_fig)
     elif n_fig > 1:
         # 多图 + fig 变量：变量可能停在早先那张图上（实测 fig.axes 为空 → IndexError）。
         # 改用 plt.gcf() 在目标 savefig/show 之前定位（gcf 此刻正是要调的那张）。
         if has_plt:
             fig_index = data.get('fig_index')
-            which = ('第 %d 张（按记录定位）' % (fig_index + 1)
-                     if isinstance(fig_index, int) else '最后一张（参数未记录图号）')
+            which = (_msg.t_wb('第 %d 张（按记录定位）') % (fig_index + 1)
+                     if isinstance(fig_index, int) else _msg.t_wb('最后一张（参数未记录图号）'))
             pre_warnings.append(
-                '脚本创建了 %d 处图（运行期共 %s 张），改用 plt.gcf() 定位%s'
+                _msg.t_wb('脚本创建了 %d 处图（运行期共 %s 张），改用 plt.gcf() 定位%s')
                 % (n_fig, data.get('n_figs') or '?', which))
             fig_var = 'plt.gcf()'
             gcf_fallback = True
         else:
             pre_warnings.append(
-                '脚本创建了 %d 张图但未导入 pyplot，按 fig 变量统一应用，请人工确认' % n_fig)
+                _msg.t_wb('脚本创建了 %d 张图但未导入 pyplot，按 fig 变量统一应用，请人工确认') % n_fig)
     mappables, cb_args = find_mappable_names(tree)
     mappable_map = mappable_by_axis(tree)          # B3：轴序号 → 本轴 mappable 变量
     # 多图会话：给块打"目标图"标记，让幂等替换能精确认领自己的块（不误替换别人的）
     _fi, _nf = data.get('fig_index'), data.get('n_figs')
-    tag = ('目标图：第 %d 张' % (_fi + 1)
+    tag = (_msg.t('wb_block_tag', n=_fi + 1)
            if isinstance(_fi, int) and isinstance(_nf, int) and _nf > 1 else None)
     anchor = find_anchor(tree, last=(n_fig > 1 or gcf_fallback))
     if anchor[0] == 'tail':
-        pre_warnings.append('脚本里没有 savefig/show/tight_layout 锚点，'
-                            '调整块已追加到脚本末尾（该脚本不存图时此块无实际效果）')
+        pre_warnings.append(_msg.t('wb_no_anchor_tail'))
 
     _frag = _unclosed_block_lines(src.splitlines())
     if _frag:
         # E12：残缺标记 → 幂等替换认不出旧块 → 会再插一份。这里如实警告（不去猜）。
         pre_warnings.append(
-            '检测到 %d 处只有起始哨兵、没有收尾哨兵的调整块痕迹（第 %s 行）：'
-            '本次会另插一块（不猜哪块该替哪块），落地后请手工删掉残缺那份'
+            _msg.t_wb('检测到 %d 处只有起始哨兵、没有收尾哨兵的调整块痕迹（第 %s 行）：本次会另插一块（不猜哪块该替哪块），落地后请手工删掉残缺那份') 
             % (len(_frag), '、'.join(str(x) for x in _frag)))
     figsize_in = data.get('figsize_in')
     new_src = src
@@ -4675,11 +4826,9 @@ def writeback(script, data, params_path, verify=True, python=None,
                     _needed_b[_ri].discard(_rf)
                     if not _needed_b[_ri]:
                         del _needed_b[_ri]
-        pre_warnings.append(
-            '块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标'
-            '（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴'
-            '或别的图上）⇒ 按 fail-closed 处理，本次不写：%s'
-            % '、'.join(_refused))
+        pre_warnings.append(_msg.t(
+            'wb_block_refused_fields',
+            fields=_msg.t('items_sep').join(_refused)))
     if not _needed_b and not figsize_in_block:
         if data.get('figsize_in'):
             # 只有画布尺寸要改（块里没有别的字段）：交给原位路径写 figsize 字面量 ——
@@ -4731,8 +4880,7 @@ def writeback(script, data, params_path, verify=True, python=None,
         _unexpressed = list(_refused) + [x for x in _unexpressed
                                          if x not in _refused]
     if _unexpressed:
-        warnings.append('这些字段调整块表达不了、本次**没能落地**：%s'
-                        '（可手动改，或把参数收敛到块能写的字段）'
+        warnings.append(_msg.t_wb('这些字段调整块表达不了、本次**没能落地**：%s（可手动改，或把参数收敛到块能写的字段）') 
                         % '、'.join(_unexpressed))
 
     def _mark_unexpressed(res0):
@@ -4757,11 +4905,8 @@ def writeback(script, data, params_path, verify=True, python=None,
         gname, gval = loop_guard(tree, cand[1], fig_index)
         if gname is not None:
             return ('if %s == %d:\n' % (gname, gval) + _reindent(block0, '    '),
-                    '循环出图：已加守卫 `if %s == %d:`，只对该次迭代生效'
-                    '（想统一应用到所有图用 --all-figs）' % (gname, gval))
-        return block0, ('锚点在循环里，但判不出图号对应的迭代值（非字面量 range / '
-                        '一次迭代出多张图 / 变量迭代），已统一应用到每次迭代；'
-                        '要只改一张请人工确认')
+                    _msg.t_wb('循环出图：已加守卫 `if %s == %d:`，只对该次迭代生效（想统一应用到所有图用 --all-figs）') % (gname, gval))
+        return block0, (_msg.t_wb('锚点在循环里，但判不出图号对应的迭代值（非字面量 range / 一次迭代出多张图 / 变量迭代），已统一应用到每次迭代；要只改一张请人工确认') )
 
     # 注意：**不要**在这里把 backup 重置成 None —— 它是调用方传进来的"本次 apply
     # 已经备好份"的复用凭据（L0-4）。旧实现这行 `backup = None` 把入参悄悄丢掉，
@@ -4808,15 +4953,12 @@ def writeback(script, data, params_path, verify=True, python=None,
         cands = [c for c in cands
                  if c[1] is not None and c[1].lineno <= _last_out]
     if not cands:
-        _why = ('本脚本有 savefig/plt.show，而所有可用锚点都落在**最后一个 savefig '
-                '之后**：那样调整块写进去也不会反映到保存的图上'
-                if _last_out is not None else '本脚本没有可用的插入锚点')
+        _why = (_msg.t_wb('本脚本有 savefig/plt.show，而所有可用锚点都落在**最后一个 savefig 之后**：那样调整块写进去也不会反映到保存的图上') 
+                if _last_out is not None else _msg.t_wb('本脚本没有可用的插入锚点'))
         res.update({'reason': FAIL, 'applied': False, 'verified': False,
                     'backup': backup, 'needs_block': True,
                     'pending': _unexpressed or None,
-                    'err': '找不到合规锚点：%s，已拒绝写回（未改动脚本）。'
-                           '可手动加一句 `fig.savefig(...)` 之前的定位调用，'
-                           '或用 --style inplace 让可原位写的字段先落地。' % _why})
+                    'err': _msg.t_wb('找不到合规锚点：%s，已拒绝写回（未改动脚本）。可手动加一句 `fig.savefig(...)` 之前的定位调用，或用 --style inplace 让可原位写的字段先落地。') % _why})
         return res
 
     chosen_block = block
@@ -4844,7 +4986,7 @@ def writeback(script, data, params_path, verify=True, python=None,
             backup = backup or _make_backup(script, params_path,
                                             warnings=pre_warnings)
         except OSError as e:
-            res['err'] = '备份失败: %s' % e
+            res['err'] = _msg.t_wb('备份失败: %s') % e
             return res
         chosen = None
         last_err = ''
@@ -4877,7 +5019,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                     # T42（Bug 4）：块生成后、**写盘前**先自检语法。过去是写盘后由
                     # 语法层拦下再回滚（数据安全，但白写一次盘、日志还像"工具出错"）。
                     # 现在直接把该候选判掉、换下一个锚点重试。
-                    last_err = ('生成的调整块语法非法（未写盘，已换锚点重试）：%s'
+                    last_err = (_msg.t_wb('生成的调整块语法非法（未写盘，已换锚点重试）：%s')
                                 % _se)
                     last_sem = last_err
                     continue
@@ -4899,7 +5041,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                 # 误判成外部改动）。写盘失败走 except，基准不动（磁盘没变）。
                 _expected = content
             except OSError as e:
-                res['err'] = '写文件失败: %s（%s）' % (
+                res['err'] = _msg.t_wb('写文件失败: %s（%s）') % (
                     e, _rollback_note(backup, script))
                 return res
             # T23 / 外部评审条目 3(c)：写盘后**无条件** ast.parse 一次（"一次解析的钱"）。
@@ -4914,7 +5056,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                             'applied': False, 'verified': False,
                             'layers': {'syntax': False, 'rerun': None,
                                        'semantic': None},
-                            'err': '写回后源码语法错误（%s）：%s'
+                            'err': _msg.t_wb('写回后源码语法错误（%s）：%s')
                                    % (_rollback_note(backup, script,
                                                      expect=content), e)})
                 return res
@@ -4944,7 +5086,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                 # 只留一句 internal_error，而脚本里已经多出一整块调整块）。
                 res.update({'reason': FAIL, 'attempts': attempts,
                             'verified': False, 'applied': False,
-                            'err': '写回后验证异常（%s: %s）：%s'
+                            'err': _msg.t_wb('写回后验证异常（%s: %s）：%s')
                                    % (type(e).__name__, e,
                                       _rollback_note(backup, script,
                                                      expect=content))})
@@ -4959,8 +5101,7 @@ def writeback(script, data, params_path, verify=True, python=None,
             res.setdefault('layers', {'syntax': True})['rerun'] = vok
             if vok is None:
                 # 超时无法判定 → 不回滚、不换锚点（重跑还会超时），按写回成功处理
-                warnings.append('验证超时（>%ss），未能自动验证；块已写入，'
-                                '请手动重跑确认' % timeout)
+                warnings.append(_msg.t_wb('验证超时（>%ss），未能自动验证；块已写入，请手动重跑确认') % timeout)
                 chosen = cand
                 chosen_block = blk
                 guard_note = note
@@ -4991,7 +5132,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                             # 异常都必须走 _rollback_note。
                             res.update({'reason': FAIL, 'attempts': attempts,
                                         'verified': False, 'applied': False,
-                                        'err': '写回后语义验证异常（%s: %s）：%s'
+                                        'err': _msg.t_wb('写回后语义验证异常（%s: %s）：%s')
                                                % (type(e).__name__, e,
                                                   _rollback_note(
                                                       backup, script,
@@ -5001,17 +5142,15 @@ def writeback(script, data, params_path, verify=True, python=None,
                     res['semantic'] = sok
                     res.setdefault('layers', {'syntax': True})['semantic'] = sok
                     if sok is False:
-                        last_err = '语义验证不一致：%s' % sdetail
+                        last_err = _msg.t_wb('语义验证不一致：%s') % sdetail
                         last_sem = sdetail
-                        warnings.append('锚点 %s 能跑通但布局没落到目标图（%s），换锚点重试'
+                        warnings.append(_msg.t_wb('锚点 %s 能跑通但布局没落到目标图（%s），换锚点重试')
                                         % (cand[0], sdetail))
                         continue
                     if sok is None:
                         # T23 / 3(a)：②层没跑成 → verified 必须降成 None（不许报 True）
                         res['verified'] = None
-                        warnings.append('语义验证未取到目标图状态（%s），'
-                                        '本次只确认了"脚本能跑通"，**没有**验证布局是否'
-                                        '落到目标图上' % sdetail)
+                        warnings.append(_msg.t_wb('语义验证未取到目标图状态（%s），本次只确认了"脚本能跑通"，**没有**验证布局是否落到目标图上') % sdetail)
                 chosen = cand
                 chosen_block = blk
                 guard_note = note
@@ -5042,9 +5181,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                     # 确实想保留这次写回的人显式加 --keep-unverified。
                     if keep_unverified:
                         warnings.append(
-                            '脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），'
-                            '无法用 Agg 验证写回结果；按 --keep-unverified 保留本次写回，'
-                            '请自行运行确认')
+                            _msg.t_wb('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证写回结果；按 --keep-unverified 保留本次写回，请自行运行确认') )
                         chosen = cand
                         chosen_block = blk
                         guard_note = note
@@ -5053,10 +5190,9 @@ def writeback(script, data, params_path, verify=True, python=None,
                     res.update({
                         'reason': FAIL, 'attempts': attempts, 'applied': False,
                         'verified': False,
-                        'err': ('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），'
-                                '无法用 Agg 验证这次写回是否可用 → 默认**不保留**：%s。'
-                                '确实要保留请显式加 --keep-unverified，'
-                                '或先修好脚本（让它能在无头环境跑通）再来写回。'
+                        # t65：稳定信号（apply 按它分类，不按文案）
+                        'verify_fail_kind': VF_HEADLESS,
+                        'err': (_msg.t_wb('脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证这次写回是否可用 → 默认**不保留**：%s。确实要保留请显式加 --keep-unverified，或先修好脚本（让它能在无头环境跑通）再来写回。') 
                                 % _rollback_note(backup, script, expect=content))})
                     return res
             # t27 修复③：这一轮验证失败、要换锚点重试 → **先把批前状态还回去**（与
@@ -5065,31 +5201,34 @@ def writeback(script, data, params_path, verify=True, python=None,
             # 外部改动，块却留在盘上）。回滚成功才把基准重置回 `src`；回滚失败则保持
             # `_expected`（磁盘上仍是我们写的那份），让下一轮守卫判定保持正确。
             _rnote = _rollback_note(backup, script, expect=_expected)
-            if _rnote == '已回滚':
+            if _rnote == _msg.t_wb('已回滚'):
                 _expected = src
             else:
-                warnings.append('换锚点重试前回滚未完成：%s' % _rnote)
+                warnings.append(_msg.t_wb('换锚点重试前回滚未完成：%s') % _rnote)
         if chosen is None:
             # 全部候选都跑不通 → 回滚；回滚是否真的成功要如实写进结论。
             # 传 expect：若用户在我们验证期间改过这个文件，就别拿备份整体覆盖。
-            if last_err.startswith('语义验证不一致'):
+            if last_err.startswith(_msg.t_wb('语义验证不一致')):
                 # T18：语义回比失败 ≠ "重跑失败"。真实原因是"脚本能跑通，但目标值没达标"，
                 # 旧文案（所有锚点写回后 Agg 重跑均失败）会把排查方向带偏。
-                _head = '目标值在重跑后仍未达标：%s（脚本本身能跑通）' % (
-                    last_sem.strip() or '（逐字段回比不一致）')
+                _vkind = VF_SEMANTIC
+                _head = _msg.t_wb('目标值在重跑后仍未达标：%s（脚本本身能跑通）') % (
+                    last_sem.strip() or _msg.t_wb('（逐字段回比不一致）'))
                 if _last_out is not None:
                     # T23/3(b)：这种"插在 savefig 之前也白改"的场景，多半是脚本在 savefig
                     # **之后**还有会覆盖布局的调用（subplots_adjust / tight_layout / 布局引擎）。
                     # 说明清楚：我们**不会**把块插到 savefig 之后（那样存出来的图不反映改动）。
-                    _head += ('。提示：脚本在第 %d 行（savefig/plt.show）之后可能还有会覆盖'
-                              '布局的调用；把那些调用移到 savefig 之前，或用 --style inplace。'
+                    _head += (_msg.t_wb('。提示：脚本在第 %d 行（savefig/plt.show）之后可能还有会覆盖布局的调用；把那些调用移到 savefig 之前，或用 --style inplace。')
                               % _last_out)
             else:
-                _head = '所有锚点写回后 Agg 重跑均失败（原脚本单独可跑通）'
+                _vkind = VF_ANCHORS
+                _head = _msg.t_wb('所有锚点写回后 Agg 重跑均失败（原脚本单独可跑通）')
             res.update({'reason': FAIL, 'attempts': attempts, 'verified': False,
                         'applied': False,
-                        'err': ('%s。%s。尝试：%s\n'
-                                'stderr 尾部：\n%s'
+                        # t65：稳定信号 + 已抽好的 stderr 尾部（apply 不再切文案）
+                        'verify_fail_kind': _vkind,
+                        'verify_fail_tail': last_err.strip(),
+                        'err': (_msg.t_wb('%s。%s。尝试：%s\nstderr 尾部：\n%s')
                                 % (_head,
                                    _rollback_note(backup, script,
                                                   expect=_expected),
@@ -5106,8 +5245,7 @@ def writeback(script, data, params_path, verify=True, python=None,
         # T23 / 外部评审条目 3(b)：锚点落到"脚本尾"必须在结论里说出来。有 savefig/show
         # 的脚本已经在上面的合规过滤里排除了 tail，所以走到这里只可能是"脚本不存图"——
         # 但仍然要让人一眼看出"块是在脚本最后面、不是在保存之前"。
-        warnings.append('本次锚点只能选"脚本尾"（脚本里没有 savefig/plt.show 可锚）'
-                        '——调整块会加在文件末尾')
+        warnings.append(_msg.t_wb('本次锚点只能选"脚本尾"（脚本里没有 savefig/plt.show 可锚）——调整块会加在文件末尾') )
 
     if fast_check and not verify and not dry_run:
         # 快速验证档（块路径）：与 _writeback_inplace 同一套弱保证 —— 只查语法，
@@ -5120,7 +5258,7 @@ def writeback(script, data, params_path, verify=True, python=None,
             res['verify_mode'] = 'fast'
         except SyntaxError as e:
             res.update({'reason': FAIL, 'verify_mode': 'fast',
-                        'err': '快速验证失败：写回后的源码语法错误（%s）：%s'
+                        'err': _msg.t_wb('快速验证失败：写回后的源码语法错误（%s）：%s')
                                % (_rollback_note(backup, script, expect=content), e),
                         'verified': False})
             return res

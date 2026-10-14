@@ -110,8 +110,10 @@ mpltweak doctor        # 打印 backend 探测（QtAgg / TkAgg 哪个 OK）与 Q
 pip install "mpltweak[qt]"
 ```
 
-> 命令不在 PATH 时（例如用 `pip --user` 装的），把本文的 `mpltweak` 换成
-> `python -m mpltweak` 即可，用法完全一样。
+> 命令不在 PATH 时（例如用 `pip --user` 装的，或 Windows + conda 下 `Scripts` 没进 PATH —— 安装时会打一行
+> `WARNING: The script mpltweak.exe is installed in '…\Scripts' which is not on PATH`），把本文的 `mpltweak`
+> 换成 `python -m mpltweak` 即可，用法完全一样；也可以直接用全路径 `<环境>\Scripts\mpltweak.exe`，
+> 或把那个目录加进 PATH（改完重开终端）。
 
 ---
 
@@ -143,7 +145,13 @@ QtAgg → Qt5Agg → Qt6Agg → TkAgg 逐个真建 canvas 探测；`doctor` 会�
 | `revert` 说"还没有可回退的备份" | 这条报错的含义是"这份备份不存在"：还没对这个脚本做过 `apply --write`，或者备份被删过。备份**恒定留在脚本旁**的 `.tweak_params/<脚本>.tweak.bak`（锚点是**脚本**，**不跟 `--params` 走**）⇒ `revert` **不用**再传 `--params`；0.1.8 遗留在参数文件旁的旧备份会作为兜底被找到 |
 | 想从头调 | 删掉 `.tweak_params/fig1.json`（不删就是接着上次续调） |
 | 多图脚本 | 每张图都会弹窗，**改哪张记哪张**；`mpltweak apply` 逐张写回 |
-| 脚本要读数据 / 跑很久 | 先试 `--timeout 600` **放宽**等待。`--no-verify` 会**完全跳过重跑验证**——那是写坏代码时唯一的自动安全网，只在脚本确实无法在无头环境重跑时才用，且用前请确认脚本已在版本控制里 |
+| 脚本要读数据 / 跑很久 | **开窗那一步没有超时开关**（本进程直接跑，等多久就是多久）；`apply --write` 的重跑验证可以 `--timeout 600` **放宽**等待（默认 300 秒；`check` / `describe` 不接受 `--timeout`）。`--no-verify` 会**完全跳过重跑验证**——那是写坏代码时唯一的自动安全网，只在脚本确实无法在无头环境重跑时才用，且用前请确认脚本已在版本控制里 |
 | **拖动特别卡** | 按 **空格** 切线框模式：只画边框、坐标轴和文字，**不渲染数据图元**（cartopy 大图实测 494ms → 169ms），挪完再按一次空格恢复 |
 | 手动改过代码后再开窗 | 会自动**不套用**上次参数（避免静默覆盖你的改动）并给出提示；确要接着上次调，加 `--force-resume` |
 | 脚本里开着 `constrained_layout` / `autolayout` | 开窗与写回时会提示（**带行号**）：布局引擎在每次绘制时重算轴位置，拖拽/写回的位置会被它覆盖。调图前先关掉（或把要精调的轴改成 `add_axes([...])`，引擎不管这类轴） |
+
+### `doctor` 的选项口径（t91）
+
+- `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
+- **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。
+- `-h` / `--help` ⇒ rc=0，打印 doctor 用法。

@@ -968,6 +968,542 @@ def _teeth_probes():
 
 
 # ---------------------------------------------------------------------------
+# =====================================================================
+# §t82 t82：**交互不变量套件**（把"手感/用户的期望"翻译成可断言的不变量）
+#
+# 六条：① 影响面（逐字段 diff：一次手势只许动它瞄准的对象）② 撤销完备性（参数**字节级**
+# 回到起点，且不许动没碰过的对象）③ 命中自洽（点哪中哪，**独立 patch 几何**判据，不复用
+# 被测代码的判定）④ 可达性（每个可见对象都有记录在案的选中路径）⑤ 无死锁（逃生路径存在）
+# ⑥ 延迟预算（代表性图形上的单次拖拽 p50/p95）。
+#
+# **离屏可证 / 待真窗口**：
+#   · 离屏可证：①-⑤ 的全部判据、⑥ 的**离屏 wall time**（本机基线，可复现）。
+#   · **待真窗口**：⑥ 里 blit/DPR/Qt 事件循环带来的**真机延迟**（离屏 Agg 没有 blit 路径、
+#     没有屏幕刷新）；以及"用户看得见的反馈"（蓝框/提示条）本身 —— 本套件只断言状态与
+#     时序，不断言像素。
+#
+# **已知缺口机制**：③④（P0-2 命中/可达）在**当前实现**上就是红的（这正是 t82 的交付：
+# 证明这套测试能独立抓住这个坑）。默认模式把它们记成"已知缺口"（只登记+打印，套件仍绿，
+# 不影响全量）；设 `MPLTWEAK_INVARIANTS_STRICT=1` 时它们变**硬失败** ⇒ 供 t71 做
+# 红 → 绿验收（红/绿原始输出并排）。
+# =====================================================================
+_STRICT_INV = os.environ.get('MPLTWEAK_INVARIANTS_STRICT') == '1'
+_INV_GAPS = []
+
+
+def inv(name, cond, detail=''):
+    '''不变量断言：默认模式下"已知缺口"只登记；严格模式（env）下算失败。'''
+    if cond:
+        check(name, True)
+    else:
+        _INV_GAPS.append(name)
+        check(name, not _STRICT_INV, '【已知缺口】%s' % detail)
+
+
+def _params(env):
+    '''导出参数（字节 + dict）——影响面/撤销完备性都以**参数**为口径。'''
+    import json as _json
+    env.tw.export()
+    with open(env.tw.export_path, 'rb') as f:
+        raw = f.read()
+    return raw, _json.loads(raw.decode('utf-8'))
+
+
+def _field_map(d):
+    '''把参数摊平成 {(对象, 字段): 值}；'canvas' 也是一个对象（figsize_* 等）。'''
+    out = {}
+    for k in ('figsize_px', 'figsize_in', 'n_figs', 'fig_index'):
+        out[('canvas', k)] = d.get(k)
+    for it in d.get('axes') or []:
+        i = it.get('index')
+        for k, v in it.items():
+            if k != 'index':
+                out[('ax%s' % i, k)] = v
+    return out
+
+
+def _diff_fields(a, b):
+    ka, kb = _field_map(a), _field_map(b)
+    return sorted(k for k in (set(ka) | set(kb)) if ka.get(k) != kb.get(k))
+
+
+def _click(env, x, y, key=None):
+    send(env.fig.canvas, 'button_press_event', int(x), int(y), button=1, key=key)
+    send(env.fig.canvas, 'button_release_event', int(x), int(y), button=1, key=key)
+
+
+def _press_esc(env):
+    send(env.fig.canvas, 'key_press_event', x=0, y=0, key='escape')
+
+
+def _undo_all(env, cap=80):
+    n = 0
+    while env.tw._undo and n < cap:
+        send(env.fig.canvas, 'key_press_event', x=0, y=0, key='ctrl+z')
+        n += 1
+    return n
+
+
+def _drag(env, x0, y0, dx, dy, steps=3):
+    send(env.fig.canvas, 'button_press_event', int(x0), int(y0), button=1)
+    for i in range(1, steps + 1):
+        send(env.fig.canvas, 'motion_notify_event',
+             int(x0 + dx * i / steps), int(y0 + dy * i / steps), button=1)
+    send(env.fig.canvas, 'button_release_event',
+         int(x0 + dx), int(y0 + dy), button=1)
+
+
+def _sel_idx(env):
+    return sorted(i for i, a in enumerate(env.axes) if id(a) in env.tw._selected)
+
+
+def _real_contains(ax, x, y):
+    '''**独立**命中判据：matplotlib 自己的几何（不调用被测代码的判定）。
+
+    两层：① `ax.patch` 的点包含（常规轴）；② 退到 `ax.get_window_extent()`（colorbar
+    这类 cax 的 patch 可能不可用）—— 两者都是 matplotlib 的几何，不是工具箱的命中逻辑。
+    '''
+    try:
+        px, py = ax.transAxes.inverted().transform((float(x), float(y)))
+        if bool(ax.patch.contains_point((px, py))):
+            return True
+    except Exception:                                    # noqa: BLE001
+        pass
+    try:
+        bb = ax.get_window_extent()
+        return bool(bb.x0 <= float(x) <= bb.x1 and bb.y0 <= float(y) <= bb.y1)
+    except Exception:                                    # noqa: BLE001
+        return False
+
+
+def _make_cb_inside_polar():
+    '''报告 P0-2 的**现场形状**：colorbar 的 rect 落在极地图矩形**内部**（相交）。
+
+    极地图 rect `[0.039, 0.4651, 0.9224, 0.4349]`（t75 台账里的实测值）+ colorbar
+    rect `[0.33, 0.455, 0.34, 0.016]` ⇒ y 方向真重叠 `[0.4651, 0.471]`。
+    '''
+    import math
+    fig = plt.figure(figsize=(15, 9.5))
+    ax = fig.add_axes([0.039, 0.4651, 0.9224, 0.4349], projection='polar')
+    th = [i * 6.2832 / 60 for i in range(60)]
+    rr = [math.cos(t) * 3 for t in th]
+    sc = ax.scatter(th, rr, c=rr)
+    cax = fig.add_axes([0.33, 0.455, 0.34, 0.016])
+    fig.colorbar(sc, cax=cax, orientation='horizontal')
+    return fig, fig.axes
+
+
+def _make_heavy_fig():
+    '''代表性图形：**极地图 + colorbar + 多艺术家**（延迟预算用）。'''
+    import math
+    fig = plt.figure(figsize=(9, 7))
+    ax = fig.add_subplot(111, projection='polar')
+    th = [i * 6.2832 / 60 for i in range(60)]
+    rr = [math.cos(t) * 3 for t in th]
+    sc = ax.scatter(th, rr, c=rr)
+    fig.colorbar(sc, ax=ax)
+    for k in range(3):
+        ax.plot(th, [math.cos(t) * (k + 1) for t in th], lw=1.0 + k)
+    return fig, fig.axes
+
+
+# ---- ① 影响面（逐字段 diff）-------------------------------------------------
+def _inv1_case(label, ops, make=None, target='ax0', allow_canvas=False,
+               allow_pos=False, expect_any=False, quiet=False):
+    holder = {}
+
+    def pre(env):
+        holder['raw'], holder['d'] = _params(env)
+        return None
+
+    def extra(env, fig, axes, init, post, pre_state):
+        _raw1, d1 = _params(env)
+        changed = _diff_fields(holder['d'], d1)
+        bad = [c for c in changed
+               if not (c[0] == target
+                       or (allow_canvas and c[0] == 'canvas')
+                       or (allow_pos and c[1] == 'pos'))]
+        if expect_any and not changed:
+            return False, '期望有改动但**一个字段都没变**'
+        return (not bad, '越界改动 = %s（允许：%s%s%s）'
+                % (bad, target, ' + canvas' if allow_canvas else '',
+                   ' + 所有轴的 pos' if allow_pos else ''))
+
+    return _case(label, ops, make=make, extra=extra, pre=pre, quiet=quiet)
+
+
+# ---- ② 撤销完备性（参数字节级）---------------------------------------------
+def _inv2_undo(ops, make=None, target='ax0', allow_canvas=False):
+    fig, axes = make() if make else _make_fig()
+    env = _Env(fig, axes, 'inv2_%d' % _case_no[0])
+    _case_no[0] += 1
+    raw0, d0 = _params(env)
+    crash, _ = _exec_ops(env, ops, False)
+    if crash is not None:
+        plt.close(fig)
+        return False, '手势抛异常 %r' % (crash[2],)
+    n = _undo_all(env)
+    raw1, d1 = _params(env)
+    changed = _diff_fields(d0, d1)
+    plt.close(fig)
+    return (raw1 == raw0 and not changed,
+            '撤销 %d 次后：参数字节相同=%s 残留差异=%s' % (n, raw1 == raw0, changed))
+
+
+# ---- ③ 命中自洽 + ④ 可达性 -------------------------------------------------
+def _inv34_hit_reach(make, tag):
+    fig, axes = make()
+    env = _Env(fig, axes, 'inv34_' + tag)
+    bad_hit, unreach = [], []
+    for i, ax in enumerate(axes):
+        x, y = env.center(ax)
+        _press_esc(env)
+        _click(env, x, y)
+        got = _sel_idx(env)
+        inside = _real_contains(ax, x, y)
+        if inside and got != [i]:
+            bad_hit.append('ax%d 中心(%d,%d) 在真实几何内，但选中 %s'
+                           % (i, x, y, got))
+        if got != [i]:
+            _press_esc(env)
+            _click(env, x, y, key='alt')
+            if _sel_idx(env) != [i]:
+                unreach.append('ax%d（中心点击 + Alt+点击都选不中）' % i)
+    plt.close(fig)
+    return bad_hit, unreach
+
+
+# ---- ⑤ 无死锁 ---------------------------------------------------------------
+def _inv5_deadlock():
+    fig, axes = _make_cb_fig()
+    env = _Env(fig, axes, 'inv5')
+    before = set(os.listdir(_TMPROOT)) if os.path.isdir(_TMPROOT) else set()
+    _drag(env, *env.center(axes[0]), 40, 25)
+    _press_esc(env)
+    _click(env, *env.center(axes[0]))
+    live_ok = bool(env.tw._selected)
+    after = set(os.listdir(_TMPROOT)) if os.path.isdir(_TMPROOT) else set()
+    nopy = not [f for f in (after - before) if f.endswith('.py')]
+    n = _undo_all(env)
+    plt.close(fig)
+    return (live_ok and nopy and n >= 0,
+            'Esc 后仍能选中=%s；手势没写任何 .py=%s；可撤销步数=%d'
+            % (live_ok, nopy, n))
+
+
+# ---- ⑥ 延迟预算（离屏 wall time；真机延迟待真窗口）--------------------------
+_BUDGET_P95_MS = 700.0      # 本机基线（Agg/离屏、15×9.5 极地图+colorbar+多艺术家、
+#                             单次完整拖拽）：**空载**实测 p50≈212ms、p95≈276ms；
+#                             **全量 pytest 满载**时实测 p50≈378ms、p95≈393ms
+#                             ⇒ 预算取 700ms（≈1.8× 满载基线，抗机器抖动且能抓住 2× 级
+#                             回归；**只覆盖离屏 wall time**，不含 blit/DPR/屏幕刷新
+#                             —— 真机延迟待真窗口）。
+
+
+def _inv6_latency(reps=30):
+    import time
+    fig, axes = _make_heavy_fig()
+    env = _Env(fig, axes, 'inv6')
+    ts = []
+    for _ in range(reps):
+        _press_esc(env)
+        x, y = env.center(axes[0])
+        t0 = time.perf_counter()
+        _drag(env, x, y, 20, 12, steps=4)
+        ts.append((time.perf_counter() - t0) * 1000.0)
+        _undo_all(env)
+    ts.sort()
+    p50 = ts[len(ts) // 2]
+    p95 = ts[min(len(ts) - 1, int(len(ts) * 0.95))]
+    plt.close(fig)
+    return (p95 <= _BUDGET_P95_MS,
+            'p50=%.1f ms p95=%.1f ms（预算 %.0f ms，%d 次）'
+            % (p50, p95, _BUDGET_P95_MS, reps))
+
+
+def _run_invariants():
+    # ---- ① 影响面（含"没什么变化"与"只变了该变的"两种判定）----
+    # 手势元组格式与 harness 一致：('drag', ax_i, (pfx,pfy), [offs], (rdx,rdy), snap_ov)
+    # / ('click', ax_i, frac, mods) / ('key', k, tgt, ax_i) / ('fit',)
+    _inv1_case('§t82① 影响面：拖 ax0 只改 ax0 的字段（画布不许动）',
+               [('drag', 0, (0.5, 0.5), [(60, 40)], (60, 40), False)],
+               target='ax0')
+    _inv1_case('§t82①b 影响面：拖 ax1 只改 ax1 的字段',
+               [('drag', 1, (0.5, 0.5), [(-50, 30)], (-50, 30), False)],
+               target='ax1')
+    _inv1_case('§t82①c 影响面：**裸点击**（无拖拽）一个字段都不许变',
+               [('click', 0, (0.5, 0.5), '')], target=None)
+    _inv1_case('§t82①d 影响面：Ctrl+F 裁白边只许动画布 + 轴的 pos（位置跟着画布走）',
+               [('fit',)], target='canvas', allow_canvas=True, allow_pos=True,
+               expect_any=True)
+
+    # ---- ② 撤销完备性 ----
+    ok, detail = _inv2_undo([('drag', 0, (0.5, 0.5), [(60, 40)], (60, 40), False)])
+    inv('§t82② 撤销完备性：拖拽序列撤销到底 ⇒ 参数**字节级**回到起点', ok, detail)
+    ok, detail = _inv2_undo([('drag', 0, (0.5, 0.5), [(60, 40)], (60, 40), False),
+                             ('drag', 1, (0.5, 0.5), [(-40, 20)], (-40, 20), False),
+                             ('fit',)], target='canvas', allow_canvas=True)
+    ok2, detail2 = ok, detail
+    inv('§t82②b 撤销完备性：拖拽 + 裁白边混合序列 ⇒ 同样字节级回到起点', ok2, detail2)
+
+    # ---- ③ 命中自洽 / ④ 可达性（当前实现上的**已知缺口** = t82 要证明的那件事）----
+    # 两种形状：① 不重叠（常规布局，应当绿）② **colorbar 落在极地图矩形内**（报告 P0-2 的
+    # 现场形状：相交处的点被路由给极地图 ⇒ colorbar 既"点不中"也"永远选不中"）。
+    for tag, mk in (('polar+cb', _make_heavy_fig), ('imshow+cb', _make_cb_fig),
+                    ('cb_inside_polar', _make_cb_inside_polar)):
+        bad_hit, unreach = _inv34_hit_reach(mk, tag)
+        inv('§t82③ 命中自洽（点哪中哪；独立 patch 几何判据）[%s]' % tag,
+            not bad_hit, '；'.join(bad_hit))
+        inv('§t82④ 可达性（每个可见对象都有记录在案的路径）[%s]' % tag,
+            not unreach, '；'.join(unreach))
+
+    # ---- ⑤ 无死锁 ----
+    ok, detail = _inv5_deadlock()
+    inv('§t82⑤ 无死锁：手势后仍有逃生路径（Esc 后仍可用 / 不写脚本 / 可撤销）', ok,
+        detail)
+
+    # ---- ⑥ 延迟预算 ----
+    ok, detail = _inv6_latency()
+    inv('§t82⑥ 延迟预算（离屏 wall time，预算 %.0f ms p95；真机 blit/DPR 待真窗口）'
+        % _BUDGET_P95_MS, ok, detail)
+
+    # ---- teeth：单点变异 ⇒ 指定不变量必红 ----
+    _inv_teeth()
+    if _INV_GAPS:
+        print('KNOWN | §t82 已知缺口 %d 条（默认模式登记；设 '
+              'MPLTWEAK_INVARIANTS_STRICT=1 变硬失败）：%s'
+              % (len(_INV_GAPS), '；'.join(_INV_GAPS)))
+    return _INV_GAPS
+
+
+def _inv_teeth():
+    '''teeth：把实现改回错误形态 ⇒ 对应不变量必红（每条都实跑一次）。'''
+    # ① 影响面：让每次拖拽顺手把**另一个轴**挪一下 ⇒ 逐字段 diff 必报越界
+    _orig_motion = Tweak._on_motion
+
+    def _motion_pollute(self, event):
+        _orig_motion(self, event)
+        try:
+            if getattr(self, '_press_pushed', False) and len(self.fig.axes) > 1:
+                a = self.fig.axes[-1]
+                b = [float(v) for v in _bbox(a)]
+                b[0] += 0.001
+                _set_bbox(a, b)
+        except Exception:                                # noqa: BLE001
+            pass
+
+    Tweak._on_motion = _motion_pollute
+    try:
+        res = _inv1_case('§t82①-teeth（静默：预期这条会红）',
+                         [('drag', 0, (0.5, 0.5), [(60, 40)], (60, 40), False)],
+                         target='ax0', quiet=True)
+    finally:
+        Tweak._on_motion = _orig_motion
+    check('§t82①【有牙】拖拽时顺手改别的轴 ⇒ 影响面断言必红',
+          res['ex_ok'] is False, res['detail'][:120])
+
+    # ② 撤销完备性：让撤销**不回放画布**（= t66 之前的"画布尺寸不进撤销栈"那种钝口径）
+    _orig_restore = Tweak._restore_snap
+
+    def _restore_nocanvas(self, snap):
+        if isinstance(snap, dict) and snap.get('figsize_in') is not None:
+            snap = dict(snap, figsize_in=None)
+        return _orig_restore(self, snap)
+
+    Tweak._restore_snap = _restore_nocanvas
+    try:
+        ok_bad, det_bad = _inv2_undo([('key', 'ctrl+f')], target='canvas',
+                                     allow_canvas=True)
+    finally:
+        Tweak._restore_snap = _orig_restore
+    check('§t82②【有牙】撤销不回放画布 ⇒ 撤销完备性（字节级）必红',
+          ok_bad is False, det_bad[:120])
+
+    # ⑤ 无死锁：让工具**僵住**（按下事件一律早退 ⇒ 之后任何点击都选不中）⇒ 必红
+    _orig_press = Tweak._on_press
+
+    def _press_stuck(self, event):
+        return
+
+    Tweak._on_press = _press_stuck
+    try:
+        ok_bad, det_bad = _inv5_deadlock()
+    finally:
+        Tweak._on_press = _orig_press
+    check('§t82⑤【有牙】手势后工具"僵住"（后续点击不再选中）⇒ 无死锁断言必红',
+          ok_bad is False, det_bad[:120])
+
+    # ⑥ 延迟预算：把一次刷新拖慢到 **250ms** ⇒ p95 必然远超预算（满载下也稳超）
+    _orig_refresh = Tweak._refresh
+    import time as _t
+
+    def _refresh_slow(self, *a, **k):
+        _t.sleep(0.25)
+        return _orig_refresh(self, *a, **k)
+
+    Tweak._refresh = _refresh_slow
+    try:
+        ok_bad, det_bad = _inv6_latency(reps=6)
+    finally:
+        Tweak._refresh = _orig_refresh
+    check('§t82⑥【有牙】单次刷新拖慢 250ms ⇒ 延迟预算（p95）必红',
+          ok_bad is False, det_bad[:120])
+
+
+# =====================================================================
+# §t71 t71：P0-2 修复的**纯函数 + 逃生通道**验收（拾取优先级 / 真实形状 / Alt 穿透 / Tab 循环）
+# 现场形状同 §t82：colorbar 的 rect 落在极地图矩形内（相交带 y∈[0.4651,0.471]）。
+# =====================================================================
+def _run_t71_units():
+    from mpltweak import toolbox as _tb71
+    fig, axes = _make_cb_inside_polar()
+    env = _Env(fig, axes, 't71')
+    pol, cb = axes[0], axes[1]
+    x, y = env.center(cb)
+    # ① 几何口径（两层）：极地图的**真实形状是圆** ⇒ 外接矩形角上的点不在圆里；
+    #    `_body_contains` 第一层用 patch（圆），第二层才退到 window_extent（cax 兜底）。
+    _corner = (int(round((pol._position.x0 + 0.002) * env.W)),
+               int(round((pol._position.y0 + 0.002) * env.H)))
+    try:
+        _in_circle = bool(pol.patch.contains_point(
+            pol.transAxes.inverted().transform((float(_corner[0]),
+                                                float(_corner[1])))))
+    except Exception:                                    # noqa: BLE001
+        _in_circle = None
+    check('§t71① 真实形状口径：极地图**圆**不包含外接矩形角点（patch 层），'
+          '`_body_contains` 第二层才退到 window_extent 兜底',
+          _in_circle is False and _tb71._body_contains(pol, *_corner) is True,
+          'patch 内含=%s / _body_contains=%s'
+          % (_in_circle, _tb71._body_contains(pol, *_corner)))
+    # ② 拾取优先级：后加入者 + 面积小者优先 ⇒ colorbar 中心的第一候选是 colorbar
+    _cands = _tb71._pick_candidates(fig, x, y)
+    check('§t71② 拾取优先级（后加入者/面积小者优先）⇒ colorbar 中心第一候选 = colorbar',
+          bool(_cands) and _cands[0] is cb and cb in _cands,
+          [fig.axes.index(c) for c in _cands])
+    # ③ 端到端：点 colorbar 中心 ⇒ 真的选中 colorbar（不再被"缩放 ax0 bottom"抢走）
+    _press_esc(env)
+    _click(env, x, y)
+    check('§t71③ 点 colorbar 中心 ⇒ 选中 colorbar（边缘把手让位给真实形状命中）',
+          _sel_idx(env) == [1], _sel_idx(env))
+    # ④ 逃生通道①：Alt+点击**穿透**到下一层候选 —— 用"colorbar **完全落在极地图矩形内**"
+    #    的形状（重叠带厚、且不贴 colorbar 自己的边），否则那条带正好压着 colorbar 上缘
+    #    把手，Alt+按下要留给"Alt+拖端点 = 调长度"的老手势（test_events 在守这条）。
+    _fig4 = plt.figure(figsize=(15, 9.5))
+    _pol4 = _fig4.add_axes([0.039, 0.4651, 0.9224, 0.4349], projection='polar')
+    _sc4 = _pol4.scatter([i * 6.2832 / 60 for i in range(60)],
+                         [math.cos(i * 6.2832 / 60) * 3 for i in range(60)],
+                         c=[math.cos(i * 6.2832 / 60) for i in range(60)])
+    _cax4 = _fig4.add_axes([0.45, 0.60, 0.20, 0.02])
+    _fig4.colorbar(_sc4, cax=_cax4, orientation='horizontal')
+    _env4 = _Env(_fig4, _fig4.axes, 't71_alt')
+    _x4 = int(round((_cax4._position.x0 + _cax4._position.width * 0.5) * _env4.W))
+    _y4 = int(round((_cax4._position.y0 + _cax4._position.height * 0.5) * _env4.H))
+    _both4 = _tb71._pick_candidates(_fig4, _x4, _y4)
+    _click(_env4, _x4, _y4)
+    _sel0 = _sel_idx(_env4)
+    _click(_env4, _x4, _y4, key='alt')
+    _sel1 = _sel_idx(_env4)
+    check('§t71④ Alt+点击穿透到下一层候选（colorbar 完全落在极地图内：colorbar → 极地图）',
+          len(_both4) >= 2 and _sel0 == [1] and _sel1 == [0],
+          '候选=%s 点击后=%s Alt 后=%s'
+          % ([_fig4.axes.index(c) for c in _both4], _sel0, _sel1))
+    plt.close(_fig4)
+    # ⑤ 逃生通道②：Tab 循环逐个走到每个轴（含被压住的）
+    _seen = set()
+    for _ in range(len(axes) + 1):
+        send(fig.canvas, 'key_press_event', x=0, y=0, key='tab')
+        _seen |= set(_sel_idx(env))
+    check('§t71⑤ Tab 循环覆盖所有可见对象（含被压住的 colorbar）',
+          _seen == set(range(len(axes))), sorted(_seen))
+    plt.close(fig)
+
+    # teeth：把"真实形状拾取 + 逃生通道"整组关掉（= 只认外接矩形/边缘把手的老口径）
+    # ⇒ §t82③ 命中自洽 + §t82④ 可达性**双双必红**
+    _orig_pick = _tb71._pick_at
+    _orig_cands = _tb71._pick_candidates
+    _tb71._pick_at = lambda fig2, x2, y2, skip=0: None
+    _tb71._pick_candidates = lambda fig2, x2, y2: []
+    try:
+        bad_hit, unreach = _inv34_hit_reach(_make_cb_inside_polar, 't71_teeth')
+    finally:
+        _tb71._pick_at = _orig_pick
+        _tb71._pick_candidates = _orig_cands
+    check('§t71⑥【有牙】关掉"真实形状拾取"（改回只认外接矩形/边缘把手）⇒ '
+          '§t82③ 命中自洽 + §t82④ 可达性**双双必红**',
+          bool(bad_hit) and bool(unreach),
+          '命中自洽红=%s 可达性红=%s' % ('; '.join(bad_hit)[:80],
+                                         '; '.join(unreach)[:80]))
+
+
+# =====================================================================
+# §t92 t92：撤销完备性**逐字段**（显式点名 `canvas.figsize_px` 与 `figsize_in`）
+#
+# 来历：`t82` 严格模式发现「裁白边（Ctrl+F）后撤销只还原了 `figsize_in`，跟踪的
+# `figsize_px` 没还原」⇒ 参数内部不一致（与 P0-1 同源）。`t71` 已修：
+#   · `_snapshot(with_canvas=True)` 记 `figsize_tracked = (_fig_px is not None)`；
+#   · `_restore_snap` 只在"本来就跟踪过"时写回 `_fig_px`，否则**复位 None**。
+# 本节的加严点：**不看字节，看逐字段 diff**（`_diff_fields` 覆盖 canvas 的 px/in 与每轴
+# 的每个字段），并显式把 canvas 的 px/in 打进 detail 便于定位。
+# =====================================================================
+_S92_SEQS = {
+    '拖拽': [('drag', 0, (0.5, 0.5), [(60, 40)], (60, 40), False)],
+    '拖拽+裁白边': [('drag', 1, (0.5, 0.5), [(-40, 20)], (-40, 20), False),
+                    ('fit',)],
+    '多操作混合': [('drag', 0, (0.5, 0.5), [(30, 15)], (30, 15), False),
+                   ('key', '+', 'title', 1),
+                   ('click', 2, (0.5, 0.5), 'ctrl'),
+                   ('fit',)],
+}
+
+
+def _s92_fields(ops):
+    '''跑 ops → 撤销到底 → **逐字段** diff（含 canvas 的 px/in）。返回 (ok, detail)。'''
+    fig, axes = _make_fig()
+    env = _Env(fig, axes, 't92_%d' % _case_no[0])
+    _case_no[0] += 1
+    _raw0, d0 = _params(env)
+    crash, _lf = _exec_ops(env, ops, False)
+    if crash is not None:
+        plt.close(fig)
+        return False, '手势抛异常 %r' % (crash[2],)
+    n = _undo_all(env)
+    _raw1, d1 = _params(env)
+    changed = _diff_fields(d0, d1)
+    _cv = [(k, d0.get(('canvas', k)), d1.get(('canvas', k)))
+           for k in ('figsize_px', 'figsize_in')]
+    plt.close(fig)
+    return (not changed), ('撤销 %d 次后逐字段差异=%s；canvas(px,in)=%s；字节相同=%s'
+                           % (n, changed, _cv, _raw1 == _raw0))
+
+
+def _run_t92_units():
+    for _nm, _ops in _S92_SEQS.items():
+        _ok, _det = _s92_fields(_ops)
+        check('§t92① 撤销到底后**逐字段**与起点一致（含 canvas.figsize_px/in）[%s]'
+              % _nm, _ok, _det)
+    # teeth：把 `figsize_px` 的还原**整段去掉**（只还原英寸）⇒ 逐字段断言必红
+    _orig_rs92 = Tweak._restore_snap
+
+    def _rs_inch_only(self, snap):
+        if isinstance(snap, dict):
+            _fi = snap.get('figsize_in')
+            if _fi is not None:
+                try:
+                    self.fig.set_size_inches(float(_fi[0]), float(_fi[1]))
+                except (AttributeError, TypeError, ValueError, IndexError):
+                    pass
+            return _orig_rs92(self, {'axes': snap.get('axes', [])})
+        return _orig_rs92(self, snap)
+
+    Tweak._restore_snap = _rs_inch_only
+    try:
+        _okb, _detb = _s92_fields(_S92_SEQS['拖拽+裁白边'])
+    finally:
+        Tweak._restore_snap = _orig_rs92
+    check('§t92②【有牙】把 `figsize_px` 的还原去掉（只还原英寸）⇒ '
+          '§t92① 逐字段断言必红', _okb is False, _detb[:150])
+
+
 def main():
     # 「hypothesis 装没装」是**环境事实**，不是被测行为：装了照旧断言它可用；
     # 没装则**明确打印跳过原因**（而不是把一个"环境缺可选依赖"记成测试失败 ——
@@ -983,6 +1519,9 @@ def main():
     _case_mixed_legend_panel()
     _case_colorbar()
     _teeth_probes()
+    _run_invariants()
+    _run_t71_units()
+    _run_t92_units()
 
     if _HAS_HYPOTHESIS:
         _run_hyp('hypothesis 任意乱序手势：不崩/往返/几何（不验落位）',

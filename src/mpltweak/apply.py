@@ -20,6 +20,7 @@ mpltweak apply —— 「落实」助手（CLI：mpltweak apply <脚本.py>）
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -62,33 +63,87 @@ def _print_changes(script, data, p):
     axes = data.get('axes', [])
     if not isinstance(axes, list):                 # 脏参数：不要在这里崩
         axes = []
-    print('参数文件: %s' % p)
-    print('脚本: %s' % os.path.basename(script))
-    print('画布: figsize_in=%s  (px=%s)'
-          % (data.get('figsize_in'), data.get('figsize_px')))
+    print(_msg.t('apply_params_label', path=p))
+    print(_msg.t('apply_script_label', name=os.path.basename(script)))
+    print(_msg.t('apply_canvas_label', inch=data.get('figsize_in'),
+                 px=data.get('figsize_px')))
+    # P2-11（t69）：明说**这次会改哪些字段** —— 与"没动"的字段区分开。
+    # 报告现场：预览只打了"画布: figsize_in=[7.5, 4.75]"，用户/agent 看不出
+    # "这一下会把我的画布改成一半"（P0-1 的背景）。figsize 若能从源码里静态读到
+    # 当前字面量，就给 `旧 → 新`（报告要的形态）；读不到时只列字段名。
+    _refs = _snippet_refs(data, None)
+    if not _refs:
+        print(_msg.t('apply_will_change_none'))
+    else:
+        _old_fs = None
+        if 'figsize' in _refs:
+            try:
+                import ast as _ast
+                with open(script, 'r', encoding='utf-8-sig') as _fsrc:
+                    _ssrc = _fsrc.read()
+                _tree = _ast.parse(_ssrc)
+                _old_fs = writeback._figsize_from_source(_ssrc, _tree)
+                if not (isinstance(_old_fs, (list, tuple))
+                        and len(_old_fs) == 2):
+                    # 最常见的写法是 `plt.figure(figsize=(w, h))` /
+                    # `plt.subplots(figsize=…)`，而 _figsize_from_source 只认
+                    # `set_size_inches(...)` 字面量 ⇒ 这里补一层（读不到就只列字段名）。
+                    for _n in _ast.walk(_tree):
+                        if not isinstance(_n, _ast.Call):
+                            continue
+                        for _kw in _n.keywords:
+                            if _kw.arg != 'figsize':
+                                continue
+                            try:
+                                _v = _ast.literal_eval(_kw.value)
+                            except (ValueError, SyntaxError, TypeError):
+                                _v = None
+                            if isinstance(_v, (list, tuple)) and len(_v) == 2:
+                                _old_fs = list(_v)
+                        if _old_fs:
+                            break
+            except (OSError, SyntaxError, ValueError):
+                _old_fs = None
+        _new_fs = data.get('figsize_in') or []
+        _items = []
+        for _r in _refs:
+            if _r != 'figsize':
+                _items.append(_r)
+            elif (isinstance(_old_fs, (list, tuple)) and len(_old_fs) == 2
+                    and isinstance(_new_fs, (list, tuple))
+                    and len(_new_fs) == 2):
+                _items.append(_msg.t(
+                    'apply_figsize_old_new',
+                    old='(%s, %s)' % (_num(_old_fs[0]), _num(_old_fs[1])),
+                    new='(%s, %s)' % (_num(_new_fs[0]), _num(_new_fs[1]))))
+            else:
+                _items.append('figsize')
+        print(_msg.t('apply_will_change',
+                     items=_msg.t('items_sep').join(_items)))
     print('-' * 62)
     for a in axes:
         if not isinstance(a, dict):                # L1：参数文件里有脏轴项 → 不崩溃
-            print('  !! 参数文件里有一个非对象轴项，已跳过: %r' % (a,))
+            print(_msg.t('apply_axis_item_bad', item=a))
             continue
         i = a.get('index')
         pos = a.get('pos')
         if pos is None:
             # 轴项缺 pos 是**通过官方 schema 校验的合法输入**（pos 不是必填）；
             # 原先直接 `for v in None` 会抛 TypeError，且 --json 下 stdout 为空。
-            print('%-4s 位置（参数里没给，保持原样）' % _axlabel(i))
+            print(_msg.t('apply_axis_pos_missing', ax='%-4s' % _axlabel(i)))
         else:
-            print('%-4s 位置 [%s]' % (_axlabel(i),
-                                     ', '.join(_fmt(v) for v in pos)))
+            print(_msg.t('apply_axis_pos', ax='%-4s' % _axlabel(i),
+                         pos=', '.join(_fmt(v) for v in pos)))
         _lfy = a.get('label_fontsize_y')
         if (a.get('title_fontsize') is not None
                 or a.get('label_fontsize') is not None or _lfy is not None):
             # x/y 标签字号分开显示（T11）：只在 y 真给了值时多打一段，老参数文件
             # 的输出保持原样（不给既有断言/脚本添噪音）。
-            print('      字号 title=%s label=%s%s tick=%s'
-                  % (a.get('title_fontsize'), a.get('label_fontsize'),
-                     '' if _lfy is None else ' label_y=%s' % _lfy,
-                     a.get('tick_fontsize')))
+            print(_msg.t('apply_axis_fontsize',
+                         title=a.get('title_fontsize'),
+                         label=a.get('label_fontsize'),
+                         labely='' if _lfy is None else ' label_y=%s' % _lfy,
+                         tick=a.get('tick_fontsize')))
         if a.get('clim') is not None:
             print('      clim=%s' % a.get('clim'))
         if a.get('cmap'):
@@ -102,8 +157,8 @@ def _print_changes(script, data, p):
                   % (line.get('index'), line.get('linewidth'), line.get('color')))
         lg = a.get('legend')
         if lg:
-            loc = lg.get('loc') or '（自由锚点）'
-            print('      图例 loc=%s fontsize=%s' % (loc, lg.get('fontsize')))
+            loc = lg.get('loc') or _msg.t('apply_legend_free_anchor')
+            print(_msg.t('apply_axis_legend', loc=loc, size=lg.get('fontsize')))
 
 
 def _snippet_line(field, val):
@@ -234,12 +289,62 @@ _FALLBACK_NEEDS_BLOCK = ('[!] 这些字段代码里没有可改的写法、本�
                          '重新落实；原位模式只改代码里已有的数字。')
 # T23 / 外部评审条目 3(d)：把"这次到底验了哪几层"如实打出来（快速档 / 没重跑 / 没语义）。
 # TODO(i18n): 交给 cli-hunter 搬进 messages.py（键名建议 verify_layers_fast /
-#             verify_layers_no_rerun / verify_layers_no_semantic）。
+#             verify_layers_no_rerun / verify_layers_no_rerun_plain /
+#             verify_layers_dryrun_maybe / verify_layers_no_semantic）。
 _LAYERS_FAST_NOTE = ('[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于'
                      '参数（--verify-fast 的弱保证）')
 _LAYERS_NO_RERUN = '[i] 本次**没有重跑**脚本（--no-verify）：写回结果未经运行验证'
+# §20.3#4：同样是"没有重跑"，但**原因不是 --no-verify**（dry-run 里没有需要实测回比的
+# 字段、或写回还没走到验证就早退）—— 别再把账记到 --no-verify 头上（旧判据的错挂）。
+_LAYERS_NO_RERUN_PLAIN = '[i] 本次**没有重跑**脚本：写回结果未经运行验证'
+# §20.3#4①：dry-run 的默认档**确实会跑脚本**（参数含"原位写不了"的字段时走
+# writeback._pending_vs_live → verify_semantic 做实测回比），但 dry-run 走的是 writeback
+# 的早退分支（writeback.py:2902-2910），返回的 res 里**没有 layers 这层真凭据** ——
+# 所以这条路上只能如实说"不排除已经跑过"，**绝不许**反过来说"没有重跑"。
+_LAYERS_DRYRUN_MAYBE = (
+    '[i] dry-run 预览（未落盘）：这批参数含"原位写不了"的字段 —— 默认档会尝试**实测回比**'
+    '（这一步会**重跑一遍你的脚本**），因此**不排除本次已经跑过它**；预览结果未经运行验证。'
+    '（--verify-fast / --no-verify / --no-semantic 不做实测回比、不重跑）')
 _LAYERS_NO_SEMANTIC = ('[i] 本次**没有做语义比对**（第③层没跑）：只确认了"脚本能跑通"，'
                        '不保证布局真的落到目标图上')
+
+
+def _verify_rerun_state(res, args):
+    """这次到底有没有**为验证重跑**脚本 —— 真凭据优先，**不按 flag 反推**。
+
+    背景（MAINTENANCE §14.2#3 = §20.3#4，同一个根因）：``--write --dry-run`` 的默认档
+    在参数含"原位写不了"的字段时会走 ``writeback._pending_vs_live`` → ``verify_semantic``
+    （writeback.py:2659-2698 / :2694）——那一步会**真跑一遍用户的脚本**；而 dry-run 走的是
+    writeback 的早退分支（writeback.py:2902-2910），返回的 res 里**根本没有 `layers`**。
+    旧判据 ``_ly.get('rerun') is None and not args.no_verify`` 于是把"没有 layers"当成
+    "没跑"，造成两个相反的错：① dry-run 真跑了却说"没有重跑"；② **唯一**真该说这句的
+    ``--no-verify`` 反而被 ``not args.no_verify`` 压掉（该说时不说）。
+
+    判据（每一档都只依据真凭据/档位本身能保证的事实）：
+      * ``res['layers']`` 在 —— writeback 在**写盘之后**逐层填的真结果：
+        ``rerun`` 为 None ⇒ 没跑；不是 None ⇒ 跑了（True 通过 / False 失败）。
+      * ``layers`` 不在且是 dry-run：❌ 没有凭据。只有**档位本身保证不跑**的才敢说
+        'not_ran'：fast / no-verify / no-semantic 走 writeback.py:2891-2893 的保守分支；
+        没有 ``needs_block``（没有"原位写不了"的字段）就进不了实测回比。默认档且
+        ``needs_block`` 为真时 ⇒ 'may_ran'（如实说"不排除跑过"）。
+      * ``layers`` 不在又不是 dry-run：只可能是"还没走到验证就早退"的分支
+        （no_axes / no_change / no_fig / stale / bad_params / 语法错前）⇒ 没跑过。
+    """
+    _ly = res.get('layers')
+    if _ly is not None:
+        return 'ran' if _ly.get('rerun') is not None else 'not_ran'
+    if not args.dry_run:
+        return 'not_ran'
+    if args.verify_fast or args.no_verify or args.no_semantic:
+        return 'not_ran'
+    # "有没有原位写不了的字段"是这条路上的**真凭据**：auto 先按原位试一次、退块时把
+    # 原位那次的结论留档在 res['inplace_needs_block']（apply.py:826）—— 实测回比发生在
+    # **原位那次**里，块通道那次不做回比，所以不能只看最终那份 res。
+    # 显式 --style block（没有原位那次）不进实测回比 ⇒ 也不该说"可能跑过"。
+    if args.style not in ('auto', 'inplace'):
+        return 'not_ran'
+    return 'may_ran' if (res.get('needs_block')
+                         or res.get('inplace_needs_block')) else 'not_ran'
 
 
 def _t_new(key, fallback, **kw):
@@ -330,8 +435,50 @@ def _all_params_files(script, override=None):
     return [by_idx[k] for k in sorted(by_idx)] + fallback
 
 
+# ---------------------------------------------------------------------------
+# B9（t33 / V1-F4）：`apply --json` 的**每一条失败出口**都要带稳定、可分支的
+# `error_code`。值域（全部 ASCII、snake_case、不随文案漂移；与 check/describe/revert
+# 同名者复用，agent 可以跨命令统一分支）：
+#
+#   file_not_found            脚本不存在
+#   no_params                 没有参数文件
+#   mutually_exclusive_flags  --no-verify 与 --verify-fast 同时给
+#   layout_conflict           --strict 下检测到布局引擎冲突，拒绝写回
+#   bad_params                参数文件结构/取值硬错误（缺 version、顶层非对象、字段非法）
+#   stale_params              脚本比参数文件新（套用旧参数会覆盖手改，要 --force）
+#   no_axes                   参数里没有可落地的轴/字段
+#   no_fig                    找不到 figure/subplots 的赋值目标（纯 pyplot 流）
+#   writeback_failed          写回/验证失败（含脚本跑不通的 fail）
+#   external_modified         验证期间脚本被外部改过（已回滚，未写回）
+#   apply_failed              兜底：出现了 ok 清单之外的 reason（新增 reason 忘登记的信号）
+#
+# 逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里；
+# 顶层 error_code 取**第一个失败文件**的码（多文件批次里"有一份没成"就是没成）。
+# 成功载荷**不加**这个键 —— 既有键名/语义、退出码、stdout/stderr 分流一字不变。
+# ---------------------------------------------------------------------------
+_OK_REASONS = ('ok', 'best_effort', 'no_change', 'preview')
+_FAIL_ERROR_CODE = {
+    'bad_params': 'bad_params',
+    'stale': 'stale_params',
+    'no_axes': 'no_axes',
+    'no_fig': 'no_fig',
+    'fail': 'writeback_failed',
+    'external_modified': 'external_modified',
+}
+
+
+def _failure_code(results):
+    """顶层 error_code：按**第一个失败文件**的 reason 取码；全成功返回 None。"""
+    for _p, _r in results or []:
+        _rs = _r.get('reason')
+        if _rs in _OK_REASONS:
+            continue
+        return _FAIL_ERROR_CODE.get(_rs, 'apply_failed')
+    return None
+
+
 def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
-               preflight_res=None):
+               preflight_res=None, error_code=None):
     """--json 的机器可读输出（每个 return 分支前都要调用一次）。
 
     ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
@@ -426,6 +573,10 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
         _payload['preflight'] = preflight_res
     if error:
         _payload['error'] = error
+    if error_code:
+        # B9：失败载荷必须能机器分支（值域见 _FAIL_ERROR_CODE 的说明）。成功载荷
+        # 不带这个键 —— 键集与语义不变。
+        _payload['error_code'] = error_code
     _msg.emit_json(_payload)
 
 
@@ -459,30 +610,28 @@ def _classify_verify_failure(res, script, script_args):
     """从写回结果 res 归因验证失败（纯函数，不重跑脚本）。
 
     返回 ``(kind, detail)``；kind 取值见 verify.VERIFY_FAIL_* 常量。
-    证据提取：
-      * 块路径 Case B（写回后失败但原脚本可跑通）：res['err'] 含
-        'stderr 尾部：' → 取其后文本做模式匹配；
-      * 原位路径 Case B：err 以 '写回后脚本跑不通' 开头，verr 直接嵌在
-        '：' 之后（最多 300 字符）→ 取其后文本；
-      * Case A（原脚本本身也跑不通）：err 只有笼统文案（无 stderr）→ 传空，
-        分类器用 ast 扫描脚本（读 argv / 交互标记）保守归类。
+
+    t65：证据**只取 writeback 给的稳定字段**（``verify_fail_tail``），不再从
+    ``res['err']`` 里按中文标记（'stderr 尾部：' / '写回后脚本跑不通'）切文案 ——
+    文案会随界面语言变（t63 之后 en 下那些标记不存在）。字段缺失（老调用方/单测
+    手工构造的 res）时传空串：分类器会退到**静态证据**（ast 扫描脚本）保守归类，
+    这也是原本 Case A 的路径。
     """
-    err = res.get('err') or ''
-    tail = ''
-    if 'stderr 尾部：' in err:
-        tail = err.split('stderr 尾部：', 1)[1].strip()
-    elif err.startswith('写回后脚本跑不通') and '：' in err:
-        tail = err.split('：', 1)[1].strip()
+    tail = res.get('verify_fail_tail') or ''
     return _verify.classify_verify_failure(tail, script_path=script,
                                            args_passed=bool(script_args))
 
 
+# t65：哪些 kind 算"验证重跑失败"（要进归因分类）。取值来自 writeback 的稳定信号，
+# **不匹配任何语言的文案** —— 旧实现按 err 的中文前缀反推，t63 把 err 翻成 en 之后
+# 在 en 下永不成立 ⇒ 归因分类静默失效（人读归因行消失 + --json 的 attribution 变 null）。
+_RERUN_FAIL_KINDS = (writeback.VF_HEADLESS, writeback.VF_AFTER_WRITE,
+                     writeback.VF_ANCHORS)
+
+
 def _is_rerun_failure(res):
-    """res['err'] 是否是"验证重跑失败"（而非语法错误 / 无锚点 / 语义不达标）。"""
-    err = res.get('err') or ''
-    return (err.startswith('脚本本身在无头环境跑不通')
-            or err.startswith('所有锚点写回后 Agg 重跑均失败')
-            or err.startswith('写回后脚本跑不通'))
+    """res 是否是"验证重跑失败"（而非语法错误 / 无锚点 / 语义不达标）—— 按稳定信号判。"""
+    return res.get('verify_fail_kind') in _RERUN_FAIL_KINDS
 
 
 def _print_attribution(kind, detail, script):
@@ -591,14 +740,8 @@ def main(argv=None):
         _err = 'no_verify and verify_fast are mutually exclusive'
         if args.json:
             _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
-                       error=_err)
-        sys.stderr.write('[apply] --no-verify 与 --verify-fast 不能同时用：\n'
-                         '  --no-verify   = 跳过重跑与语义验证（写盘后的语法检查仍会做）：\n'
-                         '                  脚本跑不通、布局没落到位都不会被发现，也不会自动回滚；\n'
-                         '                  这是写坏代码时唯一的自动安全网，一般不建议用。\n'
-                         '  --verify-fast = 只做语法检查（**不重跑脚本**）：坏语法会当场回滚，\n'
-                         '                  但"能跑通"和"布局真的落到目标图上"都不保证。\n'
-                         '  二选一。\n')
+                       error=_err, error_code='mutually_exclusive_flags')
+        sys.stderr.write(_msg.t('apply_mutex_verify'))
         return 2
 
     script = os.path.abspath(args.script)
@@ -608,7 +751,8 @@ def main(argv=None):
     if not os.path.exists(script):
         if args.json:
             _emit_json(script, [], _stdout, ok=False,
-                       error=_msg.t_en('file_not_found', path=script))
+                       error=_msg.t_en('file_not_found', path=script),
+                       error_code='file_not_found')
         else:
             sys.stderr.write('[apply] %s\n' % _msg.t('file_not_found', path=script))
         return 2
@@ -620,21 +764,23 @@ def main(argv=None):
         # 所以拒绝写回并给出可操作的办法（关掉引擎 / 用 add_axes 定位 / 显式放行）。
         if args.json:
             _emit_json(script, [], _stdout, ok=False,
-                       error='layout conflict (use --allow-layout-conflict to override)')
+                       error='layout conflict (use --allow-layout-conflict to '
+                             'override)',
+                       error_code='layout_conflict')
         for _line in _conflicts:
             sys.stderr.write('[apply] %s\n' % _line)
-        sys.stderr.write('[apply] --strict：检测到布局引擎冲突，已拒绝写回。'
-                         '要照样写回请加 --allow-layout-conflict\n')
+        sys.stderr.write(_msg.t('apply_strict_layout_refused') + '\n')
         return 2
     files = _all_params_files(script, args.params)
     if not files:
         _hint = 'no params: %s' % params.params_path(script, args.params)
         print(_hint)
         if args.json:
-            _emit_json(script, [], _stdout, ok=False, error=_hint)
+            _emit_json(script, [], _stdout, ok=False, error=_hint,
+                       error_code='no_params')
         return 2
     if len(files) > 1:
-        print('发现 %d 份参数文件（一次会话改过多张图）——逐张落实：' % len(files))
+        print(_msg.t('multi_files', n=len(files)))
 
     # 0.1.10 可重跑预检（pre-flight）：**在写回之前**把"这个脚本重跑会卡在哪"讲清楚。
     # 用户视角评审指出的最大留存瓶颈 —— 安全网要求在你的环境里重跑脚本（0.1.10 起
@@ -672,8 +818,20 @@ def main(argv=None):
     for p in files:
         try:
             data = params.load(p)
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # t56：参数文件**自己坏了**（JSON 截断 / 多余逗号 / 编码解不出来）——
+            # 这是**用户输入**的问题，与"缺 version"同族 ⇒ 归 bad_params（rc 仍是 2）。
+            # 绝不许让它冒到顶层 guard 被报成 internal_error + attribution='tool_bug'：
+            # 判不出原因时不许猜"工具 bug"，那会把用户吓去报 issue，而不是修自己的
+            # 参数文件（对外披露必须准确）。载荷键名/形状、stdout-stderr 分流都不变。
+            _e = _msg.t('apply_params_unreadable', name=os.path.basename(p),
+                        err=str(e)[:160])
+            print(_msg.t('apply_params_errors', msg=_e))
+            print(_msg.t('not_written', reason='bad_params', script=script))
+            results.append((p, {'reason': 'bad_params', 'err': _e, 'changes': []}))
+            continue
         except OSError as e:
-            print('!! 跳过 %s: %s' % (os.path.basename(p), e))
+            print(_msg.t('skipped_file', name=os.path.basename(p), err=e))
             continue
         k = data.get('fig_index')
         # 参数比脚本旧 → 脚本在保存参数之后被手动改过，套用旧参数会**静默覆盖**
@@ -686,18 +844,27 @@ def main(argv=None):
             except OSError:
                 _stale = False
             if _stale:
-                print('!! 跳过 %s：脚本在参数保存之后被修改过（套用旧参数会覆盖你'
-                      '手改的内容）；确要套用请加 --force' % os.path.basename(p))
+                print(_msg.t('apply_stale_params', name=os.path.basename(p)))
                 results.append((p, {'reason': 'stale', 'changes': [],
                                     'block': None, 'backup': None,
                                     'warnings': []}))
                 continue
         print('=' * 62)
-        print('# %s%s' % (os.path.basename(p),
-                          '' if not isinstance(k, int)
-                          else '  （第 %d 张图）' % (k + 1)))
-        for prob in params.validate(data):
-            print('!! 参数文件结构警告: %s' % prob)
+        print(_msg.t('params_file_header', name=os.path.basename(p),
+                     fig='' if not isinstance(k, int)
+                     else _msg.t('fig_ordinal', n=k + 1)))
+        # t56 附带实测发现（同一条路径）：`params.validate_errors` 的**顶层非对象**
+        # 分支返回的是**一个字符串**（函数签名写的是 List[str]），于是
+        #   * `for prob in params.validate(data)` 会**逐字符**打印（实测 541 行，
+        #     每行一个字符）；
+        #   * `'; '.join(_errs)` 会把字符用分隔符串起来，JSON 里的 err 变成乱码。
+        # 这里在**调用侧**归一成 list（不动 params.py 的返回契约），人读输出与
+        # `files[].err` 都恢复成一句话。rc / 键名 / 载荷形状不变。
+        _warns = params.validate(data)
+        if isinstance(_warns, str):
+            _warns = [_warns]
+        for prob in _warns:
+            print(_msg.t('params_struct_warn', msg=prob))
 
         # E6：**硬错误**（error 级）在入口就拒写（rc=2）。旧行为是"print 一句警告
         # 后继续跑"，于是脏值一路走到下游：`'ax%-2d' % '0'`、`float('abc')`、
@@ -705,8 +872,10 @@ def main(argv=None):
         # 而这里的校验明明已经看出来了。
         _errs = params.validate_errors(data)
         if _errs:
+            if isinstance(_errs, str):          # 同上：顶层非对象分支返回 str
+                _errs = [_errs]
             for _e in _errs:
-                print('!! 参数文件错误（已拒写）: %s' % _e)
+                print(_msg.t('apply_params_errors', msg=_e))
             # T68：拒写就是拒写 —— 人读那行也必须是"未写回"+ 原因码，不许出现"已写回"。
             print(_msg.t('not_written', reason='bad_params', script=script))
             results.append((p, {'reason': 'bad_params',
@@ -729,8 +898,7 @@ def main(argv=None):
         if not args.no_verify and not args.dry_run:
             # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
             # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
-            print('  正在验证（子进程重跑脚本，最长 %gs）'
-                  % args.timeout)
+            print(_msg.t('apply_verifying', sec=args.timeout))
         # --verify-fast **隐含** --no-verify：快速档要的就是"不重跑"。
         # 若 verify 仍为 True，writeback 里 `if fast_check and not verify` 的分支
         # 根本进不去（实测踩过：加了 --verify-fast 却照旧跑了完整验证）。
@@ -858,8 +1026,9 @@ def main(argv=None):
                 # 这次没能落地 —— 必须说出来（rc 也会变 1），不能只埋在 warnings 里。
                 if res.get('needs_block') and not args.dry_run:
                     print(_t_new('needs_block_hint', _FALLBACK_NEEDS_BLOCK,
-                                 items='、'.join(res.get('pending') or [])
-                                 or '(见 warnings)'))
+                                 items=_msg.t('items_sep').join(
+                                     res.get('pending') or [])
+                                 or _msg.t('apply_pending_see_warnings')))
             else:
                 if args.dry_run:
                     print(_t_new('dryrun_block', _FALLBACK_DRYRUN_BLOCK,
@@ -894,19 +1063,35 @@ def main(argv=None):
                 # 备份路径是细节（revert 一条命令自己会找到它）→ 进 -v；
                 # 注意"备份失败/没备份"这类异常仍由 writeback 的 warnings 通道响亮报出。
                 print(_msg.t('backup_at', path=res['backup']))
-            if res.get('verify_mode') == 'fast':
-                # 降级披露：`--verify-fast` 到底验了什么（**不收敛**）
+            # 降级披露：这次**到底验了哪几层**（T23 / 外部评审条目 3(d) 的"不收敛"）。
+            # 判据一律走真凭据（res['layers'] / verify_mode）与档位本身能保证的事实，
+            # **不再按 flag 反推"跑没跑"** —— 见 _verify_rerun_state 的说明（§14.2#3）。
+            _fast = (res.get('verify_mode') == 'fast') or bool(args.verify_fast)
+            if _fast:
+                # `--verify-fast` 这一档**从不**为验证重跑脚本（apply 传
+                # verify=False / fast_check=True，writeback.py:2965-2977）—— 这是**档位**
+                # 事实：dry-run 的早退分支里没有 verify_mode 时也要打对（§20.3#4③）。
                 print(_msg.t('verify_fast_note'))
                 # T23 / 3(d)：快速档实际只有"语法"这一层 —— 如实说清哪几层没跑，
                 # 别让人从"fast"两字反推出"验证过"。
-                print(_LAYERS_FAST_NOTE)
+                print(_t_new('verify_layers_fast', _LAYERS_FAST_NOTE))
             else:
+                _state = _verify_rerun_state(res, args)
+                if _state == 'may_ran':
+                    # 真跑了（dry-run 的实测回比那条路）⇒ **不许**说"没有重跑"
+                    print(_t_new('verify_layers_dryrun_maybe',
+                                 _LAYERS_DRYRUN_MAYBE))
+                elif _state == 'not_ran':
+                    # 真没跑：`--no-verify` 就点名它，别的档位原因各不相同，别错挂
+                    print(_t_new('verify_layers_no_rerun', _LAYERS_NO_RERUN)
+                          if args.no_verify
+                          else _t_new('verify_layers_no_rerun_plain',
+                                      _LAYERS_NO_RERUN_PLAIN))
                 _ly = res.get('layers') or {}
-                if _ly.get('rerun') is None and not args.no_verify:
-                    print(_LAYERS_NO_RERUN)
                 if _ly.get('semantic') is None and not args.no_semantic \
                         and _ly.get('rerun') is not None:
-                    print(_LAYERS_NO_SEMANTIC)
+                    print(_t_new('verify_layers_no_semantic',
+                                 _LAYERS_NO_SEMANTIC))
             if res.get('verified') is True:
                 if _verbose:
                     print(_msg.t('verify_run_ok'))      # 成功确认 → 收敛行已含结论
@@ -915,10 +1100,19 @@ def main(argv=None):
             if res.get('semantic') is True:
                 if _verbose:
                     print(_msg.t('semantic_ok'))        # 成功确认 → 收敛行已含结论
-            elif res.get('semantic') is None and not args.no_semantic:
-                # `semantic is None` 有两种来源：真跑过但取不到状态、以及**压根没跑**
-                # （原位一个字段都没落地时提前返回）。后者不该打印"未能判定"这种
-                # 假解释 —— writeback 会把它标成 'skipped'（审计 E7）。
+            elif 'semantic' in res and res.get('semantic') is None \
+                    and not args.no_semantic and not _fast \
+                    and res.get('verified') is not True:
+                # 什么才算"真跑过但取不到状态"：**键**在 res 里、值为 None，**且**
+                # `verified` 不是 True（writeback.py:3062-3069 的"②层没跑成"把
+                # verified 降成 None；而 :3070-3076 的"原位没覆盖任何轴字段 ⇒ 有意跳过
+                # 语义"那条路 verified 仍是 True，它自己的 warnings 已说清真实原因）。
+                # 旧判据只看 `res.get('semantic')` 是不是 None，于是三类路径都被解释成
+                # "脚本不存图/跑不通"：
+                #   * dry-run 的早退分支（§20.3#4①，实测脚本跑得好好的）；
+                #   * `--verify-fast`（语义层从没跑，writeback.py:2965-2977 不设这个键）；
+                #   * 有意跳过的分支（:3073）与"一个字段都没落地"的提前返回（标 'skipped'）。
+                # 这不是文案问题而是**判据**问题：缺字段 / 值为 None ≠ 判不出来。
                 print(_msg.t('semantic_unknown'))
             for w in res.get('warnings', []):
                 print(_msg.t('kept_as_is', msg=w))
@@ -948,7 +1142,7 @@ def main(argv=None):
             # T61：引擎侧的越界判据（轴序号/图号）也归 bad_params 一档 ——
             # 拒绝发生在写盘之前（脚本一个字节没动），人读输出要说清是"参数不对"，
             # 而不是含糊的"写回失败"。
-            print('!! 参数文件错误（已拒写，脚本未改动）: %s' % (res.get('err') or ''))
+            print(_msg.t('apply_params_errors_nowrite', msg=res.get('err') or ''))
         else:
             print(_msg.t('write_failed', reason=res['reason'], err=res['err']))
             # 0.1.10：验证重跑失败 → 归因到脚本侧（跑不起来 / 需要参数 / 无头需
@@ -975,14 +1169,13 @@ def main(argv=None):
     if not args.write:
         if any(r.get('reason') == 'preview' for _, r in results):
             print('-' * 62)
-            print('提示：以上数值需按脚本自身风格写回；colorbar 轴若改了位置，必须同时')
-            print('      cb.ax.set_box_aspect(None)，否则 matplotlib 每次重绘会把宽度重置回自动值。')
-            print('      机械插入可用 --write（AST 确定性写回，零 LLM）。')
+            print(_msg.t('apply_preview_hint'))
         if args.json:
             # dry_run 必须能从 JSON 里看出来（预览没落盘，消费方不能当"已写回"）。
             _emit_json(script, results, _stdout,
                        extra={'dry_run': bool(args.dry_run)},
-                       preflight_res=_pf_res)
+                       preflight_res=_pf_res,
+                       error_code=_failure_code(results))
         # 参数文件硬错误（error 级）→ 与写回路径同一档：rc=2（输入/用法错误）
         return 2 if any(r['reason'] == 'bad_params' for _, r in results) else 0
 
@@ -1000,7 +1193,7 @@ def main(argv=None):
            else (1 if (bad or _unlanded) else 0))
     if args.json:
         _emit_json(script, results, _stdout, extra={'dry_run': bool(args.dry_run)},
-                   preflight_res=_pf_res)
+                   preflight_res=_pf_res, error_code=_failure_code(results))
     if len(results) > 1:
         # 这段在 _emit_json 之后打 —— 必须显式走 stderr，否则会拼在 JSON 尾巴
         # 上，让 json.loads 报 "Extra data"（t3-H1 / t6-H3）。

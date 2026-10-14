@@ -37,14 +37,14 @@ mpltweak 把这部分从"猜"变成"写文件"：
 
 | 命令 | 作用 |
 |---|---|
-| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"）；`--all-figs` 时是嵌套的 `{"figures": [...]}`，**不能**直接喂回 `apply --params`（`rc=1 / reason=no_axes`，见「参数文件」） |
+| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"）；`-o/--output 文件` 直接写进文件（最常用）；`--all-figs` 时是嵌套的 `{"figures": [...]}`，**不能**直接喂回 `apply --params`（`rc=1 / reason=no_axes`，见「参数文件」） |
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr）。**脚本自己带参数**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）时在 `--` 后透传：`apply <脚本> --write -- --data x.npz`（bug #6，否则重跑验证与基线不一致而误回滚） |
 | `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突单独一栏（`--strict` 可升级为问题） |
 
 ```bash
-mpltweak describe fig1.py -o layout.json    # 读：拿到现在的排版
+mpltweak describe fig1.py --output layout.json    # 读：拿到现在的排版（-o / --output 同一个选项）
 # ...agent 改 layout.json 里的几个数字...
 mpltweak apply fig1.py --write --json       # 写：落回源码并自检
 mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
@@ -63,7 +63,13 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 `audit_018/promo/t16_probe2.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
-**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。
+**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。另有三个键给 agent 判"这次到底验了什么"：
+
+* `files[].verify_passes`（**恒存在**，int）：**1** = 默认单遍；**2** = 单遍取不到目标图状态、已回退两遍；**0** = 这次**没有**为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 / 没有可写字段）—— **`0` 不是失败**，它只表示"这一档没为验证重跑脚本"。它**只数主验证的遍数**：参数里有"原位写不了"的字段时先额外跑的那一遍**不计入**（所以 `verify_passes=1` ≠ 整条命令只跑了 1 遍脚本）。要判断"这次为什么回退"，看 `verify_passes=2` 再读同一条目的 `warnings`。
+* `files[].semantic_basis`（**恒存在**，str）：`live+savefig` = 图对象状态 + 磁盘那张图的追加判据；`live` = 只有图对象状态；**空串** = 这次没有语义判定依据（没跑 / 回退后如实记"没验到"）。
+* 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
+
+（这三个键的口径全文在 `docs/verify.md` 的「机器可读通道」一节。）
 
 **mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
 

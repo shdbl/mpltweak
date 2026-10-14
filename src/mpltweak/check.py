@@ -39,6 +39,13 @@ TEXT_OVERLAP_MIN = 1.5e-3
 TEXT_OVERLAP_REPORT = 6
 # 同轴相邻刻度标签：沿刻度方向的重叠达到标签尺寸的这么多比例，才算"太密"
 TICK_CROWD_RATIO = 0.20
+# colorbar × 其它轴的矩形相交判定用**独立、更小**的阈值（t67 / 报告 P1-3）。
+# 为什么不能沿用 --tol 的 0.010：这类碰撞常常只有 0.5%~1% 图高（报告实测 0.0059
+# ≈ 0.59% 图高 ≈ 17px @300dpi），用 0.010 会**正好漏掉**；而 0.002（0.2% 图高
+# ≈ 5.8px @6in/300dpi）仍远大于"仅相接"的浮点噪声。
+# 口径：取 min(--tol, CB_OVERLAP_TOL) —— 用户可以把 tol 调得更严，但**调不松**
+# 这条（"条带压在图上"是肉眼可见的排版事故，不该被一个宽松容差静默掉）。
+CB_OVERLAP_TOL = 0.002
 # 文字种类 → 人话 key（写进提示里，用户才知道是哪儿；CH-12：中英都要有）
 _KIND_KEYS = ('title', 'xlabel', 'ylabel', 'xtick', 'ytick', 'text',
               'figtext', 'capped')
@@ -129,6 +136,30 @@ def analyze(axes, tol=DEFAULT_TOL):
                     'axes': [_name(normal[i]), _name(normal[j])],
                     'msg': _msg.t('chk_overlap', a=_name(normal[i]),
                                   b=_name(normal[j]), ox=ox, oy=oy),
+                })
+
+    # ---- 2b. colorbar × **任意轴**（含 aspect 锁定的 cartopy 地图）矩形相交 ----
+    #   几何比对整体跳过 aspect_locked 轴（它们的长宽比由数据/投影定死，动不了），
+    #   但"colorbar 压在图上"是科研图里**最高频的真实排版事故**，而"极地图 +
+    #   colorbar"这个最常见组合**恰好**落在那个盲区里（t67 / 报告 P1-3 实测：
+    #   相交 0.2758 × 0.0059，check 却给 ok:true / problems:[] / warnings:[]）。
+    #   所以这一条单独保留、只报 warn（不动 --strict 语义、不动任何既有规则）。
+    _cb_eps = min(tol, CB_OVERLAP_TOL)
+    for _cb in [a for a in axes if a.get('is_colorbar')]:
+        cx0, cy0, cw, ch = _pos(_cb)
+        for _b in axes:
+            if _b is _cb:
+                continue
+            bx0, by0, bw, bh = _pos(_b)
+            ox = min(cx0 + cw, bx0 + bw) - max(cx0, bx0)
+            oy = min(cy0 + ch, by0 + bh) - max(cy0, by0)
+            if ox > _cb_eps and oy > _cb_eps:
+                warns.append({
+                    'rule': 'colorbar_overlap', 'level': 'warn',
+                    'axes': [_name(_cb), _name(_b)],
+                    'msg': _msg.t('chk_colorbar_overlap', a=_name(_cb),
+                                  b=_name(_b), ox=ox, oy=oy),
+                    'overlap': [round(ox, 4), round(oy, 4)],
                 })
 
     # ---- 3. 边缘不齐：某轴的左边（或下边）与"最近的另一个轴"差一点点 ----

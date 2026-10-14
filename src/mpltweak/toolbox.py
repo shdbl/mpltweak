@@ -46,6 +46,11 @@ from matplotlib.backend_bases import MouseEvent
 # 参数规范的版本号只维护在 params 里（params 只依赖标准库，无循环导入风险）
 from .params import SCHEMA_VERSION
 
+# t64（船长授权的 2 行超范围改动）：工具箱**启动横幅**在 `launch --dry-run` 这条
+# 验收路径上会打到 stdout ⇒ 这两条文案走 messages 的 zh→en 表（zh 逐字不变 /
+# en 纯 ASCII）。其余 49 条交互状态/调试行按船长裁定**只登记、不改**。
+from . import messages as _msg                      # noqa: E402
+
 # ---- 口径常量（置顶，带依据） ----
 STEP = 0.01          # 每按键一格的 figure 比例（沿用原版 0.01）
 NUDGE_STEP = 0.005   # 方向键微调尺寸的每次增量（中心不动）
@@ -802,9 +807,46 @@ def _line_at(fig, x, y):
 
 
 def _bbox(ax):
-    '''取坐标框 [x0, y0, w, h]（figure 比例坐标）。'''
+    '''取坐标框 [x0, y0, w, h]（figure 比例坐标）。
+
+    **P1-4（t66）：colorbar 轴用"用户声明的位置"** ``get_position(original=True)``。
+    依据（报告 P1-4 实测）：colorbar 的 ``_ColorbarAxesLocator`` 会在**每次重绘**时改写
+    cax 的 active position ⇒ "脚本 savefig 之后再读"（describe 路径）拿到 ``[0.3455, …]``，
+    而"开窗前读"（窗口路径）拿到源码里的 ``[0.33, …]`` —— 两条路径各读一个时刻，
+    ``describe → apply`` 往返就会凭空改一个用户根本没动过的 colorbar。用 original 读法后
+    两边都与源码一致（读的是"设进去的位置"，与重绘时机无关）。
+    '''
+    try:
+        if _is_colorbar_ax(ax):
+            _p = ax.get_position(original=True)
+            return [_p.x0, _p.y0, _p.width, _p.height]
+    except (AttributeError, TypeError, ValueError):
+        pass
     p = ax._position
     return [p.x0, p.y0, p.width, p.height]
+
+
+def _canvas_geometry(fig, fig_px):
+    '''画布几何 —— **窗口侧与 describe 侧共用的唯一权威口径**（t75）。
+
+    返回 ``{'figsize_px': …, 'figsize_in': …}``：
+
+    * ``figsize_in`` = 图的权威英寸 ``fig.get_size_inches()``（**与 dpi / DPR 无关**），
+      导出保留 **2 位小数**（参数文件的既有口径）。T25-#1：原先这里写 ``_fig_px/100.0``，
+      只在 dpi==100 时成立；dpi=200 的图（figsize=(6,4)）``_fig_px``=1200×800，会导出
+      ``figsize_in=[12,8]``，``apply --write`` 把源码真的改成 ``figsize=(12,8)``（放大 2 倍）。
+      offscreen 实测 QtAgg 不会改 ``fig.dpi``，所以那条"高 DPI 下 Qt 会把 fig.dpi 放大到
+      200、px/dpi 算小一半"的旧注释是错的，别信回去。
+    * ``figsize_px`` = 画布**逻辑像素**（Qt ``get_width_height`` 口径，与显示器缩放无关）。
+      窗口侧传的是自己跟踪的 ``self._fig_px``（**从未 resize 过就是 None**，参数规范允许）；
+      ``verify._state`` 侧在拿不到跟踪值时用 live canvas px 兜底 —— 两者**不是同一个量**，
+      见 ``docs/consistency-ledger.md`` 的 Q3。
+    '''
+    try:
+        inch = [round(float(x), 2) for x in fig.get_size_inches()]
+    except (AttributeError, TypeError, ValueError):
+        inch = None
+    return {'figsize_px': list(fig_px) if fig_px else None, 'figsize_in': inch}
 
 
 def _cell_of(ax):
@@ -910,6 +952,59 @@ def _snap_box(box, others, tol=SNAP_TOL):
     gx = [] if bx is None else [bx[1]]
     gy = [] if by is None else [by[1]]
     return [x0 + dx, y0 + dy, w, h], gx, gy
+
+
+def _body_contains(ax, x, y):
+    '''**按真实绘制形状**判"这一点是否落在该轴的图里"（不是外接矩形）。
+
+    P0-2（t71）：`aspect_locked` 的轴（极地图 / cartopy 地图）真实形状是**圆/多边形**，
+    外接矩形的四个角其实没有图 —— 用外接矩形判会让它把压在上面的小对象（colorbar）
+    "抢走"。这里两层：
+      ① `ax.patch.contains_point`（matplotlib 自己的 patch 几何，极地图就是那个圆）；
+      ② 退到 `ax.get_window_extent()`（cax 这类 patch 不可用的轴）。
+    **与 `_hit_handle` 共用同一几何来源**（都在 fig 的显示坐标里判），不再各算一套。
+    '''
+    try:
+        inv = ax.transAxes.inverted()
+        px, py = inv.transform((float(x), float(y)))
+        if ax.patch is not None and ax.patch.contains_point((px, py)):
+            return True
+    except (AttributeError, TypeError, ValueError):
+        pass
+    try:
+        bb = ax.get_window_extent()
+        return bool(bb.x0 <= float(x) <= bb.x1 and bb.y0 <= float(y) <= bb.y1)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _pick_candidates(fig, x, y):
+    '''返回鼠标下**所有**命中候选的轴，按拾取优先级排序（纯函数，可离屏测试）。
+
+    优先级（P0-2，船长口径）：**后加入者优先，再按面积小者优先** ——
+    压在极地图上的 colorbar 是"后加的、面积小的"⇒ 它先被选中；
+    同 z 序时小对象在上（PPT/Figma 的直觉）。
+    '''
+    out = []
+    for i, ax in enumerate(fig.axes):
+        if not _body_contains(ax, x, y):
+            continue
+        try:
+            p = ax._position
+            area = float(p.width) * float(p.height)
+        except (AttributeError, TypeError, ValueError):
+            area = 9e9
+        out.append((i, area, ax))
+    out.sort(key=lambda t: (-t[0], t[1]))
+    return [t[2] for t in out]
+
+
+def _pick_at(fig, x, y, skip=0):
+    '''拾取优先级下的**第一个**（`skip` 用来做 Alt+点击/ Tab 的"穿透下一层"）。'''
+    c = _pick_candidates(fig, x, y)
+    if not c:
+        return None
+    return c[skip % len(c)]
 
 
 def _hit_handle(fig, x, y):
@@ -1239,11 +1334,14 @@ class Tweak:
         # colorbar 轴解除 box_aspect：make_axes 会给它设 _box_aspect=20，
         # 导致每次重绘 apply_aspect 都强制宽度回自动值，set_position 不生效。
         # 清掉后拖拽/缩放/烘焙的颜色条位置才能真正钉住。
-        # colorbar 轴两处接管（缺一不可）：
-        #   ① set_box_aspect(None)：make_axes 设的 _box_aspect=20 会让 apply_aspect
-        #      每次重绘把宽度拉回自动值；
-        #   ② set_axes_locator(None)：_ColorbarAxesLocator 每次重绘按父轴重算
-        #      x0/宽度 —— 这是"改高度正常、宽度却自己缩"的真正元凶。
+        # colorbar 轴两处接管（缺一不可）—— 归因按 t84 读 matplotlib 源码修正：
+        #   ① set_box_aspect(None)：`make_axes` 会给 cax 设 `_box_aspect=20`
+        #      （`cax.set_box_aspect(aspect)`），`apply_aspect` 每次重绘据此把宽度拉回
+        #      自动值 ⇒ **这才是"改高度正常、宽度却自己缩"的元凶**；
+        #   ② set_axes_locator(None)：`_ColorbarAxesLocator.__call__` 在
+        #      `extend == 'neither'` 时是 `return ax.get_position(original=True)`
+        #      （**不跟 set_position 抢**），但**带 extend** 时它会按 `_proportional_y`
+        #      改写位置 ⇒ 那种情形必须连 locator 一起清，否则只做 ① 仍会回弹。
         for ax in fig.axes:
             try:
                 if _is_colorbar_ax(ax):
@@ -1429,16 +1527,18 @@ class Tweak:
         # 防止 w.show() 引发的 resize 把刚抓的背景作废。
         self._capture_bg(False)
         self._arm_bg_capture()
-        _info('[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s 导出=%s' % (
+        _info(_msg.t_ui('[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s '
+                        '导出=%s') % (
             ('%.0fms' % self._heavy_ms) if self._heavy_ms else '?',
             self.snap, self.export_path), flush=True)
-        _info('[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；'
-              '若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡', flush=True)
-        _log('[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | '
+        _info(_msg.t_ui(
+            '[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；'
+            '若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡'), flush=True)
+        _log(_msg.t_ui('[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | '
               '悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | '
               'Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | '
               '方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | '
-              '关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图',
+              '关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图'),
               flush=True)
 
     # ---------- 初始化 ----------
@@ -1470,7 +1570,7 @@ class Tweak:
         # 无法接管——明确提示而不是静默忽略（T25-#2c）。
         for _leg in getattr(self.fig, 'legends', []):
             if id(_leg) not in _ax_legends:
-                sys.stderr.write(_FIG_LEGEND_HINT + '\n')
+                sys.stderr.write(_msg.t_ui(_FIG_LEGEND_HINT) + '\n')
                 sys.stderr.flush()
                 break
 
@@ -1580,7 +1680,7 @@ class Tweak:
                                 or abs(_cur[1] - _tgt[1]) > 1e-6:
                             if not self._warned_offscreen:
                                 self._warned_offscreen = True
-                                sys.stderr.write(_CLAMP_HINT + '\n')
+                                sys.stderr.write(_msg.t_ui(_CLAMP_HINT) + '\n')
                                 sys.stderr.flush()
                             self.fig.set_size_inches(_tgt[0], _tgt[1])
         except Exception:
@@ -1708,8 +1808,8 @@ class Tweak:
             (fiw, fih), s = _fit
             self.fig.set_size_inches(fiw, fih)
             # 缩放会触发 resize_event → _on_resize 会重抓背景并刷新 _fig_px
-            _info('[mpltweak] 画布 %dx%d 超出屏幕可用区 %dx%d，已自动缩放到屏内 '
-                  '(%.0f%%)' % (W, H, avail[0], avail[1], s * 100), flush=True)
+            _info(_msg.t_ui('[mpltweak] 画布 %dx%d 超出屏幕可用区 %dx%d，已自动缩放到屏内 '
+                  '(%.0f%%)') % (W, H, avail[0], avail[1], s * 100), flush=True)
             return (fiw, fih)
         except Exception:
             return None
@@ -1719,7 +1819,7 @@ class Tweak:
         try:
             self.export()
         except Exception as e:
-            _log('[mpltweak] 关窗自动导出失败:', e)
+            _log(_msg.t_ui('[mpltweak] 关窗自动导出失败:'), e)
 
     # ---------- ghost + blit ----------
     def _ensure_bg(self):
@@ -1787,7 +1887,7 @@ class Tweak:
             self._remove_ghost()
             self.fig.canvas.draw_idle()
             if not getattr(self, '_warned_blit', False):
-                _info('[mpltweak] blit 不可用，已降级节流实时重绘（重图会明显卡）:',
+                _info(_msg.t_ui('[mpltweak] blit 不可用，已降级节流实时重绘（重图会明显卡）:'),
                       e, flush=True)
                 self._warned_blit = True
                 # 标题栏标红提示：降级后拖拽会卡
@@ -1942,7 +2042,7 @@ class Tweak:
         '''图例循环 6 个标准位置（重建 legend，保留字号与框线）。'''
         st = self.leg_state.get(id(ax))
         if st is None or not st['handles'] and not st['labels']:
-            _log('[mpltweak] 该轴没有可循环的图例')
+            _log(_msg.t_ui('[mpltweak] 该轴没有可循环的图例'))
             return
         leg = ax.get_legend()
         fs = leg.get_texts()[0].get_fontsize() if leg is not None and leg.get_texts() else None
@@ -1959,7 +2059,7 @@ class Tweak:
         self._mk_legend(st, ax, **kw)
         st['loc'] = nloc
         st['anchor'] = None
-        _log('[mpltweak] %s 图例 -> %s' % (ax, nloc))
+        _log(_msg.t_ui('[mpltweak] %s 图例 -> %s') % (ax, nloc))
         self._draw_now()
 
     def _draw_now(self):
@@ -2027,16 +2127,36 @@ class Tweak:
 
     # ---------- 事件处理 ----------
     # ---------- 快照（Undo/Redo） ----------
-    def _snapshot(self):
-        '''全状态快照：画布尺寸 + 每个轴的位置 + 字号 + 图例。'''
-        _fs = self._fig_px
-        if _fs is None:                      # 无头/未 resize 过的兜底
+    def _snapshot(self, with_canvas=True):
+        '''全状态快照：画布尺寸 + 每个轴的位置 + 字号 + 图例。
+
+        ``with_canvas``（t66 / P0-1 修正 —— **按操作类型定范围**，不是全局排除）：
+          · **元素类**操作（拖子图 / 对齐 / 均分 / 字号 / 线条…）传 ``False`` ⇒ 快照里
+            **不带画布尺寸**，撤销**纹丝不动**。依据是用户一手现场："我没有动画布，只是
+            拖了子图，然后按撤销，结果画布变了（缩小很多）。"
+          · **画布类**操作（Ctrl+F 裁白边 / 显式改画布）传 ``True`` ⇒ 记下并能还原画布
+            （C13 契约：裁白边后 Ctrl+Z 把画布尺寸还原）。
+        画布尺寸记**图的权威英寸** ``fig.get_size_inches()``（与导出 ``figsize_in``
+        同源、与 dpi/DPR 无关）＋逻辑像素 ``_fig_px``（日志/兼容用）。还原**只用英寸**：
+        过去那条 ``px / fig.dpi`` 在 HiDPI（``fig.dpi`` = rcParams.dpi × DPR = 200）下
+        拿逻辑 px 除物理 dpi ⇒ 画布正好 1/2，已删除。
+        '''
+        snap = {'figsize': None, 'figsize_in': None, 'axes': []}
+        if with_canvas:
+            _tracked = self._fig_px
+            _fs = _tracked
             try:
-                _fs = self.fig.canvas.get_width_height()
-            except Exception:
-                _fs = None
-        snap = {'figsize': tuple(_fs) if _fs else None,
-                'axes': []}
+                snap['figsize_in'] = [float(x) for x in self.fig.get_size_inches()]
+                if _fs is None:              # 无头/未 resize 过的兜底
+                    _fs = self.fig.canvas.get_width_height()
+            except (AttributeError, TypeError, ValueError):
+                snap['figsize_in'] = None
+            snap['figsize'] = tuple(_fs) if _fs else None
+            # t71（t82 §t82②b 抓到的不一致）：**只有"跟踪值本来就存在"时才在还原时写回
+            # `_fig_px`**。否则（从未 resize 过 ⇒ 参数规范里 `figsize_px` 应为 null）撤销
+            # 会把兜底算出来的 canvas px 写进 `_fig_px`，让"撤销到底"的参数从 null 变成数字
+            # ⇒ 与起点不再字节级相同。
+            snap['figsize_tracked'] = _tracked is not None
         for ax in self.fig.axes:
             x0, y0, w, h = _bbox(ax)
             tls = ax.get_xticklabels()
@@ -2070,7 +2190,13 @@ class Tweak:
                         break
             if mappable is not None:
                 try:
-                    item['cmap'] = mappable.get_cmap().name
+                    # P1-5（t66）：只记**命名 colormap**（`mpl.colormaps` 里查得到）。
+                    # 自建 `ListedColormap(...)` 的 `.name` 是 'from_list'（不是任何可用名），
+                    # 记下去会被写回成 `cmap='from_list'`（非法值）⇒ 这类记 null（字段不出现），
+                    # 写回时自然跳过。
+                    _nm = getattr(mappable.get_cmap(), 'name', None)
+                    if _nm and _nm in matplotlib.colormaps:
+                        item['cmap'] = _nm
                 except Exception:
                     pass
             leg = ax.get_legend()
@@ -2092,17 +2218,25 @@ class Tweak:
         return None
 
     def _restore_snap(self, snap):
-        # 先恢复画布尺寸（若有记录），再恢复各轴位置——否则轴位置是按旧画布算的
+        # 画布尺寸：**只有快照里真的记了才还原**（画布类操作记、元素类不记 ⇒ 拖子图后
+        # 按撤销画布纹丝不动）。换算**只用权威英寸** `figsize_in`（与导出同源、与 dpi/DPR
+        # 无关）；旧的 `px / fig.dpi` 换算已删除 —— 它在 HiDPI 下把逻辑 px 除物理 dpi，
+        # 画布正好缩一半（用户现场）。
+        fs_in = snap.get('figsize_in') if isinstance(snap, dict) else None
         fs = snap.get('figsize') if isinstance(snap, dict) else None
-        if fs is not None:
+        if fs_in is not None:
             try:
-                # 必须用图自己的 dpi 换算：原先硬编码 /100.0，dpi=150 的图一撤销
-                # 画布就被放大 1.5 倍（t2-B2 / t6-M11），而且经 writeback 写回脚本
-                # 会把图真的改大。
-                _dpi = float(self.fig.dpi) or 100.0
-                self.fig.set_size_inches(fs[0] / _dpi, fs[1] / _dpi)
-                self._fig_px = (int(fs[0]), int(fs[1]))
-            except Exception:
+                self.fig.set_size_inches(float(fs_in[0]), float(fs_in[1]))
+                # t71：只有快照里**本来就跟踪了**逻辑 px 时才写回；没跟踪（从未 resize
+                # 过 ⇒ 参数规范里 `figsize_px` 应为 null）就把跟踪值**复位为 None** ——
+                # 否则撤销到底后参数会从 null 变成数字，与起点不再字节级相同。
+                # （旧快照缺这个键 ⇒ 按老行为写回，保守。）
+                if snap.get('figsize_tracked', True):
+                    if fs:
+                        self._fig_px = (int(fs[0]), int(fs[1]))
+                else:
+                    self._fig_px = None
+            except (AttributeError, TypeError, ValueError, IndexError):
                 pass
         items = snap.get('axes', []) if isinstance(snap, dict) else snap
         for item in items:
@@ -2204,7 +2338,7 @@ class Tweak:
         '''
         axs = self._sel_axes()
         if len(axs) < 2:
-            _log('[mpltweak] 对齐需要先选中 ≥2 个面板（Ctrl+点击 或 拖框选）')
+            _log(_msg.t_ui('[mpltweak] 对齐需要先选中 ≥2 个面板（Ctrl+点击 或 拖框选）'))
             return
         bs = {id(a): _bbox(a) for a in axs}
         x0 = min(b[0] for b in bs.values())
@@ -2228,14 +2362,14 @@ class Tweak:
                 by = (y0 + y1) / 2.0 - bh / 2.0
             _set_bbox(a, [bx, by, bw, bh])
         self._rebuild_selection_artists()
-        self._set_title_hint('对齐 %s（%d 个面板）' % (mode, len(axs)))
+        self._set_title_hint(_msg.t_ui('对齐 %s（%d 个面板）') % (mode, len(axs)))
         self._refresh(moved=True)
 
     def _distribute_selection(self, axis):
         '''均分：两端面板不动，中间等间距 —— gap = (span - Σsize) / (n-1)。'''
         axs = self._sel_axes()
         if len(axs) < 3:
-            _log('[mpltweak] 均分需要先选中 ≥3 个面板')
+            _log(_msg.t_ui('[mpltweak] 均分需要先选中 ≥3 个面板'))
             return
         axs.sort(key=(lambda a: _bbox(a)[0]) if axis == 'h'
                  else (lambda a: _bbox(a)[1]))
@@ -2259,8 +2393,8 @@ class Tweak:
                 _set_bbox(a, [b[0], cur, b[2], b[3]])
                 cur += b[3] + gap
         self._rebuild_selection_artists()
-        self._set_title_hint('均分 %s（%d 个面板）'
-                             % ('水平' if axis == 'h' else '垂直', len(axs)))
+        self._set_title_hint(_msg.t_ui('均分 %s（%d 个面板）')
+                             % (_msg.t_ui('水平') if axis == 'h' else _msg.t_ui('垂直'), len(axs)))
         self._refresh(moved=True)
 
     def _fit_to_content(self):
@@ -2275,17 +2409,17 @@ class Tweak:
         matplotlib HiDPI 下 fig.dpi=200，逻辑 px÷200 = 真实物理英寸的一半 →
         整图每次缩小约一半）。
         '''
-        _info('[mpltweak] fit: 收到快捷键', flush=True)
+        _info(_msg.t_ui('[mpltweak] fit: 收到快捷键'), flush=True)
         try:
             renderer = self.fig.canvas.get_renderer()
             W, H = self.fig.canvas.get_width_height()   # 逻辑像素
         except Exception:
             import traceback as _tb
             _tb.print_exc()
-            _info('[mpltweak] fit: 拿不到 renderer，无法适配', flush=True)
+            _info(_msg.t_ui('[mpltweak] fit: 拿不到 renderer，无法适配'), flush=True)
             return
         if not self.fig.axes or W <= 0 or H <= 0:
-            _info('[mpltweak] fit: 无轴或画布无效 %dx%d' % (W, H), flush=True)
+            _info(_msg.t_ui('[mpltweak] fit: 无轴或画布无效 %dx%d') % (W, H), flush=True)
             return
         BW, BH = self.fig.bbox.width, self.fig.bbox.height   # 物理像素
         if BW <= 0 or BH <= 0:
@@ -2336,7 +2470,7 @@ class Tweak:
             for _a in _hidden:
                 _a.set_visible(True)
         if not boxes:
-            _info('[mpltweak] fit: 内容盒为空，无法适配', flush=True)
+            _info(_msg.t_ui('[mpltweak] fit: 内容盒为空，无法适配'), flush=True)
             return
         cx0 = min(b[0] for b in boxes)
         cy0 = min(b[1] for b in boxes)
@@ -2350,10 +2484,10 @@ class Tweak:
         NW_in = max(2 * FIT_MARGIN_IN, cw * fiw + 2 * FIT_MARGIN_IN)
         NH_in = max(2 * FIT_MARGIN_IN, ch * fih + 2 * FIT_MARGIN_IN)
         if NW_in >= fiw - 1e-9 and NH_in >= fih - 1e-9:
-            _info('[mpltweak] fit: 内容已贴边，无需适配（%.2fx%.2f in）'
+            _info(_msg.t_ui('[mpltweak] fit: 内容已贴边，无需适配（%.2fx%.2f in）')
                   % (fiw, fih), flush=True)
             return
-        self._push_undo()
+        self._push_undo(with_canvas=True)     # t66：**画布类**操作 —— 裁白边要能撤销还原
         # 3) 改画布：直接 set_size_inches(英寸)。
         try:
             self.fig.set_size_inches(NW_in, NH_in)
@@ -2366,7 +2500,7 @@ class Tweak:
         except Exception:
             import traceback as _tb
             _tb.print_exc()
-            _info('[mpltweak] fit: set_size_inches 失败', flush=True)
+            _info(_msg.t_ui('[mpltweak] fit: set_size_inches 失败'), flush=True)
             return
         # 4) 面板像素大小不变，内容左上角贴边距 → 新归一化坐标。
         #    全英寸口径：面板尺寸/位置换算成英寸再归一化，不再经过逻辑像素。
@@ -2378,9 +2512,9 @@ class Tweak:
                 nh * fih / NH_in,
             ])
         self._rebuild_selection_artists()
-        self._set_title_hint('适配画布到内容 → %.2fx%.2f in' % (NW_in, NH_in))
+        self._set_title_hint(_msg.t_ui('适配画布到内容 → %.2fx%.2f in') % (NW_in, NH_in))
         self._refresh(moved=True)
-        _info('[mpltweak] fit: 完成 → %.2fx%.2f in（原 %.2fx%.2f）'
+        _info(_msg.t_ui('[mpltweak] fit: 完成 → %.2fx%.2f in（原 %.2fx%.2f）')
               % (NW_in, NH_in, fiw, fih), flush=True)
 
     def _snap_on(self, event):
@@ -2428,7 +2562,8 @@ class Tweak:
                 out.append(_u('比例尺', 'scale') + ' ' + an)
             if p.get('lines') != it.get('lines'):
                 out.append(_u('线条', 'lines') + ' ' + an)
-        if prev.get('figsize') != cur.get('figsize'):
+        if prev.get('figsize') != cur.get('figsize') \
+                or prev.get('figsize_in') != cur.get('figsize_in'):
             out.append(_u('画布尺寸', 'canvas size'))
         seen, uniq = set(), []
         for s in out:
@@ -2484,10 +2619,12 @@ class Tweak:
         except Exception:                    # noqa: BLE001
             pass
 
-    def _push_undo(self):
+    def _push_undo(self, with_canvas=False):
         # 每次真实改动前压快照 —— 这里同时记录"本图被改过"与全局改动顺序。
         # 快照附带操作名（diff 上一快照），撤销/重做时能告诉用户"撤的是什么"。
-        _new = self._snapshot()
+        # ``with_canvas``（t66）：**只有画布类操作**（Ctrl+F 裁白边）传 True —— 元素类
+        # 操作（拖子图/对齐/字号…）的快照不带画布 ⇒ 撤销不会顺手动用户的画布。
+        _new = self._snapshot(with_canvas=with_canvas)
         _prev = self._undo[-1] if self._undo else None
         _name = self._diff_name(_prev, _new) if _prev is not None else _u('调整', 'adjust')
         # 状态没变就不占一步撤销：典型是"裸点击"（面板上按下即抬起，没拖动）——
@@ -2545,7 +2682,7 @@ class Tweak:
 
     def _undo_once(self):
         if not self._undo:
-            _log('[mpltweak] 没有可撤销的操作', flush=True)
+            _log(_msg.t_ui('[mpltweak] 没有可撤销的操作'), flush=True)
             self._toast(_u('没有可撤销的操作', 'Nothing to undo'))
             return
         _s = self._undo[-1]
@@ -2554,13 +2691,13 @@ class Tweak:
         self._restore_snap(self._undo.pop())
         # 操作名现算：diff(弹出快照, 当前) = 这次撤销回退的变化
         _n = self._diff_name(_s, _cur) or (_s.get('_name') or _u('调整', 'adjust'))
-        _log('[mpltweak] 撤销：%s（剩 %d 步）' % (_n, len(self._undo)), flush=True)
+        _log(_msg.t_ui('[mpltweak] 撤销：%s（剩 %d 步）') % (_n, len(self._undo)), flush=True)
         self._toast(_u('已撤销：', 'Undone: ') + _n)
         self._update_status()
 
     def _redo_once(self):
         if not self._redo:
-            _log('[mpltweak] 没有可重做的操作', flush=True)
+            _log(_msg.t_ui('[mpltweak] 没有可重做的操作'), flush=True)
             self._toast(_u('没有可重做的操作', 'Nothing to redo'))
             return
         _s = self._redo[-1]
@@ -2568,7 +2705,7 @@ class Tweak:
         self._undo.append(_cur)
         self._restore_snap(self._redo.pop())
         _n = self._diff_name(_cur, _s) or (_s.get('_name') or _u('调整', 'adjust'))
-        _log('[mpltweak] 重做：%s' % _n, flush=True)
+        _log(_msg.t_ui('[mpltweak] 重做：%s') % _n, flush=True)
         self._toast(_u('已重做：', 'Redone: ') + _n)
         self._update_status()
 
@@ -2657,7 +2794,7 @@ class Tweak:
         self._selected = picked
         self._rebuild_selection_artists()
         self._refresh()
-        _log('[mpltweak] 框选 %d 个面板' % len(self._selected), flush=True)
+        _log(_msg.t_ui('[mpltweak] 框选 %d 个面板') % len(self._selected), flush=True)
 
     def _legend_candidates(self, ax, leg):
         '''8 个标准位的图例框（轴坐标）：{name: (x, y, w, h)}。
@@ -2773,7 +2910,7 @@ class Tweak:
         self._mk_legend(st, ax, **kw)
         st['loc'] = best
         st['anchor'] = None
-        _log('[mpltweak] 图例吸附到 %s' % best, flush=True)
+        _log(_msg.t_ui('[mpltweak] 图例吸附到 %s') % best, flush=True)
 
     # ---------- 尺寸 HUD（窗口标题栏） ----------
     def _set_title_hint(self, text):
@@ -2846,7 +2983,39 @@ class Tweak:
             return
         # 2) colorbar 端点：拖 = 调长度（Alt+拖改 clim 已按用户要求移除）
         # 3) 边框/角缩放
+        #    P0-2（t71）：**边缘把手不许抢走压在上面的小对象** —— 若光标下另有轴的
+        #    **真实形状**包含该点（且不是这个把手的轴），说明用户点的是那个对象。
+        #    现场：colorbar 压在极地图下边缘上，却被「缩放 ax0 bottom」抢走 ⇒ 永远选不中。
         ax_h, hd = _hit_handle(self.fig, event.x, event.y)
+        _top_body = _pick_at(self.fig, event.x, event.y)
+        # **Alt+点击 = 穿透到下一层**（P0-2 逃生通道①，船长决策②）：光标下叠了两层、
+        # 且"最上面那个"要么没压着把手、要么把手的轴不是它 ⇒ Alt 把选择推到下一层。
+        # **colorbar 长轴端点上的 Alt+按下不算穿透**（那是"Alt+拖端点 = 调长度"的老手势）。
+        # 合成事件里 `event.modifiers` 对鼠标事件可能是空的（实测），所以 `event.key` 也要看。
+        if ('alt' in set(event.modifiers or ())
+                or 'alt' in set((event.key or '').split('+'))) \
+                and _top_body is not None \
+                and (ax_h is None or ax_h is not _top_body):
+            _cands = _pick_candidates(self.fig, event.x, event.y)
+            _cur = None
+            for _k, _c in enumerate(_cands):
+                if id(_c) in self._selected:
+                    _cur = _k
+                    break
+            _nxt = _cands[0] if _cur is None \
+                else _cands[(_cur + 1) % len(_cands)]
+            self._selected = {id(_nxt)}
+            self._rebuild_selection_artists()
+            self._refresh()
+            _i = self.fig.axes.index(_nxt)
+            _log(_msg.t_ui('[mpltweak] 选中 %d 个面板') % len(self._selected),
+                 flush=True)
+            self._toast(_u('穿透选中 ax%d（候选 %d 个）' % (_i + 1, len(_cands)),
+                           'picked through to ax%d (%d candidates)'
+                           % (_i + 1, len(_cands))))
+            return
+        if ax_h is not None and _top_body is not None and _top_body is not ax_h:
+            ax_h = hd = None
         if ax_h is not None:
             self._push_undo()
             self._rs_ax = ax_h
@@ -2858,7 +3027,7 @@ class Tweak:
             self._press_norm = (event.x / X, event.y / Y)
             self._rs_mods = set((event.key or '').split('+')) if event.key else set()
             self._drag_resize = True
-            _log('[mpltweak] 缩放开始 ax%d %s' % (
+            _log(_msg.t_ui('[mpltweak] 缩放开始 ax%d %s') % (
                 self.fig.axes.index(ax_h), hd), flush=True)
             if self.heavy:
                 self._blit_ghost([x0, y0, w, h])
@@ -2884,7 +3053,7 @@ class Tweak:
                 self._selected.add(aid)
             self._rebuild_selection_artists()
             self._refresh()
-            _log('[mpltweak] 选中 %d 个面板' % len(self._selected), flush=True)
+            _log(_msg.t_ui('[mpltweak] 选中 %d 个面板') % len(self._selected), flush=True)
             return
         # 5) 点击已选中面板且处于多选 → 整体拖拽（拖一个全部跟着动）
         if len(self._selected) > 1 and id(event.inaxes) in self._selected:
@@ -2897,7 +3066,7 @@ class Tweak:
                                   if id(a) in self._selected}
             self._press_xy = (event.x, event.y)
             self._press_norm = (event.x / X, event.y / Y)
-            _log('[mpltweak] 多选拖拽 %d 个面板' % len(self._selected), flush=True)
+            _log(_msg.t_ui('[mpltweak] 多选拖拽 %d 个面板') % len(self._selected), flush=True)
             return
         # 6) 点击面板：单选（显示蓝框）+ 拖拽
         self._selected = {id(event.inaxes)}
@@ -2909,7 +3078,7 @@ class Tweak:
         self._press_xy = (event.x, event.y)
         self._press_norm = (event.x / X, event.y / Y)
         self._drag = True
-        _log('[mpltweak] 拖轴开始 ax%d' % self.fig.axes.index(event.inaxes), flush=True)
+        _log(_msg.t_ui('[mpltweak] 拖轴开始 ax%d') % self.fig.axes.index(event.inaxes), flush=True)
         if self.heavy:
             self._blit_ghost(self._target)
         else:
@@ -3001,7 +3170,7 @@ class Tweak:
                     self._throttled_draw()
             else:
                 self.fig.canvas.draw_idle()
-            self._set_title_hint('移动 %d 个面板' % len(self._selected))
+            self._set_title_hint(_msg.t_ui('移动 %d 个面板') % len(self._selected))
             return
         if self._drag_resize and self._rs_ax is not None:
             # PPT 式缩放：被拖边/角随鼠标，对边固定，可吸附
@@ -3051,8 +3220,8 @@ class Tweak:
                     others.append([x0, y0, x0 + w, y0 + h])
                 b1, gx, gy = _snap_resize(b1, handle, others, min_size=ms)
             if not QUIET:
-                print('[mpltweak] DBG ax%d 按下=%s 实际=%s locked=%s origin=%s '
-                      'resize=%s snap=%s (gx=%s gy=%s)'
+                print(_msg.t_ui('[mpltweak] DBG ax%d 按下=%s 实际=%s locked=%s origin=%s '
+                      'resize=%s snap=%s (gx=%s gy=%s)')
                       % (self.fig.axes.index(self._rs_ax), self._rs_handle,
                          handle, locked,
                          ['%.4f' % v for v in self._rs_origin],
@@ -3108,7 +3277,7 @@ class Tweak:
             self._set_title_hint(
                 _u('拖%s端 = 调长度（Alt = 中心对称缩放）｜ %s',
                    'Drag %s end = length (Alt = center-anchor scale) | %s')
-                % ('左/右' if horiz else '下/上',
+                % (_msg.t_ui('左/右') if horiz else _msg.t_ui('下/上'),
                    self._hint_box(self.fig.axes.index(ax_cb),
                                   _bbox(ax_cb))))
             self._cb_hint_on = True
@@ -3203,7 +3372,7 @@ class Tweak:
                                    self._rs_target[3] - self._rs_target[1]])
                     self._remove_ghost()
                     self.fig.canvas.draw_idle()
-                _log('[mpltweak] 缩放结束 ax%d %s -> [%.3f,%.3f,%.3f,%.3f]' % (
+                _log(_msg.t_ui('[mpltweak] 缩放结束 ax%d %s -> [%.3f,%.3f,%.3f,%.3f]') % (
                     self.fig.axes.index(ax), self._rs_handle, *_bbox(ax)),
                     flush=True)
             self._rs_ax = None
@@ -3223,7 +3392,7 @@ class Tweak:
             _set_bbox(self._ax, self._target)
             self._remove_ghost()
             self.fig.canvas.draw_idle()
-        _log('[mpltweak] 拖轴结束 ax%d -> [%.3f,%.3f,%.3f,%.3f]' % (
+        _log(_msg.t_ui('[mpltweak] 拖轴结束 ax%d -> [%.3f,%.3f,%.3f,%.3f]') % (
             self.fig.axes.index(self._ax), *_bbox(self._ax)), flush=True)
         self._ax = None
         self._target = None
@@ -3386,39 +3555,39 @@ class Tweak:
         try:
             if kind == 'title':
                 owner.title.set_fontsize(owner.title.get_fontsize() + delta)
-                _log('[mpltweak] 标题字号 -> %s' % owner.title.get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] 标题字号 -> %s') % owner.title.get_fontsize(), flush=True)
             elif kind == 'xlabel':
                 owner.xaxis.label.set_fontsize(owner.xaxis.label.get_fontsize() + delta)
-                _log('[mpltweak] x轴标签字号 -> %s' % owner.xaxis.label.get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] x轴标签字号 -> %s') % owner.xaxis.label.get_fontsize(), flush=True)
             elif kind == 'ylabel':
                 owner.yaxis.label.set_fontsize(owner.yaxis.label.get_fontsize() + delta)
-                _log('[mpltweak] y轴标签字号 -> %s' % owner.yaxis.label.get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] y轴标签字号 -> %s') % owner.yaxis.label.get_fontsize(), flush=True)
             elif kind == 'xtick':
                 for t in owner.get_xticklabels():
                     t.set_fontsize(t.get_fontsize() + delta)
-                _log('[mpltweak] x刻度字号 -> %s' % owner.get_xticklabels()[0].get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] x刻度字号 -> %s') % owner.get_xticklabels()[0].get_fontsize(), flush=True)
             elif kind == 'ytick':
                 for t in owner.get_yticklabels():
                     t.set_fontsize(t.get_fontsize() + delta)
-                _log('[mpltweak] y刻度字号 -> %s' % owner.get_yticklabels()[0].get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] y刻度字号 -> %s') % owner.get_yticklabels()[0].get_fontsize(), flush=True)
             elif kind == 'legend':
-                _log('[mpltweak] 图例字号 -> %s' % self._adj_font(owner, 'legend', delta), flush=True)
+                _log(_msg.t_ui('[mpltweak] 图例字号 -> %s') % self._adj_font(owner, 'legend', delta), flush=True)
             elif kind == 'cb_ticks':
                 tl = list(owner.get_yticklabels()) + list(owner.get_xticklabels())
                 for t in tl:
                     t.set_fontsize(t.get_fontsize() + delta)
-                _log('[mpltweak] colorbar 刻度字号 -> %s' % (tl[0].get_fontsize() if tl else '?'),
+                _log(_msg.t_ui('[mpltweak] colorbar 刻度字号 -> %s') % (tl[0].get_fontsize() if tl else '?'),
                       flush=True)
             elif kind == 'cb_label':
                 owner.yaxis.label.set_fontsize(owner.yaxis.label.get_fontsize() + delta)
-                _log('[mpltweak] colorbar 标签字号 -> %s' % owner.yaxis.label.get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] colorbar 标签字号 -> %s') % owner.yaxis.label.get_fontsize(), flush=True)
             elif kind == 'text':
                 # 任意文本对象（面板标注/图内注记/fig.text）
                 owner.set_fontsize(owner.get_fontsize() + delta)
-                _log('[mpltweak] 文本字号 -> %s' % owner.get_fontsize(), flush=True)
+                _log(_msg.t_ui('[mpltweak] 文本字号 -> %s') % owner.get_fontsize(), flush=True)
             self._draw_now()
         except Exception as e:
-            _log('[mpltweak] 字号调节失败:', e, flush=True)
+            _log(_msg.t_ui('[mpltweak] 字号调节失败:'), e, flush=True)
 
     def _toggle_wireframe(self):
         '''线条模式（类似矢量软件的"轮廓/线框"视图）：只留**边框 + 坐标轴刻度 +
@@ -3487,7 +3656,7 @@ class Tweak:
             self._wire = False
         self._remove_ghost()              # 背景失效，重抓（线条模式下很便宜）
         self._capture_bg(True)
-        self._set_title_hint('线条模式 ON（空格恢复）' if self._wire else None)
+        self._set_title_hint(_msg.t_ui('线条模式 ON（空格恢复）') if self._wire else None)
         self.fig.canvas.draw_idle()
 
     def _nudge_size(self, key, event):
@@ -3501,7 +3670,7 @@ class Tweak:
         if ax is None and len(self._selected) == 1:
             ax = self._find_ax(next(iter(self._selected)))
         if ax is None:
-            _log('[mpltweak] 方向键：先把鼠标移到要调的子图上')
+            _log(_msg.t_ui('[mpltweak] 方向键：先把鼠标移到要调的子图上'))
             return
         x0, y0, w, h = _bbox(ax)
         ms = (MIN_SIZE_CB if self._as_colorbar(ax) is not None else MIN_SIZE)
@@ -3615,7 +3784,7 @@ class Tweak:
         ax = self._key_ax(event)
         artist, owner = self._line_target(event, ax)
         if artist is None:
-            _log('[mpltweak] 线宽：鼠标悬停在线条或先选中含线条的轴', flush=True)
+            _log(_msg.t_ui('[mpltweak] 线宽：鼠标悬停在线条或先选中含线条的轴'), flush=True)
             return
         old = self._line_lw(artist)
         if old is None:
@@ -3624,18 +3793,18 @@ class Tweak:
         new = min(LINE_LW_MAX, max(LINE_LW_MIN, old + delta))
         try:
             artist.set_linewidth(new)
-            self._set_title_hint('线宽 %.1f' % new)
+            self._set_title_hint(_msg.t_ui('线宽 %.1f') % new)
             self._draw_now()
         except Exception as e:
-            _log('[mpltweak] 线宽调节失败:', e, flush=True)
+            _log(_msg.t_ui('[mpltweak] 线宽调节失败:'), e, flush=True)
 
     def _cycle_linecolor(self, event):
         '''循环切换悬停线条的颜色（白名单内的线条类对象才生效）。'''
         ax = self._key_ax(event)
         artist, owner = self._line_target(event, ax)
         if artist is None:
-            _log('[mpltweak] 颜色：鼠标悬停到线条上（plot 线 / 等值线），'
-                 '或先选中含线条的轴', flush=True)
+            _log(_msg.t_ui('[mpltweak] 颜色：鼠标悬停到线条上（plot 线 / 等值线），'
+                 '或先选中含线条的轴'), flush=True)
             return
         palette = []
         for c in _LINE_COLORS:
@@ -3651,8 +3820,8 @@ class Tweak:
                 artist.set_color(new)
             else:
                 artist.set_edgecolor(new)
-            self._set_title_hint('颜色 %s' % new)
-            _log('[mpltweak] 线条颜色 -> %s' % new, flush=True)
+            self._set_title_hint(_msg.t_ui('颜色 %s') % new)
+            _log(_msg.t_ui('[mpltweak] 线条颜色 -> %s') % new, flush=True)
             self._bg = None
             self._hits = []
             self._draw_now()
@@ -3661,14 +3830,14 @@ class Tweak:
 
     @staticmethod
     def _log_color_fail(artist, exc):
-        _log('[mpltweak] 颜色调节失败（%s）: %s'
+        _log(_msg.t_ui('[mpltweak] 颜色调节失败（%s）: %s')
              % (type(artist).__name__, exc), flush=True)
 
     def _cycle_cmap(self, event):
         ax = self._key_ax(event)
         artist, owner = self._mappable_target(event, ax)
         if artist is None:
-            _log('[mpltweak] colormap：鼠标移到 colorbar 或含 mappable 的轴上', flush=True)
+            _log(_msg.t_ui('[mpltweak] colormap：鼠标移到 colorbar 或含 mappable 的轴上'), flush=True)
             return
         self._push_undo()
         try:
@@ -3688,7 +3857,7 @@ class Tweak:
             self._hits = []
             self._draw_now()
         except Exception as e:
-            _log('[mpltweak] colormap 调节失败:', e, flush=True)
+            _log(_msg.t_ui('[mpltweak] colormap 调节失败:'), e, flush=True)
 
     def _toggle_grid(self, event):
         ax = self._key_ax(event)
@@ -3738,7 +3907,7 @@ class Tweak:
             self._draw_now()
         except Exception as e:
             self._undo.pop()
-            _log('[mpltweak] %sscale 调节失败: %s' % (axis, e), flush=True)
+            _log(_msg.t_ui('[mpltweak] %sscale 调节失败: %s') % (axis, e), flush=True)
 
     def _on_key(self, event):
         '''键位：端点拖 clim；[/]线宽、c颜色、C色标、g网格、s边框、x/y比例尺。'''
@@ -3749,6 +3918,25 @@ class Tweak:
             return
         if key == 'escape':
             _close_help_fig()
+            return
+        # P0-2 逃生通道②（t71）：**Tab 循环同级元素** —— 鼠标点不到的对象（被压住 /
+        # 极地图的圆之外）也能用键盘逐个走到，绝不出现"永远选不中"。
+        if key == 'tab':
+            _axs = list(self.fig.axes)
+            if _axs:
+                _cur = None
+                for _k, _a in enumerate(_axs):
+                    if id(_a) in self._selected:
+                        _cur = _k
+                        break
+                _nxt = _axs[0] if _cur is None else _axs[(_cur + 1) % len(_axs)]
+                self._selected = {id(_nxt)}
+                self._rebuild_selection_artists()
+                self._refresh()
+                _i = self.fig.axes.index(_nxt)
+                self._toast(_u('Tab 循环：ax%d/%d'
+                               % (_i + 1, len(_axs)),
+                               'Tab cycle: ax%d/%d' % (_i + 1, len(_axs))))
             return
         if key == '[':
             self._cycle_linewidth(event, -LINE_LW_STEP)
@@ -3787,7 +3975,7 @@ class Tweak:
             return
         if key == 'n':
             self.snap = not self.snap
-            _log('[mpltweak] 吸附=%s' % self.snap, flush=True)
+            _log(_msg.t_ui('[mpltweak] 吸附=%s') % self.snap, flush=True)
             self._toast(_u('吸附', 'Snap') + ' '
                         + (_u('开', 'on') if self.snap else _u('关', 'off')))
             self._update_status()
@@ -3832,8 +4020,8 @@ class Tweak:
             if _owner is not None and _owner != str(os.getpid()):
                 # T25-#2a：被新窗口接管 → 绝不能静默 return（改了十分钟零提示零保存）。
                 # 走 stderr（不污染 stdout/--json）+ 窗口内 toast，并给补救。
-                _msg = _DOUBLE_OPEN_HINT % (path or self.export_path, _owner)
-                sys.stderr.write(_msg + '\n')
+                _msg_dbl = _msg.t_ui(_DOUBLE_OPEN_HINT) % (path or self.export_path, _owner)
+                sys.stderr.write(_msg_dbl + '\n')
                 sys.stderr.flush()
                 self._toast(_u('参数未保存：已被新窗口接管（见终端）',
                                'Params not saved: window taken over (see terminal)'))
@@ -3895,7 +4083,11 @@ class Tweak:
                         break
             if mappable is not None:
                 try:
-                    item['cmap'] = mappable.get_cmap().name
+                    # P1-5（t66）：同 `_snapshot` —— 只记命名 colormap（'from_list' 之类
+                    # 自定义 ListedColormap 记 null，写回时跳过，别写非法 cmap 名）。
+                    _nm = getattr(mappable.get_cmap(), 'name', None)
+                    if _nm and _nm in matplotlib.colormaps:
+                        item['cmap'] = _nm
                 except Exception:
                     pass
             leg = ax.get_legend()
@@ -3914,16 +4106,9 @@ class Tweak:
             # 版本号就不一致了，靠自查才翻出来。
             'version': SCHEMA_VERSION,
             'script': os.path.basename(sys.argv[0]) if sys.argv else '',
-            # 画布逻辑像素尺寸（Qt get_width_height 返回逻辑 px，与显示器缩放无关）
-            'figsize_px': list(self._fig_px) if self._fig_px else None,
-            # T25-#1：figsize_in 用图的权威逻辑尺寸 fig.get_size_inches()——
-            # 它只反映"图声明多大"，与 dpi / 屏幕缩放无关。原先这里写 `_fig_px/100.0`，
-            # 只在 dpi==100 时成立；dpi=200 的图（figsize=(6,4)）_fig_px=1200×800，
-            # 会导出 figsize_in=[12,8]，apply --write 把源码真的改成 figsize=(12,8)
-            # （放大 2 倍）。offscreen 实测 QtAgg 不会改 fig.dpi，所以那条"高 DPI 下
-            # Qt 会把 fig.dpi 放大到 200、px/dpi 算小一半"的旧注释是错的，别信回去。
-            'figsize_in': [round(float(x), 2)
-                           for x in self.fig.get_size_inches()],
+            # 画布几何走**唯一权威口径**（t75）：与 describe/verify 侧同一函数、同一口径，
+            # 细节（含 T25-#1 的来龙去脉与 px/in 的区别）见 `_canvas_geometry` 的 docstring。
+            **_canvas_geometry(self.fig, self._fig_px),
             'axes': axes,
             # 多图脚本写回定位用：调的是第几张图 / 脚本共几张图（None = 未知/旧文件）
             'fig_index': self.fig_index,
@@ -3931,7 +4116,7 @@ class Tweak:
         }
         with open(p, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        _log('[mpltweak] 已导出 %d 个子图 -> %s' % (len(axes), p))
+        _log(_msg.t_ui('[mpltweak] 已导出 %d 个子图 -> %s') % (len(axes), p))
 
 
 def gaitu(fig, export_path=None, heavy=None, quiet=False,

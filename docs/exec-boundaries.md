@@ -16,7 +16,7 @@
 | `mpltweak apply <脚本> --write` | **会**（子进程重跑） | 写回后重跑做"能跑通 + 语义一致"验证，不过就回滚 |
 | `mpltweak apply <脚本> --write --verify-fast` | **不会** | 只做语法检查（实测：脚本没被执行、也没重出图） |
 | `mpltweak apply <脚本> --write --no-verify` | **不会** | 跳过重跑与语义验证（**写盘后的语法检查仍会做**）：跑不通、布局没落到位都不会被发现，也不会自动回滚 —— 等于关掉唯一的安全网 |
-| `mpltweak apply <脚本> --write --dry-run` | **会**（**默认档** + 参数里有"原位写不了"的字段时） | 只把参数写出去、**不落盘**；但"到底要不要退块"只能**实测**参数与源码现值是否不同 ⇒ 会**先跑一遍**脚本（`writeback.py:2888` 在 `:2902` 的 dry-run 早退**之前**）。`--verify-fast` / `--no-verify` / `--no-semantic` 下**不跑**；参数里没有这类字段时也不跑 |
+| `mpltweak apply <脚本> --write --dry-run` | **会**（**默认档** + 参数里有"原位写不了"的字段时） | 只把参数写出去、**不落盘**；但"到底要不要退块"只能**实测**参数与源码现值是否不同 ⇒ 会**先跑一遍**脚本（`writeback.py:3041` 在 `:3056` 的 dry-run 早退**之前**）。`--verify-fast` / `--no-verify` / `--no-semantic` 下**不跑**；参数里没有这类字段时也不跑 |
 | `mpltweak revert <脚本> [--write]` | **不会** | 纯文件操作 |
 | `mpltweak schema` / `mpltweak doctor` | **不会** | 不碰你的脚本 |
 | `mpltweak mcp`（MCP 服务端） | **会**，每次 `tools/call` 一次 | 每次调用都在**独立子进程**里跑：脚本 `sys.exit` 带不走 server（实测：跑完一个会 `sys.exit(3)` 的脚本后 server 仍能应答 `tools/list`），上一次调用改的全局状态也不会串味 |
@@ -34,23 +34,23 @@
 
 | 类型 | 具体是什么 |
 |---|---|
-| 写文件 | `.tweak_params/<脚本>.json`（参数）、`.tweak_params/<stem>.fig<k>.json`（多图会话里每张图一份正式参数；同名 `.lock` 是会话接管标记，launch.py:593、toolbox.py:1232）、`.tweak_params/<stem>.writeback.json`（写回元数据，writeback.py:4151、apply.py:313）、`<脚本>.tweak.bak`（**固定名**备份：**首份优先**，只在不存在时创建、之后的写回**不覆盖**它；默认 `revert` 用它回到最初原件）、`<脚本>.tweak.<pid>.bak`（**每次写回各留一份**的专属副本，保留"最近 5 份 + **最早 1 份**"；`revert --first` 用它）、`<脚本>.revert.bak`（revert 前的留档）、`_verify_state.json`、`<脚本>.apply.lock`（并发写回锁，writeback.py:2237） |
+| 写文件 | `.tweak_params/<脚本>.json`（参数）、`.tweak_params/<stem>.fig<k>.json`（多图会话里每张图一份正式参数；同名 `.lock` 是会话接管标记，launch.py:471-487、toolbox.py:1327）、`.tweak_params/<stem>.writeback.json`（写回元数据，writeback.py:4394、apply.py:418）、`<脚本>.tweak.bak`（**固定名**备份：**首份优先**，只在不存在时创建、之后的写回**不覆盖**它；默认 `revert` 用它回到最初原件）、`<脚本>.tweak.<pid>.bak`（**每次写回各留一份**的专属副本，保留"最近 5 份 + **最早 1 份**"；`revert --first` 用它）、`<脚本>.revert.bak`（revert 前的留档）、`_verify_state.json`、`<脚本>.apply.lock`（并发写回锁，writeback.py:2387-2394） |
 | 写在哪儿 | **不全是脚本旁**：分**三处** —— 脚本旁 `<脚本目录>/.tweak_params/`、系统临时区 `mpltweak_state_*.json`、用户家目录 `~/.mpltweak/`；逐项见下面「落盘位置（三处）」那张表 |
 | 联网 | **工具本体不联网**（不查版本、不回传，源码里没有任何网络调用）。但你的脚本可能联网 —— 每次执行都是一次真的执行 |
 | 缓存 | Python 会写 `__pycache__/`；matplotlib 可能写字体缓存 |
 | 工作目录 | 脚本执行期间 `cwd` 被切到**脚本所在目录**，结束后恢复，所以脚本里的相对路径照常能找到数据 |
 | 导入路径 | 执行期间脚本所在目录会被插进 `sys.path` —— 插的是**子进程**的，你的进程不受影响 |
 | 全局 rcParams | `describe` / `check` / `apply --write` 的验证都跑在**子进程**里，脚本改过的全局 `rcParams` 不会留到你的进程（库级实测：`collect_isolated` 前后父进程 `font.size` 10.0 → 10.0，`sys.path` / `sys.modules` 也无残留）。只有**开窗**仍是本进程 |
-| 退出码（**子进程**命令：`describe` / `check` / `apply` 验证重跑 / `mcp`） | 脚本自己调 `sys.exit` / `os._exit` **不会**带走命令：执行在子进程里（`collect_isolated` 起子进程 verify.py:1101、重跑层 writeback.py:4288），工具照样输出结果 |
-| 退出码（**开窗**） | **本进程**跑脚本（launch.py:511），只 `except SystemExit`（launch.py:512-513）⇒ 脚本里的 `sys.exit()` 被吞掉，但 `os._exit()` 会**直接杀掉窗口进程** |
+| 退出码（**子进程**命令：`describe` / `check` / `apply` 验证重跑 / `mcp`） | 脚本自己调 `sys.exit` / `os._exit` **不会**带走命令：执行在子进程里（`collect_isolated` 起子进程 verify.py:1104、重跑层 writeback.py:4531），工具照样输出结果 |
+| 退出码（**开窗**） | **本进程**跑脚本（`runpy.run_path`，launch.py:815），只 `except SystemExit`（launch.py:816）⇒ 脚本里的 `sys.exit()` 被吞掉，但 `os._exit()` 会**直接杀掉窗口进程** |
 
 **落盘位置（三处，不是"全部落在脚本旁"）**：
 
 | 落在哪儿 | 具体是什么 | 备注 |
 |---|---|---|
-| **脚本旁** `<脚本目录>/.tweak_params/` | 参数 `.tweak_params/<脚本>.json`、多图参数 `.tweak_params/<stem>.fig<k>.json` 与会话接管标记 `<stem>.fig<k>.json.lock`（launch.py:593、toolbox.py:1232）、写回元数据 `.tweak_params/<stem>.writeback.json`（writeback.py:4151、apply.py:313）、备份 `<脚本>.tweak.bak` / `<脚本>.tweak.<pid>.bak` / `<脚本>.revert.bak`、验证状态中转 `_verify_state.json`、并发锁 `<脚本>.apply.lock`（writeback.py:2237） | 备份的锚点是**脚本**、不是参数文件 —— `--params other/x.json` 只影响从哪儿读参数，备份**不会**跟着跑到 `other/`，`revert` 也**不需要**再传 `--params`（0.1.8 放在参数文件旁边的旧位置只作为兼容兜底读一次） |
-| **系统临时区**（`tempfile` 的默认目录：`/tmp`、`%TEMP%`） | `mpltweak_state_*.json` —— `describe` / `check` 的采集子进程把图状态 dump 到这里，父进程读完即删（`tempfile.mkstemp(prefix='mpltweak_state_')`，verify.py:1088；清理 verify.py:1104-1116） | 与脚本目录无关 ⇒ 采集不会在你的项目里留下中转文件；超时 / 起不来时也走同一条清理 |
-| **用户家目录** `~/.mpltweak/` | `tk_hint_shown` —— "Tk 后端提示只打一次"的戳文件（launch.py:74-81） | `MPLTWEAK_HOME` 可改这个家目录（测试隔离 / 多环境共用一台机器）；每个用户 / 每次安装一个，与具体脚本无关 |
+| **脚本旁** `<脚本目录>/.tweak_params/` | 参数 `.tweak_params/<脚本>.json`、多图参数 `.tweak_params/<stem>.fig<k>.json` 与会话接管标记 `<stem>.fig<k>.json.lock`（launch.py:471-487、toolbox.py:1327）、写回元数据 `.tweak_params/<stem>.writeback.json`（writeback.py:4394、apply.py:418）、备份 `<脚本>.tweak.bak` / `<脚本>.tweak.<pid>.bak` / `<脚本>.revert.bak`、验证状态中转 `_verify_state.json`、并发锁 `<脚本>.apply.lock`（writeback.py:2387-2394） | 备份的锚点是**脚本**、不是参数文件 —— `--params other/x.json` 只影响从哪儿读参数，备份**不会**跟着跑到 `other/`，`revert` 也**不需要**再传 `--params`（0.1.8 放在参数文件旁边的旧位置只作为兼容兜底读一次） |
+| **系统临时区**（`tempfile` 的默认目录：`/tmp`、`%TEMP%`） | `mpltweak_state_*.json` —— `describe` / `check` 的采集子进程把图状态 dump 到这里，父进程读完即删（`tempfile.mkstemp(prefix='mpltweak_state_')`，verify.py:1091；清理 verify.py:1107-1119） | 与脚本目录无关 ⇒ 采集不会在你的项目里留下中转文件；超时 / 起不来时也走同一条清理 |
+| **用户家目录** `~/.mpltweak/` | `tk_hint_shown` —— "Tk 后端提示只打一次"的戳文件（launch.py:207-211） | `MPLTWEAK_HOME` 可改这个家目录（测试隔离 / 多环境共用一台机器）；每个用户 / 每次安装一个，与具体脚本无关 |
 
 **同一个脚本会被重复执行**：开窗 1 次、每次 `check` / `describe` 1 次、每次 `apply --write` 1 次。
 所以**别把它指向"跑一次会花钱 / 会改数据 / 会发消息"的脚本** ——「不适用场景」讲的就是这类。
@@ -76,7 +76,7 @@
 ## 写回之前的可重跑预检（0.1.10）
 
 `apply --write` 默认要**重跑你的脚本**（重跑层 + 语义层：原位路径**正常只跑 1 遍**（参数里有"原位写不了"的字段时会
-**先额外跑 1 遍**判要不要退块，`writeback.py:2888`）、取不到目标图状态时回退 2 遍、需要归因时最多 3 遍；
+**先额外跑 1 遍**判要不要退块，`writeback.py:3041`）、取不到目标图状态时回退 2 遍、需要归因时最多 3 遍；
 要插调整块的路径会**逐个候选插入点重试**，每试一个再跑一遍 —— 逐条口径见
 [verify.md 的「写回会跑几遍脚本」](verify.md#写回会跑几遍脚本)）。于是「跑不通 / 会卡住」
 的脚本总是等到写回时才暴露 —— 现在改成**动手之前先说**：默认会重跑时，`apply --write` 与开窗入口
@@ -95,7 +95,7 @@
 * **预检不执行你的脚本**：只有 `ast` 读源码 + `importlib.util.find_spec` 查"包在不在"
   （find_spec 只查规格、**不执行模块体**）。
 * **没风险就一个字都不说**：干净脚本零噪音；`--no-verify` / `--verify-fast` 本来就不重跑，也不提示；
-  `--dry-run` 也不提示（预检只在真写回时才做，`apply.py:644-647`）—— 但它**仍可能**跑一遍脚本（见上表）。
+  `--dry-run` 也不提示（预检只在真写回时才做，`apply.py:744-746`）—— 但它**仍可能**跑一遍脚本（见上表）。
   `--` 后面已经给了参数时不再喊"需要参数"。
 * **预检自己出岔子一律放行**：读不了 / 语法错误 / 目录 / 找不到一律当"无风险"，绝不让预检成为新的失败点。
 
@@ -119,6 +119,7 @@
 * 判据是"查完再写"，与真正落盘之间有**微秒级**的 TOCTOU 缝隙 —— 本机制针对的是**分钟量级**的
   验证窗口，不是这个缝隙。
 * **`revert --write` 不在此守卫范围**（它是独立命令、没有验证等待、窗口是秒级）—— 待办候选。
+* **这条守卫没有"强制放行"开关**：`--force` 管的是**另一档** —— "**参数比脚本旧**"（存完参数之后脚本被手改过，默认跳过并给 `reason: "stale"`）；`apply --write --force` 才会照样套用参数（`apply.py:717` 定义、`:840` 判定）。验证窗口内检测到的外部修改一律放弃写回。
 * 读不了文件（不存在 / 坏字节）时守卫**放行**：写盘异常自己会兜底，守卫不该把正常写回拦下。
 
 ## 跑不起来时，是谁的错、下一步做什么（0.1.10）
@@ -162,3 +163,9 @@
 不生效**，本版靠**静态预筛**兜住（含联网或起子进程调用的脚本一律不真跑）。精细的判定规则（例如"argv 里
 出现游乐场内的脚本路径也算脚本进程"，需同时避免 CLI 自身被误判而拦死 verify 的 spawn）列入
 **0.1.11 候选**。
+
+### `doctor` 的选项口径（t91）
+
+- `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
+- **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。
+- `-h` / `--help` ⇒ rc=0，打印 doctor 用法。

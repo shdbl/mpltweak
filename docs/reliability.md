@@ -12,6 +12,7 @@
 
 
 > **"承诺违约"**：工具声称"已写回 / 已验证"，但实际字节没变、或验证根本没做。本版为 **0**。
+> **② 的数字口径**：表里的 **928 / 1,780** 是 **0.1.10 那轮判据**下的记录；0.1.11 起「URL 字面量坐在调用实参位置」也计入 `net_risk`，按该判据同口径重算为 **925 / 1,770**（定义见下文「② 运行时层」）。
 ---
 
 ## ① 静态层：真实绘图代码语料验证（10,158 份）
@@ -141,6 +142,8 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 **口径**：对能真跑的绘图脚本，用 `apply --write` 走完整链路（写盘 → **重跑脚本** → 把目标图状态与参数逐字段比对）。
 范围写进句子：**池 1,837 份**（含 28 份"真会开窗" + 29 份"联网 / 子进程"的**静态排除**）⇒ **真跑候选 1,780 份**。
 
+**静态联网预筛的判据**：URL 字面量只要**坐在调用实参位置**（位置实参或关键字实参，如 `pd.read_table("https://…")`、`ax.add_wms(wms="http://…")`）即计入 `net_risk`。按这条判据同口径重算：本节的**真跑候选 1,770 份**（= 1,837 − 28 − 29 − 10）、**写回并验证通过 925 份**；本文件其余位置出现的 **1,780 / 928** 是 0.1.10 那轮判据下的记录。
+
 | 测什么 | 规模 | 结果 |
 |---|---|---|
 | 真实脚本真跑（写回 + 重跑 + 状态比对） | 池 1,837 → 真跑候选 1,780 | **928 份写回并验证通过**；其余因脚本需开窗（345）／等人输入（464）／联网或子进程（29）／撞 90 s 超时（71）**未判定**（`na_reject` / `na_error` = 0 / 0） |
@@ -201,7 +204,7 @@ mpltweak 的做法是：在目标对象**创建之后、被消费之前**（最�
 | **不规则 GridSpec / 1×3** | 逐面板偏差 **0.000000**（声明行高比 2.000、列宽比 4.533）；1×3 三面板 y0 极差 **0.000000**、长中文标题在 Ctrl+F **前/后都在画布内** | [NUMBERS.md:44,48](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L44) ＝ [run_qt9.log:58-59,70-73](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L58) |
 | **colorbar / constrained_layout** | 轴数 **1**；拖主面板 → colorbar 偏差 **0.0000**；拖 colorbar → 位移 **0.0508**、主面板 **0.0000**；clayout 两次采样 Δsize **0.000000** | [NUMBERS.md:45-46](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L45) ＝ [run_qt9.log:62-67](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L62) |
 | 撤销 / 重做 | 6,000 次手势里实际发出 **Ctrl+Z ×156 / Ctrl+Y ×162**；确定性往返：**驱动到的往返端到端一致**（判据 \|G2−G0\|∞ ≤ 0.002 且 \|G3−G1\|∞ ≤ 0.002） | [NUMBERS.md:50-51,74-77](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md#L50) ＝ [run_qt9.log:26,52-53](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/run_qt9.log#L26) |
-| 来源 | `tests/test_real_window.py`（**需要真实显示器**，一次只开一个窗口，跑完确认零残留） |
+| 来源 | `tests/test_real_window.py`（**需要真实显示器**，一次只开一个窗口，跑完确认零残留） | — |
 
 > 内部指标（几何变化率 / 选中态变化率 / 落地率 / 框选命中率 / `isActiveWindow`）只进内部报告，
 > **不出现在对外主张里** —— 它们是过程量，不是"能不能用"的判据。

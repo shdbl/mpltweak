@@ -164,9 +164,41 @@ def main(argv=None) -> int:
     text = json.dumps(payload, ensure_ascii=False,
                       indent=None if args.compact else 2)
     if args.output:
-        with open(args.output, 'w', encoding='utf-8') as f:
-            f.write(text + '\n')
-        sys.stderr.write('[describe] 已写入 %s\n' % args.output)
+        # t83：`.tweak_params/<脚本>.json` 是 params.py 的**规范位置**，
+        # 用户按规范写 `describe x.py -o .tweak_params/x.json` 时该目录常常
+        # 还不存在。这里**自动建父目录**（而不是让用户先 mkdir 再来）：
+        # 用户已明确给出路径，帮他落地更符合“命令应当成功”的预期；
+        # 且本命令**只读源码**，建一个数据目录不产生任何源码副作用。
+        _outdir = os.path.dirname(os.path.abspath(args.output))
+        try:
+            os.makedirs(_outdir, exist_ok=True)
+        except OSError as _e:
+            # 写不进就**如实说清**（路径 + 原因 + 下一步）：不走通用处理器
+            # 那套“这是工具的 bug / 已回滚”的归因 —— describe 只读，
+            # 源码一个字节都没动过，说“已回滚”是假话。
+            sys.stderr.write(_msg.t_ui('[describe] 写不进 %s：%s\n')
+                             % (args.output, _e))
+            sys.stderr.write(_msg.t_ui(
+                '  请确认该路径可写（父目录本命令会自动创建）；本命令不会改动你的脚本。\n'))
+            return 2
+        if os.path.isdir(args.output):
+            # t83：给的是目录（常见的路径写错）⇒ 明确说清，
+            # 不落进通用崩溃处理器那套“工具的 bug / 已回滚”的归因。
+            sys.stderr.write(_msg.t_ui('[describe] %s 是一个目录，请给出文件路径（例如 %s/params.json）\n')
+                             % (args.output, args.output))
+            return 2
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(text + '\n')
+        except OSError as _e:
+            sys.stderr.write(_msg.t_ui('[describe] 写不进 %s：%s\n') % (args.output, _e))
+            sys.stderr.write(_msg.t_ui(
+                '  请确认该路径可写（父目录本命令会自动创建）；本命令不会改动你的脚本。\n'))
+            return 2
+        # t64：船长授权的一行超范围改动（describe.py 不在 t64 的 inScope 里）——
+        # 与 launch/doctor 同性质的一行用户可见中文，走 messages 的 zh→en 表：
+        # zh 逐字不变、en 纯 ASCII。不改退出码 / --json 键名 / 任何判定。
+        sys.stderr.write(_msg.t_ui('[describe] 已写入 %s\n') % args.output)
     else:
         # 走 emit_json（fd 级 UTF-8）而不是 print：payload 里的中文（脚本名/路径）
         # 在 cp936 管道下会被编成 GBK，按 UTF-8 解码的 agent 直接崩（见 messages.emit_json）

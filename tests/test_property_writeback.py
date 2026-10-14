@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """writeback property-based 不变量测试（hypothesis）—— 四条铁律 + 坏参数拒写。
 
-与七个套件同风格：模块级脚本（``python tests/test_property_writeback.py`` 直接跑），
+与其它套件同风格：模块级脚本（``python tests/test_property_writeback.py`` 直接跑），
 语言钉死 MPLTWEAK_LANG=zh，末尾打印 ALL PASS / FAILED 并 sys.exit。用 hypothesis
 生成「固定可运行模板 × 参数值域 × 换行（LF/CRLF）」组合，钉住四条铁律：
 

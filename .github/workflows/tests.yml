@@ -57,6 +57,26 @@ jobs:
             echo "::endgroup::"
           done
 
+      # 方案 B（用户 2026-10-14 拍板）：3.12 保留全量 pytest，**只给 3.9** 补一个秒级
+      # "新套件冒烟"。为什么只在 3.9：0.1.9 之后新增的 10 个套件此前在 3.9/3.10/3.11 上
+      # 从不执行（下面的 pytest step 被 `if: 3.12` 限死），而**旧 Python 上最容易炸的正是
+      # "语法 / 导入 / 编码"这类秒级就能发现的问题** —— 把它们挡在最便宜的 3.9 这条 leg 上，
+      # 其余 leg 不乘 4，CI 时间不涨。
+      # 覆盖（按 tests/test_suites.py 的 SUITES 逐条核过）：test_docs（纯文本锚点/链接）、
+      # test_notation_discipline（AST 记号纪律）、test_tmpdir_discipline（临时目录取法），
+      # 外加 test_hygiene 的"套件在 GBK 控制台不崩"那 3 条（-k 顺带命中，同样是秒级）。
+      # 刻意**不含** test_real_window（真开窗会抢焦点）与 test_corpus_invariants（仓库外语料
+      # + 分钟级真跑）—— 两者本就不在 SUITES 里，此处也不引入。
+      # 实测（本机 longxia + en）：6 passed / 68 deselected / 3.9s。
+      - name: Fast smoke of the new suites (3.9 only)
+        if: matrix.python-version == '3.9'
+        run: |
+          # 3.9 leg 的安装步骤只装 matplotlib/numpy（不装 pytest）——这里补上。
+          # 刻意不装 hypothesis：三个 property 套件有 tests/_hypothesis_shim.py 兜底，
+          # 本 step 选的这三条也不依赖它（保持秒级）。
+          python -m pip install "pytest>=7.0"
+          python -m pytest -q -k "docs or notation_discipline or tmpdir_discipline"
+
       # 同一批套件再走一遍 pytest：拿到逐条用例的报告（GitHub 的失败摘要/重跑单条），
       # 外加工程卫生棘轮（宽兜底计数 / 消息 GBK 可编码）。只在最新版 python 上跑，
       # 避免把 CI 时间乘 4。见 tests/test_suites.py 与 tests/test_hygiene.py。

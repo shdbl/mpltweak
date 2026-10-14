@@ -2,7 +2,7 @@
 # tests/test_sandbox.py —— 文件系统沙箱（t9）验收测试。
 #
 # 用法：python tests/test_sandbox.py   → ALL PASS / exit 0
-# 本文件是模块级脚本（七套件同款风格），**不被 pytest 收集**（pyproject
+# 本文件是模块级脚本（各套件同款风格），**不被 pytest 收集**（pyproject
 # python_files 只收集 test_suites.py + test_hygiene.py；本文件是独立套件，由
 # test_suites.py 的子进程驱动或手工直跑）。hygiene 的 GBK-console 棘轮会检查本文件
 # （装了 reconfigure 兜底，见文件头）。

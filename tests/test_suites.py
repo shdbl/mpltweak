@@ -69,6 +69,39 @@ SUITES = [
     # --- t15 挂入：记号纪律检查器（纯 AST + 合成样例自证，零 IO 重活、秒级；
     #     只报告不修；真仓库要求产品面零违规。见 tools/notation_discipline.py 文件头）---
     ('test_notation_discipline', {}),
+    # --- t22 挂入：临时目录取法纪律（tools/corpus_filter_t7.py 的 --workroot 默认值
+    #     跨平台契约：永远绝对、绝不回落成 '.'；含"修复前会红"的反向证据。
+    #     子进程量环境、秒级。见 tests/test_tmpdir_discipline.py 文件头）---
+    ('test_tmpdir_discipline', {}),
+    # --- t74 挂入：**首次体验旅程测试**（从 wheel 装进干净 venv → 按文档逐条真跑 →
+    #     零改动/幂等/写回不变量）。约 27~90 秒：本地建 wheel（离线 --no-build-isolation，
+    #     失败自动回退到 pip 自建隔离环境）+ 建 venv + 装 wheel + 跑 CLI。
+    #     零网络（安装用 --no-index）、不开窗（MPLBACKEND=Agg）。
+    #     它抓的是单模块测试抓不到的接缝，尤其"装到的是 wheel 而不是仓库源码"
+    #     （editable 安装曾两次造成假绿）。见 tests/test_journey_wheel.py 文件头 ---
+    ('test_journey_wheel', {}),
+    # --- t77 挂入：**语法化 AST 模糊测试**（自造 CFG 随机拼代码 —— 补的是"随机拼代码"
+    #     这一层：现有 fuzz 只随参数/手势，property 也自述"脚本不随机生成"）。
+    #     三条不变量：承诺违约=0 / 未匹配项安全降级 / 幂等。
+    #     默认 N=9（每个对抗形态各 1 例，约 25 秒）；发布期大样本用
+    #     `MPLTWEAK_ASTFUZZ_N=1000`（约 60 分钟，单独跑、不进 pytest）。
+    #     零网络、不开窗。见 tests/test_ast_fuzz.py 文件头 + tools/ast_fuzz_gen.py ---
+    ('test_ast_fuzz', {}),
+    # --- t86 挂入：**CLI 参数 × 脚本 组合模糊**（命令×输入×参数文件×选项 的笛卡尔积，
+    #     分母 7×10×6×14 = 5880，按 seed 分层抽样；可复现）。
+    #     五条断言：无未处理 traceback / rc 属 {0,1,2,4} 且与文档口径一致 / 报错说人话
+    #     （stdout 或 stderr 一路）/ --json 恒可解析 / en 无中文。
+    #     默认 N=12（约 4 秒）；大样本用 `MPLTWEAK_CLIFUZZ_N`（N=240 约 62 秒；
+    #     5880 全跑约 25 分钟）。零网络、不开窗。见 tests/test_cli_fuzz.py 文件头 ---
+    ('test_cli_fuzz', {}),
+    # --- t95 挂入：**消息键登记护栏**（`t('键')` 引用的键必须已登记 —— 否则
+    #     `messages.t()` 的容错契约"缺键原样返回键"会把**键名回显给用户**；
+    #     这是 t93 的真实根因）。三层：静态扫描（tools/msg_key_audit.py）+
+    #     症状级（真跑 doctor/schema，断言输出里不出现任何已登记键名）+ 4 条 teeth。
+    #     刻意把 `t()`（回显键名 = 违规）与 `t_ui()`（缺登记只是"en 下漏翻"、
+    #     返回中文原文）分开报，否则一上来 60+ 条误报。秒级、零网络、不开窗。
+    #     见 tests/test_msg_key_audit.py 文件头 ---
+    ('test_msg_key_audit', {}),
 ]
 
 # 刻意不挂进 pytest 的两个（理由见文件头 docstring）：

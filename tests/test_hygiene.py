@@ -21,6 +21,12 @@
    UnicodeEncodeError → 整套用例从 ALL PASS 变成 rc=1 的**假红**（CI 却永远是绿的，
    因为 CI 是 UTF-8）。这里用两条守卫钉住：静态（危险文件必须装输出兜底）
    + 动态（真的在 ``PYTHONIOENCODING=gbk`` 的子进程里跑一遍清洗函数）。
+
+4. **语料 harness 的静态联网预筛必须认"URL 当调用实参"**（B7 / 0.1.11）。
+   ``tests/test_corpus_invariants.py`` 的 ``_has_net_risk`` 只认网络模块 import /
+   ``urlopen`` / ``os.system`` / ``subprocess.*`` 时，``pd.read_table("https://…")``
+   这类脚本会被**真跑**，verdict 随网络可达性翻转（联网 ``pass`` / 断网 ``rc=1``）。
+   第 4 条把"URL 字面量坐实参位置 ⇒ 判联网风险"的判定与它的边界钉住。
 """
 
 import ast
@@ -186,6 +192,28 @@ def test_messages_are_gbk_encodable():
     assert not bad, (
         '这些消息模板不能编成 GBK，会在 cp936 终端上把命令变成 rc=1 + '
         'UnicodeEncodeError：\n  ' + '\n  '.join(bad))
+
+
+def test_messages_en_templates_are_ascii():
+    """``en`` 模板必须是**纯 ASCII**（t55 / V1-F5：en 下人读输出必须逐字节 ASCII）。
+
+    与 ``test_messages_are_gbk_encodable`` 同族：那条管"cp936 终端打不出来"，
+    这条管"en 界面里混进中文"（apply/params 的校验与提示文案曾经硬编码中文，
+    `MPLTWEAK_LANG=en` 下照样打中文 —— V1 在 apply 的 28 例电池里数出 201 行非 ASCII，
+    t33 收掉 apply 侧、t55 收掉 params 侧之后为 0）。
+
+    例外：**机器可读通道**的既有载荷（如 ``params.SCHEMA['description']``）不在此表，
+    它有自己的 UTF-8 纪律（见 test_agent_api §4）。
+    """
+    from mpltweak import messages as _msg
+    bad = []
+    for key, item in _msg.MESSAGES.items():
+        tpl = item.get('en') or ''
+        if not tpl.isascii():
+            bad.append('%s: %r' % (key, tpl[:60]))
+    assert not bad, (
+        '这些 en 模板不是纯 ASCII，会在英文界面里打出中文（V1-F5）：\n  '
+        + '\n  '.join(bad))
 
 
 def test_message_lookup_never_raises():
@@ -364,6 +392,82 @@ def test_emit_first_open_hint_cases(monkeypatch, tmp_path):
     assert zh and zh != en
     for s in (zh, en):
         s.encode('gbk')                           # 控制台编码约束（messages.py 同款）
+
+
+def test_first_open_hint_two_stage_early_speaks_without_stamping(monkeypatch, tmp_path):
+    """两段式契约（t50）：**早段说话但不落戳**；落戳只发生在"真要建窗口"那一段。
+
+    为什么必须**显式**钉（此前只有隐式覆盖，不够）：这条契约已经咬过一次 ——
+    2026-10-13 23:10:27 测试走到早段位置时，把**用户真实家目录**的
+    ``~/.mpltweak/first_open_shown`` 写了出来 ⇒ 等于**吃掉用户真正的一次性提示**。
+    而旧覆盖抓不住"早段说完即落戳"这种回归：``nofig`` 路径恰好断言"戳不存在"，
+    早段文案又不含 ``'FIRST-'`` ⇒ 旧断言 ``'FIRST-' in lines`` 对早段恒不成立，
+    有人把早段改成落戳，旧用例**一条都不会红**。
+
+    实现依据（``launch.py``，逐行读过）：
+      * ``:718`` main 在**跑用户脚本 / 后端 import 之前**调 ``stage='early'``；
+      * ``:848`` 在**真要建窗口那一刻**调默认档 ``stage='window'``（落戳点）；
+      * ``_emit_first_open_hint`` ``:270`` dry-run / ``MPLTWEAK_NO_HINT=1`` → 直接 False；
+        ``:278`` 戳已存在 → False（两段共用这两个前置闸）；
+        ``:287-289`` ``stage=='early'`` → 打印后**直接 return True，刻意不落戳**。
+    全程只往**隔离家目录**（``MPLTWEAK_HOME`` → ``tmp_path``）写，绝不碰真实家目录。
+    """
+    import mpltweak.launch as launch
+    import mpltweak.messages as _msg
+    lines = []
+
+    class _Sink:
+        def write(self, s):
+            lines.append(s)
+
+    # 两段文案都从 messages 表取（键缺失时 launch 有内置兜底）；这里同时钉住
+    # "**早段取的是早段键**"（不许把建窗前那句拿去早段念）。
+    monkeypatch.setattr(_msg, 'MESSAGES', {
+        'first_open_hint': {'zh': 'WINDOW-ZH', 'en': 'WINDOW-EN'},
+        'first_open_early_hint': {'zh': 'EARLY-ZH', 'en': 'EARLY-EN'}})
+
+    env = {'MPLTWEAK_HOME': str(tmp_path)}
+    stamp = os.path.join(str(tmp_path), 'first_open_shown')
+    sink = _Sink()
+
+    # ① 早段：**打印早段句**（且不是建窗前那句）
+    assert launch._emit_first_open_hint(environ=env, stderr=sink,
+                                        stage='early') is True
+    assert ''.join(lines) in ('EARLY-ZH\n', 'EARLY-EN\n')
+    assert 'WINDOW-' not in ''.join(lines)
+    # ② 早段：**绝不落戳** —— 这就是 2026-10-13 那个坑，单点变异必须让这条变红
+    assert not os.path.exists(stamp), '早段不许落戳（落戳 = 吃掉用户的一次性提示）'
+
+    # ③ 戳已存在 ⇒ 早段静默（与默认档同一语义："说过了"就不再念）
+    lines.clear()
+    assert launch._emit_first_open_hint(environ=env, stderr=sink,
+                                        stage='window') is True
+    assert os.path.exists(stamp), '建窗前那一段才是落戳点'
+    lines.clear()
+    assert launch._emit_first_open_hint(environ=env, stderr=sink,
+                                        stage='early') is False
+    assert lines == []
+
+    # ④ 早段在 dry-run / MPLTWEAK_NO_HINT=1 下同样静默、且**不落戳**
+    env2 = {'MPLTWEAK_HOME': str(tmp_path / 'h2')}
+    stamp2 = os.path.join(str(tmp_path / 'h2'), 'first_open_shown')
+    lines.clear()
+    assert launch._emit_first_open_hint(dry_run=True, environ=env2, stderr=sink,
+                                        stage='early') is False
+    assert lines == []
+    lines.clear()
+    assert launch._emit_first_open_hint(environ=dict(env2, MPLTWEAK_NO_HINT='1'),
+                                        stderr=sink, stage='early') is False
+    assert lines == []
+    assert not os.path.exists(stamp2)
+
+    # ⑤ 两段是**两句不同的话**（两段式不是同一句念两遍），且都满足控制台编码约束
+    monkeypatch.setattr(_msg, 'MESSAGES', {})     # 走 launch 内置兜底
+    monkeypatch.setattr(_msg, 'current_lang', lambda: 'zh')
+    early, window = launch._first_open_hint('early'), launch._first_open_hint('window')
+    assert early and window and early != window
+    for s in (early, window):
+        s.encode('gbk')
 
 
 def test_first_open_hint_is_wired_into_main_without_opening_a_window(monkeypatch,
@@ -1258,3 +1362,137 @@ def test_ratchet_reverse_probe_real_gui_object(tmp_path):
         'def go():\n    return PAYLOAD\n',
         encoding='utf-8')
     assert not scan_gui_objects(str(root)), scan_gui_objects(str(root))
+
+
+# --------------------------------------------------------------------------
+# 第 4 条棘轮：语料 harness 的静态联网预筛必须认"URL 当调用实参"（B7 / 0.1.11）
+# --------------------------------------------------------------------------
+CORPUS_SUITE = os.path.join(TESTS, 'test_corpus_invariants.py')
+
+
+def _load_corpus_predicates(names):
+    """从 ``tests/test_corpus_invariants.py`` 里取出几个**纯函数**（+ 它们引用到的
+    模块级常量），exec 进一个干净名字空间后按名字返回。
+
+    为什么不直接 import：那个文件是**模块级脚本**（pyproject 的 ``python_files``
+    刻意不收它 —— 见了就 import，会把整个 harness 在收集期跑掉），import 的副作用
+    还包括 ``os.environ.setdefault`` 改本进程环境、``_ensure_tmp_writable()`` 落临时
+    目录。这里只按 AST 摘需要的片段：**引用到的模块级名字自动收集**，所以给它加常量、
+    或把判据拆成小函数，都不用改这个 helper。
+
+    局限（够用就好）：只认模块级 ``Assign`` / ``FunctionDef``，不做依赖排序 ——
+    被摘的常量之间不要互相引用。模块外的名字（目前只有内置 ``ast``）由调用方注入。
+    """
+    with open(CORPUS_SUITE, encoding='utf-8') as f:
+        src = f.read()
+    tree = ast.parse(src)
+    lines = src.splitlines()
+
+    def block(node):
+        return '\n'.join(lines[node.lineno - 1:node.end_lineno])
+
+    blocks = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    blocks.setdefault(tgt.id, block(node))
+        elif isinstance(node, ast.FunctionDef):
+            blocks.setdefault(node.name, block(node))
+
+    picked, todo = [], list(names)
+    while todo:
+        nm = todo.pop()
+        if nm in picked or nm not in blocks:
+            continue
+        picked.append(nm)
+        for sub in ast.walk(ast.parse(blocks[nm])):
+            if isinstance(sub, ast.Name) and sub.id in blocks:
+                todo.append(sub.id)
+    ns = {'ast': ast}
+    for nm in picked:
+        exec(compile(blocks[nm], '<%s:%s>' % (CORPUS_SUITE, nm), 'exec'), ns)
+    missing = [nm for nm in names if nm not in ns]
+    assert not missing, 'test_corpus_invariants.py 里找不到 %s（改名了？）' % missing
+    return {nm: ns[nm] for nm in names}
+
+
+def test_corpus_net_risk_recognizes_url_call_argument():
+    """B7（0.1.11）：URL 字面量坐在**调用实参**位置 ⇒ 判联网风险（``na_skip`` 的依据）。
+
+    为什么必须钉住：这条判据是**静态**门禁，漏掉就会真跑陌生脚本；而 0.1.10 的旁证
+    实测里 ``pd.read_table("https://…")`` 这类脚本的 verdict **随网络可达性翻转**
+    （联网 ``pass`` / 强制断网 ``rc=1 URLError``）——等于把"发布数字"交给跑测试那台
+    机器的网络状态决定。1,837 份池子实测（改前 / 改后）：命中 30 -> 40、新增 10 份、
+    一份都没减少（逐份清单见 B7 output）。
+    """
+    risk = _load_corpus_predicates(['_has_net_risk'])['_has_net_risk']
+
+    # ① 真去取 URL 的调用：位置实参、关键字实参都要认（`add_wms` 用的是关键字）
+    assert risk('import pandas as pd\n'
+                'df = pd.read_table("https://example.com/a.txt")\n') is True
+    assert risk('pd.read_csv("http://a/b.csv", compression="gzip")\n') is True
+    assert risk('ax.add_wms(wms="http://vmap0.tiles.osgeo.org/wms/vmap0")\n') is True
+
+    # ② 不许扩大判定范围：注释、模块常量、本地路径、`**kwargs` 解包都不是"实参字面量"
+    assert risk('# 见 https://example.com/docs\nx = 1\n') is False
+    assert risk('DOCS = "https://example.com/docs"\n') is False
+    assert risk('pd.read_csv("local_data.csv")\n') is False
+    assert risk('pd.read_csv(**cfg)\n') is False
+
+    # ③ **已知且故意**的偏宽（fail-closed）：这几条不联网，但一样命中 —— 宁可少跑一份，
+    #    也不能拿"期望它会拦住"去赌陌生脚本。要收窄（比如只认"会取 URL 的调用"白名单）
+    #    就必须同时改判据里的注释与 B7 的池子数字，别悄悄改。
+    assert risk('print(" https://scholar.google.com/citations?user=X")\n') is True
+    assert risk('n = len("http://dbpedia.org/resource/")\n') is True
+    assert risk('ET.register_namespace("", "http://www.w3.org/2000/svg")\n') is True
+    assert risk("im.set_url('https://www.google.com/')\n") is True
+
+    # ④ 老判据不许被这次改动带坏（网络模块 import / urlopen / os.system / subprocess.*）
+    assert risk('import socket\n') is True
+    assert risk('from urllib.request import urlopen\n'
+                'urlopen("https://example.com")\n') is True
+    assert risk('import subprocess\nsubprocess.run(["ls"])\n') is True
+    assert risk('import os\nos.system("ls")\n') is True
+    assert risk('import matplotlib.pyplot as plt\nplt.plot([1], [2])\n') is False
+    assert risk('def broken(:\n') is False
+
+
+def test_assert_shape_guard_and_mutation_selfchecks():
+    """t76：把今晚两次假绿变成**结构性不可能**。
+
+    ① 全仓断言形状护栏（tools/assert_shape_guard.py）必须 0 违规 ——
+       `check` 在本仓库有两个参数顺序相反的家族，顺序写错不会报错、只会静默恒真
+       （2026-10-14 实测某段 9 条断言全部空转）。
+    ② 变异冒烟的自证必须**真的会拒绝跑**：给它一个不存在的锚点，必须 SystemExit
+       （否则就是"变异没生效、跑出 ALL PASS 假绿"）。
+    反向验证（teeth）：删掉 tools/mutation_smoke.py 里 `if n != 1:` 那段自证 ⇒
+       本测试的第 ② 条必红。
+    """
+    import importlib.util
+    import subprocess
+    import sys as _sys
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8')
+
+    # ① 形状护栏：0 违规
+    r = subprocess.run([_sys.executable,
+                        os.path.join(root, 'tools', 'assert_shape_guard.py')],
+                       cwd=root, capture_output=True, env=env, timeout=300)
+    assert r.returncode == 0, (
+        '断言形状护栏有违规：\n' + r.stdout.decode('utf-8', 'replace')[-800:])
+
+    # ② 变异冒烟的自证②：坏锚点必须拒绝跑（不许继续跑出假绿）
+    spec = importlib.util.spec_from_file_location(
+        '_mut_smoke_t76', os.path.join(root, 'tools', 'mutation_smoke.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        mod._run_one('SELFTEST', 'mpltweak/check.py',
+                     'THIS-ANCHOR-DOES-NOT-EXIST', 'x', '§16', 'test_check')
+    except SystemExit as e:
+        assert '自证' in str(e), '自证的报错文本应含"自证"：%r' % str(e)
+    else:
+        raise AssertionError(
+            '坏锚点没有被自证拦住 ⇒ 会跑出"变异没生效"的假绿')

@@ -343,7 +343,7 @@ harness 单位口径修正（t22，**测试侧**；不改 src/、不放宽任何
 ================================================================================
   * **不进 CI**（需要真实显示器）、**不进 pytest 收集**（pyproject.toml 的
     ``python_files`` 只收 ``test_suites.py`` / ``test_hygiene.py``；本文件是
-    模块级独立套件，风格同其它七套件：末尾 ALL PASS/FAILED + ``sys.exit``）。
+    模块级独立套件，风格同其它套件：末尾 ALL PASS/FAILED + ``sys.exit``）。
   * **不改 src/**：发现真实缺陷（HiDPI / 钳制 / 拖拽落位）只如实报告，不自己修。
   * 真窗口测试**不要**设 ``MPLBACKEND=Agg``（否则就没有窗口了）。本文件在子进程
     env 里**显式删掉** MPLBACKEND（若外部环境设了 Agg），再用 ``matplotlib.use()``
@@ -399,7 +399,7 @@ SRC = os.path.join(ROOT, 'src')
 HERE = os.path.abspath(__file__)
 MARK = '@@RW@@'          # 子进程把测量结果以这一行 JSON 交回父进程
 
-# 套件风格：中文消息（与其它七套件一致）
+# 套件风格：中文消息（与其它套件一致）
 os.environ.setdefault('MPLTWEAK_LANG', 'zh')
 
 # 本文件会把**任意子进程文本**（含 GBK 字节解出来的 U+FFFD）交给 print，

@@ -107,8 +107,8 @@ axes[1, 1].title.set_fontsize(11)
 > （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
 > `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
 > （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
-> （`writeback.py:3955`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:3885`，
-> T70 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:3614`）；
+> （`writeback.py:4206`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:4136`，
+> T70 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:3840`）；
 > "轴身份"注释里恒为中文。
 > 你实际拿到的数字与轴数会跟着你的布局变。
 

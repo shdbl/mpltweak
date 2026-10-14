@@ -32,7 +32,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 界面语言钉死（与其它七个套件一致）：断言的是中文文案，别让宿主 locale 决定结论。
+# 界面语言钉死（与其它套件一致）：断言的是中文文案，别让宿主 locale 决定结论。
 os.environ['MPLTWEAK_LANG'] = 'zh'
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 from mpltweak.launch import (_apply_saved,            # noqa: E402
@@ -58,6 +58,15 @@ def _gbk_safe(s):
 
 
 _TMPROOT = os.path.join(ROOT, 'tests', '.tmp_launch_%d' % os.getpid())
+
+# t31：子进程 CLI 的**假家目录**。launch 的两个"每个用户只打一次"戳
+# （``first_open_shown`` / ``tk_hint_shown``）都落在
+# ``_mpltweak_home() = MPLTWEAK_HOME or ~/.mpltweak``（launch.py:86-104 / 165-172）。
+# 不隔离的话，任何走到"真要建窗口那一刻"的子进程用例都会把**用户真实**的一次性戳
+# 写掉 —— 2026-10-13 实测事故：跑一次 pytest 就写出了
+# ``C:\Users\xiang\.mpltweak\first_open_shown``，用户以后真开窗反而看不到那句提示
+# （被测试留下的戳骗过去了）。所以这里钉死一个测试临时区内的家目录。
+_SANDBOX_HOME = os.path.join(_TMPROOT, 'home')
 
 
 class _StubFig:
@@ -260,6 +269,9 @@ def _cli_env():
     env['MPLBACKEND'] = 'Agg'
     env['MPLTWEAK_LANG'] = 'zh'
     env['PYTHONIOENCODING'] = 'utf-8'
+    # t31：**家目录必须隔离**（理由见 _SANDBOX_HOME 处那段注释：不隔离会让子进程
+    # 用例把用户真实的 first_open_shown 戳写掉，且写掉一次就再也补不回来）。
+    env['MPLTWEAK_HOME'] = _SANDBOX_HOME
     return env
 
 
@@ -371,8 +383,579 @@ def run_exit_matrix():
     check('退出码矩阵：用户可见入口无 `return 3`（3 已退役）', not bad, ','.join(bad) or '干净')
 
 
+# ---------------------------------------------------------------------------
+# t31：**真实家目录护栏** —— 本套件绝不许往用户真实 ~/.mpltweak 写任何东西
+#
+# 三道：
+#   G1 隔离真生效（确定性）：用 _cli_env() 起子进程问 launch._mpltweak_home() 解析到
+#      哪儿，必须落在本套件的临时区内。把 _cli_env() 里那行隔离删掉 → 必须变红。
+#   G2 真实家目录零新增：整个 CLI 矩阵跑完，~/.mpltweak 不许出现任何新文件，且
+#      first_open_shown 必须不存在（这是用户**可感知**的那一条）。
+#   G3 护栏有牙（安全版）：把 MPLTWEAK_HOME 摘掉、HOME/USERPROFILE 指向一个**假家
+#      目录**，真调一次 _emit_first_open_hint() —— 戳必须落在那个假家目录里。这证明
+#      "不隔离 ⇒ 写进用户家目录"这条因果是真的，而验证过程**不碰**真实家目录
+#      （所以它能常驻套件，不必只做一次性反向验证）。
+# ---------------------------------------------------------------------------
+
+def _real_home_dir():
+    """用户**真实**家目录下的 .mpltweak（expanduser，不受 MPLTWEAK_HOME 影响）。"""
+    return os.path.join(os.path.expanduser('~'), '.mpltweak')
+
+
+def _real_home_listing():
+    try:
+        return sorted(os.listdir(_real_home_dir()))
+    except OSError:
+        return []
+
+
+_HOME_PROBE = (
+    'import sys\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'from mpltweak.launch import _mpltweak_home\n'
+    'print(_mpltweak_home())\n'
+)
+
+_TEETH_PROBE = (
+    'import io, sys\n'
+    'sys.path.insert(0, sys.argv[1])\n'
+    'from mpltweak.launch import _emit_first_open_hint, _first_open_stamp_path\n'
+    'buf = io.StringIO()\n'
+    'shown = _emit_first_open_hint(stderr=buf)\n'
+    'print(_first_open_stamp_path())\n'
+    'print("SHOWN=%s" % shown)\n'
+)
+
+
+def run_real_home_guards(home_before):
+    """跑完 CLI 矩阵后调用；``home_before`` = 开跑前真实家目录的清单快照。"""
+    import subprocess
+    real = _real_home_dir()
+    src = os.path.join(ROOT, 'src')
+    print('t31 真实家目录护栏：%s' % real)
+
+    # G1 —— 隔离真生效：子进程里问 launch 自己怎么解析家目录
+    r = subprocess.run([sys.executable, '-c', _HOME_PROBE, src],
+                       capture_output=True, text=True, encoding='utf-8',
+                       errors='replace', env=_cli_env(), cwd=ROOT, timeout=300)
+    got = [l.strip() for l in (r.stdout or '').splitlines() if l.strip()]
+    got = got[0] if got else ''
+    try:
+        inside = (os.path.commonpath([os.path.abspath(got), os.path.abspath(_TMPROOT)])
+                  == os.path.abspath(_TMPROOT))
+    except ValueError:                       # 不同盘符 -> 必然不在里面
+        inside = False
+    check('G1 子进程 CLI 的家目录被隔离到测试临时区', bool(got) and inside,
+          'rc=%s 解析到 %r（临时区 %r）' % (r.returncode, got, _TMPROOT))
+    check('G1b 解析到的家目录不是用户真实家目录',
+          bool(got) and os.path.abspath(got) != os.path.abspath(real),
+          'real=%r' % real)
+
+    # G2 —— 真实家目录零新增（"用户可感知"的那一条）
+    after = _real_home_listing()
+    new = sorted(set(after) - set(home_before))
+    check('G2 跑完整套 CLI 矩阵后，真实 ~/.mpltweak 无任何新增文件', not new,
+          '新增=%s（跑前=%s / 跑后=%s）' % (new, home_before, after))
+    check('G2b 真实 ~/.mpltweak/first_open_shown 不存在',
+          not os.path.exists(os.path.join(real, 'first_open_shown')),
+          '跑后目录内容=%s' % after)
+
+    # G3 —— 护栏有牙（安全版：假家目录，绝不碰真实家目录）
+    fake = os.path.join(_TMPROOT, 'fake_home')
+    env = _cli_env()
+    env.pop('MPLTWEAK_HOME', None)            # 摘掉隔离
+    env.pop('MPLTWEAK_NO_HINT', None)         # 别被宿主静默掉
+    env['HOME'] = fake                        # POSIX 的 ~
+    env['USERPROFILE'] = fake                 # Windows 的 ~
+    os.makedirs(fake, exist_ok=True)
+    r3 = subprocess.run([sys.executable, '-c', _TEETH_PROBE, src],
+                        capture_output=True, text=True, encoding='utf-8',
+                        errors='replace', env=env, cwd=ROOT, timeout=300)
+    lines = [l.strip() for l in (r3.stdout or '').splitlines() if l.strip()]
+    stamp = lines[0] if lines else ''
+    shown = lines[1] if len(lines) > 1 else ''
+    fake_stamp = os.path.join(fake, '.mpltweak', 'first_open_shown')
+    check('G3 【有牙】摘掉 MPLTWEAK_HOME 后，戳真的落进（假）用户家目录',
+          os.path.exists(fake_stamp),
+          'rc=%s %s 戳=%r（期望 %r）' % (r3.returncode, shown, stamp, fake_stamp))
+    check('G3b 该探针没有把戳写进**真实**家目录',
+          not os.path.exists(os.path.join(real, 'first_open_shown')),
+          '真实目录内容=%s' % _real_home_listing())
+
+
+def _ui_literals(rel, extra=()):
+    """AST：列出文件里 **print / sys.stderr.write 实参**中的中文模板（去重，排除 docstring）。
+
+    ``extra``：额外当作"用户可见出口"的函数名（t79 起用 `_log/_info/_toast/
+    _set_title_hint` 覆盖 toolbox 的交互/调试行）。
+    **已经包进 `_msg.t_ui(...)` 的字面量不再计入**（否则包完还报"漏登记"）。
+    """
+    import ast
+    path = os.path.join(ROOT, rel)
+    tree = ast.parse(open(path, encoding='utf-8').read())
+    docs = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                             ast.AsyncFunctionDef)):
+            body = getattr(node, 'body', None)
+            if body and isinstance(body[0], ast.Expr) \
+                    and isinstance(body[0].value, ast.Constant) \
+                    and isinstance(body[0].value.value, str):
+                docs.add(id(body[0].value))
+    wrapped = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, 'attr', '') == 't_ui':
+            for a in list(node.args) + [k.value for k in node.keywords]:
+                for sub in ast.walk(a):
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                        wrapped.add(id(sub))
+    out = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        nm = getattr(node.func, 'attr', getattr(node.func, 'id', ''))
+        if nm not in ('print', 'write') and nm not in extra:
+            continue
+        for a in list(node.args) + [k.value for k in node.keywords]:
+            for sub in ast.walk(a):
+                if isinstance(sub, ast.Constant) \
+                        and isinstance(sub.value, str) and id(sub) not in docs \
+                        and id(sub) not in wrapped \
+                        and any('\u4e00' <= c <= '\u9fff' for c in sub.value):
+                    out.add(sub.value)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# §9 t64：用户可见文案的 i18n 契约（doctor / launch / describe + toolbox 横幅 2 行）
+#
+# 判据（与 t63 §98 同族）：
+#   ① 覆盖：launch.py / describe.py 里**会打到 stdout/stderr** 的中文模板必须全部登记
+#      在 messages.UI_ZH_TO_EN（漏一条就红 —— 这就是"系统扫一遍"的网）；
+#   ② en 每条纯 ASCII，且 `%` 占位符个数与 zh 一致；
+#   ③ zh 下 t_ui 原样返回（逐字不变）；
+#   ④ 【有牙】把某条 en 改回中文 ⇒ ② 必红（teeth 脚本 t64_probe/teeth64.py）。
+# 已知豁免（船长 2026-10-14 裁定"只登记、不改"）：cli.py:22 的 --help epilog、
+# revert.py 3 条、mcp_server.py 1 条、toolbox.py 其余 49 条交互状态/调试行 ——
+# 它们不在 t64 的验收路径（doctor/launch/describe/check 的运行时输出）上。
+# （t78/t79 已撤掉前三条与"toolbox 交互/调试行"那条豁免；见下面 ①/①b 的覆盖式判据。）
+#
+# ---------------------------------------------------------------------------
+# 【留痕 · t89（2026-10-14）：toolbox 的**帮助覆盖层 keymap 表**为什么**不该**包进
+#  `UI_ZH_TO_EN`】—— 写给下一个看到这张表的人，**别再"顺手包装修一下"**：
+#   1) `toolbox._KEYMAP` 是**模块级双语数据表**（`{'zh': _ZH, 'en': _EN}`）：键是**语言名**，
+#      标签是**值** —— 与 `UI_ZH_TO_EN`（**模板 → 译文** 的查表）**不是一回事**。
+#      渲染处已经按语言取表（`_fill_help_fig` → `_grps = _KEYMAP.get(lang, _ZH)`），
+#      窗口内还有语言切换（`L` 键 / 按钮）；把标签再包一层 = **把"数据"当"模板"用**。
+#   2) 三类分流结论（t79 判据）：纯人读 **35 条标签 + 10 条组标题**；协议/分帧载荷 **0**；
+#      **被 `==`/`in` 比较或当字典键 = 0**（`_KEYMAP` 的键是 `'zh'`/`'en'`，标签是值）。
+#   3) 因此这一组的棘轮取「**结构同步 + en 纯 ASCII + zh 非空**」（见 ①c 三条断言），
+#      **不是** `_ui_literals(extra=…)` —— 后者是**调用点**口径，而这里是模块级数据表。
+# ---------------------------------------------------------------------------
+_TOOLBOX_BANNERS = (
+    '[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s 导出=%s',
+    '[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；'
+    '若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡',
+)
+
+
+def run_ui_i18n():
+    # t78：en 下 `mpltweak --help` 必须纯 ASCII，且仍声明退出码集合
+    import subprocess as _sp78
+    _e78 = dict(os.environ, MPLBACKEND='Agg',
+                PYTHONIOENCODING='utf-8', MPLTWEAK_LANG='en')
+    _r78 = _sp78.run([sys.executable, '-m', 'mpltweak',
+                      '--help'], cwd=ROOT, capture_output=True,
+                     env=_e78, timeout=300)
+    _o78 = (_r78.stdout + _r78.stderr).decode('utf-8',
+                                              'replace')
+    check('§9 en 下 cli --help 纯 ASCII 且仍声明 0 / 1 / 2 / 4',
+          _r78.returncode == 0 and _o78.isascii()
+          and '0 / 1 / 2 / 4' in _o78 and 'is retired' in _o78
+          and len(_o78.splitlines()) > 5 and '\\n' not in _o78,
+          (_r78.returncode, _o78[:60]))
+    import re
+    from mpltweak import messages as _msg
+    tbl = _msg.UI_ZH_TO_EN
+    old = _msg.current_lang()
+    try:
+        # ① 覆盖：launch.py / describe.py 的 print/write 中文模板一条不漏
+        for rel in ('src/mpltweak/launch.py',
+                    'src/mpltweak/describe.py',
+                    'src/mpltweak/cli.py'):
+            lits = _ui_literals(rel)
+            missing = sorted(t for t in lits if t not in tbl)
+            check('%s 的用户可见中文模板全部登记（%d 条）' % (rel.split('/')[-1],
+                                                       len(lits)),
+                  not missing, '漏登记：%r' % (missing[:3],))
+        # ①b toolbox：**交互/调试行**（拖拽提示、状态行、调试输出）也必须全登记
+        #     （t79 撤掉了 t64 那条"toolbox 其余 49 条只登记、不改"的豁免）
+        tb_lits = _ui_literals('src/mpltweak/toolbox.py',
+                               extra=('_log', '_info', '_toast', '_set_title_hint'))
+        missing_tb = sorted(t for t in tb_lits if t not in tbl)
+        check('toolbox.py 交互/调试行的中文模板全部登记（%d 条，t79 撤豁免）'
+              % len(tb_lits), not missing_tb, '漏登记：%r' % (missing_tb[:3],))
+        tb = open(os.path.join(ROOT, 'src', 'mpltweak', 'toolbox.py'),
+                  encoding='utf-8').read()
+        check('toolbox 那 2 行横幅仍在表里、且已包 t_ui（不在"未包"清单里）',
+              all(t in tbl for t in _TOOLBOX_BANNERS)
+              and not any(t in tb_lits for t in _TOOLBOX_BANNERS),
+              [t[:24] for t in _TOOLBOX_BANNERS])
+        # ①c toolbox **帮助覆盖层**（keymap 表 `_ZH`/`_EN`，t89）：
+        #     它**不走** `UI_ZH_TO_EN` —— 表本身是双语的（`_KEYMAP={'zh':_ZH,'en':_EN}`），
+        #     窗口内还有语言切换（`L` 键 / 按钮）。所以棘轮在这里的形态是**结构同步**：
+        #     zh/en 的**组数 + 每组的行数**必须一一对应（加一行 zh 却不加 en ⇒ 必红），
+        #     且 en 的标签/键列/组标题必须纯 ASCII。
+        #     （不能用 `_ui_literals(extra=…)`：那是**调用点**口径，而这里是模块级数据表。）
+        from mpltweak import toolbox as _tb89
+        _zh_shape = [len(rows) for _g, rows in _tb89._ZH]
+        _en_shape = [len(rows) for _g, rows in _tb89._EN]
+        check('§9 toolbox 帮助表 zh/en 结构一一对应（组数 + 每组行数；%d 组 / %d 行）'
+              % (len(_zh_shape), sum(_zh_shape)),
+              _zh_shape == _en_shape, (_zh_shape, _en_shape))
+        _en_txt = ([g for g, _r in _tb89._EN]
+                   + [k for _g, r in _tb89._EN for k, _d in r]
+                   + [d for _g, r in _tb89._EN for _k, d in r])
+        _bad_en = [x for x in _en_txt if not x.isascii()]
+        check('§9 toolbox 帮助表 en（组标题+键列+标签，%d 条）全纯 ASCII'
+              % len(_en_txt), not _bad_en, _bad_en[:3])
+        _zh_txt = ([g for g, _r in _tb89._ZH]
+                   + [d for _g, r in _tb89._ZH for _k, d in r])
+        check('§9 toolbox 帮助表 zh 侧确实带中文（%d 条里 %d 条含中文 ⇒ 不是空表）'
+              % (len(_zh_txt), sum(1 for x in _zh_txt
+                                   if any('\u4e00' <= c <= '\u9fff' for c in x))),
+              sum(1 for x in _zh_txt
+                  if any('\u4e00' <= c <= '\u9fff' for c in x)) >= 30)
+        # ①d t94（t84 取证后的收口）：只读预览的 colorbar 提示必须是**可直接粘贴的
+        #     两行片段**（① `set_box_aspect(None)` + ② `set_axes_locator(None)`），
+        #     并注明 **extend 情形两行都要加** —— 实测只 ① 时带 `extend='both'` 的
+        #     colorbar 仍会回弹；en 必须纯 ASCII。
+        import mpltweak.messages as _msg94
+        _hint94 = _msg94.MESSAGES['apply_preview_hint']
+        for _lg94 in ('zh', 'en'):
+            _t94 = _hint94[_lg94]
+            check('§9 t94 预览提示（%s）含**两行**片段 ① set_box_aspect + '
+                  '② set_axes_locator' % _lg94,
+                  'cb.ax.set_box_aspect(None)' in _t94
+                  and 'cb.ax.set_axes_locator(None)' in _t94, _t94[:70])
+            check('§9 t94 预览提示（%s）注明 extend 情形必须两行都加' % _lg94,
+                  'extend' in _t94, _t94[:70])
+        check('§9 t94 预览提示 en 纯 ASCII', _hint94['en'].isascii(),
+              [c for c in _hint94['en'] if not c.isascii()][:3])
+        _orig94 = dict(_hint94)
+        try:
+            _msg94.MESSAGES['apply_preview_hint'] = {
+                'zh': _orig94['zh'].replace('cb.ax.set_axes_locator(None)', ''),
+                'en': _orig94['en'].replace('cb.ax.set_axes_locator(None)', '')}
+            _h94 = _msg94.MESSAGES['apply_preview_hint']
+            _bad94 = ('cb.ax.set_box_aspect(None)' in _h94['zh']
+                      and 'cb.ax.set_axes_locator(None)' in _h94['zh'])
+        finally:
+            _msg94.MESSAGES['apply_preview_hint'] = _orig94
+        check('§9 t94【有牙】把提示里的 ② 去掉（只留 ①）⇒ 上面那条断言必红',
+              _bad94 is False, '去掉 ② 后仍判"两行齐全"=%s' % (_bad94,))
+        # ② en 纯 ASCII + 占位符个数一致
+        bad_ascii, bad_ph = [], []
+        for zh, en in tbl.items():
+            if not en.isascii():
+                bad_ascii.append(zh[:34])
+            if len(re.findall(r'%[-#0-9.]*[sdgfrxXeE]', zh)) \
+                    != len(re.findall(r'%[-#0-9.]*[sdgfrxXeE]', en)):
+                bad_ph.append(zh[:34])
+        check('UI_ZH_TO_EN 全部 en 纯 ASCII（%d 条）' % len(tbl),
+              not bad_ascii, '非 ASCII：%r' % (bad_ascii[:3],))
+        check('UI_ZH_TO_EN 占位符个数 zh/en 一致', not bad_ph,
+              '不一致：%r' % (bad_ph[:3],))
+        # ③ zh 原样返回（逐字不变）
+        _msg.set_lang('zh')
+        drift = [z for z in tbl if _msg.t_ui(z) != z]
+        check('zh 下 t_ui 原样返回（逐字不变）', not drift, drift[:3])
+        # ④ en 下 t_ui 真的取到表里的值（不是原样返回）
+        _msg.set_lang('en')
+        notrans = [z for z in tbl if _msg.t_ui(z) == z and tbl[z] != z]
+        check('en 下 t_ui 走表（不是原样返回）', not notrans, notrans[:3])
+    finally:
+        _msg.set_lang(old)
+
+
+
+# ---------------------------------------------------------------------------
+# §11 t69（首次体验雷区 A4）：doctor 编码（P2-9）/ 脚本 stderr 汇总（P2-10）/
+#      apply 预览明说"会改哪些字段"（P2-11）。
+#
+# 反向验证（teeth，t69_probe/teeth69.py）：① 去掉 doctor 的 `_force_utf8_streams()`
+# ⇒ P2-9 那条红；② 去掉末尾汇总 ⇒ P2-10 那条红；③ 去掉预览的 `会改：` 行 ⇒ P2-11 红。
+# ---------------------------------------------------------------------------
+def run_t69():
+    import json as _json
+    import subprocess as _sp
+
+    def _cli(argv, env=None):
+        """真跑一次 CLI：返回 (rc, stdout, stderr)（要全量输出 + 可覆盖 env）。"""
+        _e = _cli_env()
+        if env:
+            _e.update(env)
+        _r = _sp.run([sys.executable, '-m', 'mpltweak'] + list(argv), cwd=ROOT,
+                     capture_output=True, text=True, encoding='utf-8',
+                     errors='replace', env=_e, timeout=300)
+        return _r.returncode, (_r.stdout or ''), (_r.stderr or '')
+
+    _fig = os.path.join(_TMPROOT, 't69_fig.py')
+    with open(_fig, 'w', encoding='utf-8', newline='\n') as f:
+        f.write("import os\n"
+                "import sys\n"
+                "import matplotlib\n"
+                "matplotlib.use('Agg')\n"
+                "import matplotlib.pyplot as plt\n"
+                "print('script-noise-1', file=sys.stderr)\n"
+                "print('script-noise-2', file=sys.stderr)\n"
+                "fig = plt.figure(figsize=(15.0, 9.5))\n"
+                "ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n"
+                "ax.plot([0, 1], [1, 0])\n"
+                "fig.savefig(os.path.join(os.path.dirname("
+                "os.path.abspath(__file__)), 'o.png'), dpi=100)\n")
+    _p = os.path.join(_TMPROOT, 't69_params.json')
+    with open(_p, 'w', encoding='utf-8', newline='\n') as f:
+        _json.dump({'version': 4, 'script': 't69_fig.py', 'fig_index': 0,
+                    'n_figs': 1, 'figsize_in': [7.5, 4.75],
+                    'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5]}]}, f)
+
+    # ---- P2-11：预览明说会改哪些字段（zh / en）----
+    _rc1, _o1, _e1 = _cli(['apply', _fig, '--params', _p])
+    check('§11[P2-11] zh 预览列出"会改"的字段（figsize 旧→新）',
+          _rc1 == 0 and '会改：' in _o1 and 'figsize (15, 9.5) → (7.5, 4.75)' in _o1,
+          _o1[-400:])
+    _rc2, _o2, _e2 = _cli(['apply', _fig, '--params', _p],
+                          env={'MPLTWEAK_LANG': 'en'})
+    check('§11[P2-11] en 预览同样列出（ASCII 箭头）',
+          _rc2 == 0 and 'will change:' in _o2
+          and 'figsize (15, 9.5) -> (7.5, 4.75)' in _o2, _o2[-400:])
+    check('§11[P2-11] en 下整份预览输出仍是纯 ASCII', _o2.isascii(), _o2[:160])
+    check('§11[P2-11] 明说"未列出的字段本次不动"（与没动的区分开）',
+          '未列出的字段本次不动' in _o1 or 'fields not listed' in _o2)
+
+    # ---- P2-9：doctor 的输出显式 UTF-8 ----
+    # **单元级判据**（船长 2026-10-14 裁定）：直接观察 doctor() 对两条流的
+    # reconfigure 调用 —— 端到端那条在本机**天然无鉴别力**（变异后子进程仍产出
+    # 可被 UTF-8 解码的字节，怀疑编码继承链），所以牙必须长在这里。
+    class _FakeStream:
+        def __init__(self):
+            self.encoding = 'gbk'
+            self.calls = []
+            self.text = ''
+
+        def reconfigure(self, **kw):
+            self.calls.append(kw)
+            if kw.get('encoding'):
+                self.encoding = kw['encoding']
+
+        def write(self, s):
+            self.text += s
+            return len(s)
+
+        def flush(self):
+            pass
+
+    from mpltweak import launch as _l69
+    _fo, _fe = _FakeStream(), _FakeStream()
+    _old_streams = (sys.stdout, sys.stderr)
+    sys.stdout, sys.stderr = _fo, _fe
+    try:
+        _l69.doctor()
+    finally:
+        sys.stdout, sys.stderr = _old_streams
+    check('§11[P2-9] doctor() 把两条流显式切到 utf-8（单元级：删掉那次调用必红）',
+          _fo.encoding == 'utf-8' and _fe.encoding == 'utf-8'
+          and bool(_fo.calls) and bool(_fe.calls),
+          (_fo.encoding, _fe.encoding, _fo.calls, _fe.calls))
+    check('§11[P2-9] doctor 的人读输出确实走这两条流（夹具有效性自证）',
+          ('开窗后端' in _fo.text) or ('window backend' in _fo.text),
+          _fo.text[:90])
+    # 补充（端到端；**本机无鉴别力**，价值在真机 PowerShell 管道）
+    _env = _cli_env()
+    _env.pop('PYTHONIOENCODING', None)          # 复现用户现场：只有平台默认编码
+    _r9 = _sp.run([sys.executable, '-m', 'mpltweak.cli', 'doctor'], cwd=ROOT,
+                  capture_output=True, env=_env, timeout=300)
+    try:
+        _t9 = _r9.stdout.decode('utf-8')
+        _ok9 = True
+    except UnicodeDecodeError:
+        _t9, _ok9 = '', False
+    check('§11[P2-9]（补充·本机无鉴别力）管道下 doctor 输出可按 UTF-8 解码',
+          _ok9 and (('开窗后端' in _t9) or ('window backend' in _t9)),
+          (_ok9, _r9.stdout[:60]))
+
+    # ---- P2-10：脚本自己刷 stderr 时末尾给汇总，且**不吞**脚本输出 ----
+    _rc10, _o10, _e10 = _cli(['launch', _fig, '--dry-run'])
+    check('§11[P2-10] 脚本自己的 stderr 原样保留（不吞）',
+          _rc10 == 0 and 'script-noise-1' in _e10 and 'script-noise-2' in _e10, _e10[-300:])
+    _want10 = ('[launch] 提示：上面的 stderr 里有 2 行来自**你的脚本自身**'
+               '（工具自己的提示都带 [launch]/[mpltweak] 前缀）')
+    check('§11[P2-10] 汇总行的**精确文本 + 计数**（删掉汇总必红）',
+          _want10 in _e10, _e10[-300:])
+
+
+# ---------------------------------------------------------------------------
+# §12 t91：doctor 严格校验（未知选项/多余位置参数 ⇒ rc=2；--json 明拒；-h ⇒ rc=0）
+# 背景：doctor 过去**静默接受**未知选项/多余参数（rc=0），与 --help 里"未知选项 = 2"
+# 的口径打架；最危险的是 `doctor --json` —— 用户/agent 以为拿到机器可读结果，实际被
+# 静默忽略（"静默撒谎"）。
+# 反向验证（teeth）：把 `cli.py` doctor 分支的四路校验改回去 ⇒ 下面断言必红。
+# ---------------------------------------------------------------------------
+def run_doctor_strict():
+    import subprocess as _sp12
+
+    def _d(lang, *argv):
+        _e = _cli_env()
+        _e['MPLTWEAK_LANG'] = lang
+        _r = _sp12.run([sys.executable, '-m', 'mpltweak'] + list(argv),
+                       cwd=ROOT, capture_output=True, env=_e, timeout=300)
+        return _r.returncode, (_r.stdout + _r.stderr).decode('utf-8',
+                                                             'replace')
+
+    for _lang in ('zh', 'en'):
+        _rc0, _o0 = _d(_lang, 'doctor')
+        check('§12[%s] doctor（无参）仍 rc=0 且照常自检' % _lang,
+              _rc0 == 0 and 'python' in _o0, (_rc0, _o0[:60]))
+        _rch, _oh = _d(_lang, 'doctor', '-h')
+        check('§12[%s] doctor -h ⇒ rc=0（用法）' % _lang,
+              _rch == 0 and 'doctor' in _oh, (_rch, _oh[:60]))
+        _rcj, _oj = _d(_lang, 'doctor', '--json')
+        check('§12[%s] doctor --json ⇒ rc=2 且**明拒**（不静默忽略）' % _lang,
+              _rcj == 2 and ('--json' in _oj), (_rcj, _oj[:80]))
+        _rcb, _ob = _d(_lang, 'doctor', '--bogus')
+        check('§12[%s] doctor --bogus ⇒ rc=2' % _lang, _rcb == 2, _rcb)
+        _rce, _oe = _d(_lang, 'doctor', 'extra.py')
+        check('§12[%s] doctor extra.py ⇒ rc=2（多余位置参数不再被吞）' % _lang,
+              _rce == 2, _rce)
+        if _lang == 'en':
+            _all = _o0 + _oh + _oj + _ob + _oe
+            check('§12 en 下 doctor 各路径输出纯 ASCII', _all.isascii(),
+                  _all[:80])
+
+# ---------------------------------------------------------------------------
+# §13 t90：`check --fig K`（K 越界）提示走 messages（en 纯 ASCII）+ 单图措辞
+# 反向验证（teeth）：把 `UI_ZH_TO_EN` 里这两条 en 值改回中文 ⇒ §9 的
+# `UI_ZH_TO_EN 全部 en 纯 ASCII` 必红。
+# ---------------------------------------------------------------------------
+def run_fig_msg():
+    import subprocess as _sp13
+    import os as _os13
+    _d = _os13.path.join(_os13.path.dirname(_os13.path.abspath(__file__)),
+                         '.tmp_t90')
+    _os13.makedirs(_d, exist_ok=True)
+    for _name, _n in (('one.py', 1), ('two.py', 2)):
+        _src = ["import os", "import matplotlib",
+                "matplotlib.use('Agg')",
+                "import matplotlib.pyplot as plt"]
+        for _i in range(_n):
+            _src += ['fig%d, ax%d = plt.subplots(figsize=(6.0, 4.0))'
+                     % (_i, _i), 'ax%d.plot([0, 1], [1, 0])' % _i]
+        _fp = _os13.path.join(_d, _name)
+        with open(_fp, 'w', encoding='utf-8', newline='\n') as _f:
+            _f.write('\n'.join(_src) + '\n')
+    for _lang in ('zh', 'en'):
+        for _name in ('one.py', 'two.py'):
+            _e = _cli_env()
+            _e['MPLTWEAK_LANG'] = _lang
+            _r = _sp13.run([sys.executable, '-m', 'mpltweak', 'check',
+                            _os13.path.join(_d, _name), '--fig', '9'],
+                           cwd=_d, capture_output=True, env=_e,
+                           timeout=300)
+            _o = (_r.stdout + _r.stderr).decode('utf-8', 'replace')
+            check('§13[%s] %s --fig 9 ⇒ rc=2' % (_lang, _name),
+                  _r.returncode == 2, _r.returncode)
+            check('§13[%s] %s 提示里“第/张图不存在”措辞正确'
+                  % (_lang, _name),
+                  ('张图不存在' in _o) if _lang == 'zh'
+                  else ('does not exist' in _o), _o[:80])
+            if _lang == 'en':
+                check('§13 en 下提示纯 ASCII', _o.isascii(), _o[:80])
+            if _name == 'one.py':
+                check('§13[%s] 单图时不说“0..0 之间的序号”' % _lang,
+                      ('0..0' not in _o), _o[:90])
+
+# ---------------------------------------------------------------------------
+# §14 t83：`describe -o` 自动建父目录（规范位置 `.tweak_params/<脚本>.json`）+
+# 写失败给可操作文案（不再谎称“这是工具的 bug / 已回滚”）
+# 反向验证（teeth）：把 `describe.py` 里建父目录那两行删掉 ⇒ 本节指定断言必红。
+# ---------------------------------------------------------------------------
+def run_describe_o():
+    import os as _os14
+    import subprocess as _sp14
+    _d = _os14.path.join(_os14.path.dirname(_os14.path.abspath(__file__)),
+                         '.tmp_t83')
+    _os14.makedirs(_d, exist_ok=True)
+    _fp = _os14.path.join(_d, 'fig1.py')
+    _src = (
+        "import os\n"
+        "import matplotlib\n"
+        "matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "fig, ax = plt.subplots()\n"
+        "ax.plot([0, 1], [1, 0])\n"
+        "fig.savefig(os.path.join(os.path.dirname(os.path.abspath(__file__)),"
+        " 'o.png'), dpi=80)\n"
+    )
+    with open(_fp, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(_src)
+    _out = _os14.path.join('.tweak_params', 'fig1.json')
+    for _lang in ('zh', 'en'):
+        _e = _cli_env()
+        _e['MPLTWEAK_LANG'] = _lang
+        _r = _sp14.run([sys.executable, '-m', 'mpltweak', 'describe',
+                        'fig1.py', '-o', _out],
+                       cwd=_d, capture_output=True, env=_e, timeout=300)
+        _o = (_r.stdout + _r.stderr).decode('utf-8', 'replace')
+        _made = _os14.path.exists(_os14.path.join(_d, _out))
+        check('§14[%s] describe -o .tweak_params/x.json ⇒ rc=0' % _lang,
+              _r.returncode == 0, (_r.returncode, _o[:80]))
+        check('§14[%s] 父目录被自动创建、文件已写入' % _lang, _made, _out)
+        check('§14[%s] 输出里没有“工具 bug / 已回滚”这类假归因' % _lang,
+              ('bug' not in _o.lower()) and ('已回滚' not in _o), _o[:90])
+        if _lang == 'en':
+            check('§14 en 下输出纯 ASCII', _o.isascii(), _o[:90])
+    _r2 = _sp14.run([sys.executable, '-m', 'mpltweak', 'describe', 'fig1.py',
+                     '-o', '.tweak_params'],
+                    cwd=_d, capture_output=True, env=_e, timeout=300)
+    _o2 = (_r2.stdout + _r2.stderr).decode('utf-8', 'replace')
+    check('§14 -o 给目录 ⇒ rc=2 且明说“是一个目录/is a directory”',
+          _r2.returncode == 2 and ('是一个目录' in _o2
+                                   or 'is a directory' in _o2), _o2[:90])
+
+
+# ---------------------------------------------------------------------------
+# §15 t93：`doctor` 拒绝未知选项时**点名**被拒参数（与 argparse 家族同形）
+# 反向验证（teeth）：把 cli.py 里那行 `schema_unknown_args` 去掉 ⇒ 本节必红。
+# ---------------------------------------------------------------------------
+def run_doctor_names():
+    import subprocess as _sp15
+    _cases = (
+        (('doctor', 'x.py', '--nope'), '--nope'),
+        (('doctor', '--nope'), '--nope'),
+        (('doctor', '--json'), '--json'),
+    )
+    for _lang in ('zh', 'en'):
+        _e = _cli_env()
+        _e['MPLTWEAK_LANG'] = _lang
+        for _argv, _want in _cases:
+            _r = _sp15.run([sys.executable, '-m', 'mpltweak'] + list(_argv),
+                           cwd=ROOT, capture_output=True, env=_e, timeout=300)
+            _o = (_r.stdout + _r.stderr).decode('utf-8', 'replace')
+            check('§15[%s] %s ⇒ rc=2' % (_lang, ' '.join(_argv)),
+                  _r.returncode == 2, _r.returncode)
+            check('§15[%s] %s ⇒ 输出**点名**被拒参数 %s'
+                  % (_lang, ' '.join(_argv), _want), _want in _o, _o[:90])
+            check('§15[%s] %s ⇒ 不出现未登记的键名'
+                  % (_lang, ' '.join(_argv)),
+                  'schema_unknown_args' not in _o, _o[:90])
+            if _lang == 'en':
+                check('§15 en 下输出纯 ASCII', _o.isascii(), _o[:90])
+
 def main():
     os.makedirs(_TMPROOT, exist_ok=True)
+    # t31：先给**真实**家目录拍快照（任何子进程起来之前），跑完再对比零新增。
+    _home_before = _real_home_listing()
     print('launch._apply_saved 顶层非对象 JSON 守卫回归（0.1.10）')
     run_guards()
     print()
@@ -381,6 +964,27 @@ def main():
     print()
     print('t58 退出码矩阵（方案 A：0 / 1 / 2 / 4；3 已退役）—— 真起子进程跑 CLI')
     run_exit_matrix()
+    print()
+    print('t31 真实家目录护栏（防"测试写用户家目录"）')
+    run_real_home_guards(_home_before)
+    print()
+    print('t64 用户可见文案 i18n 契约（doctor/launch/describe + toolbox 横幅 2 行）')
+    run_ui_i18n()
+    print()
+    print('t69 首次体验雷区 A4：doctor 编码 / 脚本 stderr 汇总 / 预览列会改字段')
+    run_t69()
+    print()
+    print('t91 doctor 严格校验（未知选项/多余参数/--json）')
+    run_doctor_strict()
+    print()
+    print('t90 check --fig 越界提示（i18n + 单图措辞）')
+    run_fig_msg()
+    print()
+    print('t83 describe -o 建父目录 + 可操作文案')
+    run_describe_o()
+    print()
+    print('t93 doctor 拒绝未知参数时点名')
+    run_doctor_names()
     shutil.rmtree(_TMPROOT, ignore_errors=True)
     print()
     if _fails:

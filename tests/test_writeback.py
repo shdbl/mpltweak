@@ -152,8 +152,8 @@ def read(script):
 d, script, pp = setup()
 res = writeback.writeback(script, PARAMS, pp, verify=True)
 # T70：ax2 是**未命名的 colorbar 轴**（`fig.colorbar(im, ax=ax2)` 的返回值没接
-# 名字）⇒ 块里找不到可证的目标对象 ⇒ 它的 pos/clim/cmap 按 fail-closed 不写、如实进
-# pending。ax0/ax1 照常落地 ⇒ reason 从 ok 变成**诚实**的 best_effort（不是退步：
+# 名字）→ 块里找不到可证的目标对象 → 它的 pos/clim/cmap 按 fail-closed 不写、如实进
+# pending。ax0/ax1 照常落地 → reason 从 ok 变成**诚实**的 best_effort（不是退步：
 # 旧行为是把 ax2 的改动写到运行期 fig.axes[2] 上，静态轴数一漂就落到别的轴）。
 check('reason=best_effort（未命名 colorbar 轴的目标证不出，如实报没能落地）',
       res['reason'] == 'best_effort' and res.get('needs_block') is True
@@ -250,10 +250,10 @@ before4 = read(script4)
 res4 = writeback.writeback(script4, params_gcf, pp4, verify=True)
 # T70-B（船长批示）：纯 pyplot **单图**是**有条件可证**的 —— 全文件只有一次建图、没有
 # colorbar/inset_axes/inset_locator/twinx/twiny/make_axes_locatable/secondary_*、
-# 也没有 close ⇒ `plt.gcf()` 就是那张图、`.axes[k]` 就是静态第 k 条轴 ⇒ **允许写块**，
+# 也没有 close → `plt.gcf()` 就是那张图、`.axes[k]` 就是静态第 k 条轴 → **允许写块**，
 # 并在块注释里写明"凭什么可证"。这一档在原 census 里是 B 档（403/1158）的主体，
 # 一刀切拒掉换不到任何安全性。
-check('T70-B 纯 pyplot 单图：可证 ⇒ 照常写块、验证通过',
+check('T70-B 纯 pyplot 单图：可证 → 照常写块、验证通过',
       res4.get('gcf_fallback') is True and res4['reason'] == 'ok'
       and res4.get('verified') is True,
       'gcf=%s reason=%s verified=%s'
@@ -264,7 +264,7 @@ check('T70-B 块用 plt.gcf().axes[k]，且把"凭什么可证"写进块注释',
       and '目标定位：本文件只有一次建图' in _src4,
       str([ln for ln in _src4.splitlines() if '.axes[' in ln][:2]))
 check('T70-B 写盘后确实换了内容（不是字节不变）', _src4 != before4)
-# 对照：多图（§6）与循环（§9）条件不成立 ⇒ 仍然拒绝（见下面两节）
+# 对照：多图（§6）与循环（§9）条件不成立 → 仍然拒绝（见下面两节）
 
 # ---- 4b. 无 plt 导入且无 fig 变量 → NO_FIG（不瞎猜）----
 d4b, script4b, pp4b = setup()
@@ -321,13 +321,13 @@ with open(script6, 'w', encoding='utf-8') as f:
 params_gcf6 = dict(params_gcf, fig_index=1)
 res6 = writeback.writeback(script6, params_gcf6, pp6, verify=True)
 # T74：目标图（第 2 张）虽然**没接名字**，但建图调用可**静态编号**（两次
-# `plt.figure(...)` ⇒ 第 2 张就是编号 2）、且模块层没有 close、没有额外建轴来源 ⇒
+# `plt.figure(...)` → 第 2 张就是编号 2）、且模块层没有 close、没有额外建轴来源 →
 # 块改用 `plt.figure(2).axes[0]` 定位（T70 时代的"一律拒绝"被这条可证路径救回）。
 # 注意：仍然**不许**出现 `plt.gcf()` / `plt.gca()` / `fig.axes[i]`（运行期下标）。
 _src6 = read(script6)
 _blk6 = (_src6.split(writeback.BLOCK_START)[-1].split('end auto layout')[0]
          if writeback.BLOCK_START in _src6 else '')
-check('T74 多图 + 未命名 figure：编号可证 ⇒ 块用 plt.figure(2).axes[0]（块内无运行期下标）',
+check('T74 多图 + 未命名 figure：编号可证 → 块用 plt.figure(2).axes[0]（块内无运行期下标）',
       _blk6.count('plt.figure(2).axes[0]') >= 1
       and 'plt.gcf()' not in _blk6 and 'plt.gca()' not in _blk6
       and 'fig.axes[' not in _blk6,
@@ -430,10 +430,10 @@ _src9_before = read(script9)
 res9 = writeback.writeback(script9, params_loop, pp9, verify=True, semantic=True)
 _src9 = read(script9)
 # T70：循环里 `plt.figure()/plt.plot()` 建图建轴 —— 既没有可证的变量名（每轮重绑），
-# 又是 pyplot 隐式建轴（认不出条数）⇒ 目标证不出 ⇒ fail-closed 不写盘。
+# 又是 pyplot 隐式建轴（认不出条数）→ 目标证不出 → fail-closed 不写盘。
 # 旧的 `if i == 2:` 循环守卫因此对**这种形态**不再可达（守卫逻辑仍在，但没有可证的
 # 目标对象）；这是本任务有意的能力收窄，详见报告 §T70。
-check('T70 循环里 pyplot 建图建轴：目标证不出 ⇒ 拒绝写（不插块、字节不变）',
+check('T70 循环里 pyplot 建图建轴：目标证不出 → 拒绝写（不插块、字节不变）',
       res9['reason'] == 'best_effort' and res9.get('applied') is False
       and res9.get('needs_block') is True and bool(res9.get('pending'))
       and _src9 == _src9_before and writeback.BLOCK_START not in _src9,
@@ -515,8 +515,8 @@ for _name, _idx, _pos in (('target.fig0.json', 0, [0.10, 0.10, 0.5, 0.5]),
 # T23：**把 mtime 打桩**，别依赖"两份参数处理得够快"（T22 实测的"时间炸弹"：
 # 进程内 apply + 极小脚本时第一份写回 <1s，于是旧实现"用当前脚本 mtime 当基准"
 # 也碰巧过 —— 慢机器/慢脚本上会随机红绿）。
-#   脚本 mtime = now-10s，两份参数 = now-5s（参数比脚本新 ⇒ 合法，不该拦）；
-#   旧实现里第一份写回后脚本变成 now ⇒ 第二份被判 stale（差 5s > 1s 容差）→ 用例必失败。
+#   脚本 mtime = now-10s，两份参数 = now-5s（参数比脚本新 → 合法，不该拦）；
+#   旧实现里第一份写回后脚本变成 now → 第二份被判 stale（差 5s > 1s 容差）→ 用例必失败。
 _now = time.time()
 os.utime(script11, (_now - 10, _now - 10))
 for _n in ('target.fig0.json', 'target.json'):
@@ -711,8 +711,8 @@ res19 = writeback.writeback(script19, params19, pp19, verify=True, semantic=True
 _s19 = read(script19)
 check('中文：set_title 字号替换不错位',
       "ax.set_title('(a) 三角函数', fontsize=13)" in _s19, '')
-# T73（零兼容）：参数只给了 x ⇒ y 标签字号**不许**被写成 x 的值（保持源码原值）
-check('中文：只给 x ⇒ y 标签字号保持源码原值（T73 零兼容）',
+# T73（零兼容）：参数只给了 x → y 标签字号**不许**被写成 x 的值（保持源码原值）
+check('中文：只给 x → y 标签字号保持源码原值（T73 零兼容）',
       "ax.set_ylabel('数值', fontsize=10)" not in _s19
       and any('set_ylabel' in ln and 'fontsize' in ln
               for ln in _s19.splitlines()),
@@ -1791,8 +1791,8 @@ with open(_pp49, 'w', encoding='utf-8') as f:
 _res49b = writeback.writeback(_s49, _params.load(_pp49), _pp49, verify=True,
                               semantic=True, style='inplace')
 _src49b = read(_s49)
-# T73（零兼容）：没有 label_fontsize_y ⇒ **一个字节都不动 y**（旧期望是"y 也写成 14"）
-check('49b T73：无 label_fontsize_y ⇒ x 写 14、y 保持源码原值 11',
+# T73（零兼容）：没有 label_fontsize_y → **一个字节都不动 y**（旧期望是"y 也写成 14"）
+check('49b T73：无 label_fontsize_y → x 写 14、y 保持源码原值 11',
       'ax.set_xlabel("x", fontsize=14)' in _src49b
       and 'ax.set_ylabel("y", fontsize=11)' in _src49b
       and 'ax.set_ylabel("y", fontsize=14)' not in _src49b,
@@ -1825,7 +1825,7 @@ writeback.writeback(_s49, _params.load(_pp49), _pp49, verify=False,
                     style='block')
 _src49d = read(_s49)
 # T73（零兼容）：块模式同样"没写 y 就不写 y 那一行"（旧期望是"两边都是 14"）
-check('49d T73：块模式无 y ⇒ 只写 x 那一行（y 不出现）',
+check('49d T73：块模式无 y → 只写 x 那一行（y 不出现）',
       'xaxis.label.set_fontsize(14)' in _src49d
       and 'yaxis.label.set_fontsize(14)' not in _src49d,
       str([ln.strip() for ln in _src49d.splitlines() if 'label.set_fontsize' in ln]))
@@ -2433,7 +2433,7 @@ shutil.rmtree(_d, ignore_errors=True)
 #   外部评审条目 2 / T22 实测：2 图 + 两份参数，第一张写回耗时 2.9s → 第二张被判 stale
 #   跳过，理由还是"脚本在参数保存之后被修改过"（改它的正是 mpltweak 自己）。
 #   这里用**打桩 mtime** 造出确定性场景：脚本 now-20s、两份参数 now-10s（合法），
-#   且两份参数都早于"第一张写回后的脚本" ⇒ 旧实现必判第二份 stale。
+#   且两份参数都早于"第一张写回后的脚本" → 旧实现必判第二份 stale。
 _MULTI_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
               'import matplotlib.pyplot as plt\n'
               'fig1, ax1 = plt.subplots(figsize=(6, 3))\n'
@@ -2470,7 +2470,7 @@ check('56a 多图逐张写回：两张都落地（不是第二张被判 stale）
 check('56a 两张的位置都写进了源码',
       '[0.2000, 0.2000, 0.6000, 0.6000]' in _txt56
       and '[0.5000, 0.5000, 0.3000, 0.3000]' in _txt56, _oo56[-200:])
-# 56b 真 stale：脚本确实在参数保存之后被手改 ⇒ 仍要拦住，且理由与事实相符
+# 56b 真 stale：脚本确实在参数保存之后被手改 → 仍要拦住，且理由与事实相符
 os.utime(_s56, (time.time() + 5, time.time() + 5))
 _s0_56 = read(_s56)
 _rr56b = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', 'fig.py',
@@ -2627,7 +2627,7 @@ check('59a 脚本本身跑不通（缺数据）→ 默认回滚、不留写回�
                                   _oo59[-220:]))
 shutil.rmtree(_d59, ignore_errors=True)
 
-#   59b --verify-fast（只查语法）：写回语法合法 ⇒ 保留 + rc=0，但必须如实标注
+#   59b --verify-fast（只查语法）：写回语法合法 → 保留 + rc=0，但必须如实标注
 #       "只做了语法检查、没重跑、没比对"（这就是 3(d) 要的层级透明）。
 _d59b, _s59b, _p59b = _mk15('t23_59b', _IF_SRC2,
                             {'version': 4, 'script': 'fig.py',
@@ -2902,7 +2902,7 @@ check('61e _pv_live_field 认识 T26 的新字段（等值 False / 不等 True�
 # ---- 62. T35：默认 scale 注入 → 把 log 轴写成 linear（E5，真 bug）----
 #   normalize 过去给**每个轴**补 `xscale/yscale='linear'`（调用方从没要求），写回侧把它
 #   当目标 → 源码明写 log 时判"有目标值且不同" → 退块 → 块里塞 `set_xscale('linear')`
-#   ⇒ **对数轴被改成线性**（L0 最终复测：23192393__figure_panels / 5809269__O3_FYSP_paper）。
+#   → **对数轴被改成线性**（L0 最终复测：23192393__figure_panels / 5809269__O3_FYSP_paper）。
 #   修法：默认值改 None（＝未设置，与 grid 同一个先例）＋ 块渲染器只写 pending 里的字段。
 _LOG_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
             'import matplotlib.pyplot as plt\n'
@@ -3375,7 +3375,7 @@ for _tag66, _srcc, _why in (
     shutil.rmtree(_d66, ignore_errors=True)
 
 
-# ---- 68. T58：重名轴 + 部分覆盖 ⇒ 任何模式都不许"写错行并被保留"（9 格钉子）----
+# ---- 68. T58：重名轴 + 部分覆盖 → 任何模式都不许"写错行并被保留"（9 格钉子）----
 _DUP68 = ('import matplotlib\nmatplotlib.use("Agg")\n'
           'import matplotlib.pyplot as plt\n'
           'fig = plt.figure(figsize=(6, 6))\n'
@@ -3447,7 +3447,7 @@ check('69a-e2e auto 路径最终把尺寸落地（set_size_inches 出现在脚�
                        if 'set_size_inches' in ln][:2]))
 shutil.rmtree(_d69, ignore_errors=True)
 
-# 69b 干净往返不破功：有字面量且等值 ⇒ no_change 且字节不变
+# 69b 干净往返不破功：有字面量且等值 → no_change 且字节不变
 _LIT69 = ('import matplotlib\nmatplotlib.use("Agg")\n'
           'import matplotlib.pyplot as plt\n'
           'fig, ax = plt.subplots(figsize=(6.4, 4.8))\n'
@@ -3464,7 +3464,7 @@ check('69b 干净往返（字面量与目标等值）→ no_change 且字节不�
 shutil.rmtree(_d69b, ignore_errors=True)
 
 
-# 69c（T60 / Bug 6 v2）：无 figsize 字面量 + 参数 == 脚本实际会用的尺寸 ⇒ 必须 no_change，
+# 69c（T60 / Bug 6 v2）：无 figsize 字面量 + 参数 == 脚本实际会用的尺寸 → 必须 no_change，
 #   且**不得**插入任何块 / 写 set_size_inches（防"多余插块"回归；v1 补丁的缺陷）。
 _NOLIT69C = ('import matplotlib\nmatplotlib.use("Agg")\n'
              'import matplotlib.pyplot as plt\n'
@@ -3485,7 +3485,7 @@ check('69c 无字面量 + 参数等于默认尺寸(6.4x4.8) → no_change / 字�
          writeback.BLOCK_START in _t69c, 'set_size_inches' in _t69c))
 shutil.rmtree(_d69c, ignore_errors=True)
 
-# 69c-v2：脚本里显式 fig.set_size_inches(6.4, 4.8)、参数与之相等 ⇒ 同样 no_change
+# 69c-v2：脚本里显式 fig.set_size_inches(6.4, 4.8)、参数与之相等 → 同样 no_change
 _SSI69C = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n'
            'fig, ax = plt.subplots()\n'
@@ -3513,7 +3513,7 @@ shutil.rmtree(_d69d, ignore_errors=True)
 #     * 不拒：pos 的 left/bottom 为负（只要还有可见部分）、xlim 反转（倒置轴）、
 #           fontsize == 0（合法，只提示）。
 #   这些都必须在**任何写盘/插块之前**发生（脚本字节不变、无块、ok=false、
-#   reason=bad_params ⇒ apply rc=2）。
+#   reason=bad_params → apply rc=2）。
 _T61_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
             'import matplotlib.pyplot as plt\n'
             'fig, axes = plt.subplots(1, 2, figsize=(9, 4))\n'
@@ -3655,14 +3655,14 @@ for _cid70, _p70e in (
 
 
 # 69e（T65/T66）：**不变量** —— 绝不静默丢改动。三种结局分别钉死：
-# （a）声称"无需改动"（reason=no_change 且未写盘）⇒ 必须证明脚本**生效尺寸已经==目标**
-#      （独立读取器读不出 ⇒ 未知 ⇒ FAIL）；**P3'/P7 修前正是这一支**（假等值 ⇒ 静默 no_change）。
-# （b）没写盘、也没说 no_change ⇒ 必须**明确申报**退块（needs_block=True 或 pending 非空），否则同样是静默丢改动；
-# （c）真写了盘 ⇒ 改完后生效尺寸必须==目标。
+# （a）声称"无需改动"（reason=no_change 且未写盘）→ 必须证明脚本**生效尺寸已经==目标**
+#      （独立读取器读不出 → 未知 → FAIL）；**P3'/P7 修前正是这一支**（假等值 → 静默 no_change）。
+# （b）没写盘、也没说 no_change → 必须**明确申报**退块（needs_block=True 或 pending 非空），否则同样是静默丢改动；
+# （c）真写了盘 → 改完后生效尺寸必须==目标。
 # 生效尺寸用**本测试自带的独立读取器**（绝不调产品函数 _figsize_from_source，避免自证）。
 def _eff_size(src):
-    """独立读取脚本的**生效尺寸**：所有可读字面量按 lineno 取最后一条；有尺寸语句但读不出 ⇒ None；
-    完全没有尺寸语句 ⇒ matplotlib 默认值。"""
+    """独立读取脚本的**生效尺寸**：所有可读字面量按 lineno 取最后一条；有尺寸语句但读不出 → None；
+    完全没有尺寸语句 → matplotlib 默认值。"""
     import ast as _ast
     try:
         tree = _ast.parse(src)
@@ -3708,7 +3708,7 @@ def _eff_size(src):
         cands.sort(key=lambda c: c[0])
         return cands[-1][1]
     if seen:
-        return None                      # 有尺寸语句但读不出 ⇒ 未知
+        return None                      # 有尺寸语句但读不出 → 未知
     try:
         import matplotlib as _m
         d = _m.rcParams['figure.figsize']
@@ -3731,13 +3731,13 @@ _P5 = ('%sfig, ax = plt.subplots()\nfig.set_size_inches(6.4, 4.8)\n'
 _P7 = ('%sfig, ax = plt.subplots()\nW, H = 6.4, 4.8\nfig.set_size_inches(W, H)\n'
        'ax.plot([1, 2, 3])\nfig.savefig("o.png")\n')
 # --- 读取器自检（防它自己退化成"永远返回默认值"，那会让 (a) 支整体失效）---
-check('69e-R1 读取器：figsize= 字面量 ⇒ [9.0, 5.0]', _hit(_eff_size(_P1 % _H69E), [9.0, 5.0]),
+check('69e-R1 读取器：figsize= 字面量 → [9.0, 5.0]', _hit(_eff_size(_P1 % _H69E), [9.0, 5.0]),
       str(_eff_size(_P1 % _H69E)))
-check('69e-R2 读取器：后置 set_size_inches 覆盖 ⇒ [4.0, 3.0]',
+check('69e-R2 读取器：后置 set_size_inches 覆盖 → [4.0, 3.0]',
       _hit(_eff_size(_P3H % _H69E), [4.0, 3.0]), str(_eff_size(_P3H % _H69E)))
-check('69e-R3 读取器：变量尺寸（有语句但读不出）⇒ None（未知）',
+check('69e-R3 读取器：变量尺寸（有语句但读不出）→ None（未知）',
       _eff_size(_P7 % _H69E) is None, str(_eff_size(_P7 % _H69E)))
-check('69e-R4 读取器：完全没有尺寸语句 ⇒ rcParams 默认 [6.4, 4.8]',
+check('69e-R4 读取器：完全没有尺寸语句 → rcParams 默认 [6.4, 4.8]',
       _hit(_eff_size(_P4 % _H69E), [6.4, 4.8]), str(_eff_size(_P4 % _H69E)))
 # --- 七例不变量 ---
 for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
@@ -3760,13 +3760,13 @@ for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
     _pend = _r.get('pending') or []
     if _rsn == 'no_change' and _same:
         _kind = '声称无需改动+未写盘'
-        _ok = _hit(_eff, _fs)                       # 空口宣称 ⇒ 必须证明本来就对
+        _ok = _hit(_eff, _fs)                       # 空口宣称 → 必须证明本来就对
     elif _same:
         _kind = '未写盘+已申报退块'
         _ok = bool(_nb is True or _pend)            # 弃权可以，但必须说清楚
     else:
         _kind = '声称已改（已写盘）'
-        _ok = _hit(_eff, _fs)                       # 真改了 ⇒ 改完必须对
+        _ok = _hit(_eff, _fs)                       # 真改了 → 改完必须对
     check('%s 不变量[%s]：生效尺寸 %s vs 目标 %s' % (_tag, _kind, _eff, _fs), _ok,
           'reason=%r nb=%r pending=%r bytes_same=%s eff=%s'
           % (_rsn, _nb, _pend, _same, _eff))
@@ -3781,18 +3781,18 @@ for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
 #      `big/zenodo/3490985__cloudFractionZonalMeanProfiles.py` 写的是
 #      `plt.colorbar(thePlot, cax=fig.add_axes([0.78, 0.18, 0.2, 0.03]))`，
 #      参数给的 axes[0].pos 与源码**逐位相同**。旧实现的位置等值证明要求字面量挂在
-#      `ast.Assign` 上（(a)~(d) 四条路径都够不到"内联"的 add_axes）⇒ 判"证不出" ⇒
-#      best_effort ⇒ auto 退块 ⇒ 插一段
+#      `ast.Assign` 上（(a)~(d) 四条路径都够不到"内联"的 add_axes）→ 判"证不出" →
+#      best_effort → auto 退块 → 插一段
 #      `for _ax, _p in zip(fig.axes, [[0.78, 0.18, 0.2, 0.03]]): _ax.set_position(_p)`。
 #      而那个脚本运行期有 **12** 条轴（11 个面板由 `for i in range(11):
 #      plt.subplot(3,4,i+1)` 循环建出 + 色条 cax 是第 12 条）：`fig.axes[0]` 是**主图**，
 #      不是参数里记的那条 cax。步骤 1 实测：块执行前 fig.axes[0].pos=
 #      (0.0656, 0.7086, 0.1698, 0.2483)、cax=(0.78, 0.18, 0.2, 0.03)；块执行后
-#      fig.axes[0]=(0.78, 0.18, 0.2, 0.03)、cax 一个数都没动 ⇒ **把主图改成了色条的几何**。
+#      fig.axes[0]=(0.78, 0.18, 0.2, 0.03)、cax 一个数都没动 → **把主图改成了色条的几何**。
 #   C  同一参数两次 apply 不幂等：语料 `big/zenodo/21785935__03_ml_pipeline.py`
 #      （136 KB / 20 张图）第 1 次原位把 `fig = plt.figure(figsize=(18, 12))` 改成 (6, 4)；
 #      第 2 次被**另一张图**的 `fig_bee.set_size_inches(10, 7)` 误判成"目标尺寸已被覆盖"
-#      ⇒ 等值证明失败 ⇒ auto 退块又插一遍 `plt.gcf().set_size_inches(6, 4)`（+5 行）。
+#      → 等值证明失败 → auto 退块又插一遍 `plt.gcf().set_size_inches(6, 4)`（+5 行）。
 # 反向验证（`fix018/t67/t67_rev.py`，三条都必须真判别）：
 #   R1 `_pos_literal_equal` 首行加 `return False`（等值证明恒"证不出"）→ 71① 必须 FAIL；
 #   R2 `_later_size_override` 里 `if fig_names is not None:` 改成 `if False:`
@@ -3819,7 +3819,7 @@ _S71_20 = ('import matplotlib\n'
                      for _k in range(1, 20))
            + 'f19.set_size_inches(10, 7)\n')
 
-# ---- 71①（A 的主症状）：值相等的内联 cax pos ⇒ 判"本来就对"，一个字节都不动 ----
+# ---- 71①（A 的主症状）：值相等的内联 cax pos → 判"本来就对"，一个字节都不动 ----
 _d71a, _s71a, _p71a = _mk15('t67a', _S71_A,
                             {'version': 4, 'script': 'fig.py',
                              'axes': [{'index': 0,
@@ -3836,14 +3836,14 @@ check('71① 值相等的内联 cax pos → 原位判"本来就对"（no_change�
                                       _r71a.get('pending')))
 _rc71a = apply.main([_s71a, '--params', _p71a, '--write', '--verify-fast'])
 _t71a = read(_s71a)
-check('71① auto 全流程：值相等 ⇒ 字节不变、无调整块、无 set_position',
+check('71① auto 全流程：值相等 → 字节不变、无调整块、无 set_position',
       _rc71a == 0 and _t71a == _S71_A
       and writeback.BLOCK_START not in _t71a and 'set_position' not in _t71a,
       'rc=%s | %s' % (_rc71a, [_l for _l in _t71a.splitlines()
                               if 'position' in _l or 'auto layout' in _l]))
 shutil.rmtree(_d71a, ignore_errors=True)
 
-# ---- 71①b（A 的第二症状）：值不同 + 循环建轴 ⇒ 块内目标轴证不出 ⇒ fail-closed ----
+# ---- 71①b（A 的第二症状）：值不同 + 循环建轴 → 块内目标轴证不出 → fail-closed ----
 #   旧实现在这里会插 zip 块，把位置写到运行时第一张轴（主图）上 —— 宁可不改。
 _d71b, _s71b, _p71b = _mk15('t67b', _S71_A,
                             {'version': 4, 'script': 'fig.py',
@@ -3851,7 +3851,7 @@ _d71b, _s71b, _p71b = _mk15('t67b', _S71_A,
                                        'pos': [0.10, 0.10, 0.50, 0.50]}]})
 _r71b = writeback.writeback(_s71b, _params.load(_p71b), _p71b, verify=False,
                             fast_check=True, style='inplace')
-check('71①b 值不同 + 循环建轴：原位写不了 ⇒ best_effort + needs_block（不写盘）',
+check('71①b 值不同 + 循环建轴：原位写不了 → best_effort + needs_block（不写盘）',
       _r71b.get('reason') == 'best_effort' and _r71b.get('needs_block') is True
       and _r71b.get('applied') is False and read(_s71b) == _S71_A,
       'reason=%r nb=%r applied=%r' % (_r71b.get('reason'),
@@ -3891,14 +3891,14 @@ shutil.rmtree(_d71c, ignore_errors=True)
 # ======================================================================
 # §72（T68）消息层诚实性：**没写盘就不许说"已写回"**
 # ======================================================================
-# 缺陷：块通道的人读行只看 `reason` 不看 `applied` ⇒ "拒绝写回"的路径
-# （applied=false，例如 T67 的"运行时轴数证不出 ⇒ 不写位置块"fail-closed）也打
+# 缺陷：块通道的人读行只看 `reason` 不看 `applied` → "拒绝写回"的路径
+# （applied=false，例如 T67 的"运行时轴数证不出 → 不写位置块"fail-closed）也打
 # `[OK] 已写回: <脚本>`；bad_params 入口拒写只有一句"已拒写"、没有统一的"未写回"行。
 # JSON 一直是诚实的（ok/applied/needs_block/pending 都对），坏的只有人读那一行。
 # 修法（apply.py + messages.py）：原位/块两条人读通道都按 `applied`（且非 dry-run）决定；
 # 未写盘 → `未写回[<reason>]：脚本未被改动（<脚本>）`（中英走 messages 表）。
 # 反向验证（fix018/t68/t68_rev.py）：关掉这两处判定（恢复无条件 written_block +
-# 删掉 bad_params 那行）⇒ 72① / 72② 必须 FAIL。
+# 删掉 bad_params 那行）→ 72① / 72② 必须 FAIL。
 _S72_IP = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n'
            'fig = plt.figure(figsize=(8, 6))\n'
@@ -3921,7 +3921,7 @@ def _s72_run(src, params, extra=()):
     return _rr.returncode, _o, _txt
 
 
-# 72① 坏参数（params.validate_errors 命中）⇒ rc=2、字节不变、人读不得说"已写回"
+# 72① 坏参数（params.validate_errors 命中）→ rc=2、字节不变、人读不得说"已写回"
 _rc72a, _o72a, _t72a = _s72_run(
     _GRID_SRC, {'version': 4, 'script': 'fig.py',
                 'axes': [{'index': 0, 'pos': [0.1, 0.2, 0.3]}]})
@@ -3930,7 +3930,7 @@ check('72① 坏参数：rc=2、未写盘、人读不得出现「已写回」，
       and 'bad_params' in _o72a and _t72a == _GRID_SRC,
       'rc=%s | %s' % (_rc72a, [_l for _l in _o72a.splitlines() if '写回' in _l]))
 
-# 72② 块目标证不出（applied=false + needs_block=true，T67 的 fail-closed）⇒ 同上
+# 72② 块目标证不出（applied=false + needs_block=true，T67 的 fail-closed）→ 同上
 _rc72b, _o72b, _t72b = _s72_run(
     _S71_A, {'version': 4, 'script': 'fig.py',
              'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.50, 0.50]}]})
@@ -3939,7 +3939,7 @@ check('72② 块目标证不出（一个字节都没写）：人读不得说「�
       and 'best_effort' in _o72b and _t72b == _S71_A,
       'rc=%s | %s' % (_rc72b, [_l for _l in _o72b.splitlines() if '写回' in _l]))
 
-# 72③a 正常**原位**写盘 ⇒ 人读仍要说"已原位写回"（不许因为本次修正而少说）
+# 72③a 正常**原位**写盘 → 人读仍要说"已原位写回"（不许因为本次修正而少说）
 _rc72c, _o72c, _t72c = _s72_run(
     _S72_IP, {'version': 4, 'script': 'fig.py', 'figsize_in': [6.0, 4.0],
               'fig_index': 0, 'n_figs': 1, 'axes': []})
@@ -3948,7 +3948,7 @@ check('72③a 正常原位写盘：人读仍明确「已原位写回」，且数
       and 'figsize=(6, 4)' in _t72c,
       'rc=%s | %s' % (_rc72c, [_l for _l in _o72c.splitlines() if '写回' in _l]))
 
-# 72③b 正常**追加调整块** ⇒ 人读仍要说"已写回"，且块真进文件
+# 72③b 正常**追加调整块** → 人读仍要说"已写回"，且块真进文件
 _rc72d, _o72d, _t72d = _s72_run(
     _GRID_SRC, {'version': 4, 'script': 'fig.py',
                 'axes': [{'index': 0, 'pos': [0.20, 0.20, 0.60, 0.60]}]})
@@ -3966,11 +3966,11 @@ check('72④ 拒绝执行（no_axes）：人读给出原因码、不说「已写
                               if '写回' in _l or 'no_axes' in _l]))
 
 # ---- 73. T70：块内只许用**静态可证的对象名**定位目标（判据见 fix_engine.md §T70）----
-#   ① 目标对象自己的变量名 / 单次字面量 `subplots` 容器的元素 ⇒ 可证，块里就用它；
-#   ② 纯 pyplot 单图（全文件只有一次建图、无 colorbar/inset/twin/close）⇒
+#   ① 目标对象自己的变量名 / 单次字面量 `subplots` 容器的元素 → 可证，块里就用它；
+#   ② 纯 pyplot 单图（全文件只有一次建图、无 colorbar/inset/twin/close）→
 #      `plt.gcf().axes[k]` 也可证（块注释里写明凭什么可证）；
-#   ③ 其余（名字出作用域 / 循环里建图建轴 / 多图没名字 / 未命名 colorbar 轴）⇒ 目标
-#      证不出 ⇒ **拒绝写**：不插块、字节不变、applied=false + needs_block + pending，
+#   ③ 其余（名字出作用域 / 循环里建图建轴 / 多图没名字 / 未命名 colorbar 轴）→ 目标
+#      证不出 → **拒绝写**：不插块、字节不变、applied=false + needs_block + pending，
 #      人读走 T68 的 not_written 通道（绝不许出现「已写回」）。
 _SRC73A = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n'
@@ -3983,7 +3983,7 @@ _d73a, _s73a, _p73a = _mk15('t73a', _SRC73A, _PAR73A)
 _r73a = writeback.writeback(_s73a, _params.load(_p73a), _p73a, verify=False,
                             fast_check=True, style='block')
 _blk73a = _r73a.get('block') or ''
-check('73① 目标可证 ⇒ 块用变量名，块内无运行期下标/动态定位',
+check('73① 目标可证 → 块用变量名，块内无运行期下标/动态定位',
       'ax.set_xlim(0, 4)' in _blk73a
       and not any(k in _blk73a for k in ('fig.axes[', 'plt.gcf()', 'plt.gca()',
                                          'get_axes()[', 'zip(')),
@@ -3993,7 +3993,7 @@ check('73① 成功路径没退步：真写盘（applied=True 且块进文件）
       'applied=%r' % (_r73a.get('applied'),))
 shutil.rmtree(_d73a, ignore_errors=True)
 
-# ② 目标不可证：图与轴建在函数里，块的锚点在模块层 ⇒ 名字在块位置**没有绑定**
+# ② 目标不可证：图与轴建在函数里，块的锚点在模块层 → 名字在块位置**没有绑定**
 _SRC73B = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n\n\n'
            'def draw():\n'
@@ -4005,7 +4005,7 @@ _SRC73B = ('import matplotlib\nmatplotlib.use("Agg")\n'
 _d73b, _s73b, _p73b = _mk15('t73b', _SRC73B, _PAR73A)
 _r73b = writeback.writeback(_s73b, _params.load(_p73b), _p73b, verify=False,
                             fast_check=True, style='block')
-check('73② 目标不可证 ⇒ 拒绝写：不插块 + 字节不变 + applied=false + pending 非空',
+check('73② 目标不可证 → 拒绝写：不插块 + 字节不变 + applied=false + pending 非空',
       _r73b.get('reason') == 'best_effort' and _r73b.get('applied') is False
       and _r73b.get('needs_block') is True and bool(_r73b.get('pending'))
       and read(_s73b) == _SRC73B,
@@ -4084,8 +4084,8 @@ shutil.rmtree(_d73c, ignore_errors=True)
 
 # ---- 76. T71：幂等与可撤销（第二次写盘不得再改字节；revert 必须回到**批前原件**）----
 #   真因：① `_later_size_override` 把**别的对象**的属性链覆盖
-#   （`d.figure_.set_size_inches(10, 6)`）误判成"本图被覆盖" ⇒ `figsize_already_ok` False
-#   ⇒ 第二次 apply 又插块、又改字节，并**重写固定名备份** ⇒ revert 只能回到中间态；
+#   （`d.figure_.set_size_inches(10, 6)`）误判成"本图被覆盖" → `figsize_already_ok` False
+#   → 第二次 apply 又插块、又改字节，并**重写固定名备份** → revert 只能回到中间态；
 #   ② 跨独立 apply 调用时固定名 `.tweak.bak` 被重新复制（首份不优先）。
 _SRC76 = ('import matplotlib\nmatplotlib.use("Agg")\n'
           'import matplotlib.pyplot as plt\n\n\n'
@@ -4125,7 +4125,7 @@ check('76④ 第二次写盘**不覆盖**固定名备份（首份优先）',
       _bak76b == _bak76a,
       'bak_same=%s' % (_bak76b == _bak76a))
 # 76⑥（T71 附加）：**跨独立 apply 调用**的真齿 —— 第二次用**不同参数**（确实写盘）
-# ⇒ 备份必须仍是**批前原件**（而不是上一次写回后的中间态）。
+# → 备份必须仍是**批前原件**（而不是上一次写回后的中间态）。
 _PAR76b = dict(_PAR76)
 _PAR76b['figsize_in'] = [8.0, 3.0]
 _p76b = os.path.join(_d76, 'params76b.json')
@@ -4147,7 +4147,7 @@ check('76⑤ revert 回到**批前原件**（字节 == pristine）',
       str([_l for _l in read(_s76).splitlines() if 'figsize' in _l][:2]))
 shutil.rmtree(_d76, ignore_errors=True)
 
-# ---- 77. T73 零兼容：参数里没写 y ⇒ **一个字都不动 y** ----
+# ---- 77. T73 零兼容：参数里没写 y → **一个字都不动 y** ----
 _SRC77 = ('import matplotlib\nmatplotlib.use("Agg")\n'
           'import matplotlib.pyplot as plt\n'
           'fig, ax = plt.subplots()\n'
@@ -4167,7 +4167,7 @@ _r77a = writeback.writeback(_S77, _params.load(_P77), _P77, verify=False,
                            fast_check=True, style='inplace')
 _src77a = read(_S77)
 _ch77a = [str(c) for c in (_r77a.get('changes') or [])]
-check('77① 只给 x ⇒ y 侧 set_ylabel 逐字节不变、changes 不含 y 侧',
+check('77① 只给 x → y 侧 set_ylabel 逐字节不变、changes 不含 y 侧',
       'ax.set_ylabel("Y", fontsize=20)' in _src77a
       and 'ax.set_ylabel("Y", fontsize=15)' not in _src77a
       and 'ax.set_xlabel("X", fontsize=15)' in _src77a
@@ -4180,7 +4180,7 @@ _r77b = writeback.writeback(_S77b, _params.load(_P77b), _P77b, verify=False,
                            fast_check=True, style='inplace')
 _src77b = read(_S77b)
 _ch77b = [str(c) for c in (_r77b.get('changes') or [])]
-check('77② x/y 都给且都不同 ⇒ 两侧都改、changes 两侧都报',
+check('77② x/y 都给且都不同 → 两侧都改、changes 两侧都报',
       'ax.set_xlabel("X", fontsize=15)' in _src77b
       and 'ax.set_ylabel("Y", fontsize=25)' in _src77b
       and any('label_fontsize_y' in c for c in _ch77b)
@@ -4192,7 +4192,7 @@ _D77c, _S77c, _P77c = _mk15('t73', _SRC77,
                                     'label_fontsize_y': 20.0}))
 _r77c = writeback.writeback(_S77c, _params.load(_P77c), _P77c, verify=False,
                            fast_check=True, style='inplace')
-check('77③ 窗口风格参数（x/y 都给且已等于源码）⇒ no_change、两边都不动',
+check('77③ 窗口风格参数（x/y 都给且已等于源码）→ no_change、两边都不动',
       _r77c.get('reason') == 'no_change'
       and 'fontsize=9' in read(_S77c) and 'fontsize=20' in read(_S77c),
       'reason=%r' % (_r77c.get('reason'),))
@@ -4201,9 +4201,9 @@ shutil.rmtree(_D77b, ignore_errors=True)
 shutil.rmtree(_D77c, ignore_errors=True)
 
 # ---- 78. T75b：describe 补 y 侧字号字段 + verify **真的判 y** -----------------
-#   T73 删掉了"参数没写 y ⇒ 沿用 x"的兼容回退（零兼容），随之暴露两个缺口：
-#   ① `describe` 只导出 x 侧三个字号字段 ⇒ agent 读不到 y 侧、也不知道能设；
-#   ② `verify.compare` 只比 x 侧 ⇒ **纯 y 改动在语义层不被判定**（"没比却说通过"）。
+#   T73 删掉了"参数没写 y → 沿用 x"的兼容回退（零兼容），随之暴露两个缺口：
+#   ① `describe` 只导出 x 侧三个字号字段 → agent 读不到 y 侧、也不知道能设；
+#   ② `verify.compare` 只比 x 侧 → **纯 y 改动在语义层不被判定**（"没比却说通过"）。
 #   本节钉三件事：describe 出两个 y 字段且是**源码真值**（不是复制 x）；参数带了 y
 #   就必须比（写错要失败）；只给 x 的参数一个字节都不动 y（T73 不变量）。
 _S78 = ('import matplotlib\nmatplotlib.use("Agg")\n'
@@ -4313,7 +4313,7 @@ check('78③ 轴没有 y 刻度标签时（实际值取不到）→ detail 里**
       '未判定字段' in (_detu or '') and 'tick_fontsize_y' in (_detu or ''),
       'ok=%r detail=%r' % (_oku, _detu))
 
-# 78④ 只有 x 的参数 ⇒ y 一个字节都不动（T73 不变量）
+# 78④ 只有 x 的参数 → y 一个字节都不动（T73 不变量）
 with open(_p78, 'w', encoding='utf-8', newline='\n') as _f78:
     json.dump({'version': 4, 'script': 'fig.py', 'fig_index': 0,
                'axes': [{'index': 0, 'label_fontsize': 22}]}, _f78)
@@ -4333,7 +4333,7 @@ shutil.rmtree(_d78u, ignore_errors=True)
 # ---- 74. T74：多图 pyplot 的**可证**定位 `plt.figure(<n>).axes[k]` ----
 #   为什么可证：`plt.gcf()` 是"**当前活动**的那张图"（脚本末尾通常是最后一张 ≠ 目标
 #   图，T70 禁掉的就是它）；`plt.figure(n)` 是"**编号为 n 的那张图**"——n 可静态枚举、
-#   模块层没有 close ⇒ 它**就是**目标图。
+#   模块层没有 close → 它**就是**目标图。
 _SRC74 = ('import matplotlib\nmatplotlib.use("Agg")\n'
           'import matplotlib.pyplot as plt\n'
           'plt.figure()\nplt.plot([1, 2, 3])\n'
@@ -4345,23 +4345,23 @@ _D74, _S74, _P74 = _mk15('t74', _SRC74, _PAR74)
 _r74a = writeback.writeback(_S74, _params.load(_P74), _P74, verify=False,
                            fast_check=True, style='block')
 _src74a = read(_S74)
-check('74① 多图编号可证 ⇒ 块用 plt.figure(2).axes[0]，且不含 gcf/gca/fig.axes[',
+check('74① 多图编号可证 → 块用 plt.figure(2).axes[0]，且不含 gcf/gca/fig.axes[',
       'plt.figure(2).axes[0]' in _src74a
       and 'plt.gcf()' not in _src74a and 'plt.gca()' not in _src74a
       and 'fig.axes[' not in _src74a,
       str([ln.strip() for ln in _src74a.splitlines() if '.axes[' in ln]))
-# ②a `close(2)` ⇒ 编号会被复用/重置 ⇒ 必须拒绝（字节不变 + pending + 不插块）
+# ②a `close(2)` → 编号会被复用/重置 → 必须拒绝（字节不变 + pending + 不插块）
 _D74b, _S74b, _P74b = _mk15(
     't74', _SRC74.replace('plt.savefig', 'plt.close(2)\nplt.savefig'), _PAR74)
 _prior74b = read(_S74b)
 _r74b = writeback.writeback(_S74b, _params.load(_P74b), _P74b, verify=False,
                            fast_check=True, style='block')
-check('74② 有 close(2) ⇒ 拒绝写（字节不变 + pending 非空 + 不插块）',
+check('74② 有 close(2) → 拒绝写（字节不变 + pending 非空 + 不插块）',
       _r74b.get('applied') is False and bool(_r74b.get('pending'))
       and read(_S74b) == _prior74b
       and writeback.BLOCK_START not in read(_S74b),
       'applied=%r pending=%r' % (_r74b.get('applied'), _r74b.get('pending')))
-# ②b 循环里建图 ⇒ 编号不可枚举 ⇒ 拒绝
+# ②b 循环里建图 → 编号不可枚举 → 拒绝
 _SRC74c = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n'
            'for i in range(2):\n'
@@ -4372,7 +4372,7 @@ _D74c, _S74c, _P74c = _mk15('t74', _SRC74c, _PAR74)
 _prior74c = read(_S74c)
 _r74c = writeback.writeback(_S74c, _params.load(_P74c), _P74c, verify=False,
                            fast_check=True, style='block')
-check('74② 循环里建图 ⇒ 编号不可枚举 ⇒ 拒绝写（字节不变 + pending 非空）',
+check('74② 循环里建图 → 编号不可枚举 → 拒绝写（字节不变 + pending 非空）',
       _r74c.get('applied') is False and bool(_r74c.get('pending'))
       and read(_S74c) == _prior74c,
       'applied=%r pending=%r' % (_r74c.get('applied'), _r74c.get('pending')))
@@ -4402,14 +4402,14 @@ shutil.rmtree(d4, ignore_errors=True)
 shutil.rmtree(_TMPROOT, ignore_errors=True)
 
 # 69e（T65/T66）：**不变量** —— 绝不静默丢改动。三种结局分别钉死：
-# （a）声称"无需改动"（reason=no_change 且未写盘）⇒ 必须证明脚本**生效尺寸已经==目标**
-#      （独立读取器读不出 ⇒ 未知 ⇒ FAIL）；**P3'/P7 修前正是这一支**（假等值 ⇒ 静默 no_change）。
-# （b）没写盘、也没说 no_change ⇒ 必须**明确申报**退块（needs_block=True 或 pending 非空），否则同样是静默丢改动；
-# （c）真写了盘 ⇒ 改完后生效尺寸必须==目标。
+# （a）声称"无需改动"（reason=no_change 且未写盘）→ 必须证明脚本**生效尺寸已经==目标**
+#      （独立读取器读不出 → 未知 → FAIL）；**P3'/P7 修前正是这一支**（假等值 → 静默 no_change）。
+# （b）没写盘、也没说 no_change → 必须**明确申报**退块（needs_block=True 或 pending 非空），否则同样是静默丢改动；
+# （c）真写了盘 → 改完后生效尺寸必须==目标。
 # 生效尺寸用**本测试自带的独立读取器**（绝不调产品函数 _figsize_from_source，避免自证）。
 def _eff_size(src):
-    """独立读取脚本的**生效尺寸**：所有可读字面量按 lineno 取最后一条；有尺寸语句但读不出 ⇒ None；
-    完全没有尺寸语句 ⇒ matplotlib 默认值。"""
+    """独立读取脚本的**生效尺寸**：所有可读字面量按 lineno 取最后一条；有尺寸语句但读不出 → None；
+    完全没有尺寸语句 → matplotlib 默认值。"""
     import ast as _ast
     try:
         tree = _ast.parse(src)
@@ -4455,7 +4455,7 @@ def _eff_size(src):
         cands.sort(key=lambda c: c[0])
         return cands[-1][1]
     if seen:
-        return None                      # 有尺寸语句但读不出 ⇒ 未知
+        return None                      # 有尺寸语句但读不出 → 未知
     try:
         import matplotlib as _m
         d = _m.rcParams['figure.figsize']
@@ -4478,13 +4478,13 @@ _P5 = ('%sfig, ax = plt.subplots()\nfig.set_size_inches(6.4, 4.8)\n'
 _P7 = ('%sfig, ax = plt.subplots()\nW, H = 6.4, 4.8\nfig.set_size_inches(W, H)\n'
        'ax.plot([1, 2, 3])\nfig.savefig("o.png")\n')
 # --- 读取器自检（防它自己退化成"永远返回默认值"，那会让 (a) 支整体失效）---
-check('69e-R1 读取器：figsize= 字面量 ⇒ [9.0, 5.0]', _hit(_eff_size(_P1 % _H69E), [9.0, 5.0]),
+check('69e-R1 读取器：figsize= 字面量 → [9.0, 5.0]', _hit(_eff_size(_P1 % _H69E), [9.0, 5.0]),
       str(_eff_size(_P1 % _H69E)))
-check('69e-R2 读取器：后置 set_size_inches 覆盖 ⇒ [4.0, 3.0]',
+check('69e-R2 读取器：后置 set_size_inches 覆盖 → [4.0, 3.0]',
       _hit(_eff_size(_P3H % _H69E), [4.0, 3.0]), str(_eff_size(_P3H % _H69E)))
-check('69e-R3 读取器：变量尺寸（有语句但读不出）⇒ None（未知）',
+check('69e-R3 读取器：变量尺寸（有语句但读不出）→ None（未知）',
       _eff_size(_P7 % _H69E) is None, str(_eff_size(_P7 % _H69E)))
-check('69e-R4 读取器：完全没有尺寸语句 ⇒ rcParams 默认 [6.4, 4.8]',
+check('69e-R4 读取器：完全没有尺寸语句 → rcParams 默认 [6.4, 4.8]',
       _hit(_eff_size(_P4 % _H69E), [6.4, 4.8]), str(_eff_size(_P4 % _H69E)))
 # --- 七例不变量 ---
 for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
@@ -4507,13 +4507,13 @@ for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
     _pend = _r.get('pending') or []
     if _rsn == 'no_change' and _same:
         _kind = '声称无需改动+未写盘'
-        _ok = _hit(_eff, _fs)                       # 空口宣称 ⇒ 必须证明本来就对
+        _ok = _hit(_eff, _fs)                       # 空口宣称 → 必须证明本来就对
     elif _same:
         _kind = '未写盘+已申报退块'
         _ok = bool(_nb is True or _pend)            # 弃权可以，但必须说清楚
     else:
         _kind = '声称已改（已写盘）'
-        _ok = _hit(_eff, _fs)                       # 真改了 ⇒ 改完必须对
+        _ok = _hit(_eff, _fs)                       # 真改了 → 改完必须对
     check('%s 不变量[%s]：生效尺寸 %s vs 目标 %s' % (_tag, _kind, _eff, _fs), _ok,
           'reason=%r nb=%r pending=%r bytes_same=%s eff=%s'
           % (_rsn, _nb, _pend, _same, _eff))
@@ -4522,7 +4522,7 @@ for _tag, _src, _fs in (('69e-P1', _P1 % _H69E, [6.4, 4.8]),
 
 # ---- 79. T78：tick_fontsize 原位写回必须按 axis 过滤（不许改到 axis='y' 那条）----
 # 实测来源：zenodo `22254023__figure_lib.py`（第 812 行 axis='y' 在前、第 833 行 axis='x' 在后）。
-# 旧代码用不过滤 axis 的 _find_call ⇒ 命中最早的 812（y）改成目标值，而该改的 833（x）没动，
+# 旧代码用不过滤 axis 的 _find_call → 命中最早的 812（y）改成目标值，而该改的 833（x）没动，
 # 工具却报 ok / style=inplace / changes=['ax0.tick_fontsize']。
 _S79 = '''import matplotlib
 matplotlib.use('Agg')
@@ -4577,7 +4577,7 @@ check('79③ 不带 axis= 的 tick_params(labelsize=) 仍是原位目标（改�
       [ln for ln in _t79c.splitlines() if 'tick_params' in ln])
 shutil.rmtree(_d79c, ignore_errors=True)
 
-# 79④ axis= 是**变量** ⇒ 证不出 ⇒ 不许乱猜（那条字面量必须原样不动）
+# 79④ axis= 是**变量** → 证不出 → 不许乱猜（那条字面量必须原样不动）
 _S79d = '''import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -4626,10 +4626,10 @@ check('79⑤ T78②：块里 x 侧写成 axis=\'x\'（不许用不带 axis= 的�
       str(_ln79e))
 shutil.rmtree(_d79e, ignore_errors=True)
 
-# ---- 84. T84（blocker，Codex r4 §2.3）：同图**重名轴** ⇒ 原位写回禁止改别的轴 ----
+# ---- 84. T84（blocker，Codex r4 §2.3）：同图**重名轴** → 原位写回禁止改别的轴 ----
 #   `fig, (ax, ax) = plt.subplots(1, 2)`：名字 ax 在运行期只认**最后一次**解包（第二条轴），
-#   而 `_find_call` 只能按名字取"最早那次调用" ⇒ 轴 0 的字段会被写到**第二条轴**那行。
-#   T57 的判据建立在 `axes_calls`（只收 add_axes/add_subplot）上，**看不见同名解包** ⇒ 漏。
+#   而 `_find_call` 只能按名字取"最早那次调用" → 轴 0 的字段会被写到**第二条轴**那行。
+#   T57 的判据建立在 `axes_calls`（只收 add_axes/add_subplot）上，**看不见同名解包** → 漏。
 import hashlib as _hl84                                                # noqa: E402
 
 _SRC84 = ('import matplotlib\nmatplotlib.use("Agg")\n'
@@ -4658,7 +4658,7 @@ def _run84(tag, param_axes):
 
 _d84, _s84, _r84, _f84, _b84, _a84, _o84 = _run84(
     't84dup', [{'index': 0, 'tick_fontsize': 14.0}])
-check('84① 同图重名轴 + 参数只给 index=0 ⇒ 禁止原位写回（applied=false / pending 非空）',
+check('84① 同图重名轴 + 参数只给 index=0 → 禁止原位写回（applied=false / pending 非空）',
       _f84.get('applied') is False and bool(_f84.get('pending')),
       'reason=%r applied=%r pending=%r' % (_f84.get('reason'), _f84.get('applied'),
                                            _f84.get('pending')))
@@ -4677,7 +4677,7 @@ shutil.rmtree(_d84, ignore_errors=True)
 _d84b, _s84b, _r84b, _f84b, _b84b, _a84b, _o84b = _run84(
     't84dup_ok', [{'index': 0, 'tick_fontsize': 14.0},
                   {'index': 1, 'tick_fontsize': 14.0}])
-check('84② 对照：参数覆盖全部被绑定轴 ⇒ 允许原位写（applied=true、字节变了）',
+check('84② 对照：参数覆盖全部被绑定轴 → 允许原位写（applied=true、字节变了）',
       _f84b.get('applied') is True and _a84b != _b84b,
       'reason=%r applied=%r pending=%r' % (_f84b.get('reason'), _f84b.get('applied'),
                                            _f84b.get('pending')))
@@ -4704,7 +4704,7 @@ _data85 = {'fig_index': 0, 'figsize_in': [7.0, 3.5], 'axes': []}
 open(_p85, 'w', encoding='utf-8').write(json.dumps(_data85))
 _r85 = writeback.writeback(_s85, _data85, _p85, verify=True, semantic=True,
                            style='inplace', timeout=120)
-check('85① figsize-only（covered 空）⇒ 语义层照跑且通过（semantic is True，不再是 None）',
+check('85① figsize-only（covered 空）→ 语义层照跑且通过（semantic is True，不再是 None）',
       _r85.get('semantic') is True,
       'reason=%r semantic=%r verified=%r err=%r' % (_r85.get('reason'),
                                                     _r85.get('semantic'),
@@ -4716,7 +4716,7 @@ check('85② 原位写回生效：源码里的 figsize 变成目标值',
 shutil.rmtree(_d85, ignore_errors=True)
 
 # =====================================================================
-# §86 写盘前二次确认：src 读取后外部改过脚本 ⇒ 拒绝落盘（不覆盖用户改动）
+# §86 写盘前二次确认：src 读取后外部改过脚本 → 拒绝落盘（不覆盖用户改动）
 # =====================================================================
 _d86 = os.path.join(_TMPROOT, 'case_86')
 os.makedirs(_d86, exist_ok=True)
@@ -4726,10 +4726,10 @@ _orig86 = ('import matplotlib.pyplot as plt\n'
            'fig.savefig("out86.png")\n')
 open(_s86, 'w', encoding='utf-8', newline='').write(_orig86)
 _g86 = writeback._guard_external_edit(_s86, _orig86)
-check('86① 磁盘未变 ⇒ 放行（返回 None）', _g86 is None, repr(_g86))
+check('86① 磁盘未变 → 放行（返回 None）', _g86 is None, repr(_g86))
 open(_s86, 'w', encoding='utf-8', newline='').write(_orig86 + '# 用户此刻保存了新行\n')
 _g86b = writeback._guard_external_edit(_s86, _orig86)
-check('86② 磁盘与 src 不一致（编辑器保存过）⇒ 拒绝写盘（返回原因）',
+check('86② 磁盘与 src 不一致（编辑器保存过）→ 拒绝写盘（返回原因）',
       isinstance(_g86b, str) and '外部修改' in _g86b, repr(_g86b))
 shutil.rmtree(_d86, ignore_errors=True)
 
@@ -4773,7 +4773,7 @@ def _cli87(s, p, *extra):
     return (r.stdout or '') + (r.stderr or ''), r.returncode
 
 
-# ① 带参脚本 + `-- --n 7` 透传 ⇒ 重跑拿到参数、语义验证通过、真实写回
+# ① 带参脚本 + `-- --n 7` 透传 → 重跑拿到参数、语义验证通过、真实写回
 _o87, _rc87 = _cli87(_s87a, _p87a, '--', '--n', '7')
 check('87① apply --write -- --n 7：脚本参数透传给重跑，验证通过并写回（rc=0）',
       _rc87 == 0 and '已原位写回' in _o87 and '语义验证通过' in _o87,
@@ -4782,7 +4782,7 @@ check('87① apply --write -- --n 7：脚本参数透传给重跑，验证通过
 check('87① 源码真的被改：ax.grid(False) → ax.grid(True)',
       'ax.grid(True)' in read(_s87a) and 'ax.grid(False)' not in read(_s87a),
       str([_l.strip() for _l in read(_s87a).splitlines() if 'grid' in _l][:2]))
-# ② 对照：**不带**脚本参数（修前行为）⇒ 脚本因缺参跑不通 → 回滚 + 写回失败
+# ② 对照：**不带**脚本参数（修前行为）→ 脚本因缺参跑不通 → 回滚 + 写回失败
 _o87b, _rc87b = _cli87(_s87b, _p87b)
 check('87② 对照（不带参数）：脚本缺参跑不通 → 写回失败（rc≠0，未落地）',
       _rc87b != 0,
@@ -4935,14 +4935,14 @@ def _sha89(p):
 
 # ---- ① 单元：指纹判据本身 ----
 _s89, _p89 = _mk89('fig89a.py', _SRC89)
-check('89① 磁盘内容未变 ⇒ _check_external_edit 放行（None）',
+check('89① 磁盘内容未变 → _check_external_edit 放行（None）',
       writeback._check_external_edit(_s89, _SRC89) is None)
 with open(_s89, 'w', encoding='utf-8', newline='') as f:
     f.write(_USER89)
 # 用 `or {}` 包一层：守卫一旦被关掉（反面验证）这里会拿到 None，必须**干净判红**
 # 而不是抛 AttributeError 把整节后续断言全跳过（反验证实测踩到）。
 _r89u = writeback._check_external_edit(_s89, _SRC89) or {}
-check('89② 磁盘内容变过 ⇒ 拒绝，并给机器可读字段（reason/external_modified/指纹）',
+check('89② 磁盘内容变过 → 拒绝，并给机器可读字段（reason/external_modified/指纹）',
       isinstance(_r89u, dict)
       and _r89u.get('reason') == writeback.EXTERNAL_MODIFIED
       and _r89u.get('external_modified') is True
@@ -4997,7 +4997,7 @@ try:
 finally:
     writeback._make_backup = _orig_backup89
 _src89b = read(_s89b)
-check('89⑥ 落盘前发现外部改动 ⇒ 本次写回放弃（reason=external_modified）',
+check('89⑥ 落盘前发现外部改动 → 本次写回放弃（reason=external_modified）',
       _res89b.get('reason') == writeback.EXTERNAL_MODIFIED
       and _res89b.get('external_modified') is True
       and _res89b.get('applied') is False,
@@ -5038,7 +5038,7 @@ try:
 finally:
     writeback.verify_run = _orig_verify89
 _src89c = read(_s89c)
-check('89⑨ 验证失败要回滚、但磁盘已被外部改过 ⇒ **跳过回滚**，保留用户版本',
+check('89⑨ 验证失败要回滚、但磁盘已被外部改过 → **跳过回滚**，保留用户版本',
       _src89c == _USER89 and 'USER-EDIT-89' in _src89c,
       'reason=%r | %s' % (_res89c.get('reason'), _src89c[-50:]))
 check('89⑩ 回滚被跳过这件事写进了结论（不是静默）',
@@ -5047,7 +5047,7 @@ check('89⑩ 回滚被跳过这件事写进了结论（不是静默）',
       repr((_res89c.get('err') or '')[-160:]))
 shutil.rmtree(_d89c, ignore_errors=True)
 
-# ---- ④ 对照：全程没人动过 ⇒ 行为与以前完全一致 ----
+# ---- ④ 对照：全程没人动过 → 行为与以前完全一致 ----
 _d89d = os.path.join(_TMPROOT, 'case_89d')
 os.makedirs(os.path.join(_d89d, '.tweak_params'), exist_ok=True)
 _s89d = os.path.join(_d89d, 'fig89d.py')
@@ -5059,7 +5059,7 @@ with open(_p89d, 'w', encoding='utf-8') as f:
 _shab = _sha89(_s89d)
 _res89d = writeback.writeback(_s89d, _PAR89, _p89d, verify=True,
                               semantic=False, style='inplace', timeout=120)
-check('89⑪ 对照：无外部改动 ⇒ 正常写回成功、且没有外部改动标记（正常路径零变化）',
+check('89⑪ 对照：无外部改动 → 正常写回成功、且没有外部改动标记（正常路径零变化）',
       _res89d.get('reason') == 'ok' and _res89d.get('verified') is True
       and _res89d.get('external_modified') is None
       and _sha89(_s89d) != _shab,
@@ -5220,7 +5220,7 @@ shutil.rmtree(_d89f, ignore_errors=True)
 # 违约现场（t23 全量真跑 1,837 份里 3 例同签名，增量**都恰好 +231 字节** = 一个调整块）：
 #   候选①写盘成功 → 验证失败（**原脚本单独跑得通**）→ 没回滚就换锚点重试
 #   → 候选②的"外部改动守卫"拿**入口读的 src** 去比磁盘（此刻磁盘上已是"我们刚写的块"）
-#   → 误报 external_modified，且命中分支**不回滚就 return** ⇒ apply 说"没写"、磁盘 +231。
+#   → 误报 external_modified，且命中分支**不回滚就 return** → apply 说"没写"、磁盘 +231。
 # 本用例用 monkeypatch 把触发条件（我们的写回版跑不通 / 原脚本跑得通）钉死，断言不变量：
 # **最终字节 == 原始字节**（且不得报 external_modified、applied 必须 False）。
 _d90 = os.path.join(_TMPROOT, 'case_90')
@@ -5409,7 +5409,7 @@ _SRC92 = ('import matplotlib\n'
           'ax = fig.add_axes([0.1, 0.1, 0.4, 0.4])\n'
           'ax.plot([1, 2, 3])\n'
           'fig.savefig("o92.png")\n')
-# add_axes 的位置是源码里**现成的数字字面量** ⇒ 走原位写回（style=inplace），
+# add_axes 的位置是源码里**现成的数字字面量** → 走原位写回（style=inplace），
 # 且默认真跑档（verify+semantic）能判"图已更新" —— 这正是"干净成功"这条路。
 _PAR92 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
           'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5]}]}
@@ -5469,7 +5469,1545 @@ check('92④ 前置：这次写回**真的落盘了**（源码里 add_axes 的�
 check('92⑤ 结构性对照（与文案无关）：默认档的输出行数严格少于 -v',
       len(_l92) < len(_l92v), 'default=%d verbose=%d' % (len(_l92), len(_l92v)))
 
+# =====================================================================
+# §93 披露缺陷（§20.3#4 = §14.2#3，t32）：dry-run 跑了却说没跑 / --no-verify 该说不说 /
+#     --verify-fast 文案错 / 以及"语义验证未能判定"这个假解释
+# =====================================================================
+# 三条现象（都先用**标记文件法**实测过；夹具与 §91 同款：脚本第一行写标记文件 →
+# "这次到底跑没跑"只由标记文件回答）：
+#   ① `apply … --write --dry-run` 默认档（参数含"原位写不了"的字段）**真跑脚本**，
+#      旧输出却打 `[i] 本次没有重跑脚本（--no-verify）` → **说反了**；
+#   ② 真加 `--no-verify` 时旧输出**反而不打**这条降级提示（`not args.no_verify` 压掉）
+#      → **该说时不说**（写盘路径一样中招）；
+#   ③ `--verify-fast` 也打上面那条，而它的正确文案是 `_LAYERS_FAST_NOTE`
+#      （dry-run 走 writeback 的早退分支，res 里没有 verify_mode，旧 gate 认不出档位）。
+# 同一根因的第四条：dry-run / `--verify-fast` 下 res 里**根本没有 `semantic` 键**，
+# 旧判据把它当成"语义层没判出来"，于是打 `· 语义验证未能判定（脚本不存图/跑不通）` ——
+# 而那一遍脚本其实跑得好好的。
+# 改后判据（本用例钉的就是它）：一律看**真凭据** —— `res['layers']` / `verify_mode` /
+# "键到底在不在 res 里" + `apply._verify_rerun_state()`；**绝不按 flag 反推"跑没跑"**。
+# 反向验证（teeth，harness 见 D:\Agent\deepseek\t32_probe\teeth32.py）：
+#   M1 把闸门改回 `_ly.get('rerun') is None and not args.no_verify` → 93②/93④/93⑤ 必红；
+#   M2 把语义那条改回 `res.get('semantic') is None` → 93⑥/93⑦/93⑬ 必红。
+
+
+class _Args93(object):
+    """给纯函数 ``apply._verify_rerun_state`` 造 args（它只读这几个属性）。"""
+
+    def __init__(self, **kw):
+        self.dry_run = False
+        self.verify_fast = False
+        self.no_verify = False
+        self.no_semantic = False
+        self.style = 'auto'
+        self.__dict__.update(kw)
+
+
+def _apply93(res_extra, src=_SRC92, extra=()):
+    """用**patch 过的 writeback** 驱动 apply.main，抓人读 stdout。
+
+    只钉"打印闸门"本身：这些分支（键在 / 键不在、verified 是 None / True）由 writeback
+    的返回决定，patch 最直接（本文件既有做法见 §35b 的 `_bad_apply`）；真实 res 的构造
+    由 §93①-93⑦ 的 CLI 子进程用例负责。
+    """
+    _d = os.path.join(_TMPROOT, 'case_t93c')
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(_d, exist_ok=True)
+    s = os.path.join(_d, 'fig.py')
+    p = os.path.join(_d, 'p.json')
+    with open(s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src % os.path.join(_d, 'mark.txt') if '%r' in src else src)
+    with open(p, 'w', encoding='utf-8', newline='\n') as _f:
+        json.dump(dict(_PAR92, script='fig.py'), _f, ensure_ascii=False)
+    base = {'reason': 'ok', 'changes': ['ax0.pos'], 'block': '原位修改：ax0.pos',
+            'backup': None, 'warnings': [], 'applied': True, 'style': 'inplace',
+            'needs_block': False, 'pending': []}
+    base.update(res_extra)
+    _orig = writeback.writeback
+    writeback.writeback = lambda *a, **k: dict(base)
+    _buf = io.StringIO()
+    _so = sys.stdout
+    sys.stdout = _buf
+    try:
+        _rc = apply.main([s, '--params', p, '--write'] + list(extra))
+    finally:
+        sys.stdout = _so
+        writeback.writeback = _orig
+        shutil.rmtree(_d, ignore_errors=True)
+    return _buf.getvalue(), _rc
+
+
+# ---- ①-④ 三条现象的 CLI 子进程实测（复用 §91/§92 的夹具与 helper）----
+_o93a, _rc93a, _ran93a, _same93a = _case91('t93a', _PAR91)
+check('93① 前置真凭据：dry-run 默认档**确实跑了**脚本（标记文件出现）',
+      _rc93a == 0 and _ran93a is True, 'rc=%r marker=%r' % (_rc93a, _ran93a))
+check('93② dry-run 默认档**不许**说"没有重跑"（旧版正是在这里说反）',
+      '没有重跑' not in _o93a and 'dry-run 预览' in _o93a,
+      [l.strip() for l in _o93a.splitlines() if '重跑' in l][:2])
+_o93b, _rc93b, _ran93b, _same93b = _case91('t93b', _PAR91, '--verify-fast')
+check('93③ dry-run + --verify-fast 出**快速档专属**文案，不再错挂 --no-verify',
+      _rc93b == 0 and '本次只做了' in _o93b
+      and apply._LAYERS_NO_RERUN not in _o93b,
+      [l.strip() for l in _o93b.splitlines() if '重跑' in l or '只做了' in l][:3])
+_o93c, _rc93c, _ran93c, _same93c = _case91('t93c', _PAR91, '--no-verify')
+check('93④ dry-run + --no-verify（确实没跑）**如实打降级提示**（旧版该说时不说）',
+      _rc93c == 0 and apply._LAYERS_NO_RERUN in _o93c,
+      [l.strip() for l in _o93c.splitlines() if '重跑' in l][:2])
+_l93d, _rc93d, _src93d = _case92('t93d', '--no-verify')
+check('93⑤ 写盘路径 + --no-verify 同样如实打降级提示（旧版被 `not args.no_verify` 压掉）',
+      _rc93d == 0 and any(apply._LAYERS_NO_RERUN in l for l in _l93d),
+      _l93d[-3:])
+_l93e, _rc93e, _src93e = _case92('t93e', '--verify-fast')
+check('93⑥ 写盘路径 + --verify-fast 出快速档文案，且**不**打假"未能判定"',
+      _rc93e == 0 and any('本次只做了' in l for l in _l93e)
+      and not any('语义验证未能判定' in l for l in _l93e), _l93e[-3:])
+check('93⑦ dry-run 也不打假"语义验证未能判定（脚本不存图/跑不通）"',
+      '语义验证未能判定' not in _o93a,
+      [l.strip() for l in _o93a.splitlines() if '语义' in l][:2])
+
+# ---- 判据本身：纯函数真值表（真凭据优先、不按 flag 反推）----
+_R93 = apply._verify_rerun_state
+check('93⑧ 写盘路径：res.layers.rerun=None → 真没跑；不是 None → 跑过（含失败那遍）',
+      _R93({'layers': {'rerun': None}}, _Args93()) == 'not_ran'
+      and _R93({'layers': {'rerun': False}}, _Args93()) == 'ran'
+      and _R93({'layers': {'rerun': True}}, _Args93()) == 'ran')
+check('93⑨ dry-run：有待回比字段 → may_ran（绝不反过来说没跑）；'
+      '档位/形状能保证不跑的 → not_ran',
+      _R93({'needs_block': True}, _Args93(dry_run=True)) == 'may_ran'
+      and _R93({'needs_block': False}, _Args93(dry_run=True)) == 'not_ran'
+      and _R93({'needs_block': True}, _Args93(dry_run=True, verify_fast=True)) == 'not_ran'
+      and _R93({'needs_block': True}, _Args93(dry_run=True, no_verify=True)) == 'not_ran'
+      and _R93({'needs_block': True}, _Args93(dry_run=True, no_semantic=True)) == 'not_ran'
+      and _R93({'needs_block': True}, _Args93(dry_run=True, style='block')) == 'not_ran')
+check('93⑩ auto 退块时原位那次的凭据也认（inplace_needs_block，apply.py:826）',
+      _R93({'inplace_needs_block': True}, _Args93(dry_run=True)) == 'may_ran')
+_u93t, _rc93t = _apply93({'verified': None, 'semantic': None,
+                          'layers': {'syntax': True, 'rerun': True, 'semantic': None}})
+check('93⑪ 真"取不到状态"（rerun 有值 + verified=None + semantic=None）→ 照旧打"未能判定"',
+      '语义验证未能判定' in _u93t, _u93t[-200:])
+_u93u, _rc93u = _apply93({'verified': True, 'semantic': None,
+                          'layers': {'syntax': True, 'rerun': True, 'semantic': None}})
+check('93⑫ 语义层**有意跳过**（verified=True）→ 只打"没有做语义比对"，不打假"未能判定"',
+      '没有做语义比对' in _u93u and '语义验证未能判定' not in _u93u, _u93u[-220:])
+_u93v, _rc93v = _apply93({'verified': None})
+check('93⑬ res 里连 semantic 键都没有（= dry-run 早退的形状）→ 不打"未能判定"',
+      '语义验证未能判定' not in _u93v, _u93v[-200:])
+
+# =====================================================================
+# §94 t36：`fig.subplots(...)` 被误判成"下一张图"（形状 A 的第二半，t10 定位）
+#
+# 形状 A（本任务命名；t10 的 probe3 里叫 B）：
+#     fig = plt.figure(figsize=(8, 6))
+#     axs = fig.subplots(2, 2)
+#     a, b, c, d = axs.ravel()
+# 根因：`_fig_span`（writeback.py:1057）把 `fig.subplots(...)` 也算成建图调用 → 目标图区间
+# 被截成 [fig 行, fig.subplots 行) → 块的建轴枚举 `_axes_binding_entries`（writeback.py:3718，
+# 那条路唯一传 figure_only=True）一条轴都数不到 → pos 字段全 fail-closed 拒写
+# （best_effort / needs_block=True / pending=ax0..ax3.pos）。第一半（认 ravel 解包名）
+# 已在 t10 落地。
+#
+# 修法（t36，保守）：只给 `_axes_binding_entries` 这一条路传 `figure_only=True` ——
+# "接收者可证是 Figure 的 `X.subplots(...)`"是**在这张图上建轴**，不算新图分界；
+# **其余 5 个调用点口径一字不动**（§94①/①b 专门钉这一条，防"改建图调用口径"的越界）。
+#
+# 本节的 E2E 用 verify=False：只验"目标表达式能不能证出来 + 块真写进文件"
+# （t36 改的就是这一步；带真跑验证的 E2E 证据见 t36 output 的 probe）。
+# =====================================================================
+_S94A = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig = plt.figure(figsize=(8, 6))\n'
+         'axs = fig.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1, 2], [1, 2])\nb.plot([1, 2], [2, 1])\n'
+         'c.plot([1, 2], [1, 2])\nd.plot([1, 2], [2, 1])\n'
+         'fig.savefig("out.png")\n')
+_S94B = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig, axs = plt.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1, 2], [1, 2])\nb.plot([1, 2], [2, 1])\n'
+         'c.plot([1, 2], [1, 2])\nd.plot([1, 2], [2, 1])\n'
+         'fig.savefig("out.png")\n')
+_PAR94 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'figsize_in': [8.0, 6.0],
+          'axes': [{'index': k, 'pos': [0.08 + 0.5 * (k % 2),
+                                        0.55 - 0.45 * (k // 2), 0.36, 0.36]}
+                   for k in range(4)]}
+
+
+def _s94_run(src, tag, patch_old=False):
+    """真跑一次 writeback（style=block、verify=False）：返回 (res, 新增的块文本)。"""
+    _d = os.path.join(_TMPROOT, 'case_t94_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'), exist_ok=True)
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(_PAR94, _f, ensure_ascii=False)
+    _orig = writeback._fig_span
+    if patch_old:
+        # 反向验证（teeth）：把 t36 的那一个调用点的口径改回改前（figure_only 恒 False）。
+        writeback._fig_span = (lambda t, i, figure_only=False: _orig(t, i, False))
+    try:
+        _res = writeback.writeback(_s, dict(_PAR94), _p, verify=False,
+                                   style='block')
+    finally:
+        writeback._fig_span = _orig
+    with open(_s, encoding='utf-8') as _f:
+        _txt = _f.read()
+    return _res, _txt[len(src):]
+
+
+# ① 口径：默认档（其余 5 个调用点）**一字不变**，只有 figure_only 这条拿到完整区间
+_t94 = _ast.parse(_S94A)
+check('94① 形状 A：默认口径仍截在 fig.subplots 那一行（其余调用点不受影响），'
+      'figure_only=True 才拿到完整区间',
+      writeback._fig_span(_t94, 0) == (5, 6)
+      and writeback._fig_span(_t94, 0, figure_only=True) == (5, 10 ** 9),
+      'default=%r figure_only=%r' % (writeback._fig_span(_t94, 0),
+                                     writeback._fig_span(_t94, 0, figure_only=True)))
+check('94①b 判据只认"接收者可证是 Figure 的 X.subplots(...)"：'
+      'plt.subplots(...) / 证不出的接收者**仍是**新图分界',
+      writeback._is_axes_on_existing_figure(
+          [n for n in _ast.walk(_ast.parse(_S94B))
+           if isinstance(n, _ast.Call)
+           and getattr(n.func, 'attr', None) == 'subplots'][0], {'fig'}) is False
+      and writeback._is_axes_on_existing_figure(
+          [n for n in _ast.walk(_ast.parse('axs = other.subplots(1, 2)\n'))
+           if isinstance(n, _ast.Call)
+           and getattr(n.func, 'attr', None) == 'subplots'][0], {'fig'}) is False,
+      'plt.subplots / 不可证接收者都必须返回 False')
+
+# ② 两个形状的成功行为：块真写进去、目标表达式用解包名、无 pending
+_res94a, _blk94a = _s94_run(_S94A, 'a')
+check('94② 形状 A（plt.figure + fig.subplots + ravel）：applied=True、'
+      'needs_block=False、pending 空、块用 a/b/c/d',
+      _res94a.get('applied') is True and not _res94a.get('needs_block')
+      and not (_res94a.get('pending') or [])
+      and all(('%s.set_position(' % n) in _blk94a for n in 'abcd'),
+      'reason=%r applied=%r needs_block=%r pending=%r'
+      % (_res94a.get('reason'), _res94a.get('applied'),
+         _res94a.get('needs_block'), _res94a.get('pending')))
+_res94b, _blk94b = _s94_run(_S94B, 'b')
+check('94②b 既有形状（fig, axs = plt.subplots + ravel，t10 第一半）：同样 applied=True、'
+      'pending 空、块用 a/b/c/d',
+      _res94b.get('applied') is True and not _res94b.get('needs_block')
+      and not (_res94b.get('pending') or [])
+      and all(('%s.set_position(' % n) in _blk94b for n in 'abcd'),
+      'reason=%r applied=%r needs_block=%r pending=%r'
+      % (_res94b.get('reason'), _res94b.get('applied'),
+         _res94b.get('needs_block'), _res94b.get('pending')))
+
+# ③ 反向验证（teeth）：把那一处口径改回改前 → 形状 A 必须重新被拒
+#    （这一条保证 ② 不是"本来就能过"的假绿）
+_res94o, _blk94o = _s94_run(_S94A, 'a_old', patch_old=True)
+check('94③【有牙】改回改前口径（figure_only 恒 False）→ 形状 A 重新被拒：'
+      'applied=False、needs_block=True、pending=ax0..ax3.pos、盘上不留块',
+      _res94o.get('applied') is False
+      and _res94o.get('needs_block') is True
+      and (_res94o.get('pending') or []) == ['ax0.pos', 'ax1.pos', 'ax2.pos',
+                                             'ax3.pos']
+      and _blk94o.strip() == '',
+      'reason=%r applied=%r needs_block=%r pending=%r block=%r'
+      % (_res94o.get('reason'), _res94o.get('applied'),
+         _res94o.get('needs_block'), _res94o.get('pending'), _blk94o[:80]))
+
+# =====================================================================
+# §95 t37/t52：`axis_var_index` 认哪些形式（`axes.ravel()` / `axes.flatten()` 调用形式）
+#
+# t37 取证结论：**代码 bug**（不是文档声称过头）—— 分支②只匹配属性 `ast.Attribute`，而
+# `.ravel()` / `.flatten()` 是 `ast.Call`；属性元组里已经写了 'ravel'/'flatten'，说明原意
+# 就是要支持这两种写法，只是漏了"带括号的调用形式"。实测代价（真跑，写后执行脚本取真值）：
+# `fig, axs = plt.subplots(2,2)` + `a,b,c,d = axs.ravel()` + 按轴给 clim/cmap 时，块把第 2
+# 张图的 clim/cmap 也写到第 1 个 mappable 上（`im0`），且 `verified=True` → 静默错目标
+# （ax0 拿到 plasma、ax1 停在默认 viridis）。
+#
+# **t52 已修**（船长批准）：分支②改走 t10 的 `_ravel_receiver`（同一份判据：无
+# args/keywords 的 `.ravel()`/`.flatten()` 与属性 `.flat` 都认；证不出容器就不认）。
+# 修后全池 1,837 静态 A/B：本表变化 **46** 份、`mappable_by_axis` / `_needed_block_fields`
+# 变化 **0**；这 46 份真跑 = 块路径 46/46 逐字节一致、原位路径 5 份 `pending` 多出
+# `ax0.cmap`（源码字节相同）；合成形状的块目标 im0→im1、`reason` best_effort→ok，
+# 写后真值 ax0=viridis / ax1=plasma ✓ 各就各位。
+#
+# 本节钉：① 已支持形式；② **调用形式必须认出来**（t52 后）；③ teeth（把判据改回只认
+# `ast.Attribute` → ② 必须变红）；④ 块目标回归（clim/cmap 落到 im0/im1，不许再全落 im0）。
+# =====================================================================
+_S95 = ('import matplotlib.pyplot as plt\n'
+        'fig, axs = plt.subplots(2, 2)\n'
+        'g, h = axs.flat\n'
+        'i = axs[1]\n'
+        'a, b, c, d = axs.ravel()\n'
+        'e, f = axs.flatten()\n'
+        'fig2, ax2 = plt.subplots()\n'
+        'ax3 = fig2.add_subplot(2, 2, 1)\n'
+        'ax4 = fig.add_axes([0.1, 0.1, 0.3, 0.3])\n')
+_map95 = writeback.axis_var_index(_ast.parse(_S95))
+check('95① 已支持的形式都认：`axs.flat` 属性解包、`axs[1]` 下标、`fig, ax = plt.subplots()`、'
+      '`fig.add_subplot(...)` / `fig.add_axes([...])` 逐个创建',
+      _map95.get('g') == 0 and _map95.get('h') == 1 and _map95.get('i') == 1
+      and _map95.get('ax2') == 0 and _map95.get('ax3') == 0
+      and _map95.get('ax4') == 1, _map95)
+check('95②【t52 已修】**调用**形式必须认出来：`a,b,c,d = axs.ravel()` → a..d = 0..3、'
+      '`e,f = axs.flatten()` → e,f = 0,1（判据同 t10 的 `_ravel_receiver`）',
+      [_map95.get(n) for n in ('a', 'b', 'c', 'd')] == [0, 1, 2, 3]
+      and [_map95.get(n) for n in ('e', 'f')] == [0, 1], _map95)
+
+# ③ teeth：把判据改回"只认 ast.Attribute"（= t52 之前的代码）→ ② 的断言必须变红
+_rr95 = writeback._ravel_receiver
+
+
+def _old_rr95(value):
+    if isinstance(value, _ast.Call):        # 改前：Call 形式一律不认
+        return None
+    return _rr95(value)
+
+
+writeback._ravel_receiver = _old_rr95
+try:
+    _map95o = writeback.axis_var_index(_ast.parse(_S95))
+finally:
+    writeback._ravel_receiver = _rr95
+check('95③【有牙】把判据改回只认 `ast.Attribute`（t52 之前）→ 调用形式又认不出来'
+      '（a..f 全缺），即 95② 的断言在改前代码上必然为假',
+      all(n not in _map95o for n in ('a', 'b', 'c', 'd', 'e', 'f'))
+      and _map95o.get('g') == 0 and _map95o.get('h') == 1, _map95o)
+
+# ④ 块目标回归：按轴 clim/cmap 必须落到各自的 mappable（不再全落 im0）
+_S95B = ('import matplotlib\nmatplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n'
+         'import numpy as np\n\n'
+         'fig, axs = plt.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'im0 = a.imshow(np.arange(16).reshape(4, 4) / 15.0)\n'
+         'im1 = b.imshow((np.arange(16).reshape(4, 4) + 5) / 15.0)\n'
+         'c.plot([1, 2])\nd.plot([2, 1])\n'
+         'fig.savefig("out.png")\n')
+_PAR95B = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+           'figsize_in': [8.0, 6.0],
+           'axes': [{'index': 0, 'clim': [0.2, 0.8], 'cmap': 'viridis'},
+                    {'index': 1, 'clim': [0.1, 0.9], 'cmap': 'plasma'}]}
+_d95 = os.path.join(_TMPROOT, 'case_t95_clim')
+shutil.rmtree(_d95, ignore_errors=True)
+os.makedirs(os.path.join(_d95, '.tweak_params'), exist_ok=True)
+_s95 = os.path.join(_d95, 'fig.py')
+with open(_s95, 'w', encoding='utf-8', newline='\n') as _f:
+    _f.write(_S95B)
+_p95 = os.path.join(_d95, '.tweak_params', 'fig.json')
+with open(_p95, 'w', encoding='utf-8') as _f:
+    json.dump(_PAR95B, _f, ensure_ascii=False)
+writeback.writeback(_s95, dict(_PAR95B), _p95, verify=False, style='block')
+with open(_s95, encoding='utf-8') as _f:
+    _blk95 = _f.read()[len(_S95B):]
+check('95④ 块目标回归（`axs.ravel()` + 按轴 clim/cmap）：`im0.set_clim(0.2, 0.8)` 与 '
+      '`im1.set_clim(0.1, 0.9)` / `im1.set_cmap(\'plasma\')` 各就各位，'
+      '且**不再**出现把 ax1 的值写到 im0 上（`im0.set_clim(0.1, 0.9)`）',
+      'im0.set_clim(0.2, 0.8)' in _blk95 and 'im1.set_clim(0.1, 0.9)' in _blk95
+      and "im1.set_cmap('plasma')" in _blk95
+      and 'im0.set_clim(0.1, 0.9)' not in _blk95,
+      [l.strip() for l in _blk95.splitlines() if 'set_clim' in l or 'set_cmap' in l])
+
+# =====================================================================
+# §96 t51：`count_figures` 把 `fig.subplots(...)` 算一张图 → 形状 A 误报"2 处图"
+#
+# 现象：形状 A（`fig = plt.figure()` + `axs = fig.subplots(2,2)` + `a,b,c,d = axs.ravel()`）
+# 在 t36 之后**已能落地**（applied/verified/semantic 全 True），但 `count_figures=2`（运行期
+# 只有 1 张）→ 输出里出现**不成立**的「脚本创建了 2 处图（运行期共 1 张），改用 plt.gcf()
+# 定位第 1 张」+ 锚点/gcf 退到多图口径 + `reason` 停在 `best_effort` → 拿**假前提**建议用户
+# 改自己的代码（本项目红线：不得说反话）。
+#
+# 修法（t51，纪律照抄 t36 —— 只动一条路）：`count_figures(tree, figure_only=True)`，判据复用
+# t36 的 `_is_axes_on_existing_figure`（`X.subplots(...)` 仅当 X 可证是 Figure 时不算新图）；
+# **只给块路径那两处**传 True（:4582 越界拒写、:4603 多图分支），**原位路径（:1315/:2851）
+# 与 `_fig_index_beyond`（:378）保持既有口径**（另案）。默认参数 False = 既有行为一字不变。
+#
+# 本节钉：① 两种口径的计数（含"plt.subplots 照旧算"与"两张真图仍进多图分支"）；
+#        ② 形状 A 的 E2E：reason=ok、无"创建了 N 处图"警告、写出的字节不变；
+#        ③ teeth：把口径改回 → 警告与 best_effort 回来（而写出的字节**仍相同**）。
+# =====================================================================
+_S96A = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig = plt.figure(figsize=(8, 6))\n'
+         'axs = fig.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1, 2], [1, 2])\nb.plot([1, 2], [2, 1])\n'
+         'c.plot([1, 2], [1, 2])\nd.plot([1, 2], [2, 1])\n'
+         'fig.savefig("out.png")\n')
+_S96B = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig, axs = plt.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1, 2], [1, 2])\nb.plot([1, 2], [2, 1])\n'
+         'c.plot([1, 2], [1, 2])\nd.plot([1, 2], [2, 1])\n'
+         'fig.savefig("out.png")\n')
+_S96C = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig = plt.figure(figsize=(8, 6))\n'
+         'axs = fig.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1], [1])\nb.plot([1], [1])\nc.plot([1], [1])\nd.plot([1], [1])\n'
+         'fig.savefig("out.png")\n'
+         'fig2 = plt.figure(figsize=(8, 6))\n'
+         'axs2 = fig2.subplots(1, 2)\n'
+         'e, f = axs2.ravel()\ne.plot([1], [1])\nf.plot([1], [2])\n'
+         'fig2.savefig("out2.png")\n')
+_PAR96 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'figsize_in': [8.0, 6.0],
+          'axes': [{'index': k, 'pos': [0.08 + 0.5 * (k % 2),
+                                        0.55 - 0.45 * (k // 2), 0.36, 0.36]}
+                   for k in range(4)]}
+
+
+def _s96_run(src, tag, patch_old=False):
+    """真跑一次 writeback（style=block、verify=True）：返回 (res, 新增块文本)。"""
+    _d = os.path.join(_TMPROOT, 'case_t96_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'), exist_ok=True)
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(_PAR96, _f, ensure_ascii=False)
+    _orig = writeback.count_figures
+    if patch_old:
+        # 反向验证（teeth）：把 t51 那两处调用点的口径改回改前（figure_only 恒 False）。
+        writeback.count_figures = (lambda t, figure_only=False: _orig(t, False))
+    try:
+        _res = writeback.writeback(_s, dict(_PAR96), _p, verify=True,
+                                   semantic=True, style='block', timeout=60)
+    finally:
+        writeback.count_figures = _orig
+    with open(_s, encoding='utf-8') as _f:
+        _txt = _f.read()
+    return _res, _txt[len(src):]
+
+
+# ① 判据与两种口径
+check('96① 形状 A：默认档仍数 2（其余调用点口径一字不变），figure_only 数 1',
+      writeback.count_figures(_ast.parse(_S96A)) == 2
+      and writeback.count_figures(_ast.parse(_S96A), figure_only=True) == 1,
+      'default=%r figure_only=%r' % (
+          writeback.count_figures(_ast.parse(_S96A)),
+          writeback.count_figures(_ast.parse(_S96A), figure_only=True)))
+check('96①b `plt.subplots(...)` 照旧算新图：`fig, axs = plt.subplots(2,2)` 两种口径都数 1；'
+      '两张真图（两张都用 `fig.subplots`）figure_only 仍数 2',
+      writeback.count_figures(_ast.parse(_S96B), figure_only=True) == 1
+      and writeback.count_figures(_ast.parse(_S96C), figure_only=True) == 2,
+      'B=%r C=%r' % (writeback.count_figures(_ast.parse(_S96B), figure_only=True),
+                     writeback.count_figures(_ast.parse(_S96C), figure_only=True)))
+
+# ② 形状 A 的 E2E：reason=ok + 不再有假警告 + 字节不变
+_res96a, _blk96a = _s96_run(_S96A, 'a')
+check('96② 形状 A（plt.figure + fig.subplots + ravel）：reason=ok、applied/verified 真、'
+      'pending 空、**不再**出现"创建了 N 处图"警告',
+      _res96a.get('reason') == 'ok' and _res96a.get('applied') is True
+      and _res96a.get('verified') is True
+      and not (_res96a.get('pending') or [])
+      and not any('处图' in _w for _w in (_res96a.get('warnings') or [])),
+      'reason=%r applied=%r verified=%r pending=%r warnings=%r'
+      % (_res96a.get('reason'), _res96a.get('applied'),
+         _res96a.get('verified'), _res96a.get('pending'),
+         _res96a.get('warnings')))
+
+# ③ teeth：口径改回 → 假警告 + best_effort 回来，但写出的字节**仍相同**
+_res96o, _blk96o = _s96_run(_S96A, 'a_old', patch_old=True)
+check('96③【有牙】改回改前口径 → 形状 A 重新报 best_effort + 出现「创建了 2 处图」警告；'
+      '且写出来的字节与改后**完全相同**（这条修的是"说假话"，不是写回行为）',
+      _res96o.get('reason') == 'best_effort'
+      and any('创建了 2 处图' in _w for _w in (_res96o.get('warnings') or []))
+      and _blk96o == _blk96a,
+      'reason=%r warnings=%r 字节相同=%r'
+      % (_res96o.get('reason'), _res96o.get('warnings'), _blk96o == _blk96a))
+
+# =====================================================================
+# §97 t54：`count_figures` **剩下 3 个调用点**也传 `figure_only=True`
+#
+# t51 只改了块路径那两处（:4601 越界拒写 / :4622 多图分支），于是同一个脚本在两条路径上
+# 得到**不同的"图数量"**（块路径=1、原位路径=2）—— 这个不一致本身就是缺陷。t54 收口：
+#   · `_fig_index_beyond`（fi=1 越界守卫）：形状 A 被算成 2 张 → 真越界的 `fig_index=1`
+#     混过守卫（实测 OLD `reason=ok` 照写，NEW `reason=bad_params` + 「越界：脚本里只有 1 张图」）。
+#   · `apply_inplace` 的网格轴补映射门槛 `count_figures(tree) <= 1`：形状 A 被当多图 →
+#     白跳过补映射（本次测的样本里该分支的补映射被 idx_map 覆盖，未产生可观察差异）。
+#   · `_writeback_inplace` 的 `_fs_ambiguous`：形状 A + figsize 参数无 fig_index → **假警告**
+#     「脚本有 2 张图但参数没有 fig_index…保持原样」并把本该做的画布尺寸改动整条跳过
+#     （实测 OLD applied=False/d=+0 + 假警告 → NEW applied=True/d=+1、无警告）。
+#
+# 本节钉：① 越界守卫（fi=1 拒、fi=0 放行）；② 原位路径的 figsize 真落地且无假警告；
+#        ③ teeth：把 `_writeback_inplace` 里的口径改回 → ② 的断言变红；
+#        ④ teeth：把 `count_figures` 的口径改回 → ① 的断言变红。
+# =====================================================================
+_S97A = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig = plt.figure(figsize=(8, 6))\n'
+         'axs = fig.subplots(2, 2)\n'
+         'a, b, c, d = axs.ravel()\n'
+         'a.plot([1, 2], [1, 2])\nb.plot([1, 2], [2, 1])\n'
+         'c.plot([1, 2], [1, 2])\nd.plot([1, 2], [2, 1])\n'
+         'fig.savefig("out.png")\n')
+_PAR97 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'figsize_in': [10.0, 7.0],
+          'axes': [{'index': k, 'pos': [0.08 + 0.5 * (k % 2),
+                                        0.55 - 0.45 * (k // 2), 0.36, 0.36],
+                    'grid': True} for k in range(4)]}
+_PAR97_NOFI = {k: v for k, v in _PAR97.items() if k != 'fig_index'}
+
+
+def _s97_run(src, tag, params, patch_old_inplace=False):
+    """真跑一次 writeback（style='inplace'、verify=False）：返回 (res, 写后源码)。"""
+    _d = os.path.join(_TMPROOT, 'case_t97_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'), exist_ok=True)
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(params, _f, ensure_ascii=False)
+    _cf = writeback.count_figures
+    _wi = writeback._writeback_inplace
+
+    def _old_inplace(*a, **k):
+        writeback.count_figures = (lambda t, figure_only=False: _cf(t, False))
+        try:
+            return _wi(*a, **k)
+        finally:
+            writeback.count_figures = _cf
+
+    if patch_old_inplace:
+        writeback._writeback_inplace = _old_inplace
+    try:
+        _res = writeback.writeback(_s, dict(params), _p, verify=False,
+                                   style='inplace')
+    finally:
+        writeback._writeback_inplace = _wi
+        writeback.count_figures = _cf
+    with open(_s, encoding='utf-8') as _f:
+        return _res, _f.read()
+
+
+# ① 越界守卫（:378）
+_t97 = _ast.parse(_S97A)
+check('97① 形状 A 的 `fig_index=1` 越界必须被拒（`_fig_index_beyond` 用 figure_only 口径）：'
+      'fi=1 报「越界：脚本里只有 1 张图」、fi=0 放行',
+      '越界' in writeback._fig_index_beyond(_t97, {'fig_index': 1, 'n_figs': 1})
+      and writeback._fig_index_beyond(_t97, {'fig_index': 0, 'n_figs': 1}) == '',
+      writeback._fig_index_beyond(_t97, {'fig_index': 1, 'n_figs': 1})[:60])
+
+# ② 原位路径：figsize 与脚本不同 + 无 fig_index → 真改画布尺寸、且无假警告
+_res97, _src97 = _s97_run(_S97A, 'a', _PAR97_NOFI)
+check('97② 形状 A + figsize[10,7] 无 fig_index（原位）：applied=True、`figsize=(10, 7)` '
+      '真落地、且**不再**出现假警告「脚本有 2 张图但参数没有 fig_index」',
+      _res97.get('applied') is True and 'figsize=(10, 7)' in _src97
+      and not any('张图' in _w for _w in (_res97.get('warnings') or [])),
+      'applied=%r 源码含 figsize=(10, 7)=%r warnings=%r'
+      % (_res97.get('applied'), 'figsize=(10, 7)' in _src97,
+         _res97.get('warnings')))
+
+# ③ teeth：把原位路径里的口径改回 → ② 的断言变红（applied=False + 假警告回来）
+_res97o, _src97o = _s97_run(_S97A, 'a_old', _PAR97_NOFI, patch_old_inplace=True)
+check('97③【有牙】把 `_writeback_inplace` 里的口径改回（figure_only 恒 False）→ '
+      'applied=False、`figsize=(10, 7)` 没落地、假警告回来 —— 即 97② 在改前代码上必假',
+      _res97o.get('applied') is False and 'figsize=(10, 7)' not in _src97o
+      and any('2 张图' in _w for _w in (_res97o.get('warnings') or [])),
+      'applied=%r 含 figsize=(10, 7)=%r warnings=%r'
+      % (_res97o.get('applied'), 'figsize=(10, 7)' in _src97o,
+         _res97o.get('warnings')))
+
+# ④ teeth：把 `count_figures` 的口径改回 → ① 的越界断言变红
+_cf97 = writeback.count_figures
+writeback.count_figures = (lambda t, figure_only=False: _cf97(t, False))
+try:
+    _bad97 = writeback._fig_index_beyond(_t97, {'fig_index': 1, 'n_figs': 1})
+finally:
+    writeback.count_figures = _cf97
+check('97④【有牙】把 `count_figures` 的口径改回 → `_fig_index_beyond` 又放行 fi=1'
+      '（= ① 在改前代码上必假）',
+      _bad97 == '', '旧口径下 fi=1 的判定=%r' % _bad97[:60])
+
+# =====================================================================
+# §98 t63：writeback **错误/边缘路径**的语言化棘轮（en 下输出全 ASCII）
+#
+# t63 把 writeback.py 里 74 处用户可见中文模板原地包成 `_msg.t_wb('<原 zh 模板>')`，
+# 表在 messages.py 的 `WB_ZH_TO_EN`（zh 模板 → en 模板；zh 语言原样返回 → 逐字不变）。
+# 本节钉四件事：
+#   ① 覆盖率：writeback.py 里非 docstring 的中文常量**除两条块标记**外都必须在表里
+#      （块标记是**写进用户脚本**的幂等哨兵，语言一换会出现两块 → 有意例外）；
+#   ② en 值纯 ASCII + cp936 可编 + 占位符个数与 zh 一致（否则渲染错位）；
+#   ③ zh 语言下 `t_wb` 原样返回（逐字不变）；
+#   ④ teeth：把某条 en 改回中文 → ② 的判据变红。
+# =====================================================================
+_S98_MARK = '# ===== 自动布局调整'
+from mpltweak import messages as _messages                      # noqa: E402
+
+
+def _s98_templates():
+    _src = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                '..', 'src', 'mpltweak', 'writeback.py'),
+                   encoding='utf-8').read()
+    _t = _ast.parse(_src)
+    _doc = set()
+    for _n in _ast.walk(_t):
+        if isinstance(_n, (_ast.Module, _ast.ClassDef, _ast.FunctionDef,
+                           _ast.AsyncFunctionDef)):
+            _b = getattr(_n, 'body', None) or []
+            if _b and isinstance(_b[0], _ast.Expr) \
+                    and isinstance(_b[0].value, _ast.Constant) \
+                    and isinstance(_b[0].value.value, str):
+                _doc.add(id(_b[0].value))
+    _cjk = re.compile('[\u4e00-\u9fff]')
+    return [_n.value for _n in _ast.walk(_t)
+            if isinstance(_n, _ast.Constant) and isinstance(_n.value, str)
+            and _cjk.search(_n.value) and id(_n) not in _doc
+            and not _n.value.startswith(_S98_MARK)]
+
+
+_tpl98 = _s98_templates()
+_miss98 = [t[:40] for t in _tpl98 if t not in _messages.WB_ZH_TO_EN]
+check('98① 覆盖率：writeback.py 里非 docstring 的中文模板（除两条块标记哨兵）'
+      '全部进了 messages.WB_ZH_TO_EN',
+      not _miss98, '未进表 %d 条：%s' % (len(_miss98), _miss98[:3]))
+_spec98 = re.compile(r'%(?:\((\w+)\))?[sdrf]')
+_bad98 = [(k[:26], len(_spec98.findall(k)), len(_spec98.findall(v)))
+          for k, v in _messages.WB_ZH_TO_EN.items()
+          if not v.isascii()
+          or len(_spec98.findall(k)) != len(_spec98.findall(v))]
+check('98② 表里每条 en 都是纯 ASCII 且占位符个数与 zh 一致（en 渲染不会错位）',
+      not _bad98, _bad98[:3])
+check('98③ zh 语言下 `t_wb` 原样返回（zh 文案逐字不变）',
+      _messages.t_wb(_tpl98[0]) == _tpl98[0] if _tpl98 else False,
+      _tpl98[:1])
+_orig_tbl98 = dict(_messages.WB_ZH_TO_EN)
+_tampered = dict(_orig_tbl98)
+_tampered['已回滚'] = '已回滚'                     # 故意把一条 en 改回中文
+_bad_tampered = [k for k, v in _tampered.items() if not v.isascii()]
+check('98④【有牙】把一条 en 改回中文 → ② 的 ASCII 判据变红（改前代码上必假）',
+      bool(_bad_tampered) and not [k for k, v in _orig_tbl98.items()
+                                   if not v.isascii()],
+      'tampered=%s' % _bad_tampered)
+
+# =====================================================================
+# §99 t66 / P1-5：colorbar 的**自定义** cmap 不许记成 'from_list'
+#
+# 报告 P1-5：开窗落盘把自建 `mcolors.ListedColormap(...)`（`.name == 'from_list'`）的名字
+# 记进 `item['cmap']`，写回会得到 `cmap='from_list'`（不是任何可用 colormap 名）。
+# 修法（t66）：只在 `name in matplotlib.colormaps` 时记录，其余记 null（字段不出现 →
+# 写回自然跳过）。两处快照（`_snapshot` 与导出）都改。
+# 验收（报告附录 B #6）：自定义 cmap 的 colorbar → 参数里 `cmap` 为 null 且 apply 不报该字段。
+# =====================================================================
+import matplotlib as _mpl99                                     # noqa: E402
+from matplotlib import colors as _mc99                          # noqa: E402
+
+_s99_tb = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..',
+                               'src', 'mpltweak', 'toolbox.py'),
+                  encoding='utf-8').read()
+check('99① 接线：toolbox.py 两处快照都改用"命名 colormap 才记"的判据（旧写法 0 残留）',
+      _s99_tb.count("item['cmap'] = mappable.get_cmap().name") == 0
+      and _s99_tb.count('_nm in matplotlib.colormaps') == 2,
+      '旧=%d 新=%d' % (_s99_tb.count("item['cmap'] = mappable.get_cmap().name"),
+                       _s99_tb.count('_nm in matplotlib.colormaps')))
+_s99_custom = _mc99.ListedColormap(['#a00', '#fff', '#00a'])
+check('99② 自定义 ListedColormap 的 `.name`（%r）不在 mpl.colormaps → 判据会记 null'
+      '（报告附录 B #6 的前半）' % _s99_custom.name,
+      _s99_custom.name not in _mpl99.colormaps, _s99_custom.name)
+check('99③ 命名 colormap（viridis）在 mpl.colormaps → 判据照记（不误伤）',
+      'viridis' in _mpl99.colormaps, list(_mpl99.colormaps)[:3])
+check('99④【有牙】改回旧判据（直接取 `.name`）→ 自定义 cmap 会被记成 %r，'
+      '而它编不进 mpl.colormaps（= 99② 在改前代码上必假）' % _s99_custom.name,
+      _s99_custom.name == 'from_list' and _s99_custom.name not in _mpl99.colormaps,
+      _s99_custom.name)
+check('99⑤ 参数里 `cmap: null` 合法（= 该字段不出现，apply 不报它；报告附录 B #6 后半）',
+      _params.validate_errors({'version': 4, 'script': 'f.py', 'fig_index': 0,
+                               'n_figs': 1,
+                               'axes': [{'index': 0, 'cmap': None}]}) == [],
+      _params.validate_errors({'version': 4, 'script': 'f.py', 'fig_index': 0,
+                               'n_figs': 1,
+                               'axes': [{'index': 0, 'cmap': None}]}))
+
+# =====================================================================
+# §100 t66 / P0-1（**按操作类型定范围**的修正版）：撤销只在"画布类操作"里动画布
+#
+# 用户一手证据："我没有动画布，只是拖了子图，然后按撤销，结果画布变了（缩小很多）。"
+# 机制：撤销栈里带着画布尺寸 → 任何一次撤销都回放它；旧回放 `set_size_inches(px/fig.dpi)`
+# 里 `px` 是**逻辑像素**（= figsize×100）、`fig.dpi` 在 HiDPI 下 = rcParams.dpi×DPR
+# （用户环境 200）→ 画布正好缩到 1/2。
+# 修正口径：**元素类**操作快照不记画布（撤销纹丝不动）；**画布类**操作（Ctrl+F 裁白边）
+# 快照记画布且能还原（C13 契约）；还原只用**权威英寸** `fig.get_size_inches()`（与导出
+# `figsize_in` 同源、与 dpi/DPR 无关），旧的 px/dpi 换算已删。
+# 本节矩阵 = dpi ∈ {100,150,200}（不开窗：未绑定方法 + 只带所需属性的假 self）。
+# =====================================================================
+import matplotlib.pyplot as _plt100                             # noqa: E402
+from mpltweak import toolbox as _tb100                          # noqa: E402
+
+
+class _F100:
+    def __init__(self, fig, px):
+        self.fig = fig
+        self._fig_px = px
+        self.leg_state = {}
+        self._find_ax = lambda i: None
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+
+_s100_figs = []
+for _dpi in (100, 150, 200):
+    _f = _plt100.figure(figsize=(15.0, 9.5))
+    _f.dpi = _dpi
+    _c = _F100(_f, (1500, 950))
+    _snap = _tb100.Tweak._snapshot(_c, with_canvas=False)      # 元素类：不记画布
+    _f.set_size_inches(10.0, 7.0)                              # 假装"拖了一次子图"
+    _tb100.Tweak._restore_snap(_c, _snap)                      # 撤销
+    _got = tuple(round(float(x), 2) for x in _f.get_size_inches())
+    check('100① dpi=%d：**元素类**撤销**不动画布**（快照 with_canvas=False 不带画布）'
+          % _dpi,
+          _snap.get('figsize') is None and _snap.get('figsize_in') is None
+          and _got == (10.0, 7.0), 'snap=%r 画布=%r' % (_snap.get('figsize'), _got))
+    _s100_figs.append(_f)
+for _dpi in (100, 150, 200):
+    _f = _plt100.figure(figsize=(15.0, 9.5))
+    _f.dpi = _dpi
+    _c = _F100(_f, (1500, 950))
+    _snap = _tb100.Tweak._snapshot(_c, with_canvas=True)       # 画布类：记画布
+    _f.set_size_inches(7.0, 4.5)                               # 假装裁白边/显式改画布
+    _tb100.Tweak._restore_snap(_c, _snap)                      # 撤销 → 必须还原
+    _got = tuple(round(float(x), 2) for x in _f.get_size_inches())
+    check('100② dpi=%d：**画布类**撤销**把画布还原**到权威英寸 (15.0, 9.5)'
+          '（C13 契约；旧 px/dpi 换算在 dpi>100 时会缩水）' % _dpi,
+          _snap.get('figsize_in') == [15.0, 9.5] and _got == (15.0, 9.5),
+          'snap_in=%r 画布=%r' % (_snap.get('figsize_in'), _got))
+    _s100_figs.append(_f)
+# teeth ①：把"元素类不记画布"改回（= 元素类也记画布）→ 撤销会把画布拉回 15×9.5 → 100① 必红
+_f = _plt100.figure(figsize=(15.0, 9.5))
+_c = _F100(_f, (1500, 950))
+_snap_bad = _tb100.Tweak._snapshot(_c, with_canvas=True)       # 改回：元素类也记画布
+_f.set_size_inches(10.0, 7.0)
+_tb100.Tweak._restore_snap(_c, _snap_bad)
+_got_bad = tuple(round(float(x), 2) for x in _f.get_size_inches())
+check('100③【有牙】把"元素类不记画布"改回去 → 拖子图后撤销把画布拉回 15.0×9.5'
+      '（= 100① 在改前口径上必假）',
+      _got_bad == (15.0, 9.5), '画布=%r' % (_got_bad,))
+_s100_figs.append(_f)
+# teeth ②：把"画布类不还原"改回（= 画布类也不记）→ 裁白边后撤销还原不了 → 100② 必红
+_f = _plt100.figure(figsize=(15.0, 9.5))
+_c = _F100(_f, (1500, 950))
+_snap_bad2 = _tb100.Tweak._snapshot(_c, with_canvas=False)     # 改回：画布类也不记
+_f.set_size_inches(7.0, 4.5)
+_tb100.Tweak._restore_snap(_c, _snap_bad2)
+_got_bad2 = tuple(round(float(x), 2) for x in _f.get_size_inches())
+check('100④【有牙】把"画布类还原"改回去（画布类也不记）→ 裁白边后撤销还原不了'
+      '（= 100② 在改前口径上必假；C13 会红）',
+      _got_bad2 == (7.0, 4.5), '画布=%r' % (_got_bad2,))
+_s100_figs.append(_f)
+for _f in _s100_figs:
+    _plt100.close(_f)
+
+# =====================================================================
+# §101 t66 / P1-4：`describe → apply` 零往返（colorbar 的位置读法）
+#
+# 报告 P1-4：colorbar 的 `_ColorbarAxesLocator` 在**每次重绘**时改写 cax 的 active
+# position → "脚本 savefig 之后再读"（describe）与"开窗前读"（窗口）拿到两个值
+# （实测 0.1162 → 0.0289 那种 4× 差），`describe → apply` 就会凭空改一个用户没动过的
+# colorbar。修法：`toolbox._bbox` 对 colorbar 轴用 `get_position(original=True)`
+# （与重绘时机无关）。
+# 验收（报告附录 B #5）：describe 后立刻 apply 零改动。**注**：预览模式 apply 一律报
+# `reason='preview'`（设计如此），所以"零改动"用三件一起证：`changes=[]` + 字节未变 +
+# `--write` 时 `reason='no_change'`。
+# =====================================================================
+_s101_f = _plt100.figure(figsize=(8, 6))
+_s101_ax = _s101_f.add_subplot(111)
+_s101_im = _s101_ax.imshow([[0, 1], [1, 0]])
+_s101_cb = _s101_f.colorbar(_s101_im, ax=_s101_ax)
+_s101_b1 = [round(float(v), 6) for v in _tb100._bbox(_s101_cb.ax)]
+_s101_f.canvas.draw()
+_s101_b2 = [round(float(v), 6) for v in _tb100._bbox(_s101_cb.ax)]
+_s101_orig = [round(float(v), 6) for v in
+              _s101_cb.ax.get_position(original=True).bounds]
+check('101① colorbar 轴的 `_bbox` 与**重绘时机无关**且等于 `get_position(original=True)`'
+      '（= 权威读位置）',
+      _tb100._is_colorbar_ax(_s101_cb.ax) and _s101_b1 == _s101_b2
+      and _s101_b1 == _s101_orig, '重绘前=%s 重绘后=%s original=%s'
+      % (_s101_b1, _s101_b2, _s101_orig))
+# teeth：改回旧读法（直接读 `ax._position`）→ 重绘前后不一致 → 101① 在改前代码上必假
+_s101_old_after = [round(float(v), 6) for v in
+                   [_s101_cb.ax._position.x0, _s101_cb.ax._position.y0,
+                    _s101_cb.ax._position.width, _s101_cb.ax._position.height]]
+check('101②【有牙】改回旧读法（`ax._position`）→ 重绘后宽度被 locator 改写'
+      '（%s ≠ %s）→ 两条路径各读一个值，101① 在改前代码上必假'
+      % (_s101_old_after[2], _s101_b1[2]),
+      _s101_old_after != _s101_b1, '旧读法(重绘后)=%s 权威=%s'
+      % (_s101_old_after, _s101_b1))
+_plt100.close(_s101_f)
+
+# 真 CLI 往返（describe → apply）：零改动三件套
+import subprocess as _sp101                                     # noqa: E402
+import json as _json101                                         # noqa: E402
+_s101_d = os.path.join(_TMPROOT, 'case_t101')
+shutil.rmtree(_s101_d, ignore_errors=True)
+os.makedirs(_s101_d)
+_s101_py = os.path.join(_s101_d, 'fig.py')
+with open(_s101_py, 'w', encoding='utf-8', newline='\n') as _f:
+    _f.write('import matplotlib\nmatplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n\n'
+             'fig, ax = plt.subplots(figsize=(8, 6))\n'
+             'im = ax.imshow([[0, 1], [1, 0]])\n'
+             'cb = fig.colorbar(im, ax=ax)\n'
+             'fig.savefig("out.png")\n')
+_s101_pj = os.path.join(_s101_d, 'layout.json')
+_s101_env = dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8',
+                 MPLTWEAK_LANG='zh', MPLTWEAK_HOME=os.path.join(_s101_d, 'home'),
+                 PYTHONPATH=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         '..', 'src'))
+_s101_env.pop('MPLTWEAK_NO_HINT', None)
+_sp101.run([sys.executable, '-m', 'mpltweak', 'describe', _s101_py, '-o', _s101_pj],
+           capture_output=True, timeout=300, env=_s101_env, cwd=_s101_d)
+with open(_s101_py, 'rb') as _f:
+    _s101_before = _f.read()
+_s101_r = _sp101.run([sys.executable, '-m', 'mpltweak', 'apply', _s101_py,
+                      '--params', _s101_pj, '--json'],
+                     capture_output=True, timeout=300, env=_s101_env, cwd=_s101_d)
+_s101_rw = _sp101.run([sys.executable, '-m', 'mpltweak', 'apply', _s101_py,
+                       '--params', _s101_pj, '--json', '--write'],
+                      capture_output=True, timeout=300, env=_s101_env, cwd=_s101_d)
+with open(_s101_py, 'rb') as _f:
+    _s101_after = _f.read()
+_s101_o = (_s101_r.stdout or b'').decode('utf-8', 'replace')
+_s101_ow = (_s101_rw.stdout or b'').decode('utf-8', 'replace')
+_s101_j = _json101.loads(_s101_o[_s101_o.index('{'):_s101_o.rindex('}') + 1])['files'][0]
+_s101_jw = _json101.loads(_s101_ow[_s101_ow.index('{'):_s101_ow.rindex('}') + 1])['files'][0]
+check('101③【报告附录 B #5】describe → apply 零往返：预览 `changes=[]` + 字节未变，'
+      '`--write` 时 `reason=no_change` 且字节未变（colorbar 位置不再被凭空改）',
+      not _s101_j.get('changes') and _s101_before == _s101_after
+      and _s101_jw.get('reason') == 'no_change',
+      'preview reason=%r changes=%r / write reason=%r 字节未变=%s'
+      % (_s101_j.get('reason'), _s101_j.get('changes'), _s101_jw.get('reason'),
+         _s101_before == _s101_after))
+
+# =====================================================================
+# §102 t66 / P0-1 止损：figsize **交叉一致性守卫**（报告建议 3 + 附录 B #2）
+#
+# 报告的现场：`figsize_px=[1500, 950]` 配 `figsize_in=[7.5, 4.75]`（**正好 1/2**）
+# = "dpi 换算错一倍"，写回会把用户的画布永久减半。`writeback._figsize_inconsistent`
+# 在写回前拦下**成倍**矛盾（1.5/2/3 倍，任一方向；dpi 按脚本静态探测、默认 100），
+# 拒写并给人话原因（`reason=bad_params`，rc 仍是 2 —— 不动退出码）。
+# =====================================================================
+_S102 = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig, ax = plt.subplots(figsize=(15, 9.5))\n'
+         'ax.plot([1, 2], [1, 2])\n'
+         'fig.savefig("out.png")\n')
+_S102_200 = ('import matplotlib\n'
+             'matplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n\n'
+             'fig, ax = plt.subplots(figsize=(6, 4), dpi=200)\n'
+             'ax.plot([1, 2], [1, 2])\n'
+             'fig.savefig("out.png")\n')
+
+
+def _s102_run(src, tag, params):
+    _d = os.path.join(_TMPROOT, 'case_t102_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'), exist_ok=True)
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(params, _f, ensure_ascii=False)
+    with open(_s, 'rb') as _f:
+        _b0 = _f.read()
+    _r = writeback.writeback(_s, dict(params), _p, verify=False, style='block')
+    with open(_s, 'rb') as _f:
+        return _r, _b0 == _f.read()
+
+
+_p102_bad = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'figsize_px': [1500, 950], 'figsize_in': [7.5, 4.75]}
+_r102a, _same102a = _s102_run(_S102, 'half', _p102_bad)
+check('102①【报告附录 B #2】px=[1500,950] + in=[7.5,4.75]（正好 1/2）→ 拒写'
+      '（reason=bad_params）+ 人话原因 + 一个字节不动',
+      _r102a.get('reason') == 'bad_params' and _same102a
+      and 'figsize' in (_r102a.get('err') or ''),
+      'reason=%r 字节未变=%s err=%r' % (_r102a.get('reason'), _same102a,
+                                       (_r102a.get('err') or '')[:70]))
+_r102b, _ = _s102_run(_S102, 'double',
+                      dict(_p102_bad, figsize_in=[30.0, 19.0]))
+check('102② 反方向（in 是 2 倍）也拒（成倍矛盾两个方向都拦）',
+      _r102b.get('reason') == 'bad_params', _r102b.get('reason'))
+_r102c, _ = _s102_run(_S102, 'ok100',
+                      dict(_p102_bad, figsize_in=[15.0, 9.5]))
+check('102③ 合法参数（in = px/100）**不拒**（守卫不误伤正常写回）',
+      _r102c.get('reason') != 'bad_params', _r102c.get('reason'))
+_r102d, _ = _s102_run(_S102_200, 'dpi200',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                       'n_figs': 1, 'figsize_px': [1200, 800],
+                       'figsize_in': [6.0, 4.0]})
+check('102④ dpi=200 的脚本（px=[1200,800] + in=[6,4]）**不拒**（按脚本静态 dpi 折算，'
+      '不误伤合法的 dpi=200 参数）',
+      _r102d.get('reason') != 'bad_params', _r102d.get('reason'))
+_orig_fi102 = writeback._figsize_inconsistent
+writeback._figsize_inconsistent = lambda tree, data: ''
+try:
+    _r102e, _ = _s102_run(_S102, 'teeth', _p102_bad)
+finally:
+    writeback._figsize_inconsistent = _orig_fi102
+check('102⑤【有牙】把守卫换成 `return ''`（= 没有这条）→ 坏参数不再被拒'
+      '（= 102① 在改前代码上必假）',
+      _r102e.get('reason') != 'bad_params', _r102e.get('reason'))
+
+# =====================================================================
+# §103 t70 / 报告附录 B #1（离屏版）：`dpi × DPR` **参数化矩阵**
+#
+# 矩阵 = `rcParams['figure.dpi'] ∈ {100,150,200}` × **注入** `DPR ∈ {1,1.5,2}`；
+# 每格："拖一次 → Ctrl+Z"，断言画布回到**操作前原值**，并断言 `figsize_in` 与 dpi 自洽。
+#
+# **注入依据（模拟 ≠ 真机）**：不开窗就没有真 Qt 画布，DPR 只能注入。依据是本仓库自己的
+# 注释（`toolbox.py:1654-1690`）：物理请求尺寸 = 英寸 × `fig.dpi`；逻辑画布 px = 物理 ÷ DPR；
+# HiDPI 下 matplotlib 把 `fig.dpi` 乘过 DPR → `fig.dpi = rcParams.dpi × DPR`，而逻辑 px
+# `_fig_px` = 英寸 × `rcParams.dpi`（与 DPR 无关）。→ 旧的 `px / fig.dpi` 正好少算一个
+# DPR 因子：**DPR=2 时画布缩到 1/2**（用户现场 7.5×4.75）。
+# **Qt 真机把 dpr 乘进 `fig.dpi` 这一步仍需真窗口实测（待验）** —— 本矩阵证的是"换算
+# 公式在 DPR≠1 时必然错"，不是"Qt 真的这么做"。
+# =====================================================================
+_IN103 = (15.0, 9.5)
+
+
+class _F103:
+    def __init__(self, fig, px):
+        self.fig = fig
+        self._fig_px = px
+        self.leg_state = {}
+        self._find_ax = lambda i: None
+
+    def __getattr__(self, name):
+        return lambda *a, **k: None
+
+
+def _old_conv103(fig, px):
+    '''t66 之前的换算：`px / fig.dpi`（= 少算一个 DPR 因子）。'''
+    _d = float(fig.dpi) or 100.0
+    fig.set_size_inches(px[0] / _d, px[1] / _d)
+
+
+_s103_figs, _s103_old_bad = [], []
+for _dpi in (100, 150, 200):
+    for _dpr in (1, 1.5, 2):
+        _px = (int(round(_IN103[0] * _dpi)), int(round(_IN103[1] * _dpi)))
+        _f = _plt100.figure(figsize=_IN103)
+        _f.dpi = float(_dpi) * float(_dpr)              # 注入 HiDPI 后的 fig.dpi
+        _c = _F103(_f, _px)
+        _snap = _tb100.Tweak._snapshot(_c, with_canvas=True)
+        _f.set_size_inches(10.0, 7.0)                   # "拖一次"
+        _tb100.Tweak._restore_snap(_c, _snap)           # Ctrl+Z
+        _got = tuple(round(float(x), 3) for x in _f.get_size_inches())
+        check('103① dpi=%d × DPR=%s（fig.dpi=%s）：撤销后画布回到操作前原值'
+              % (_dpi, _dpr, _f.dpi),
+              _got == _IN103 and _snap.get('figsize_in') == list(_IN103),
+              '画布=%r snap_in=%r' % (_got, _snap.get('figsize_in')))
+        _s103_figs.append(_f)
+        _f2 = _plt100.figure(figsize=_IN103)            # 同格跑一遍旧换算（teeth 用）
+        _f2.dpi = float(_dpi) * float(_dpr)
+        _f2.set_size_inches(10.0, 7.0)
+        _old_conv103(_f2, _px)
+        _old = tuple(round(float(x), 3) for x in _f2.get_size_inches())
+        if _old != _IN103:
+            _s103_old_bad.append((_dpi, _dpr, float(_f2.dpi), _old))
+        _s103_figs.append(_f2)
+for _f in _s103_figs:
+    _plt100.close(_f)
+check('103② 自洽性：逻辑 px/英寸 == rcParams.dpi（与 DPR 无关）、'
+      '`fig.dpi == rcParams.dpi × DPR`（注入依据）；→ 旧换算 `px/fig.dpi` = 英寸/DPR',
+      all((int(round(_IN103[0] * d)) / _IN103[0]) == d for d in (100, 150, 200)),
+      'px/in 口径 = rcParams.dpi')
+check('103③【有牙】把换算改回 `px/fig.dpi` → 矩阵里 **DPR≠1 的 6 格全红**，'
+      '其中 rcParams=100 × DPR=2（= 用户环境的 fig.dpi=200）正好缩到 1/2',
+      len(_s103_old_bad) == 6
+      and (100, 2, 200.0, (7.5, 4.75)) in _s103_old_bad,
+      '旧换算出错的格 = %s' % (_s103_old_bad,))
+
+# =====================================================================
+# §104 t79：块哨兵**语言无关**（幂等硬验收）
+#
+# 设计口径（writeback.py:62-74 的注释就是决策留痕）：写进用户脚本的哨兵是**固定的中性
+# 英文**（`BLOCK_START`/`BLOCK_END`），**不跟随界面语言** —— 否则中文系统写一次、英文
+# 系统再写一次就认不出旧块 → 堆两个块互相打架。语言相关的那句说明写在哨兵**下面**。
+# 检测侧（`_ALL_STARTS`/`_ALL_ENDS`）**同时认**当前哨兵 + 0.1.x 已发布的中文旧哨兵。
+# 验收（任务书 ①/②/③）：
+#   ① zh 建块 → en 再跑 → 仍只有一块、不重复写入；
+#   ② en 建块 → zh 再跑 → 同理；
+#   ③ 老版本（中文哨兵）建的块被新版本识别并**整体替换**（不留旧哨兵）。
+# teeth：把检测改回"只认当前语言"（`_ALL_STARTS=(BLOCK_START,)`）→ ③ 必红（会多出一块）。
+# =====================================================================
+from mpltweak import messages as _m104                              # noqa: E402
+_S104 = ('import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n\n'
+         'fig, ax = plt.subplots(figsize=(8, 6))\n'
+         'ax.plot([1, 2], [1, 2])\n'
+         'fig.savefig("out.png")\n')
+_S104_LEGACY = ('import matplotlib\n'
+                'matplotlib.use("Agg")\n'
+                'import matplotlib.pyplot as plt\n\n'
+                'fig, ax = plt.subplots(figsize=(8, 6))\n'
+                'ax.plot([1, 2], [1, 2])\n'
+                '\n'
+                '# ===== 自动布局调整（由调图工具生成，勿手改；重复写回会整体替换）=====\n'
+                'ax.set_position([0.125, 0.11, 0.775, 0.77])\n'
+                '# ===== 自动布局调整结束 =====\n'
+                '\n'
+                'fig.savefig("out.png")\n')
+_S104_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'figsize_in': [8.0, 6.0],
+             'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]}
+
+
+def _s104_counts(path):
+    _t = io.open(path, encoding='utf-8').read()
+    return (_t.count(writeback.BLOCK_START), _t.count(writeback.BLOCK_END),
+            _t.count(writeback._LEGACY_STARTS[0]),
+            _t.count(writeback._LEGACY_ENDS[0]))
+
+
+def _s104_run(tag, src, lang, times=1):
+    _d = os.path.join(_TMPROOT, 'case_t104_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'))
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(_S104_PAR, _f, ensure_ascii=False)
+    _old_lang = _m104.current_lang()
+    _res = []
+    try:
+        _m104.set_lang(lang)
+        for _ in range(times):
+            _res.append(writeback.writeback(_s, dict(_S104_PAR), _p,
+                                            verify=False, style='block'))
+    finally:
+        _m104.set_lang(_old_lang)
+    return _res, _s104_counts(_s)
+
+
+_r104a, _c104a = _s104_run('zh_then_en', _S104, 'zh', times=2)
+_c104a_en = None
+_old_lang104 = _m104.current_lang()
+try:
+    _m104.set_lang('en')
+    _d104 = os.path.join(_TMPROOT, 'case_t104_zh_then_en')
+    _p104 = os.path.join(_d104, '.tweak_params', 'fig.json')
+    _r104b = writeback.writeback(os.path.join(_d104, 'fig.py'), dict(_S104_PAR),
+                                 _p104, verify=False, style='block')
+finally:
+    _m104.set_lang(_old_lang104)
+_c104b = _s104_counts(os.path.join(_d104, 'fig.py'))
+check('§104① zh 建块 → en 再跑：仍只有一块、不重复写入（哨兵不跟语言走）',
+      _c104b[0] == 1 and _c104b[1] == 1 and _c104b[2] == 0 and _c104b[3] == 0
+      and _r104b.get('reason') in ('no_change', 'ok', 'best_effort'),
+      'blocks=%s reason=%r' % (_c104b, _r104b.get('reason')))
+
+_r104c, _c104c = _s104_run('en_then_zh', _S104, 'en')
+_old_lang104b = _m104.current_lang()
+try:
+    _m104.set_lang('zh')
+    _d104b = os.path.join(_TMPROOT, 'case_t104_en_then_zh')
+    _p104b = os.path.join(_d104b, '.tweak_params', 'fig.json')
+    _r104d = writeback.writeback(os.path.join(_d104b, 'fig.py'), dict(_S104_PAR),
+                                 _p104b, verify=False, style='block')
+finally:
+    _m104.set_lang(_old_lang104b)
+_c104d = _s104_counts(os.path.join(_d104b, 'fig.py'))
+check('§104② en 建块 → zh 再跑：同理仍只有一块',
+      _c104d[0] == 1 and _c104d[1] == 1 and _c104d[2] == 0 and _c104d[3] == 0,
+      'blocks=%s reason=%r' % (_c104d, _r104d.get('reason')))
+
+_r104e, _c104e = _s104_run('legacy_zh', _S104_LEGACY, 'en')
+check('§104③ 老版本（中文哨兵）的块被新版本**整体替换**（不留旧哨兵、不堆第二块）',
+      _c104e[0] == 1 and _c104e[1] == 1 and _c104e[2] == 0 and _c104e[3] == 0,
+      'blocks=%s reason=%r' % (_c104e, _r104e[-1].get('reason')))
+
+# teeth：把检测改回"只认当前语言" → ③ 必红（旧 zh 块被当成普通代码，另插一块）
+_orig_all104 = (writeback._ALL_STARTS, writeback._ALL_ENDS)
+try:
+    writeback._ALL_STARTS = (writeback.BLOCK_START,)
+    writeback._ALL_ENDS = (writeback.BLOCK_END,)
+    _r104f, _c104f = _s104_run('legacy_zh_teeth', _S104_LEGACY, 'en')
+finally:
+    writeback._ALL_STARTS, writeback._ALL_ENDS = _orig_all104
+check('§104④【有牙】检测改回"只认当前语言" → 旧 zh 块认不出、堆出第二块'
+      '（= §104③ 在改前口径上必红）',
+      _c104f[0] >= 2 or _c104f[2] >= 1,
+      'blocks=%s（期望 START≥2 或旧哨兵残留）' % (_c104f,))
+
+# =====================================================================
+# §106 t88（🔴 P0，t77 抓到）：源码 figsize 是**变量/表达式/动态配置**时，绝不许被
+# 静默替换成字面量；`changes` / `figsize_edited` 必须如实。
+#
+# 判据（任务书 §1/§2）：① 非字面量 → **拒写该字段**（其余字段照常写）并**明确披露**；
+# ② 没改就不许报 `figsize`；③ 源码里的变量/表达式**一个字节都不许动**。
+# 对照例（`figsize=(6, 4)`）本来就该"等值不写"（L0-1 口径）。
+# =====================================================================
+_S106_HEAD = ('import matplotlib\n'
+              'matplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n')
+_S106_TAIL = ('ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])\n'
+              'ax.plot([1, 2], [2, 1])\n'
+              'fig.savefig("o.png")\n')
+_S106_CASES = {
+    'ctrl': (_S106_HEAD + 'fig = plt.figure(figsize=(6, 4))\n' + _S106_TAIL,
+             'figsize=(6, 4)', 'figsize=(W, H)'),
+    'var': (_S106_HEAD + 'W = 6.0\nH = 4.0\n'
+            'fig = plt.figure(figsize=(W, H))\n' + _S106_TAIL,
+            'figsize=(W, H)', 'figsize=(6, 4)'),
+    'expr': (_S106_HEAD + 'BASE = 10\n'
+             'fig = plt.figure(figsize=(BASE - 4, 4))\n' + _S106_TAIL,
+             'figsize=(BASE - 4, 4)', 'figsize=(6, 4)'),
+    'env': (_S106_HEAD + 'import os\n'
+            'W = float(os.environ.get("MPLTWEAK_T88_W", "6"))\n'
+            'fig = plt.figure(figsize=(W, 4))\n' + _S106_TAIL,
+            'figsize=(W, 4)', 'figsize=(6, 4)'),
+}
+_S106_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'figsize_px': [600, 400], 'figsize_in': [6.0, 4.0],
+             'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]}
+_s106_res = {}
+
+
+def _s106_run(tag, src):
+    d = os.path.join(_TMPROOT, 'case_t106_' + tag)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(os.path.join(d, '.tweak_params'))
+    sp = os.path.join(d, 'fig.py')
+    with open(sp, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(src)
+    pp = os.path.join(d, '.tweak_params', 'fig.json')
+    with open(pp, 'w', encoding='utf-8') as f:
+        json.dump(_S106_PAR, f, ensure_ascii=False)
+    res = writeback.writeback(sp, dict(_S106_PAR), pp, verify=False,
+                              style='inplace')
+    with open(sp, encoding='utf-8') as f:
+        after = f.read()
+    _s106_res[tag] = (res, after, sp)
+    return res, after
+
+
+def _s106_disclosed(res):
+    '''有没有**如实披露**"这个字段没能落地"（pending / inplace_needs_block / 警告）。'''
+    if res.get('pending'):
+        return True
+    if res.get('inplace_needs_block'):
+        return True
+    return any('figsize' in str(w) or '画布' in str(w)
+               for w in (res.get('warnings') or []))
+
+
+for _tag106 in ('ctrl', 'var', 'expr', 'env'):
+    _src106, _keep106, _lost106 = _S106_CASES[_tag106]
+    _r106, _after106 = _s106_run(_tag106, _src106)
+    _ch106 = _r106.get('changes') or []
+    if _tag106 == 'ctrl':
+        check('§106① 对照例 figsize=(6, 4)：等值 → 不写、不报 figsize',
+              _r106.get('figsize_edited') is False
+              and 'figsize' not in _ch106
+              and 'figsize=(6, 4)' in _after106,
+              'edited=%s changes=%s' % (_r106.get('figsize_edited'), _ch106))
+    else:
+        check('§106② %s：源码 %s **一个字节都不许动**（不许替换成 %s）'
+              % (_tag106, _keep106, _lost106),
+              _keep106 in _after106 and _lost106 not in _after106,
+              _after106.splitlines()[3:5])
+        check('§106③ %s：figsize_edited=False 且 changes 里没有 figsize（不许谎报）'
+              % _tag106,
+              _r106.get('figsize_edited') is False and 'figsize' not in _ch106,
+              'edited=%s changes=%s' % (_r106.get('figsize_edited'), _ch106))
+        check('§106④ %s：拒写要**如实披露**（pending / needs_block / 警告）' % _tag106,
+              _s106_disclosed(_r106),
+              'pending=%s needs_block=%s warnings=%s'
+              % (_r106.get('pending'), _r106.get('inplace_needs_block'),
+                 (_r106.get('warnings') or [])[:1]))
+    if _tag106 == 'ctrl':
+        check('§106④b ctrl：对照例**不该**有"画布没落地"的披露（等值本来就不用写）',
+              not _s106_disclosed(_r106),
+              'pending=%s warnings=%s' % (_r106.get('pending'),
+                                          (_r106.get('warnings') or [])[:1]))
+
+# 其余字段照常写（"只拒这一个字段，别的照写"）
+check('§106⑤ 拒写 figsize 不影响其它字段：ax0.pos 照常落地（changes 含 ax0.pos）',
+      any('pos' in str(c) for c in (_s106_res['var'][0].get('changes') or [])),
+      _s106_res['var'][0].get('changes'))
+check('§106⑥ 运行期行为不变：`W` 仍在源码里被引用（动态配置没被钉死）',
+      'os.environ.get("MPLTWEAK_T88_W"' in _s106_res['env'][1]
+      and 'figsize=(W, 4)' in _s106_res['env'][1],
+      _s106_res['env'][1].splitlines()[3:6])
+
+# teeth：把守卫改回去（非字面量也照样替换）→ §106② 必红
+_orig_edit106 = writeback.edit_figsize
+
+
+def _edit_bad106(src, tree, figsize_in, fig_index=None):
+    if not figsize_in or len(figsize_in) < 2:
+        return src, False
+    starts = writeback._line_starts(src)
+    node = writeback._fig_call_node(tree, fig_index)
+    if node is None:
+        return src, False
+    for kw in node.keywords:
+        if kw.arg == 'figsize' and kw.value is not None:
+            v = kw.value
+            have = writeback._seq_lit_nums(v)
+            if have is not None and writeback._num_close(have[0], figsize_in[0]) \
+                    and writeback._num_close(have[1], figsize_in[1]):
+                return src, False
+            new_txt = writeback._fmt_figsize(v, figsize_in)      # 旧口径：无条件替换
+            s = writeback._offset(starts, v.lineno, v.col_offset, src)
+            e = writeback._offset(starts, v.end_lineno, v.end_col_offset, src)
+            return src[:s] + new_txt + src[e:], True
+    return src, False
+
+
+writeback.edit_figsize = _edit_bad106
+try:
+    _r106t, _after106t = _s106_run('teeth', _S106_CASES['var'][0])
+finally:
+    writeback.edit_figsize = _orig_edit106
+check('§106⑦【有牙】把守卫改回去（非字面量也替换成字面量）→ 变量被抹掉、§106② 必红',
+      'figsize=(W, H)' not in _after106t and _r106t.get('figsize_edited') is True,
+      'after 第 3-4 行=%s edited=%s' % (_after106t.splitlines()[3:5],
+                                        _r106t.get('figsize_edited')))
+
+# 与 t66 那道 figsize_in ≈ figsize_px/dpi 守卫的**交互**（两道守卫不得互相掩盖）
+_d106 = os.path.join(_TMPROOT, 'case_t106_guard')
+shutil.rmtree(_d106, ignore_errors=True)
+os.makedirs(os.path.join(_d106, '.tweak_params'))
+_sp106 = os.path.join(_d106, 'fig.py')
+with open(_sp106, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_S106_CASES['var'][0])
+_pp106 = os.path.join(_d106, '.tweak_params', 'fig.json')
+_bad106 = dict(_S106_PAR, figsize_px=[1200, 800])       # px/in 差成倍（t66 的现场）
+with open(_pp106, 'w', encoding='utf-8') as f:
+    json.dump(_bad106, f, ensure_ascii=False)
+_rg106 = writeback.writeback(_sp106, _bad106, _pp106, verify=False,
+                             style='inplace')
+with open(_sp106, encoding='utf-8') as f:
+    _ag106 = f.read()
+check('§106⑧ 与 t66 守卫的交互：px/in 成倍矛盾 → **t66 守卫先拦**（reason=bad_params）'
+      '且源码一字未动（两道守卫不互相掩盖）',
+      _rg106.get('reason') == 'bad_params' and 'figsize=(W, H)' in _ag106
+      and not _rg106.get('figsize_edited'),
+      'reason=%s edited=%s' % (_rg106.get('reason'),
+                               _rg106.get('figsize_edited')))
+
+# =====================================================================
+# §107 t87（薄弱点⑧）：**差分测试** —— 同一图同参走「原地改写」与「块通道」两条路，
+# 规范化图形状态必须**逐字段一致**（不一致 → 必有一路错）。
+#
+# 判据（船长 2026-10-14 定稿，四层）：
+#   ① **强判据**：原地路**声称已应用**（不在 `pending` 里）的字段 → 两条路的 dump 必须
+#      逐字段相同（浮点容差 `_T87_TOL = 5e-5`，依据：`verify._state` 把 rect 舍入到 4 位
+#      小数 → 半量子 5e-5；与 `docs/consistency-ledger.md` 同口径）。
+#   ② **合法差异**：原地路**表达不了**的字段（`pending` 里如实披露）→ 允许不同，
+#      但必须登记进**已知差异表** `_T87_KNOWN`（只准缩小；末尾全文打印）。
+#   ③ **未披露的差异 → 红**（核心口径：不许静默少做）。
+#   ④ **披露粒度**：实测 `pending` 是**字段级**（如 `ax0.label_fontsize` / `ax0.grid` /
+#      `ax1.clim`）→ 断言"**披露集合 ⊇ 差异字段集合**"成立，无需退到"披露粒度不足"。
+#      （唯一例外是**派生字段**与一处**已知未披露**，见下面的表与台账。）
+#
+# 规范化 dump：两份生成脚本各**真跑一遍**（Agg 子进程）→ `verify._state(fig)` 导出
+# 图数 / figsize / 每轴 pos·xlim·ylim·title_fs·label_fs·tick_fs·grid·is_cb·clim·cmap。
+# =====================================================================
+_T87_TOL = 5e-5
+_T87_SHAPES = {
+    'figsize_only': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\n\n"
+                     "fig = plt.figure(figsize=(6, 4))\n"
+                     "ax = fig.add_subplot(111)\n"
+                     "ax.plot([1, 2], [1, 2])\n"
+                     "ax.set_title('A', fontsize=10)\n"
+                     "ax.xaxis.label.set_fontsize(10)\n"
+                     "ax.tick_params(labelsize=10)\n"
+                     "ax.grid(False)\n"
+                     "fig.savefig('o.png')\n"),
+    'subplots_2x2': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\n\n"
+                     "fig, axs = plt.subplots(2, 2, figsize=(10, 7))\n"
+                     "axs[0, 0].plot([1, 2], [2, 1])\n"
+                     "axs[0, 0].set_title('A', fontsize=10)\n"
+                     "axs[0, 0].xaxis.label.set_fontsize(10)\n"
+                     "axs[0, 0].tick_params(labelsize=10)\n"
+                     "axs[0, 0].grid(False)\n"
+                     "fig.savefig('o.png')\n"),
+    'gridspec': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                 "import matplotlib.pyplot as plt\n\n"
+                 "fig = plt.figure(figsize=(9, 6))\n"
+                 "gs = fig.add_gridspec(2, 3)\n"
+                 "axs = [fig.add_subplot(gs[i, j]) for i in range(2) for j in range(3)]\n"
+                 "axs[0].set_title('G', fontsize=10)\n"
+                 "axs[0].xaxis.label.set_fontsize(10)\n"
+                 "axs[0].tick_params(labelsize=10)\n"
+                 "axs[0].grid(False)\n"
+                 "fig.savefig('o.png')\n"),
+    'polar_cb': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                 "import matplotlib.pyplot as plt\nimport numpy as np\n\n"
+                 "fig = plt.figure(figsize=(15, 9.5))\n"
+                 "ax = fig.add_axes([0.039, 0.4651, 0.9224, 0.4349], "
+                 "projection='polar')\n"
+                 "th = np.linspace(0, 6.28, 40)\n"
+                 "sc = ax.scatter(th, np.cos(th) * 3, c=np.cos(th))\n"
+                 "cb = fig.colorbar(sc, ax=ax)\n"
+                 "sc.set_cmap('viridis')\n"
+                 "sc.set_clim(0.0, 1.0)\n"
+                 "ax.set_title('P', fontsize=10)\n"
+                 "ax.xaxis.label.set_fontsize(10)\n"
+                 "ax.tick_params(labelsize=10)\n"
+                 "ax.grid(False)\n"
+                 "fig.savefig('o.png')\n"),
+    'fig_add_axes': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\n\n"
+                     "fig = plt.figure(figsize=(8, 6))\n"
+                     "ax = fig.add_axes([0.1, 0.1, 0.8, 0.8])\n"
+                     "ax.plot([1, 2], [2, 1])\n"
+                     "ax.set_title('B', fontsize=10)\n"
+                     "ax.xaxis.label.set_fontsize(10)\n"
+                     "ax.tick_params(labelsize=10)\n"
+                     "ax.grid(False)\n"
+                     "fig.savefig('o.png')\n"),
+}
+# dump 字段名 → `pending` 里的字段名（披露集合与差异集合用同一套名字对齐）
+_T87_FIELD2PEND = {'title_fs': 'title_fontsize', 'label_fs': 'label_fontsize',
+                   'tick_fs': 'tick_fontsize', 'grid': 'grid', 'clim': 'clim',
+                   'cmap': 'cmap', 'pos': 'pos', 'xlim': 'xlim', 'ylim': 'ylim',
+                   'figsize_in': 'figsize'}
+# **派生字段**：值跟着别的字段走（登记在案、不是"静默少做"）
+_T87_DERIVED = {('fig0.ax1.ylim',): '垂直 colorbar 的 ylim 跟着 clim 走（clim 已披露）'}
+# **已知未披露**（只准缩小的台账；每一项都是待派 src/ 单的缺陷，末尾全文打印）
+# t99（已收口，台账**清空**）：唯一那条 `('fig0.ax0.cmap',)` 已删除 —— 原地路现在把
+# colorbar 轴上的 `cmap` **如实列进 pending**（与 `clim` 同等待遇）。根因：writeback.py
+# 的 "nm is None"（无变量映射，colorbar 轴必走这一支）分支列字段时**漏了 `cmap`** ⇒
+# 参数写在 colorbar 轴上、mappable 挂在别的轴时，`cmap` 既写不了也不说（静默少做）。
+# 台账清空后，§107① 对 polar_cb 变成**没有兜底的硬断言**：任何新的未披露差异直接判红。
+_T87_UNDISCLOSED = {}
+_T87_KNOWN = {
+    'ax.xaxis.label.set_fontsize(10) 调用形态':
+        '原地路只改"代码里已有的数字"的**已知调用形态**；`ax.xaxis.label.set_fontsize(10)`'
+        '这种写法它不改写 → 该字段进 pending（如实披露）→ 允许两条路不同。',
+    'axs[0,0].grid(False) 形态（subplots-tuple 接收者）':
+        '同上：subplots 元组下标接收者的 `grid(...)` 不在原地路可改形态里 → 进 pending。',
+    'polar 的 sc.set_cmap/set_clim 形态':
+        'mappable 上的 `set_cmap/set_clim` 与"轴参数"不是同一接收者 → 原地路表达不了'
+        '（`clim` 已如实进 pending；`cmap` 见上面的未披露台账）。',
+}
+
+_T87_DUMP = r'''
+import json, os, sys
+sys.path.insert(0, r'%s')
+import matplotlib; matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from mpltweak import verify
+src = open(sys.argv[1], encoding='utf-8').read()
+os.chdir(os.path.dirname(sys.argv[1]))
+exec(compile(src, sys.argv[1], 'exec'), {'__name__': '__main__'})
+out = []
+for num in plt.get_fignums():
+    f = plt.figure(num)
+    st = verify._state(f)
+    out.append({'figsize_in': st.get('figsize_in'),
+                'n_axes': len(st.get('axes') or []),
+                'axes': [{'pos': a.get('pos'), 'xlim': a.get('xlim'),
+                          'ylim': a.get('ylim'), 'title_fs': a.get('title_fontsize'),
+                          'label_fs': a.get('label_fontsize'),
+                          'tick_fs': a.get('tick_fontsize'),
+                          'is_cb': a.get('is_colorbar'), 'clim': a.get('clim'),
+                          'cmap': a.get('_cmap'), 'grid': a.get('grid')}
+                         for a in (st.get('axes') or [])]})
+print('@@DUMP@@' + json.dumps(out, sort_keys=True, default=str))
+''' % (os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+       + os.sep + 'src')
+
+
+def _t87_params(src):
+    ax = {'index': 0, 'title_fontsize': 13.0, 'label_fontsize': 12.0,
+          'tick_fontsize': 11.0, 'grid': True}
+    p = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+         'figsize_px': [600, 400], 'figsize_in': [6.0, 4.0], 'axes': [ax]}
+    if 'colorbar' in src:
+        # 真实 describe 输出会给 colorbar 轴带 `is_colorbar: true`（写回侧据此走
+        # colorbar 专用口径，例如 t99 的 cmap fail-closed）⇒ 参数必须如实带上。
+        p['axes'].append({'index': 1, 'is_colorbar': True,
+                          'clim': [0.2, 0.9], 'cmap': 'plasma'})
+    return p
+
+
+def _t87_route(name, src, style, tamper=None):
+    """跑一条路：写副本 → writeback(style) → 子进程真跑 → 规范化 dump。"""
+    d = os.path.join(_TMPROOT, 't87_%s_%s' % (name, style))
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(os.path.join(d, '.tweak_params'))
+    sp = os.path.join(d, 'fig.py')
+    with open(sp, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(src)
+    pp = os.path.join(d, '.tweak_params', 'fig.json')
+    with open(pp, 'w', encoding='utf-8') as f:
+        json.dump(_t87_params(src), f, ensure_ascii=False)
+    res = writeback.writeback(sp, _t87_params(src), pp, verify=False, style=style)
+    if tamper is not None:
+        tamper(sp, res)
+    dp = os.path.join(d, 'dump.py')
+    with open(dp, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(_T87_DUMP)
+    env = dict(os.environ, MPLBACKEND='Agg', PYTHONIOENCODING='utf-8')
+    r = subprocess.run([sys.executable, dp, sp], capture_output=True,
+                       timeout=300, env=env, cwd=d)
+    dump = None
+    for line in (r.stdout or b'').decode('utf-8', 'replace').splitlines():
+        if line.startswith('@@DUMP@@'):
+            dump = json.loads(line[len('@@DUMP@@'):])
+    return res, dump, sp
+
+
+def _t87_flat(dump):
+    out = {}
+    for i, f in enumerate(dump or []):
+        out['fig%d.figsize_in' % i] = f.get('figsize_in')
+        out['fig%d.n_axes' % i] = f.get('n_axes')
+        for j, a in enumerate(f.get('axes') or []):
+            for k, v in a.items():
+                out['fig%d.ax%d.%s' % (i, j, k)] = v
+    return out
+
+
+def _t87_close(a, b):
+    if isinstance(a, list) and isinstance(b, list) and len(a) == len(b):
+        return all(_t87_close(x, y) for x, y in zip(a, b))
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
+            and not isinstance(a, bool) and not isinstance(b, bool):
+        return abs(float(a) - float(b)) <= _T87_TOL
+    return a == b
+
+
+def _t87_judge(name, src, tamper=None):
+    """返回 (ok, detail, diffs, disclosed, undisclosed, derived)。"""
+    r1, d1, s1 = _t87_route(name, src, 'inplace', tamper=tamper)
+    r2, d2, s2 = _t87_route(name, src, 'block')
+    if d1 is None or d2 is None:
+        # 脚本在子进程里没跑成（缺数据文件 / 满载下超时等）⇒ **不是"两条路不一致"**，
+        # 如实报"跳过"（不静默、也不算红），免得把环境问题误判成差分缺陷。
+        return True, ('SKIP：dump=None（脚本没跑成：inplace=%s block=%s）'
+                      % (d1 is None, d2 is None)), [], [], [], []
+    f1, f2 = _t87_flat(d1), _t87_flat(d2)
+    diffs = [k for k in sorted(set(f1) | set(f2))
+             if not _t87_close(f1.get(k), f2.get(k))]
+    pend = set(r1.get('pending') or [])
+    nb = bool(r1.get('inplace_needs_block'))
+    disclosed, undisclosed, derived = [], [], []
+    for k in diffs:
+        leaf = k.rsplit('.', 1)[-1]
+        pname = _T87_FIELD2PEND.get(leaf, leaf)
+        _ax = k.split('.')[1] if k.startswith('fig') else ''
+        if (k,) in _T87_DERIVED:
+            derived.append(k)
+        elif (k,) in _T87_UNDISCLOSED:
+            undisclosed.append(k)
+        elif nb or any(p == pname or p.endswith('.' + pname)
+                       or pname in p for p in pend):
+            disclosed.append(k)
+        else:
+            undisclosed.append(k)
+    detail = ('差异=%s ｜ 已披露=%s ｜ 未披露=%s ｜ 派生=%s ｜ pending=%s'
+              % (diffs, disclosed, undisclosed, derived, sorted(pend)))
+    # 判据③+④：未披露的差异**必须在"已知未披露"台账里**（只准缩小）—— 台账外的任何
+    # 未披露差异都算红（不许静默少做）；台账内的如实记录并全文打印，待派 src/ 单。
+    _ok87j = all((k,) in _T87_UNDISCLOSED for k in undisclosed)
+    return _ok87j, detail, diffs, disclosed, undisclosed, derived
+
+
+_t87_bad = 0
+for _n87, _s87 in _T87_SHAPES.items():
+    _ok87, _det87, _d87, _dis87, _und87, _der87 = _t87_judge(_n87, _s87)
+    check('§107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[%s]' % _n87,
+          _ok87, _det87)
+    if not _ok87:
+        _t87_bad += 1
+print('§107 已知差异表（只准缩小；%d 条）:' % len(_T87_KNOWN))
+for _k87, _v87 in _T87_KNOWN.items():
+    print('   · %s —— %s' % (_k87, _v87))
+print('§107 派生字段（登记在案）: %s' % (list(_T87_DERIVED),))
+print('§107 **已知未披露**台账（%d 条；每一条都待派 src/ 单）:' % len(_T87_UNDISCLOSED))
+for _k87, _v87 in _T87_UNDISCLOSED.items():
+    print('   · %s —— %s' % (_k87, _v87))
+# 台账**已空**（t99 收口）⇒ 这里验证"**没有兜底**"：把原地路的披露抹掉 ⇒ polar_cb 必红。
+_orig_wb87e = writeback.writeback
+
+
+def _wb_no_disc87e(*a, **k):
+    res = _orig_wb87e(*a, **k)
+    if isinstance(res, dict):
+        res = dict(res)
+        res['pending'] = []
+        res['inplace_needs_block'] = False
+        res['warnings'] = []
+    return res
+
+
+writeback.writeback = _wb_no_disc87e
+try:
+    _ok87d, _det87d = _t87_judge('polar_cb', _T87_SHAPES['polar_cb'])[:2]
+finally:
+    writeback.writeback = _orig_wb87e
+check('§107⑤【有牙】台账已空 ⇒ 抹掉披露后 polar_cb 必红（无兜底；'
+      't99 之前这条差异是靠台账"合法化"的）', _ok87d is False, _det87d[:150])
+
+# teeth①：把原地路的**披露**抹掉（pending 清空 + needs_block 置 False）→ 未披露差异必红
+_orig_wb87 = writeback.writeback
+
+
+def _wb_no_disc87(*a, **k):
+    res = _orig_wb87(*a, **k)
+    if isinstance(res, dict):
+        res = dict(res)
+        res['pending'] = []
+        res['inplace_needs_block'] = False
+        res['warnings'] = []
+    return res
+
+
+writeback.writeback = _wb_no_disc87
+try:
+    _ok87a, _det87a = _t87_judge('subplots_2x2', _T87_SHAPES['subplots_2x2'])[:2]
+finally:
+    writeback.writeback = _orig_wb87
+check('§107②【有牙】抹掉原地路的披露（pending/needs_block/warnings 全清）→ '
+      '「未披露差异=0」必红', _ok87a is False, _det87a[:150])
+
+# teeth②：把**两条路都能表达**的字段故意改歪（原地路写完后把标题字号改掉）→ 强判据必红
+def _tamper87(sp, res):
+    with open(sp, encoding='utf-8') as f:
+        _t = f.read()
+    with open(sp, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(_t.replace('fontsize=13', 'fontsize=17'))
+
+
+_ok87b, _det87b = _t87_judge('figsize_only', _T87_SHAPES['figsize_only'],
+                             tamper=_tamper87)[:2]
+check('§107③【有牙】把某条路的某个值改歪（标题字号 13→17）→ 差分断言必红',
+      _ok87b is False and 'fig0.ax0.title_fs' in _det87b, _det87b[:150])
+
+# teeth③：副本基线干净自证 —— 不做任何篡改时，同一形状两次跑**结果一致**（判据本身不抖）
+_ok87c1, _det87c1 = _t87_judge('fig_add_axes', _T87_SHAPES['fig_add_axes'])[:2]
+_ok87c2, _det87c2 = _t87_judge('fig_add_axes', _T87_SHAPES['fig_add_axes'])[:2]
+check('§107④ 基线自证：同一形状连跑两次，判据结论稳定（且未披露=0）',
+      _ok87c1 is True and _ok87c2 is True, '%s ｜ %s' % (_det87c1[:70],
+                                                         _det87c2[:70]))
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)
-
 

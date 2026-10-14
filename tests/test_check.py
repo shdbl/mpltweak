@@ -648,10 +648,330 @@ def main():
                   '§15 判不出原因时**绝不**误报 tool_bug（不吓用户）')
         except ImportError as _e:                                  # noqa: BLE001
             print('  --  跳过分类器断言：%s' % _e)
+
+        # ------------------------------------------------------------------
+        # §16 t67（报告 P1-3）：colorbar × aspect_locked 轴的**矩形相交**必须报出来。
+        #
+        # 为什么单列：几何比对整体跳过 aspect_locked 轴（它们的长宽比由投影/数据定死，
+        # 动不了），而"极地图 + colorbar"这个科研图里最常见的组合**恰好**落进那个盲区
+        # ⇒ 过去 check 对这条最高频的真实排版事故给 ok:true / problems:[] / warnings:[]。
+        # 现在单独保留一条 colorbar 规则（warn，不动 --strict、不动任何既有规则）。
+        #
+        # 几何：报告那张表是 get_tightbbox（真实渲染）量的，而 check 用 pos（轴位置
+        # 矩形，aspect 锁定轴经 apply_aspect 调整后的值）—— 两者不是一回事（实测：
+        # 报告 y 0.4651-0.900 vs pos 0.4757-0.8894）。所以夹具按 **pos 空间**构造：
+        # map [0.3621, 0.4550, 0.2758, 0.4349] + set_aspect('equal') → pos y0=0.4656
+        # /h=0.4137；colorbar [0.33, 0.455, 0.34, 0.016] → 相交 x 0.2758 × y 0.0054
+        # （0.54% 图高，与报告 0.59% 同量级，且**小于**默认 --tol 0.010 ⇒ 专门验
+        #  那条更小的独立阈值 CB_OVERLAP_TOL）。
+        # 反向验证（teeth）：删掉 check.analyze 里那段 2b 规则 ⇒ 本节的断言必红。
+        # ------------------------------------------------------------------
+        _cb_head = (
+            "import os\n"
+            "import matplotlib\n"
+            "matplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            "from matplotlib.cm import ScalarMappable\n"
+            "from matplotlib.colors import Normalize\n"
+            "fig = plt.figure(figsize=(6.0, 4.0))\n"
+            "ax_map = fig.add_axes([0.3621, 0.4550, 0.2758, 0.4349])\n"
+            "ax_map.set_aspect('equal')\n"
+            "ax_map.plot([0, 1], [0, 1])\n"
+            "cax = fig.add_axes([0.33, %s, 0.34, 0.016])\n"
+            "fig.colorbar(ScalarMappable(norm=Normalize(0, 1), cmap='viridis'),"
+            " cax=cax)\n"
+            "fig.savefig(os.path.join(os.path.dirname(os.path.abspath(__file__)),"
+            " 'o.png'), dpi=100)\n")
+
+        def _cb_json(name, cby, lang):
+            p = os.path.join(tmp, name + '.py')
+            with open(p, 'w', encoding='utf-8', newline='\n') as f:
+                f.write(_cb_head % cby)
+            rc, out, _err = run('check', p, '--json',
+                                env={'MPLTWEAK_LANG': lang})
+            try:
+                return rc, json.loads(out), out
+            except Exception:                                      # noqa: BLE001
+                return rc, {}, out
+
+        for _lang in ('zh', 'en'):
+            _rc16, _j16, _o16 = _cb_json('cb_overlap_%s' % _lang, '0.455', _lang)
+            _w16 = [w for w in (_j16.get('warnings') or [])
+                    if w.get('rule') == 'colorbar_overlap']
+            check(_rc16 == 0 and len(_w16) == 1 and _w16[0]['level'] == 'warn'
+                  and sorted(_w16[0]['axes']) == ['ax0', 'ax1'],
+                  '§16[%s] colorbar × aspect_locked 轴相交 → 1 条 colorbar_overlap '
+                  'warn（过去静默通过）' % _lang,
+                  (_rc16, [w.get('rule') for w in (_j16.get('warnings') or [])]))
+            if _w16:
+                check('colorbar_overlap' in json.dumps(_w16[0], ensure_ascii=False)
+                      and bool(_w16[0].get('msg')),
+                      '§16[%s] 这条 warn 带人话 msg + 稳定 rule 名' % _lang,
+                      _w16[0].get('msg'))
+        _rc16b, _j16b, _o16b = _cb_json('cb_overlap_en_txt', '0.455', 'en')
+        check(_o16b.isascii(),
+              '§16 en 下 check 的整份输出仍是纯 ASCII（含新规则）', _o16b[:120])
+
+        # 反例：colorbar 离地图很远（不相交）⇒ **不许**报这条
+        for _lang in ('zh', 'en'):
+            _rc17, _j17, _o17 = _cb_json('cb_apart_%s' % _lang, '0.10', _lang)
+            check(_rc17 == 0 and not [w for w in (_j17.get('warnings') or [])
+                                      if w.get('rule') == 'colorbar_overlap'],
+                  '§16[%s] 反例：不重叠的 colorbar **不**误报' % _lang,
+                  [w.get('rule') for w in (_j17.get('warnings') or [])])
+
+        # 既有设计不许被顺手改掉：几何比对**仍然**跳过 aspect_locked 轴
+        # （两个 aspect 锁定的轴互相重叠 → 不报 overlap；没有 colorbar → 不报新规则）
+        _lock = os.path.join(tmp, 'two_locked.py')
+        with open(_lock, 'w', encoding='utf-8', newline='\n') as f:
+            f.write("import os\n"
+                    "import matplotlib\n"
+                    "matplotlib.use('Agg')\n"
+                    "import matplotlib.pyplot as plt\n"
+                    "fig = plt.figure(figsize=(6.0, 4.0))\n"
+                    "for _x in (0.10, 0.20):\n"
+                    "    _a = fig.add_axes([_x, 0.20, 0.40, 0.40])\n"
+                    "    _a.set_aspect('equal')\n"
+                    "    _a.plot([0, 1], [0, 1])\n"
+                    "fig.savefig(os.path.join(os.path.dirname("
+                    "os.path.abspath(__file__)), 'o.png'), dpi=100)\n")
+        _rc18, _o18, _e18 = run('check', _lock, '--json',
+                                env={'MPLTWEAK_LANG': 'zh'})
+        try:
+            _j18 = json.loads(_o18)
+        except Exception:                                          # noqa: BLE001
+            _j18 = {}
+        _rules18 = [p.get('rule') for p in (_j18.get('problems') or [])] + \
+                   [w.get('rule') for w in (_j18.get('warnings') or [])]
+        check('overlap' not in _rules18 and 'colorbar_overlap' not in _rules18,
+              '§16 既有设计不变：aspect_locked 轴仍不进几何比对（也不误报新规则）',
+              _rules18)
     except Exception as e:                                        # noqa: BLE001
         check(False, '测试执行', e)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # =================================================================
+    # §17 t75：**跨读者几何/画布一致性矩阵**（把"两条路径各算一遍"变成可检出的红）
+    #
+    # 读者（都不开窗，Agg 离屏）：
+    #   R1 `toolbox._bbox(ax)`          —— 窗口/交互侧读轴 rect（colorbar 用 original 口径）
+    #   R2 `verify._state(fig)['axes']` —— describe/verify 采集侧（**用的就是 R1 的函数**）
+    #   R3 `check._pos(item)`           —— check 侧：**只消费 R2 的 pos**，没有独立几何读者
+    #   R4 `_canvas_geometry(fig, px)`  —— 窗口侧画布（R2 的画布在 `verify._state` 里另算）
+    #   R5 `writeback.count_figures(tree)` —— 静态 AST 侧图数量（R2 给运行时图数量）
+    # 容差（依据写在 docs/consistency-ledger.md）：
+    #   TOL_RECT = 5e-5  —— R2/R3 把 rect 四舍五入到 **4 位小数**（量子 1e-4 ⇒ 半量子 5e-5）；
+    #                       R1 是全精度。这是**已知且刻意**的差异，不是 bug。
+    #   TOL_INCH = 5e-3  —— 窗口侧导出 `figsize_in` 保留 **2 位小数**（量子 1e-2 ⇒ 半量子 5e-3）；
+    #                       R2 保留 4 位。同上，刻意。
+    #   TOL_PX   = 1     —— 像素取整。
+    # 接缝覆盖：① colorbar rect（R1 用 `_position` 会与 R2 差 0.087 ⇒ 红）；
+    #           ② polar×colorbar 的 ink 重叠在**读者数据**里可见（把该轴从数据里去掉 ⇒ 红）；
+    #           ③ 画布 px/in 同源（把 in 算成 px/100 ⇒ dpi=200 时红）。
+    # =================================================================
+    import ast as _ast17
+    import matplotlib.pyplot as _plt17
+    from mpltweak import check as _ck17, toolbox as _tb17, verify as _vf17, \
+        writeback as _wb17
+
+    TOL_RECT, TOL_INCH, TOL_PX = 5e-5, 5e-3, 1
+
+    _S17 = {
+        'polar_cb': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\nimport numpy as np\n\n"
+                     "fig = plt.figure(figsize=(8, 6))\n"
+                     "ax = fig.add_subplot(111, projection='polar')\n"
+                     "th = np.linspace(0, 6.28, 40)\n"
+                     "sc = ax.scatter(th, np.cos(th) * 3, c=np.cos(th))\n"
+                     "cb = fig.colorbar(sc, ax=ax)\n"),
+        'multi': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                  "import matplotlib.pyplot as plt\nimport numpy as np\n\n"
+                  "fig, axs = plt.subplots(2, 2, figsize=(10, 7))\n"
+                  "im = axs[0, 0].imshow(np.arange(9).reshape(3, 3))\n"
+                  "fig.colorbar(im, ax=axs[0, 0])\n"),
+        'gridspec': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\nimport numpy as np\n\n"
+                     "fig = plt.figure(figsize=(9, 6))\n"
+                     "gs = fig.add_gridspec(2, 3)\n"
+                     "axs = [fig.add_subplot(gs[i, j]) for i in range(2) for j in range(3)]\n"),
+        'figsize_only': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                         "import matplotlib.pyplot as plt\n\n"
+                         "fig = plt.figure(figsize=(6, 4))\n"
+                         "ax = fig.add_subplot(111)\n"),
+        'two_figs': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                     "import matplotlib.pyplot as plt\n\n"
+                     "fig1 = plt.figure(figsize=(6, 4))\n"
+                     "fig1.add_subplot(111)\n"
+                     "fig2 = plt.figure(figsize=(6, 4))\n"
+                     "fig2.add_subplot(111)\n"),
+        'fig_subplots': ("import matplotlib\nmatplotlib.use('Agg')\n"
+                         "import matplotlib.pyplot as plt\n\n"
+                         "fig = plt.figure(figsize=(8, 6))\n"
+                         "axs = fig.subplots(2, 2)\n"),
+    }
+
+    def _build17(name):
+        _plt17.close('all')
+        _ns17 = {'__name__': 'shape17'}
+        exec(compile(_S17[name], name, 'exec'), _ns17)
+        return _plt17.gcf()
+
+    _bad_rect17, _bad_canvas17, _bad_count17, _rows17 = [], [], [], []
+    for _name17 in _S17:
+        _f17 = _build17(_name17)
+        _f17.canvas.draw()                    # 最坏时刻：locator/aspect 都跑过
+        _st17 = _vf17._state(_f17)
+        for _i17, _ax17 in enumerate(_f17.axes):
+            _r1 = [float(v) for v in _tb17._bbox(_ax17)]
+            _r2 = [float(v) for v in (_st17['axes'][_i17].get('pos') or [])]
+            _r3 = [float(v) for v in _ck17._pos(_st17['axes'][_i17])]
+            _d12 = max(abs(a - b) for a, b in zip(_r1, _r2)) if len(_r2) == 4 else 9e9
+            _d23 = max(abs(a - b) for a, b in zip(_r2, _r3)) if len(_r3) == 4 else 9e9
+            _rows17.append((_name17, _i17, bool(_tb17._is_colorbar_ax(_ax17)),
+                            _d12, _d23))
+            if _d12 > TOL_RECT or _d23 > TOL_RECT:
+                _bad_rect17.append('%s ax%d cb=%s d12=%.2e d23=%.2e'
+                                   % (_name17, _i17,
+                                      _tb17._is_colorbar_ax(_ax17), _d12, _d23))
+        _cg17 = _tb17._canvas_geometry(_f17, None)
+        _px17 = _st17.get('figsize_px')
+        _in17 = _st17.get('figsize_in')
+        _d_in17 = (max(abs(a - b) for a, b in zip(_cg17['figsize_in'], _in17))
+                   if (_cg17['figsize_in'] and _in17) else 9e9)
+        # px：窗口侧"没 resize 过"就是 None（参数规范允许）；此时 verify 的 live px 必须
+        # 等于 英寸 × fig.dpi（同一物理量的兜底口径）
+        _exp_px17 = [int(round(v * float(_f17.dpi))) for v in _f17.get_size_inches()]
+        _px_ok17 = True
+        if _px17:
+            _px_ok17 = (_cg17['figsize_px'] is None
+                        and all(abs(a - b) <= TOL_PX for a, b in zip(_px17, _exp_px17)))
+        if _d_in17 > TOL_INCH or not _px_ok17:
+            _bad_canvas17.append('%s d_in=%.2e px=%s exp=%s'
+                                 % (_name17, _d_in17, _px17, _exp_px17))
+        _n_ast17 = _wb17.count_figures(_ast17.parse(_S17[_name17]), figure_only=True)
+        _n_run17 = len(_plt17.get_fignums())
+        if _n_ast17 != _n_run17:
+            _bad_count17.append('%s AST=%s 运行时=%s' % (_name17, _n_ast17, _n_run17))
+        _plt17.close(_f17)
+
+    check(not _bad_rect17,
+          '§17① 轴 rect 三读者一致（R1 `toolbox._bbox` / R2 `verify._state` / R3 '
+          '`check._pos`，容差 %g = 采集侧 4 位小数半量子）' % TOL_RECT,
+          _bad_rect17[:3])
+    check(any(r[2] for r in _rows17),
+          '§17② 矩阵**含 colorbar 轴**（接缝①的载体；%d 个形状里 %d 个 colorbar 轴）'
+          % (len(_S17), sum(1 for r in _rows17 if r[2])),
+          _rows17[:2])
+    # 接缝①的**常驻检查**：colorbar 的 rect 必须等于**源码声明值**
+    # （`get_position(original=True)`）。依据：`_ColorbarAxesLocator` 每次重绘会改写
+    # active position（实测宽度 0.1162 → 0.0289）⇒ 只要某个读者读 active，就会与源码差
+    # 一个数量级，`describe → apply` 就会凭空改一个用户没动过的 colorbar（t66/P1-4）。
+    _bad_cb17, _n_cb17 = [], 0
+    for _name17 in _S17:
+        _f17x = _build17(_name17)
+        _f17x.canvas.draw()               # 最坏时刻
+        _st17x = _vf17._state(_f17x)
+        for _i17x, _ax17x in enumerate(_f17x.axes):
+            if not _tb17._is_colorbar_ax(_ax17x):
+                continue
+            _n_cb17 += 1
+            _decl17 = [float(v) for v in _ax17x.get_position(original=True).bounds]
+            _r1x = [float(v) for v in _tb17._bbox(_ax17x)]
+            _r2x = [float(v) for v in (_st17x['axes'][_i17x].get('pos') or [])]
+            _dx1 = max(abs(a - b) for a, b in zip(_decl17, _r1x))
+            _dx2 = max(abs(a - b) for a, b in zip(_decl17, _r2x))
+            if _dx1 > TOL_RECT or _dx2 > TOL_RECT:
+                _bad_cb17.append('%s ax%d decl=%s R1=%s R2=%s d1=%.2e d2=%.2e'
+                                 % (_name17, _i17x, _decl17, _r1x, _r2x, _dx1, _dx2))
+        _plt17.close(_f17x)
+    check(_n_cb17 > 0 and not _bad_cb17,
+          '§17②b【接缝①·常驻】colorbar rect 的**两个读者都等于源码声明值**'
+          '（`get_position(original=True)`，容差 %g）—— %d 个 colorbar 轴'
+          % (TOL_RECT, _n_cb17), _bad_cb17[:2])
+    check(not _bad_canvas17,
+          '§17③ 画布两读者一致（R4 `toolbox._canvas_geometry` vs R2 `verify._state`，'
+          '英寸容差 %g = 窗口导出 2 位小数半量子；px 按"没 resize 过为 None"的规范口径）'
+          % TOL_INCH, _bad_canvas17[:3])
+    check(not _bad_count17,
+          '§17④ 图数量两读者一致（R5 静态 `count_figures(figure_only=True)` vs R2 运行时）',
+          _bad_count17[:3])
+
+    # --- 接缝②（数据级）：polar × colorbar 的**重叠在读者数据里可见** --------------
+    # 报告 P1-3 的现场形状：极地图 rect [0.039, 0.4651, 0.9224, 0.4349] + colorbar
+    # rect [0.33, 0.455, 0.34, 0.016] ⇒ y 方向真重叠 [0.4651, 0.471]。
+    _f17b = _plt17.figure(figsize=(15, 9.5))
+    _pax17 = _f17b.add_axes([0.039, 0.4651, 0.9224, 0.4349], projection='polar')
+    _cax17 = _f17b.add_axes([0.33, 0.455, 0.34, 0.016])
+    _f17b.canvas.draw()
+    _st17b = _vf17._state(_f17b)
+    _pb17 = [float(v) for v in _tb17._bbox(_pax17)]
+    _cb17 = [float(v) for v in _tb17._bbox(_cax17)]
+    _ov_y = min(_pb17[1] + _pb17[3], _cb17[1] + _cb17[3]) - max(_pb17[1], _cb17[1])
+    _ov_x = min(_pb17[0] + _pb17[2], _cb17[0] + _cb17[2]) - max(_pb17[0], _cb17[0])
+    _ov_state = None
+    if len(_st17b['axes']) == 2:
+        _s0 = [float(v) for v in _st17b['axes'][0]['pos']]
+        _s1 = [float(v) for v in _st17b['axes'][1]['pos']]
+        _ov_state = (min(_s0[0] + _s0[2], _s1[0] + _s1[2]) - max(_s0[0], _s1[0]) > 0
+                     and min(_s0[1] + _s0[3], _s1[1] + _s1[3]) - max(_s0[1], _s1[1]) > 0)
+    check(_ov_x > 0 and _ov_y > 0 and _ov_state is True,
+          '§17⑤【接缝②·数据级】报告现场的 polar×colorbar 重叠在**两个读者的数据里都可见**'
+          '（R1 x/y 重叠 = %.4f/%.4f；R2 判定 = %s）—— check 侧"看不见"的原因是它把 '
+          'aspect_locked 轴排除在几何比对之外（§16 设计），不是数据缺失'
+          % (_ov_x, _ov_y, _ov_state),
+          (_ov_x, _ov_y, _ov_state))
+    _plt17.close(_f17b)
+
+    # --- teeth：单点变异 ⇒ 矩阵必红（三个接缝各一条 + 图数量一条）-----------------
+    _orig_bbox17 = _tb17._bbox
+    _f17c = _build17('polar_cb')
+    try:
+        _tb17._bbox = lambda ax: list(ax._position.bounds)      # 改回"只读 active"
+        _f17c.canvas.draw()
+        _st17c = _vf17._state(_f17c)
+        _cax17c = [a for a in _f17c.axes if _tb17._is_colorbar_ax(a)][0]
+        _decl17c = [float(v) for v in _cax17c.get_position(original=True).bounds]
+        _d17c = max(abs(float(a) - float(b)) for a, b in
+                    zip(_tb17._bbox(_cax17c), _decl17c))
+    finally:
+        _tb17._bbox = _orig_bbox17
+        _plt17.close(_f17c)
+    check(_d17c > TOL_RECT,
+          '§17⑥【有牙·接缝①】把 R1 改回 `ax._position`（active）⇒ colorbar rect 与**源码'
+          '声明值**差 %.4f > 容差 %g ⇒ §17②b 必红' % (_d17c, TOL_RECT), _d17c)
+
+    _orig_cg17 = _tb17._canvas_geometry
+    _f17d = _plt17.figure(figsize=(6, 4))
+    try:
+        _tb17._canvas_geometry = lambda fig, px: {
+            'figsize_px': list(px) if px else None,
+            'figsize_in': [round(v / 100.0, 2) for v in
+                           (list(px) if px
+                            else [100.0 * x for x in fig.get_size_inches()])]}
+        _f17d.dpi = 200.0                                        # dpi=200 现场
+        # 现场：英寸 (6,4) × dpi 200 ⇒ 画布 px (1200,800)；历史写法 `px/100` 会算出 12 英寸
+        _d17d = abs(_tb17._canvas_geometry(_f17d, (1200, 800))['figsize_in'][0]
+                    - _vf17._state(_f17d)['figsize_in'][0])
+    finally:
+        _tb17._canvas_geometry = _orig_cg17
+        _plt17.close(_f17d)
+    check(_d17d > TOL_INCH,
+          '§17⑦【有牙·接缝③】把 R4 的英寸改回 `px/100`（历史写法；英寸 (6,4) × dpi=200 ⇒ '
+          'px (1200,800) ⇒ 历史写法算出 12 英寸）⇒ 与 R2 差 %.3f > 容差 %g ⇒ §17③ 必红'
+          % (_d17d, TOL_INCH), _d17d)
+
+    _orig_cf17 = _wb17.count_figures
+    try:
+        _wb17.count_figures = lambda tree, figure_only=False: \
+            _orig_cf17(tree, figure_only=False)                  # 改回 t36 前的口径
+        _n17e = _wb17.count_figures(_ast17.parse(_S17['fig_subplots']),
+                                    figure_only=True)
+    finally:
+        _wb17.count_figures = _orig_cf17
+    check(_n17e != 1,
+          '§17⑧【有牙·图数量】把 R5 改回 t36 前口径（`fig.subplots` 也算新图）⇒ '
+          'fig_subplots 报 %s 张而运行时只有 1 张 ⇒ §17④ 必红' % (_n17e,), _n17e)
 
     print()
     if _fails:

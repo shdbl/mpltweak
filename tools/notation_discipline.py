@@ -21,6 +21,24 @@
 本检查器补的是**第三条缝**：``src/`` 与 ``tools/`` 里**直接 ``print`` 出去的字符串**
 （既不在消息表里、也不属于测试套件），外加记号字形纪律（前两条都不管记号）。
 
+扫描面：哪些文件**不**扫（t98 补）
+================================
+``iter_py()`` 的跳过规则 —— 刻意**很窄**，只认仓库既有的临时/探针命名约定：
+
+* **目录**：``SKIP_DIRS`` 里的（``.git`` / ``__pycache__`` / ``.pytest_cache`` /
+  ``node_modules`` / ``.eggs`` …）+ 名字以 ``.tmp`` / ``tmp_`` 开头的；
+* **文件**（t98 新增）：名字以 ``.tmp`` / ``tmp_`` / ``_jsonenc`` **开头**，
+  或以 ``_probe.py`` **结尾**的。
+
+**为什么文件级也要跳**：别的测试会往仓库里写"用完就删"的探针 ``.py``
+（``tests/test_agent_api.py:309`` → ``tests/.tmp_dpi.py``、``:445`` → ``tests/_jsonenc9.py``）；
+**并发跑两条臂**（或与别的 agent 的跑重叠）时，A 臂的探针文件正被 B 臂的本次扫描看到
+⇒ **假红**（t87 那次"两臂都红、分离跑都过"就有这个成分）。原来只跳**目录**、文件不跳。
+
+⚠️ **给新套件/新脚本起名时不要用上面这些临时/探针前缀** —— 否则它**不会被本检查器扫到**
+（等于悄悄退出记号纪律）。这条登记规则同时写在 ``CONTRIBUTING.md`` 的套件登记一节。
+反过来：**绝不**按"未跟踪 / 新文件"整片跳过 —— 那会把刚加的正式套件也漏掉。
+
 判据：什么算「终端输出字符串」
 ============================
 **核心原则：不靠函数名白名单**。仓库里有叫 ``check`` / ``fail`` / ``error`` 的辅助函数
@@ -341,9 +359,22 @@ def iter_py(root):
                        if d not in SKIP_DIRS and not d.startswith('.tmp')
                        and not d.startswith('tmp_')]
         for f in sorted(filenames):
-            if f.endswith('.py'):
-                p = os.path.join(dirpath, f)
-                yield p, os.path.relpath(p, root).replace('\\', '/')
+            if not f.endswith('.py'):
+                continue
+            # **文件级**也要跳过临时/探针名（t98 修）—— 原来只跳**目录**，于是"别的测试
+            # 写进仓库、用完就删"的探针文件会被扫到：
+            #   `tests/test_agent_api.py:309` 写 `tests/.tmp_dpi.py`
+            #   `tests/test_agent_api.py:445` 写 `tests/_jsonenc9.py`
+            # 并发跑两条臂（或与别的 agent 的跑重叠）时，**A 臂的探针文件正被 B 臂的
+            # notation 扫描看到** ⇒ 假红（两条臂都红、分离跑都过 —— t87 那次就是这个机制）。
+            # 跳过面刻意**很窄**：只认仓库既有的临时/探针命名约定，绝不按"未跟踪"整片跳过
+            # （那会把新加的正式套件也漏掉）。`tests/test_notation_discipline.py` 的
+            # teeth 17 钉住"探针名不报、正常名照报"。
+            if (f.startswith('.tmp') or f.startswith('tmp_')
+                    or f.startswith('_jsonenc') or f.endswith('_probe.py')):
+                continue
+            p = os.path.join(dirpath, f)
+            yield p, os.path.relpath(p, root).replace('\\', '/')
 
 
 def severity(rel, text, f):

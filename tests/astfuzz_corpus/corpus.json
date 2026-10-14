@@ -1,0 +1,52 @@
+{
+  "_doc": [
+    "t77 固定 corpus：seed + **实测钉住**的期望结果，保证任何可疑/失败样本都可复现。",
+    "复现方式：python tests/test_ast_fuzz.py <N>（N 要 > seed）；或 --corpus 只跑本表。",
+    "脚本不存盘 —— 它由 tools/ast_fuzz_gen.py 从 seed **确定性重建**（seed 就是最小化样本）。",
+    "hard=true 的才是硬断言；其余是**实测记录**，结果变好属'矩阵漂移'，只报告不判红。",
+    "台账（KNOWN_OVERWRITE）里那条已知缺陷修好（t88）后，下面 defect_* 四条会变 stale，请更新本表。"
+  ],
+  "entries": [
+    {"name": "control_plain_literal", "seed": 0, "form": "plain",
+     "expect": "inplace", "hard": true,
+     "why": "对照：全字面量 ⇒ 必须能原位写回（本表唯一硬断言；缺陷不适用时的基线）"},
+
+    {"name": "nested_unpack", "seed": 1, "form": "nested_unpack",
+     "expect": "refuse", "hard": false,
+     "why": "① 嵌套解构 (ax1,(ax2,ax3)) = subplots(...) ⇒ 安全降级（0 字节）"},
+    {"name": "tuple_unpack", "seed": 2, "form": "tuple_unpack",
+     "expect": "refuse", "hard": false,
+     "why": "① 经典 fig,(ax1,ax2) = subplots(1,2) ⇒ 安全降级"},
+    {"name": "listcomp", "seed": 3, "form": "listcomp",
+     "expect": "refuse", "hard": false,
+     "why": "② 列表推导里建轴 ⇒ 无静态轴名 ⇒ 安全降级"},
+    {"name": "walrus", "seed": 4, "form": "walrus",
+     "expect": "refuse", "hard": false,
+     "why": "③ 海象运算符 left := 0.15 ⇒ 目标非字面量 ⇒ 安全降级"},
+    {"name": "scope", "seed": 5, "form": "scope",
+     "expect": "refuse", "hard": false,
+     "why": "④ 类方法 + 嵌套函数 + 装饰器 + style.context ⇒ 安全降级"},
+    {"name": "exprs", "seed": 6, "form": "exprs",
+     "expect": "refuse", "hard": false,
+     "why": "⑤ 字面量表达式变换 1e-1 / 5/10 ⇒ 安全降级"},
+    {"name": "dynamic", "seed": 7, "form": "dynamic",
+     "expect": "refuse", "hard": false,
+     "why": "变量驱动的 pos ⇒ 无法静态证明 ⇒ 安全降级"},
+    {"name": "loop_axes", "seed": 8, "form": "loop_axes",
+     "expect": "refuse", "hard": false,
+     "why": "for 循环里建轴 ⇒ 无静态轴名 ⇒ 安全降级"},
+
+    {"name": "defect_figsize_var", "seed": 117, "form": "plain",
+     "expect": "inplace_nofs", "hard": false,
+     "why": "**t88 已修**：pos 落地 **且 figsize 一字未动**（旧行为：figsize 变量被改写成字面量）。expect=inplace_nofs 就是钉这一条"},
+    {"name": "defect_figsize_expr", "seed": 153, "form": "plain",
+     "expect": "inplace_nofs", "hard": false,
+     "why": "**t88 已修**：同上；figsize 是常量表达式 (BASE - n) 也不再被改写"},
+    {"name": "defect_figsize_dynamic", "seed": 198, "form": "plain",
+     "expect": "inplace_nofs", "hard": false,
+     "why": "**t88 已修**：同上；figsize 由环境变量驱动（旧行为有损最重、会改运行期行为）⇒ 现在一字未动"},
+    {"name": "defect_figsize_only", "seed": 9, "form": "plain",
+     "expect": "refuse", "hard": false,
+     "why": "**t88 已修 ⇒ 结果变好（矩阵漂移）**：旧行为是'只把 figsize 那一行改成字面量'(figsize_only)；现在 figsize 拒写 + pos 本身非字面量 ⇒ **refuse（0 字节）**"}
+  ]
+}

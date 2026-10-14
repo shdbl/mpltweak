@@ -956,13 +956,16 @@ def _state_of_one_fig(sess: _Session, fig_index, with_text: bool,
     # 负值（含 verify 子进程约定的 -1）表示"最后一张"，不是越界。
     if not exited and isinstance(fig_index, int) and fig_index >= 0 \
             and not (0 <= fig_index < len(figs)):
-        return None, ('第 %d 张图不存在（脚本共留下 %d 张）；'
-                      '请用 0..%d 之间的序号，或用 --all-figs 全部导出'
+        if len(figs) == 1:
+            return None, (_msg.t_ui('第 %d 张图不存在（脚本只有 1 张）；请用 0，或用 --all-figs 全部导出')
+                          % (fig_index,))
+        return None, (_msg.t_ui('第 %d 张图不存在（脚本共留下 %d 张）；'
+                      '请用 0..%d 之间的序号，或用 --all-figs 全部导出')
                       % (fig_index, len(figs), len(figs) - 1))
     idx = (fig_index if isinstance(fig_index, int) and fig_index >= 0
            else len(figs) - 1)
     if exited and not (0 <= idx < len(figs)):
-        return None, ('第 %d 张图不存在（脚本共留下 %d 张）'
+        return None, (_msg.t_ui('第 %d 张图不存在（脚本只有 %d 张）；请用 0，或用 --all-figs 全部导出')
                       % (fig_index, len(figs)))
     fig = figs[idx]
     snap = sess.reg.snapshots.get(id(fig)) if info is not None else None

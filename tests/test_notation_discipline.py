@@ -240,6 +240,33 @@ def teeth():
         check('teeth 16 临时样例目录已清理（不留脏文件）', not os.path.exists(tmp),
               '还在 %s' % tmp if os.path.exists(tmp) else '')
 
+    # ---- t98：**文件级**跳过临时/探针名（原来只跳目录）----
+    # 病根：别的测试会往仓库里写"用完就删"的探针 `.py` —— `tests/test_agent_api.py:309`
+    # 写 `tests/.tmp_dpi.py`、`:445` 写 `tests/_jsonenc9.py`。并发跑两条臂（或与别的
+    # agent 的跑重叠）时，**A 臂的探针文件正被 B 臂的 notation 扫描看到** ⇒ 假红
+    # （t87 那次**两臂都红、分离跑都过**，就是这个机制）。修法 = `iter_py()` 做**文件级**
+    # 跳过，且跳过面**很窄**（只认既有临时/探针命名约定，不按"未跟踪"整片跳）。
+    tmp17 = tempfile.mkdtemp(prefix='notation_t98_')
+
+    def _mk17(name):
+        p = os.path.join(tmp17, name)
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write("print('\u2713 done')\n")      # U+2713 ⇒ R1 记号 + R2 GBK 编不出
+        return p
+
+    try:
+        _mk17('.tmp_probe_t98.py')                 # 探针名 ⇒ 必须被跳过
+        _f17, _rc17, _ = _run_tool(tmp17)
+        check('teeth 17a 探针名（.tmp_*）**不报** ⇒ rc=0（否则并发跑会假红）',
+              not _f17 and _rc17 == 0, '实得 %s rc=%s' % (_fmt(_f17 or []), _rc17))
+        _mk17('normal_t98.py')                     # 正常名 ⇒ 必须照报
+        _f17b, _rc17b, _ = _run_tool(tmp17)
+        check('teeth 17b 正常名**照报** ⇒ rc≠0（证明跳过很窄、没藏真违规）',
+              bool(_f17b) and _rc17b != 0,
+              '实得 %s rc=%s' % (_fmt(_f17b or []), _rc17b))
+    finally:
+        shutil.rmtree(tmp17, ignore_errors=True)
+
 
 # ------------------------------------------------------------------- 真仓库
 def run_real():

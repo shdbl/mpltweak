@@ -31,6 +31,14 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 mpltweak doctor
 ```
 > 自检一律用 `mpltweak doctor`。**没有 `mpltweak --version` 这个命令** —— 传 `--version` 会被当成"要开窗"，反而报脚本路径缺失。
+> Windows 上若 `doctor` 的中文在 PowerShell 里显示成乱码：doctor 的输出是**显式 UTF-8**，重定向一下再读即可 —— `mpltweak doctor > doctor.txt` 然后 `Get-Content -Encoding UTF8 doctor.txt`（或先 `chcp 65001`）。
+
+**⚠️ `pip install` 之后命令还是"不存在"？** Windows + conda 很常见：包装好了，但 `Scripts` 目录不在 PATH
+（安装时会打一行 `WARNING: The script mpltweak.exe is installed in '…\Scripts' which is not on PATH`）。
+**这不是"没装"，别重装一遍。** 三条等价路子，任选一条：
+1. **全路径调用**：`D:\Miniconda\envs\<你的环境名>\Scripts\mpltweak.exe doctor`（把 `<你的环境名>` 换掉即可）；
+2. 把 `<环境>\Scripts` **加进 PATH**（改完要**重开终端**才生效）；
+3. **最稳**：`python -m mpltweak doctor` —— 只要 `python` 是本环境的，任何 PATH 配置都对；本文所有 `mpltweak <子命令>` 都能这么换。
 
 **命令不存在（`command not found` / `不是内部或外部命令`）⇒ 先问，再装**：
 1. 先用一句人话告诉用户："这台机器上还没装 mpltweak，需要装一下才能用。"
@@ -38,6 +46,7 @@ mpltweak doctor
    ```bash
    pip install mpltweak
    ```
+   **装完若命令仍报"不存在"，多半只是不在 PATH —— 见上面 ⚠️ 那段，别重装。**
 3. **要开窗拖图**（用户说"开交互调图 / 我要拖一下"）：再装 Qt 后端，**多约 150MB**：
    ```bash
    pip install "mpltweak[qt]"
@@ -53,21 +62,25 @@ mpltweak doctor
 ## 先说一句"要等多久"，别静默等待
 
 `describe` / `check` / `apply`（含 `--write`）**都会在独立子进程里重跑用户的脚本**（无头 Agg 后端）；
-其中 **`apply --write` 默认只重跑 1 遍**（这一遍同时看「能不能跑通」与「改的字段有没有真落到目标图上」），
-**需要归因"是不是脚本本来就跑不通"时 3 遍**（多跑一遍原脚本做基线对照）——
+其中 **`apply --write` 默认 1 遍起**：源码里有可直接改的数字时就是 1 遍（这一遍同时看「能不能跑通」与
+「改的字段有没有真落到目标图上」）；参数里有**「原位写不了」的字段**（`grid` / `spines` / `clim` / `pos` /
+`xscale` 这类，**很常见**）时会**先额外跑 1 遍**判「要不要退块」
+（口径见 `docs/verify.md` 的「写回会跑几遍脚本」表第 5 行）⇒ **真有改动要落地是 2 遍起**，
+**需要归因"是不是脚本本来就跑不通"时 3 遍**（多跑一遍原脚本做基线对照；取不到目标图状态还会**回退到两遍口径**）——
 这几遍**都在用户拿回控制权之前**发生，而且**会真的执行他的脚本（`savefig` 照常产出他的图）**；
-**默认超时 300 秒**（`--timeout 秒` 可调；`--keep-unverified` 可保留这次写回）。
+**默认超时 300 秒**（**只有 `apply --write` 能调**：`--timeout 秒`；`describe` / `check` / 开窗**都没有**这个开关 —— 见「其他选项」的分列）。
 
 **先把口径说对（别把因果讲反）**：重跑**不是额外负担** —— 用户改完之后**本来就要重跑确认图对不对**，
 而且我们这次重跑**会顺便把他的图生成出来**（直接拿它给用户看，多数情况下不用再单独跑一次）。
 **真正的门槛只有一条：脚本能不能在无头环境里跑通。**
-慢脚本只是"等待变成单次的 2~3 倍"：**绝对不要对用户说"你这脚本太慢 / 不合适 / 不能用"**（那是错误归因）。
+慢脚本只是"等待约等于单次运行的时长（有「原位写不了」的字段时 2 倍起，走到回退或归因时 2~3 倍）"：
+**绝对不要对用户说"你这脚本太慢 / 不合适 / 不能用"**（那是错误归因）。
 
 所以任何一步动手前，先用一句人话给预期：
 
 > "接下来我会跑一遍你的脚本做验证（顺利的话顺手把你的图也出好），通常几十秒，慢的脚本可能几分钟。"
 
-用户看到的是"卡住了"，不是"在干活"。脚本明显很慢（读大数据、画地图）时，提前把 `--timeout` 调大并告诉用户"这一步会久一点"。
+用户看到的是"卡住了"，不是"在干活"。脚本明显很慢（读大数据、画地图）时，**走 `apply --write` 时**提前把 `--timeout` 调大并告诉用户"这一步会久一点"（开窗那一步没有超时开关，等多久就是多久）。
 
 ## 命令速查
 
@@ -90,7 +103,14 @@ mpltweak doctor
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
 | `mpltweak doctor` | 环境自检（后端 / Qt 绑定 / matplotlib 版本） |
 
-其他选项：`--all-figs`（循环出图时统一应用，默认只改参数记录的那张）、`--timeout 秒`（**默认 300**；`apply --write` 就是用它在子进程里重跑脚本做验证，脚本很慢就调大）、`--python 解释器`、`--lang zh|en`（界面语言，默认跟随系统）、`--force`（脚本比参数新时仍强行套用；默认跳过以免覆盖手改）。
+其他选项（**按子命令分列 —— 选项不是全局通用的**）：
+- **`apply`**：`--timeout 秒`（**默认 300**，就是它在子进程里重跑脚本做验证的等待上限；脚本很慢就调大）、`--python 解释器`、`--style auto|inplace|block`、`--force`、`--snippet`、`--json`、`--dry-run`、`--all-figs`、`--keep-unverified`、`--no-verify` / `--no-semantic` / `--verify-fast`、`--strict` / `--allow-layout-conflict`、`-v`。
+- **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`。
+- **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
+- **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
+- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `launch` / `doctor` **不接受**（实测源码里只有三处注册：`apply.py:720`、`describe.py:110`、`check.py:570`）。
+
+**`--timeout` 只有 `apply` 认** —— `check` / `describe` / `launch` **都不认**（实测：`mpltweak check <脚本> --timeout 900` ⇒ `unrecognized arguments`、`rc=2`）。**`check` 也不需要它**：实测一份要读 NSIDC + 128 个 MME 文件的重脚本，`check` 只用 **50 秒**左右（远低于 300 秒）⇒ "默认 300 秒不够"这个担心对 `check` 不成立。选项清单以 `mpltweak <子命令> --help` 为准。
 
 **备份与回退（成对记）**：`apply --write` 之后，**脚本旁**会同时存在两份可回退的备份 ——
 ① `<脚本目录>/.tweak_params/<脚本名>.tweak.bak`（**固定名、首份优先**：只在不存在时创建，之后的写回
@@ -171,6 +191,13 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 | 画布 | **Ctrl+F** · `n` · **空格** · **Ctrl+Q** | 裁白边 · 吸附开关 · 线条模式 · 关全部窗口 |
 | 历史 | **Ctrl+Z** · **Ctrl+Y** 或 **Ctrl+Shift+Z** | 撤销 · 重做（Office 惯例双绑） |
 | 其他 | **Alt+拖拽** | 临时关闭吸附（这一下不对齐） |
+| 逃生 | **Alt+点击** · **Tab** | **穿透**到下一层候选（被压住的对象，如压在极地图上的 colorbar） · **逐个循环**所有可见对象（含点不到的） |
+
+**拾取优先级（P0-2 / t71）**：光标下有多个对象时，**后加入者优先、再按面积小者优先** ——
+压在极地图上的 colorbar 先被选中；**边缘缩放把手不许抢走压在上面的小对象**。极地图这类
+`aspect_locked` 轴按**真实绘制形状（圆）**判命中，不是外接矩形。若仍点不到想点的那个，
+用上表的**逃生**两招（`Alt+点击` 穿透 / `Tab` 循环）—— 不允许存在"永远选不中"的对象。
+（真窗口里"点色条真的选中"仍待真窗口实测确认；离屏手势套件已证。）
 
 **空格（线条模式）**：只留边框 + 刻度文字 + 图例，隐藏数据图元。cartopy 全球图实测全量重绘
 494ms → 169ms，排版挪位置时用它，再按一次恢复。
@@ -218,6 +245,16 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **`layers = {syntax, rerun, semantic}`**：三层各自"跑没跑"。`true` = 跑了，`null` / 缺键 = **没跑**。
   **只有 `semantic: true` 才算"布局真的落到目标图上"**；`verified: null` 表示**语义层没跑**（取不到图
   状态，或你加了 `--verify-fast`）——**不要当成通过**；`verified: false` 才是明确的失败。
+- **`verify_passes` / `semantic_basis`**：两个键**恒有**（别再从 `warnings` 的文本里猜）——
+  `verify_passes` = 这次为验证在**写回后的脚本**上跑了几遍：**1** = 默认单遍 / **2** = 单遍取不到目标图
+  状态、已回退到两遍 / **0** = 这次没有为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 /
+  没有可写字段）。**`0` 不是失败**，它只表示"这一档没有为验证重跑脚本"（与提示语「没有重跑脚本 ——
+  不保证能跑通、也不保证布局真的落到目标图上」是同一口径）。它**只数主验证的遍数**：参数里有"原位
+  写不了"的字段时会**先额外跑一遍**判要不要退块（见上面「先说一句要等多久」那节），**这一遍不计入**
+  ⇒ `verify_passes=1` **不等于**"整条命令只跑了 1 遍脚本"。
+  `semantic_basis` = 语义判定的依据：**`live+savefig`**（图对象状态 + 磁盘那张图的追加判据）/
+  **`live`**（只有图对象状态）/ **空串**（这次没有语义判定依据）。想知道"这次**为什么**回退到两遍"：
+  先看 `verify_passes=2`，再读同一条目的 `warnings`。
 - **`reason`** 常见取值（都在集成树上实测过）：
 
   | 值 | 含义 | 你该做什么 |
@@ -246,3 +283,9 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 
 产品逻辑全在 pip 包 **mpltweak** 里（`pip install mpltweak` 就够跑 `describe` / `check` / `apply` / `mcp`；**开窗需要一个图形后端，而 Qt 是可选 extra、不在默认依赖里** —— 没装 Qt 时自动退回 Tk 开窗并在 stderr 提示，想要完整体验加 `pip install "mpltweak[qt]"`）。
 本文件只负责"什么时候用、怎么用、别踩什么坑"—— 内核升级不需要动它。
+
+### `doctor` 的选项口径（t91）
+
+- `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
+- **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。
+- `-h` / `--help` ⇒ rc=0，打印 doctor 用法。

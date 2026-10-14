@@ -53,8 +53,17 @@ import time
 from importlib.util import find_spec
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # mpltweak 树
-DEFAULT_CORPUS = r'D:\Agent\deepseek\corpus_union'
-DEFAULT_OUT = r'D:\Agent\deepseek\_review\corpus_filter_t7'
+# 语料与产出都在**仓库外的工作区**（`MAINTENANCE.md:295` §7「素材与工作脚本」；`_review/**`
+# 是"本机工作记录、未随仓库发布"，见 `docs/reliability.md:242`）。这里**不写死盘符**：
+# 按同族工具的既有写法从树位置推 —— `tools/cmp_plain_vs_instrumented.py:77-80`、
+# `tools/probe_close_vs_wrapper.py:54`、`tools/probe_onepass_perf.py:141` 对**同两个路径**
+# 都是这么写的，消费方 `tests/test_corpus_invariants.py:632-633` 的 WORKSPACE 也这么推；
+# 本工具曾是 `tools/` 里唯一写死 `D:\` 的地方。
+# 本机（`<ws> = D:\Agent\deepseek`）解析结果与旧的写死值**逐字相同**（t39 实测相等）；
+# 换了布局或换机器请用 `--corpus` / `--out` 显式指定 —— 语料本身不随仓库发布。
+WORKSPACE = os.path.dirname(ROOT)
+DEFAULT_CORPUS = os.path.join(WORKSPACE, 'corpus_union')
+DEFAULT_OUT = os.path.join(WORKSPACE, '_review', 'corpus_filter_t7')
 PARAMS_TEMPLATE = {"version": 4, "fig_index": 0, "figsize_in": [8.5, 5.5]}
 APPLY_TIMEOUT = 20.0          # 单份 apply 预演超时（秒）
 _PY = sys.executable

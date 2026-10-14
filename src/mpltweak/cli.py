@@ -18,7 +18,10 @@ import sys
 
 
 def _usage(out):
-    out.write(
+    # t78：cli.py 的 messages 导入都在各函数内部（如 _schema_command），
+    # 本函数也要显式导入一次，供 t_ui 取语言表。
+    from . import messages as _msg
+    out.write(_msg.t_ui(
         'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n'
         '\n'
         '用法：\n'
@@ -50,8 +53,7 @@ def _usage(out):
         '交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n'
         '      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n'
         '      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n'
-    )
-
+    ))
 
 def _schema_command(argv):
     """``mpltweak schema``：CH-9 —— 不再忽略参数。
@@ -101,6 +103,27 @@ def main(argv=None):
         from .mcp_server import main as mcp_main
         return mcp_main(argv[1:])
     if cmd == 'doctor':
+        # t91（船长裁定收窄）：doctor 过去**静默接受**未知选项/多余位置参数（rc=0），
+        # 与 --help 里"未知选项 = 2"的口径打架；最危险的是 `doctor --json` ——
+        # 用户/agent 以为拿到机器可读结果，实际被静默忽略（"静默撒谎"）。
+        # 现按其它子命令同一口径严格校验；--json 明拒（doctor 没有这个选项）。
+        # 注意：cli.py 的 messages 都是**函数内局部导入**（见 _schema_command），
+        # 本分支同样要显式导入一次，否则 NameError（t78 同型坑）。
+        from . import messages as _msg
+        _dargs = argv[1:]
+        if any(a in ('-h', '--help') for a in _dargs):
+            sys.stdout.write(_msg.t('doctor_usage') + '\n')
+            return _msg.EXIT_OK
+        if any(a == '--json' for a in _dargs):
+            sys.stderr.write(_msg.t('doctor_no_json') + '\n')
+            sys.stderr.write(_msg.t('doctor_usage') + '\n')
+            return _msg.EXIT_USAGE
+        _dunknown = [a for a in _dargs if a != '--lang']
+        if _dunknown:
+            sys.stderr.write(_msg.t('doctor_usage') + '\n')
+            sys.stderr.write(_msg.t('schema_unknown_args',
+                                    args=' '.join(_dunknown)) + '\n')
+            return _msg.EXIT_USAGE
         from .launch import doctor
         return doctor()
     if cmd == 'launch':

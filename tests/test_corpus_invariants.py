@@ -2,7 +2,7 @@
 """语料级不变量扫描（⑥）—— 复用 t2（test_property_writeback）的四条铁律断言函数，
 对真实语料子集（corpus_union，只读）逐份跑不变量扫描。
 
-模块级脚本，风格同七套件 + test_property_writeback.py：
+模块级脚本，风格同其它套件 + test_property_writeback.py：
 ``MPLTWEAK_LANG=zh`` 钉死 + 末尾打印 ALL PASS / FAILED 并 ``sys.exit``。
 
 四条铁律（来自 t2，判据实现一致，仅把"④ 只动目标"改成无模板的语料版）：
@@ -317,11 +317,35 @@ _NET_MODULES = ('socket', 'requests', 'urllib', 'urllib2', 'urllib3', 'httpx',
 _NET_OS_CALLS = ('system', 'popen', 'execv', 'execvp', 'execve', 'spawnv',
                  'spawnvp', 'spawnl', 'startfile')
 _NET_SUBPROC_CALLS = ('run', 'Popen', 'call', 'check_output', 'check_call')
+# URL 字面量的前缀（只认带 http/https scheme 的字符串常量）。B7 用：
+# `pd.read_table("https://…")` 这类"URL 坐在实参位置"的写法也是联网信号
+# —— 0.1.10 全量真跑的旁证实测过，它的 verdict 随网络可达性翻转
+# （联网 `pass` / 强制断网 `rc=1 URLError`；见 bench 分支
+# `evidence/0.1.10/INDEPENDENT_SPOTCHECK.md` §5 与 MAINTENANCE §14.2-⑦）。
+_URL_PREFIXES = ('http://', 'https://')
+
+
+def _is_url_literal(node):
+    """AST 节点是不是一个 URL 字面量（`ast.Constant` 字符串 + http/https 开头）。"""
+    return (isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value.strip().lower().startswith(_URL_PREFIXES))
 
 
 def _has_net_risk(text):
     """AST 静态：脚本是否**联网 / 起子进程**（不用正则扫源码 —— 那样会把注释和
-    字符串里的词也算进去；t17/t20 的棘轮已经栽过一次"词元计数 ≠ 调用点"）。"""
+    字符串里的词也算进去；t17/t20 的棘轮已经栽过一次"词元计数 ≠ 调用点"）。
+
+    B7（0.1.11）补一条判据：**URL 字面量坐在调用实参位置**（位置实参或关键字实参
+    都算）也算联网风险 —— `pd.read_table("https://…")` / `ax.add_wms(wms="http://…")`。
+    全池 1,837 份实测：新判据命中 12 份、其中 10 份是旧判据漏掉的（真联网的
+    `pd.read_table` ×2 / `pd.read_csv` ×2 / `add_wms` 都在内）。
+
+    **只认"实参位置的 URL 字面量"**，不做"源码里出现 http 就命中"的宽口径；也要
+    知道这条判据**故意偏宽**：`print("https://…")` / `len("http://…")` /
+    `ET.register_namespace('', 'http://www.w3.org/2000/svg')` 这类非网络调用同样命中
+    （实测 1,837 份里 5 份）。这是 fail-closed：宁可把一份能跑的脚本标成
+    "判据不适用"，也不能拿"期望它会拦住"去赌陌生脚本在断网环境里的行为。"""
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -335,6 +359,12 @@ def _has_net_risk(text):
             if (node.module or '').split('.')[0] in _NET_MODULES:
                 return True
         elif isinstance(node, ast.Call):
+            # URL 字面量当实参（`**kwargs` 解包时 kw.value 是表达式、不是字面量，
+            # 天然不算）→ 判联网风险，与调用的是谁无关（`pd.read_table` 与
+            # `ax.add_wms` 都不是网络模块，但都会去取 URL）。
+            if any(_is_url_literal(a) for a in node.args) or any(
+                    _is_url_literal(kw.value) for kw in node.keywords):
+                return True
             fn = node.func
             if isinstance(fn, ast.Name):
                 if fn.id in ('system', 'popen'):
@@ -1516,6 +1546,14 @@ def _build_summary(corpus_root, manifest_path, n_rows, comp, chosen, results,
         a('于是被当作 harness 进程，只剩文件层（文件层对 harness 也生效，所以')
         a('**越界读写删依然是拦得住的**，试点证据见 §4c）。按"指望不上的层就别给它')
         a('机会"的口径，这类脚本静态预筛、不真跑。')
+        a('')
+        a('静态判据（`_has_net_risk`）：网络模块 import / `urlopen|urlretrieve` /')
+        a('`os.system|popen` / `subprocess.*` / **URL 字面量坐在调用实参位置**')
+        a('（0.1.11 补，如 `pd.read_table("https://…")` —— 0.1.10 的旁证实测里这类')
+        a('脚本的 verdict 随网络可达性翻转：联网 `pass` / 断网 `rc=1 URLError`）。')
+        a('最后一条**故意偏宽**：`print("https://…")` / `len("http://…")` /')
+        a('`register_namespace(…, "http://www.w3.org/2000/svg")` 这类不联网的调用同样')
+        a('命中 —— 宁可少跑一份，也不拿"期望它会拦住"去赌陌生脚本的行为。')
         a('')
         a('> 边界（如实说明）：① 沙箱"是否脚本进程"以 `argv[0]` 判定，**真跑链路'
           '（`python -m mpltweak.verify …`）落在 harness 侧，只有文件层生效**；')

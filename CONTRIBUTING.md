@@ -35,7 +35,9 @@ pip install -e . --no-deps   # then install only what you need (fully headless)
 
 ## Running the tests
 
-There are seven suites, all plain scripts (no pytest needed):
+Every suite is a **plain script** that prints `ALL PASS` or a failure list, so no pytest is needed
+for a quick loop. The **seven original suites** (the only ones the CI shell loop below still runs on
+every matrix leg) are:
 
 ```bash
 python tests/test_tweak.py        # core interaction helpers
@@ -47,20 +49,29 @@ python tests/test_check.py        # layout health check
 python tests/test_mcp.py          # MCP server (skips itself if `mcp` isn't installed)
 ```
 
-Each prints `ALL PASS` or a failure list. **All seven must pass before a PR.**
+**The authoritative list of suites is `SUITES` in `tests/test_suites.py`** (17 entries as of
+2026-10-13; two more are deliberately excluded — see its `SUITES_EXCLUDED` and header docstring).
+The bar for a PR is a green **`pytest -q`** (all registered suites + the hygiene ratchets), not
+"these seven".
 
-### The pytest route (optional, same suites)
+### The pytest route (optional locally, but this is what CI trusts)
 
-`tests/test_suites.py` wraps those seven scripts in pytest — one test case per suite, so CI
-reports, single-suite selection and IDE integration all work:
+`tests/test_suites.py` wraps **every suite in `SUITES`** — 17 today, not just the seven above — one
+test case per suite, so CI reports, single-suite selection and IDE integration all work.
+`pyproject.toml` pins `python_files = ["test_suites.py", "test_hygiene.py"]`, so plain `pytest -q`
+collects exactly those two wrappers and the suites themselves run as subprocesses:
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                       # all suites + the hygiene ratchet
+pytest -q                       # all registered suites + the hygiene ratchets
 pytest -q -k test_writeback     # just the write-back engine
+pytest -q -k notation_discipline  # or any suite registered later
 ```
 
-`tests/test_hygiene.py` holds two ratchets that used to live only in prose:
+`tests/test_hygiene.py` holds the engineering-hygiene ratchets that used to live only in prose (21
+test functions today: module registration, GBK encodability, the broad-`except Exception` count, the
+child-process env-pinning ledger, the "no real GUI objects in tests" guard, …). The two original
+ones:
 
 - **`except Exception` may not grow unregistered.** Broad catches are correct in GUI
   callbacks and runtime probes, but at ~150 of them you can no longer tell "expected
@@ -107,17 +118,45 @@ Put the reverse check in the PR description ("reverting `writeback.py:<line>` ma
 
 ### Adding a suite
 
-Adding a test file means touching four places — CI, both test wrappers and the docs:
+**One registration point: `SUITES` in `tests/test_suites.py`.** That list is what pytest collects
+(`pyproject.toml` pins `python_files = ["test_suites.py", "test_hygiene.py"]`) and therefore what CI
+executes. The `for t in ...` loop in `.github/workflows/tests.yml` is **only the seven legacy
+suites** and does *not* need editing for a new one. Both recent precedents landed with exactly that
+single edit — `test_notation_discipline` (HEAD `99fe55b`) and `test_docs` (`d24b9bb`) each added one
+tuple to `SUITES`; neither touched the workflow.
 
-1. `tests/test_yoursuite.py`, printing `ALL PASS` (copy the shape of `test_check.py`);
-2. the `for t in ...` loop in `.github/workflows/tests.yml`;
-3. `SUITES` in `tests/test_suites.py`;
-4. the list above, plus the handbook section that describes the suites.
+1. write `tests/test_yoursuite.py`, printing `ALL PASS` (copy the shape of `test_check.py`);
+2. add one tuple to `SUITES` in `tests/test_suites.py` — second element = extra env vars for that
+   suite (usually `{}`):
 
-Four places, and the suite must run in **both** language environments (`MPLTWEAK_LANG=zh` pinned inside
-the suite, `MPLTWEAK_LANG=en pytest -q` in CI) — otherwise it passes locally and turns CI red. If what
-you added is a *source* module rather than a suite, the other registries are the module list pinned by
-`tests/test_hygiene.py` and, if it becomes an extra, `pyproject.toml`.
+   ```python
+   ('test_notation_discipline', {}),   # ← the precedent: one line
+   ```
+
+3. if the suite must **not** run under pytest, put it in `SUITES_EXCLUDED` instead, with a one-line
+   reason — `test_real_window` (opens a real window) and `test_corpus_invariants` (needs the
+   out-of-repo corpus + minutes of runtime) are there today;
+4. keep this file in sync: the suite list above and this section are the human-facing registry.
+5. **name it so the checkers actually see it** (t98): do *not* give a real suite a temp/probe name —
+   starting with `.tmp`, `tmp_` or `_jsonenc`, or ending with `_probe.py`.
+   `tools/notation_discipline.py`'s `iter_py()` deliberately **skips** those names, because other
+   tests write throwaway probes into the repo and delete them afterwards
+   (`tests/test_agent_api.py:309` → `tests/.tmp_dpi.py`, `:445` → `tests/_jsonenc9.py`), and a
+   concurrent run would otherwise see another arm's probe file and report a **false red**.
+   A real suite named that way would **silently drop out of the notation discipline**.
+   (Details: that tool's docstring, section “扫描面”.)
+
+If what you added is a *source* module rather than a suite, the registries are the `BASELINE` list
+pinned by `tests/test_hygiene.py` (`test_all_modules_registered`) and, if it becomes an extra,
+`pyproject.toml`.
+
+**CI coverage — known gap, stated plainly (as of 2026-10-13).** The plain-script loop
+(`.github/workflows/tests.yml:53-58`) runs **only the seven legacy suites**, on all 8 matrix legs.
+Everything in `SUITES` *does* run through `pytest -q` in the `pytest report + hygiene ratchet` step
+(`:63-72`), but that step is guarded by `if: matrix.python-version == '3.12'` ⇒ **the 10 suites added
+after 0.1.9 are never exercised on Python 3.9 / 3.10 / 3.11**. Closing it means either adding them to
+the loop or dropping the 3.12-only guard; that is a release-pipeline change, so it is recorded here as
+a TODO rather than changed silently.
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose
@@ -187,3 +226,9 @@ mpltweak check your_script.py --json
 ## License
 
 By contributing you agree your work is released under the project's MIT license.
+
+### 文案 i18n 的边界（t78 血案，硬规则）
+
+`messages` 的语言表**只用于纯人读文本**。**协议载荷 / 日志分帧 / 被 `==`、`startswith` 比较或当字典键用的字符串，一律不许套表。**
+
+真实反例：`src/mpltweak/mcp_server.py` 的 MCP 启动行套了 `_msg.t_ui(...)` 之后，MCP **握手直接断**（`tests/test_mcp.py` 红，尾行 `FAILED: 1 项 -> ['MCP 端到端']`）；把该文件写回 HEAD 后立刻 ALL PASS。判据：**改完必须跑受影响的那条命令/套件**，`ast.parse` 通过不代表行为没坏。

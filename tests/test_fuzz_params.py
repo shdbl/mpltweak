@@ -49,7 +49,7 @@ except ImportError:                                          # noqa: BLE001
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 界面语言钉死（与其它七个套件一致）：断言的是中文文案，别让宿主 locale 决定结论。
+# 界面语言钉死（与其它套件一致）：断言的是中文文案，别让宿主 locale 决定结论。
 os.environ['MPLTWEAK_LANG'] = 'zh'
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 from mpltweak import params as _params              # noqa: E402
@@ -390,6 +390,59 @@ def run_mutations():
 
 
 # ---------------------------------------------------------------------------
+# F. 返回类型契约（t59）：validate / validate_errors 的**每一条返回路径**都是 List[str]
+#
+# 为什么单独立一节：t56 实测到"顶层不是对象"（load 路径的 `_top_not_object` 标记）
+# 那条分支 `return` 的是**一个字符串**（签名写的是 List[str]），旧 apply 于是
+#   * `for prob in params.validate(data)` **逐字符**打印（实测 541 行，每行一个字符）；
+#   * `'; '.join(_errs)` 把字符用 "; " 串起来 ⇒ --json 的 files[].err 变乱码。
+# t56 在调用侧归一避险；t59 把**根因**修在 params.py，这里钉住类型契约 ——
+# 下一个调用方不必再自己防一遍。文案与顺序都不许变（zh/en 由 pv_* 键承载）。
+# ---------------------------------------------------------------------------
+def _write_tmp_params(text, name='types.json'):
+    path = os.path.join(_TMPROOT, name)
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+    return path
+
+
+def run_return_types():
+    print('F. 返回类型契约：validate / validate_errors 恒返回 List[str]')
+    cases = [
+        ('裸非 dict(list)', [1, 2, 3]),
+        ('裸非 dict(str)', 'hello'),
+        ('裸非 dict(int)', 7),
+        ('load 路径·顶层 list', _params.load(_write_tmp_params('[1, 2, 3]'))),
+        ('load 路径·顶层 str', _params.load(_write_tmp_params('"hi"'))),
+        ('load 路径·缺 version', _params.load(
+            _write_tmp_params('{"script": "target.py", "axes": []}'))),
+        ('正常参数', _params.normalize(_base())),
+    ]
+    for label, d in cases:
+        for fname, fn in (('validate_errors', _params.validate_errors),
+                          ('validate', _params.validate)):
+            try:
+                res = fn(d)
+            except Exception as e:                              # noqa: BLE001
+                check('%s(%s) 不抛异常' % (fname, label), False,
+                      _gbk_safe(str(e))[:200])
+                continue
+            check('%s(%s) 返回 list[str]' % (fname, label),
+                  isinstance(res, list) and all(isinstance(x, str) for x in res),
+                  '%s: %r' % (type(res).__name__, _gbk_safe(str(res))[:120]))
+    # 内容与顺序：顶层非对象那条必须**恰好一句**（而不是被逐字符拆开）
+    _d_top = _params.load(_write_tmp_params('[1, 2, 3]'))
+    _e_top = _params.validate_errors(_d_top)
+    check('顶层非对象的硬错误恰好 1 条、是一句话、点名"顶层不是对象"',
+          len(_e_top) == 1 and '顶层不是对象' in _e_top[0]
+          and len(_e_top[0]) > 40, repr(_e_top)[:160])
+    # validate 对同一条路径也是 list，且以硬错误开头（软问题只追加）
+    _v_top = _params.validate(_d_top)
+    check('validate(顶层非对象) 同样是 list 且以硬错误开头',
+          isinstance(_v_top, list) and _v_top[:1] == _e_top, repr(_v_top)[:160])
+
+
+# ---------------------------------------------------------------------------
 # E. 端到端抽查：apply --write --json --no-verify 的行为与 validate_errors 一致
 # ---------------------------------------------------------------------------
 _FIX = os.path.join(ROOT, 'tests', 'fixtures', 'synth_script.py')
@@ -523,6 +576,8 @@ def main():
             check('合法参数无硬错误', True)
         except Exception as e:                       # noqa: BLE001
             check('合法参数无硬错误', False, _gbk_safe(str(e))[:500])
+
+    run_return_types()
 
     run_mutations()
 

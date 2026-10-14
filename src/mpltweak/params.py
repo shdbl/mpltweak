@@ -350,8 +350,7 @@ def read_text_ex(path: str) -> Tuple[str, str, bool]:
         # 显式把 'utf-8-sig' 传回给 _atomic_write（writeback 就是这么做的）。
         return text, ('utf-8' if enc == 'utf-8-sig' else enc), had_bom
     raise UnicodeDecodeError('mpltweak', raw, 0, min(1, len(raw)),
-                             '无法识别的文本编码（已试 utf-8-sig / utf-8 / gbk / '
-                             'gb18030 / big5）')
+                             _t('pv_decode_failed'))
 
 
 def load(path: str) -> Dict[str, Any]:
@@ -417,17 +416,31 @@ def _is_num(v: Any) -> bool:
         return False
 
 
+def _t(key, **kw):
+    """params 里**面向用户的文案**统一走 messages 表（t55 / V1-F5）。
+
+    V1 实测：`MPLTWEAK_LANG=en` 下 apply 的人读输出仍有 5 行非 ASCII，全来自本模块的
+    校验文案。这里只搬文案 —— **校验逻辑/判定条件/异常类型/rc 一字不动**。
+
+    局部导入 messages：本文件既有 ``schema_main``（:309）就是"局部导入 + 避免顶层
+    循环依赖"的写法，这里跟随同一范式，将来谁在 messages 里 import params 也不会踩到
+    部分初始化的包对象。
+    """
+    from . import messages as _msg
+    return _msg.t(key, **kw)
+
+
 def _num_list_problem(v: Any, n: int, what: str) -> Optional[str]:
     """``v`` 必须是 n 个可用数值的数组；否则返回一句指名道姓的问题。"""
     if v is None:
         return None
     if not isinstance(v, (list, tuple)):
-        return '%s 必须是 %d 个数字的数组，实际是 %r' % (what, n, v)
+        return _t('pv_num_list_type', what=what, n=n, v=v)
     if len(v) != n:
-        return '%s 必须是 %d 个数字（实际 %d 个）: %r' % (what, n, len(v), v)
+        return _t('pv_num_list_len', what=what, n=n, len=len(v), v=v)
     for x in v:
         if not _is_num(x):
-            return '%s 含非数值/非法数值元素: %r' % (what, x)
+            return _t('pv_num_list_item', what=what, v=x)
     return None
 
 
@@ -443,16 +456,12 @@ def _version_problem(data: Dict[str, Any]) -> Optional[str]:
     用户以为"写回成功了"。
     """
     if data.get('_version_missing'):
-        return ('参数文件缺少 version 字段（本规范要求 version=%d）—— 这份文件'
-                '可能不是本工具导出的，或被人手改掉了版本号；拒写。'
-                '请用 `mpltweak describe <脚本>` 重新导出。' % SCHEMA_VERSION)
+        return _t('pv_version_missing', want=SCHEMA_VERSION)
     ver = data.get('version')
     if isinstance(ver, bool) or not isinstance(ver, int):
-        return 'version 缺失或非整数: %r' % (ver,)
+        return _t('pv_version_type', v=ver)
     if ver != SCHEMA_VERSION:
-        return ('version=%d 与当前规范 %d 不符（旧版/未知版参数一律拒写，'
-                '以免按错误语义改代码；请用 `mpltweak describe <脚本>` 重新导出）'
-                % (ver, SCHEMA_VERSION))
+        return _t('pv_version_mismatch', got=ver, want=SCHEMA_VERSION)
     return None
 
 
@@ -466,7 +475,7 @@ def _size_problem(v: Any, what: str) -> Optional[str]:
     if not isinstance(v, (int, float)) or isinstance(v, bool):
         return None
     if v <= 0:
-        return '%s 必须 > 0，实际是 %r' % (what, v)
+        return _t('pv_must_positive', what=what, v=v)
     return None
 
 
@@ -489,19 +498,17 @@ def _pos_problem(pos: Any, what: str) -> Optional[str]:
     for x in pos:
         if not _is_num(x):
             return None
-    p = _size_problem(pos[2], '%s[2]（width）' % what)
+    p = _size_problem(pos[2], _t('pv_width_label', what=what))
     if p:
         return p
-    p = _size_problem(pos[3], '%s[3]（height）' % what)
+    p = _size_problem(pos[3], _t('pv_height_label', what=what))
     if p:
         return p
     left, bottom, w, h = (float(pos[0]), float(pos[1]), float(pos[2]),
                           float(pos[3]))
     if left + w <= 0 or bottom + h <= 0 or left >= 1 or bottom >= 1:
-        return ('%s 整块都在画布外（left=%g bottom=%g w=%g h=%g）：写进源码后'
-                '这块面板在图上看不到（left/bottom 为负但**有可见部分**是允许的，'
-                '这里拒的是完全跑到画布外）'
-                % (what, left, bottom, w, h))
+        return _t('pv_pos_offscreen', what=what, left=left, bottom=bottom,
+                  w=w, h=h)
     return None
 
 
@@ -524,7 +531,7 @@ def _fontsize_problem(v: Any, what: str) -> Optional[str]:
     if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
     if v < 0:
-        return '%s 不能为负（实际 %r）：matplotlib 渲染异常' % (what, v)
+        return _t('pv_fontsize_negative', what=what, v=v)
     return None
 
 
@@ -539,8 +546,7 @@ def _axis_index_problem(idx: Any, what: str) -> Optional[str]:
     if idx is None or isinstance(idx, bool) or not isinstance(idx, int):
         return None                        # 类型问题由上面那条报
     if idx < 0:
-        return '%s 为负（%d）：轴序号是 0 基，负数会被 Python 当成"最后一张"，'\
-               '静默写到别的轴上' % (what, idx)
+        return _t('pv_index_negative', what=what, idx=idx)
     return None
 
 
@@ -554,14 +560,15 @@ def validate_errors(data: Dict[str, Any]) -> List[str]:
     """
     errs: List[str] = []
     if not isinstance(data, dict):
-        return ['顶层不是对象: %r' % (data,)]
+        return [_t('pv_top_not_object_inner', v=data)]
     if data.get('_top_not_object'):
         # load() 对顶层非对象 JSON 打的标记（同 _version_missing 机制）：
         # 与"缺 version / 结构完全不对"同一档硬错误 —— 参数文件必须是 JSON 对象。
-        return ('参数文件顶层不是对象（应为 JSON 对象，如 {"version": …}）'
-                '—— 这份文件可能不是本工具导出的，或被人手改坏了结构；拒写。'
-                '请用 `mpltweak describe <脚本>` 重新导出。实际内容: %s'
-                % data['_top_not_object'])
+        # t59：**必须包一层 list** —— 本函数签名是 ``List[str]``，返回裸字符串会让
+        # 调用方 `for x in errs` **逐字符**打印（t56 实测 541 行、每行一个字符），
+        # `'; '.join(errs)` 也会把字符用分隔符串起来（--json 的 files[].err 变乱码）。
+        # 文案与顺序不变，只是把这一条装进列表里。
+        return [_t('pv_top_not_object_file', v=data['_top_not_object'])]
     # T61：version 必须存在且等于当前规范
     p = _version_problem(data)
     if p:
@@ -578,15 +585,15 @@ def validate_errors(data: Dict[str, Any]) -> List[str]:
     if axes is None:
         axes = []
     if not isinstance(axes, list):
-        errs.append('axes 必须是数组，实际是 %s' % type(axes).__name__)
+        errs.append(_t('pv_axes_not_list', t=type(axes).__name__))
         return errs
     for i, a in enumerate(axes):
         if not isinstance(a, dict):
-            errs.append('axes[%d] 不是对象: %r' % (i, a))
+            errs.append(_t('pv_axis_not_object', i=i, v=a))
             continue
         idx = a.get('index')
         if isinstance(idx, bool) or not isinstance(idx, int):
-            errs.append('axes[%d].index 必须是整数，实际是 %r' % (i, idx))
+            errs.append(_t('pv_index_not_int', i=i, v=idx))
         # T61：负数轴序号（-1 = Python 的最后一张）会被静默写到别的轴上
         p = _axis_index_problem(idx, 'axes[%d].index' % i)
         if p:
@@ -607,7 +614,7 @@ def validate_errors(data: Dict[str, Any]) -> List[str]:
                   'tick_fontsize', 'tick_fontsize_y'):
             v = a.get(f)
             if v is not None and not _is_num(v):
-                errs.append('axes[%d].%s 必须是数字或 null，实际是 %r' % (i, f, v))
+                errs.append(_t('pv_field_not_number', i=i, f=f, v=v))
                 continue
             # T61：负字号拒写（0 合法，只在 validate 里提示）
             p = _fontsize_problem(v, 'axes[%d].%s' % (i, f))
@@ -615,46 +622,42 @@ def validate_errors(data: Dict[str, Any]) -> List[str]:
                 errs.append(p)
         g = a.get('grid')
         if g is not None and not isinstance(g, bool):
-            errs.append('axes[%d].grid 必须是布尔或 null，实际是 %r' % (i, g))
+            errs.append(_t('pv_grid_not_bool', i=i, v=g))
         for f in ('xscale', 'yscale'):
             v = a.get(f)
             if v is not None and (not isinstance(v, str) or v not in SCALE_ENUM):
-                errs.append('axes[%d].%s 不是支持的轴尺度: %r（允许 %s）'
-                            % (i, f, v,
-                               '、'.join(str(x) for x in SCALE_ENUM if x)))
+                errs.append(_t('pv_scale_unsupported', i=i, f=f, v=v,
+                               allowed=_t('items_sep').join(
+                                   str(x) for x in SCALE_ENUM if x)))
         lines = a.get('lines')
         if lines is not None and not isinstance(lines, list):
-            errs.append('axes[%d].lines 必须是数组，实际是 %s'
-                        % (i, type(lines).__name__))
+            errs.append(_t('pv_lines_not_list', i=i, t=type(lines).__name__))
         else:
             for j, ln in enumerate(lines or []):
                 if not isinstance(ln, dict):
-                    errs.append('axes[%d].lines[%d] 不是对象: %r' % (i, j, ln))
+                    errs.append(_t('pv_line_not_object', i=i, j=j, v=ln))
                     continue
                 lw = ln.get('linewidth')
                 if lw is not None and not _is_num(lw):
-                    errs.append('axes[%d].lines[%d].linewidth 必须是数字或 null，'
-                                '实际是 %r' % (i, j, lw))
+                    errs.append(_t('pv_linewidth_not_number', i=i, j=j, v=lw))
         lg = a.get('legend')
         if lg is not None:
             if not isinstance(lg, dict):
-                errs.append('axes[%d].legend 必须是对象或 null: %r' % (i, lg))
+                errs.append(_t('pv_legend_not_object', i=i, v=lg))
             else:
                 fs = lg.get('fontsize')
                 if fs is not None and not _is_num(fs):
-                    errs.append('axes[%d].legend.fontsize 必须是数字或 null，'
-                                '实际是 %r' % (i, fs))
+                    errs.append(_t('pv_legend_fontsize_not_number', i=i, v=fs))
                 else:
                     p = _fontsize_problem(fs, 'axes[%d].legend.fontsize' % i)
                     if p:
                         errs.append(p)
                 loc = lg.get('loc')
                 if loc is not None and not isinstance(loc, str):
-                    errs.append('axes[%d].legend.loc 必须是字符串或 null，'
-                                '实际是 %r' % (i, loc))
+                    errs.append(_t('pv_legend_loc_not_str', i=i, v=loc))
         sp = a.get('spines')
         if sp is not None and not isinstance(sp, dict):
-            errs.append('axes[%d].spines 必须是对象: %r' % (i, sp))
+            errs.append(_t('pv_spines_not_object', i=i, v=sp))
     return errs
 
 
@@ -668,7 +671,7 @@ def validate(data: Dict[str, Any]) -> List[str]:
         return problems
     ver = data.get('version')
     if isinstance(ver, int) and not isinstance(ver, bool) and ver > SCHEMA_VERSION:
-        problems.append('version=%d 高于当前 %d，按尽力读处理' % (ver, SCHEMA_VERSION))
+        problems.append(_t('pv_version_newer', got=ver, want=SCHEMA_VERSION))
     # T61：fontsize == 0 合法（matplotlib 允许，只是那处文字看不见）→ 只提示，不拒写
     for i, a in enumerate(data.get('axes') or []):
         if not isinstance(a, dict):
@@ -676,13 +679,11 @@ def validate(data: Dict[str, Any]) -> List[str]:
         for f in ('title_fontsize', 'label_fontsize', 'label_fontsize_y',
                   'tick_fontsize', 'tick_fontsize_y'):
             if a.get(f) == 0 and not isinstance(a.get(f), bool):
-                problems.append('axes[%d].%s = 0：这处文字会看不见'
-                                '（matplotlib 允许，故不拒写）' % (i, f))
+                problems.append(_t('pv_fontsize_zero', i=i, f=f))
         lg = a.get('legend')
         if isinstance(lg, dict) and lg.get('fontsize') == 0 \
                 and not isinstance(lg.get('fontsize'), bool):
-            problems.append('axes[%d].legend.fontsize = 0：图例文字会看不见'
-                            '（matplotlib 允许，故不拒写）' % i)
+            problems.append(_t('pv_legend_fontsize_zero', i=i))
     return problems
 
 

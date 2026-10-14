@@ -10,7 +10,7 @@
 * 章节**编号 / 改名 / 移动都会改变锚点**（`## 它解决什么问题` → `## 1. 它解决什么问题`
   ⇒ 锚点 `#它解决什么问题` → `#1-它解决什么问题`）。仓库此前对这一层**零守卫**。
 
-本套件检查五类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
+本套件检查六类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
 ================================================================================
 ① **文件内锚点**：`](#slug)` 必须命中**同文件**某个标题的 slug；
 ② **相对链接**：`docs/x.md` / `../README.md` / `x.md#slug` 的**目标文件必须存在**；带 `#slug`
@@ -19,6 +19,8 @@
 ④ **外部链接**：`http(s)://` 只做**格式**检查（scheme + host 形如域名），同样不发请求；
 ⑤ **自仓 URL**（0.1.11 扩展，见下）：`https://github.com/<owner>/<repo>/blob|tree/<默认分支>/<path>`
    **解析回仓库内相对路径**，再按 ② 同款口径查"文件/目录存在 + 跨文档锚点存在"。
+⑥ **表格列数自洽（转义感知）**（0.1.11 扩展，见下）：每个表格块里**每个行**（表头、分隔行、
+   数据行）的单元格数必须等于**表头**格数；`\|` 是字面竖线、**不**参与切分。
 
 ⑤ 为什么必须有（**真实口径漏洞，不是假想**）
 ==========================================
@@ -32,6 +34,15 @@
   硬查必然**误报** ⇒ 一律跳过；
 * `tree/<dir>` 查目录、`blob/<file>` 查文件（有 `isdir` 探针时）；锚点只在目标是**已扫描的 `.md`**
   时查（与 ② 同款：目标不在扫描集里就不硬判）。
+
+⑥ 为什么必须有（**同一类问题今晚出现 3 次，每次都是人工临时探针抓的**）
+====================================================================
+1. `MAINTENANCE.md` 某行一个**未转义**的 `|` ⇒ 该行被多切一格（表格错位）；
+2. `docs/reliability.md` 的「来源」行只有 **2 格**而表头 **3 格**（**真缺陷**；提交版 HEAD 里是第
+   204 行 `| 来源 | … |`，doc-owner 补 `| — |` 修掉）；
+3. 同一张表里 `\\|Δ\\|` / `\\|G2−G0\\|∞` 的**假阳性** —— 朴素 `split('|')` 把它们数成 5 / 7 格。
+⇒ 这条判据必须**转义感知**，且**宁可少判也不误报**：只认规范写法（行首 `|` + 分隔行），
+`\\|` 计为字面竖线、不切分。
 
 slug 算法必须**自证**，不许靠约定
 ================================
@@ -297,6 +308,145 @@ def headings(text, skip_fences=True):
     return out
 
 
+# ---------------------------------------------------------------- ⑥ 表格列数自洽
+# t48：同一类问题今晚出现 3 次 —— ①MAINTENANCE.md 某行未转义的 `|` 多切一格；
+# ②docs/reliability.md「来源」行只有 2 格而表头 3 格（**真缺陷**；提交版 HEAD 第 204 行，
+# doc-owner 补 `| — |` 修掉）；③同表 `\|Δ\|` / `\|G2−G0\|∞` 的**假阳性**（朴素 split 数成 5 / 7 格）。
+# ⇒ 判据必须**转义感知**，且**宁可少判也不误报**。
+#
+# 判据（写清不藏）：
+#   * 只认**规范写法**：行首（去空白后）是 `|`，且**表头行的下一行是分隔行**（`|---|:-:|` 之类）。
+#     不满足就不算表格 —— 避免把正文里的 `|` 当表。
+#   * 切分：只有**未转义**的 `|` 是定界符。判据 = 数 `|` 前连续反斜杠的个数，**奇数 = 被转义 =
+#     字面竖线（不切）**。刻意**不用** `(?<!\\)\|`：那个正则漏掉 `\\|`（两个反斜杠 + 竖线 =
+#     字面反斜杠 + 定界符，Markdown 里**该切**）。
+#   * 围栏内不校验（与 ①~⑤ 同一个开关，复用 `_lines`）。
+#   * 比对基准是**表头**格数；表头、分隔行、每个数据行都算，任一不等即报。
+#
+# 不纳入的东西（写清）：
+#   * `MAINTENANCE.md` 不进仓库（`NOT_SHIPPED_MD`），**不进** `analyze()` 的扫描面 ——
+#     它的标题若进 R1/R2 会跟"CI 上文件不存在"打架（见 `md_files` 的注释）。
+#     但它是表格最多的一份、也正是本问题的发生地 ⇒ 用 `TABLE_EXTRA_FILES` 在**本机存在时**
+#     补扫；CI 上文件不存在就跳过（不会假红）。代价是覆盖差：**本机更严、CI 不扫** ——
+#     方向安全（本机拦得住、CI 不会因它假红），且与 `tools/check_doc_refs.py` 的
+#     `--with-maintenance` 是同一个模式（船长 2026-10-14 裁定保留）。
+#   * 非规范表格（无行首 `|`、无分隔行）不判 —— 宁可少判。
+TABLE_EXTRA_FILES = ('MAINTENANCE.md',)
+
+# 显式白名单（**当前为空** = 全仓 0 处真违规）：确有"故意列数不同"的表格时登记在这里。
+# 键 = (仓库相对路径, 该行文本去空白)；值 = 理由字符串。**刻意不含行号**（行号会漂，
+# 与 AMBIG_BASELINE 同款纪律）。棘轮纪律：宁可登记例外，**不许**为此放宽整条判据。
+TABLE_COLS_BASELINE = {}
+
+
+def split_row_cells(line):
+    """转义感知切分一行表格 → 单元格列表（处理首 / 尾定界符）。"""
+    s = line.strip()
+    if s.startswith('|'):
+        s = s[1:]
+    cells, buf, bs = [], [], 0
+    for ch in s:
+        if ch == '\\':
+            bs += 1
+            buf.append(ch)
+            continue
+        if ch == '|' and bs % 2 == 0:
+            cells.append(''.join(buf))
+            buf = []
+            bs = 0
+            continue
+        bs = 0
+        buf.append(ch)
+    cells.append(''.join(buf))
+    if len(cells) > 1 and not cells[-1].strip():
+        cells.pop()                       # 行尾定界符带出的空尾格
+    return cells
+
+
+def naive_row_cells(line):
+    """**故意**的朴素切分：只用于反向验证，证明"转义感知"是承重的、不是装饰。"""
+    return line.strip().strip('|').split('|')
+
+
+def _is_table_row(line):
+    return line.strip().startswith('|')
+
+
+def _is_table_sep(line):
+    s = line.strip()
+    if not s.startswith('|'):
+        return False
+    body = s.strip('|')
+    return bool(body) and '-' in body and all(c in '|-: ' for c in body)
+
+
+def table_issues(text, rel, splitter=None, baseline=None):
+    """→ ['文件:行号  表格列数不符（表头第 N 行 = X 格 / 本行 = Y 格）…']（⑥ 的核心）。"""
+    sp = splitter or split_row_cells
+    base = TABLE_COLS_BASELINE if baseline is None else baseline
+    out, lines, i = [], _lines(text), 0
+    while i < len(lines):
+        hln, hline = lines[i]
+        if _is_table_row(hline) and i + 1 < len(lines) and _is_table_sep(lines[i + 1][1]):
+            want = len(sp(hline))
+            j = i + 1
+            while j < len(lines) and _is_table_row(lines[j][1]):
+                rln, rline = lines[j]
+                got = len(sp(rline))
+                if got != want and (rel, ' '.join(rline.split())) not in base:
+                    out.append('%s:%d  表格列数不符（表头第 %d 行 = %d 格 / 本行 = %d 格）%s%s'
+                               % (rel, rln, hln, want, got,
+                                  '【分隔行】' if _is_table_sep(rline) else '',
+                                  rline.strip()[:70]))
+                j += 1
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def table_count(text):
+    """→ 识别到的表格块数（覆盖钉用：防"一个表都没识别到"导致的恒绿）。"""
+    lines, n, i = _lines(text), 0, 0
+    while i < len(lines):
+        if _is_table_row(lines[i][1]) and i + 1 < len(lines) and _is_table_sep(lines[i + 1][1]):
+            n += 1
+            i += 1
+            while i < len(lines) and _is_table_row(lines[i][1]):
+                i += 1
+        else:
+            i += 1
+    return n
+
+
+def collect_table_issues(files, root=ROOT, extra=TABLE_EXTRA_FILES, splitter=None,
+                         baseline=None):
+    """扫描面 `files` + `extra`（在则扫、不在则跳过）上的 ⑥ 全部问题。"""
+    out = []
+    for rel in sorted(files):
+        out += table_issues(files[rel], rel, splitter=splitter, baseline=baseline)
+    for rel in extra:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            out += table_issues(io.open(p, encoding='utf-8', newline='').read(), rel,
+                                splitter=splitter, baseline=baseline)
+    return out
+
+
+def collect_table_count(files, root=ROOT, extra=TABLE_EXTRA_FILES):
+    """→ (表格块数, 被扫到的文件名列表)（覆盖钉：证明 ⑥ 真的看到了表）。"""
+    n, seen = 0, []
+    for rel in sorted(files):
+        n += table_count(files[rel])
+        seen.append(rel)
+    for rel in extra:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            n += table_count(io.open(p, encoding='utf-8', newline='').read())
+            seen.append(rel)
+    return n, seen
+
+
 # ---------------------------------------------------------------- 核心分析器
 def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None,
             self_repo=None, isdir=None):
@@ -485,6 +635,23 @@ def run_real():
               (items[0][:120] if items else ''))
         _print_issues(items)
 
+    # —— ⑥ 表格列数自洽（转义感知）——
+    _t_extra = [x for x in TABLE_EXTRA_FILES if os.path.exists(os.path.join(ROOT, x))]
+    t_items = collect_table_issues(files)
+    check('⑥ 表格列数自洽（转义感知 `\\|`；扫描 %d 份 *.md%s）—— 实得 %d 处'
+          % (len(files), (' + ' + '、'.join(_t_extra)) if _t_extra else '',
+             len(t_items)),
+          not t_items, (t_items[0][:140] if t_items else ''))
+    _print_issues(t_items)
+    # 覆盖钉：⑥ 必须**真的识别到表格**，否则判据可能因"一个表都没认出来"而恒绿
+    # （与 ⑤ 的 README 覆盖钉同款纪律）。
+    _n_tab, _tab_files = collect_table_count(files)
+    check('⑥ 覆盖钉：确实识别到表格（%d 个表块 / %d 份文件，扫描面完整）'
+          % (_n_tab, len(_tab_files)),
+          _n_tab > 0 and len(_tab_files) == len(files) + len(_t_extra),
+          '表块 %d / 文件 %d（期望 %d）' % (_n_tab, len(_tab_files),
+                                        len(files) + len(_t_extra)))
+
     # —— README 覆盖钉：两份 README 必须在扫描面内，且它们的链接**真的**被解析成仓库路径 ——
     # 不钉的话，将来把 README 移出扫描面（或链接风格一换）本套件会**静默**失去对第一入口的覆盖。
     # 判据用"② + ⑤ 合计 > 0"而不是"自仓 URL > 0"：README 若改回相对链接，这条不该跟着红。
@@ -626,6 +793,52 @@ def teeth(real_files, real_exists):
           not r['selflink'] and len(r_bad_tree['selflink']) == 1,
           'ok=%s bad=%s' % (r['selflink'], r_bad_tree['selflink']))
 
+    # ---- ⑥ 表格列数自洽（转义感知）----
+    # 编号刻意用 17..23 而**不**续 ⑰：⑪~⑳ 在 GBK（cp936）里**编不出来**（本机实测），
+    # 本文件虽有 errors='replace' 兜底不至于崩，但新加的标签不该再多带一批不可编码字符
+    # （t15/C7 记号纪律）。也**不用** `teeth⑥a` 这种写法：那是"第 ⑥ 号 teeth"的子号，
+    # 与既有 `teeth⑥`（R1 歧义标题）会读混 —— 这里是**新类别** ⑥。
+    _t_esc = ('# T\n\n| A | B | C |\n|---|---|---|\n'
+              '| d\\|Δ\\| | x | y |\n'
+              '| e\\|G2−G0\\|∞ ≤ 0.002 且 \\|G3−G1\\|∞ ≤ 0.002 | x | y |\n')
+    _r_esc = table_issues(_t_esc, 'a.md')
+    check('teeth17 ⑥ 假阳性守卫：`\\|Δ\\|` / `\\|G2−G0\\|∞` 里的 `\\|` 是字面竖线，'
+          '必须算**同一格内**（转义感知 = 3 格 ⇒ 0 问题）',
+          not _r_esc, '实得 %s' % _r_esc)
+
+    _r_naive = table_issues(_t_esc, 'a.md', splitter=naive_row_cells)
+    check('teeth18 ⑥ 反向：同一段文本用**朴素 split** 必须误报（证明转义感知是承重的）',
+          len(_r_naive) >= 2, '朴素实得 %d 处：%s' % (len(_r_naive), _r_naive[:1]))
+
+    _t_bad = '# T\n\n| A | B | C |\n|---|---|---|\n| 只有两格 | x |\n'
+    _r_bad = table_issues(_t_bad, 'a.md')
+    check('teeth19 ⑥ 真缺陷必须报出，且点名 文件:行号 + 表头格数 + 本行格数',
+          len(_r_bad) == 1 and 'a.md:5' in _r_bad[0] and '= 3 格' in _r_bad[0]
+          and '本行 = 2 格' in _r_bad[0], '实得 %s' % _r_bad)
+
+    _t_sep = '# T\n\n| A | B | C |\n|---|---|\n| x | y | z |\n'
+    _r_sep = table_issues(_t_sep, 'a.md')
+    check('teeth20 ⑥ 分隔行格数不符也要报（带【分隔行】标注）',
+          len(_r_sep) == 1 and '【分隔行】' in _r_sep[0], '实得 %s' % _r_sep)
+
+    _t_fence = '# T\n\n```\n| A | B | C |\n|---|---|---|\n| 只有两格 | x |\n```\n'
+    check('teeth21 ⑥ 围栏内的"表样"文本不校验（与 ①~⑤ 同一个开关）',
+          not table_issues(_t_fence, 'a.md'), '实得 %s' % table_issues(_t_fence, 'a.md'))
+
+    # 奇偶反斜杠：`\|` = 字面竖线（不切）；`\\|` = 字面反斜杠 + 真定界符（**要切**）。
+    # 这一条就是"为什么不用 `(?<!\\)\|` 正则"的证据（那个正则会漏掉后者）。
+    _t_bs = ('# T\n\n| A | B |\n|---|---|\n'
+             '| x\\|y | z |\n'
+             '| p\\\\|q | r |\n')
+    _r_bs = table_issues(_t_bs, 'a.md')
+    check('teeth22 ⑥ 奇数反斜杠 = 字面竖线（不切），偶数反斜杠 = 真定界符（要切）'
+          '—— 故不用 `(?<!\\\\)\\|`',
+          len(_r_bs) == 1 and 'a.md:6' in _r_bs[0], '实得 %s' % _r_bs)
+
+    check('teeth23 ⑥ table_count 能数出表块（防"一个表都没识别到"的恒绿）',
+          table_count(_t_bad) == 1 and table_count('# T\n\n没有表格\n') == 0,
+          '有表=%d / 无表=%d' % (table_count(_t_bad), table_count('# T\n\n没有表格\n')))
+
     # ---- 反向验证：把判据弄坏 ⇒ 必须变红（不许"恰好全绿"）----
     _p('---- 反向验证（把判据弄坏就必须变红）----')
     bad_slug = lambda t: t.strip().lower()                                        # noqa: E731
@@ -642,6 +855,14 @@ def teeth(real_files, real_exists):
           and len(r_nobase['ambig_new']) > len(r_ok['ambig_new']) and bool(AMBIG_BASELINE),
           '清空基线 %d 处 / 恢复基线 %d 处 / 基线条数 %d'
           % (len(r_nobase['ambig_new']), len(r_ok['ambig_new']), len(AMBIG_BASELINE)))
+
+    r_tab_ok = collect_table_issues(real_files)
+    r_tab_naive = collect_table_issues(real_files, splitter=naive_row_cells)
+    check('反向③ ⑥ 对真仓库：转义感知 = 0 处；换成朴素 split 必须误报 > 0 处'
+          '（证明"转义感知"确实在挡假阳性，且这条判据不是恒绿）',
+          not r_tab_ok and len(r_tab_naive) > 0,
+          '转义感知 %d 处 / 朴素 %d 处' % (len(r_tab_ok), len(r_tab_naive)))
+
     # 刻意**不**写成 `== len(AMBIG_BASELINE)`：那会把自检与"仓库此刻恰好没有基线外的歧义标题"
     # 耦死 —— 一旦有人新增一个（正是棘轮要拦的），自检会跟着红、掩盖真信号。用
     # `>= 基线数` + `严格多于带基线时` 既证明"基线确实在豁免"，又不与仓库状态耦合。
