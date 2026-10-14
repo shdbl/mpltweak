@@ -146,7 +146,7 @@ Send this link to the Agent you already use (Claude Code / Codex / Cursor / Deep
 
 ### The recommended flow: six steps (just talk to your Agent)
 
-1. **Ask the Agent to draw the figure.** You only say what you want ("plot these two groups as a comparison bar chart"); the Agent writes the script and runs it.
+1. **Ask the Agent to draw the figure.** (If you already have a plotting script and only want to tune the layout, skip to step 3 and tell it the script name, e.g. `fig1.py`.)
    *What you see*: the Agent shows you the figure it drew.
 2. **First check that the content is right** (do not start on the layout yet). Are the axes, labels and data what you meant? If not, say so now.
    *What you see*: a finalised version of the content — from here on you are only tweaking layout, not what is drawn.
