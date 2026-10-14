@@ -17,6 +17,8 @@ Docs linked from this file (`docs/*.md`) are currently written in Chinese.
 
 </div>
 
+> **Driving this from an AI coding agent?** See [Using it with Agents](#using-it-with-agents): six steps you can hand to your agent.
+
 ## What problem it solves
 
 When you lay out a multi-panel figure, the trouble is usually the layout rather than the data: move one subplot and the neighbouring axis label is covered; increase a font size a little and the legend overlaps a curve. And every change means re-running the script and looking at the figure again.
@@ -63,6 +65,8 @@ The second line is for **opening a window**: that needs a graphics backend (in p
 > There are only four: **0 = fine / success; 1 = problem found (check); 2 = cannot run (script not found / the script itself fails / bad arguments — the same in every entry point); 4 = no usable graphics backend** (0.1.9's 3 is retired).
 
 ## 5-minute quick start
+
+> Or let an AI coding agent do it: see [Using it with Agents](#using-it-with-agents) (six steps to hand to your agent).
 
 `cd` into the folder that holds your script first:
 
