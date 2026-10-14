@@ -6,6 +6,11 @@
         --src "D:\\Agent\\deepseek\\_evidence_freeze\\0.1.10" \
         --dst "bench/evidence/0.1.10"
 
+    # 新版本的**增量包**（目录结构与 0.1.10 不同）：用 --walk 原样遍历，不必维护清单
+    python bench/tools/sanitize_evidence.py --walk \
+        --src "D:\\Agent\\deepseek\\_evidence_freeze\\0.1.11" \
+        --dst "bench/evidence/0.1.11"
+
 设计原则（为什么这样做，而不是"重写文件"）：
   1. **只在字符串内部做定点替换**：不解析重排、不改结构，保持原文件可逐行审计；
   2. **规则按"最具体优先"排序**，逐条计数，跑完打印审计表（哪个规则、改了几处、样例）；
@@ -118,12 +123,31 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', required=True)
     ap.add_argument('--dst', required=True)
+    ap.add_argument('--walk', action='store_true',
+                    help='把 --src 下的**所有**文件按相同相对路径脱敏进 --dst。'
+                         '默认走上面的 FILES（0.1.10 的固定清单）；'
+                         '新版本的**增量包**用这个开关，不必再维护一份清单。'
+                         '脱敏规则、JSON 复验、红线守卫完全一致。')
     args = ap.parse_args()
+
+    if args.walk:
+        pairs = []
+        for dirpath, dirnames, filenames in os.walk(args.src):
+            dirnames[:] = [d for d in dirnames if d not in ('__pycache__',)]
+            for fn in sorted(filenames):
+                p = os.path.join(dirpath, fn)
+                rel = os.path.relpath(p, args.src).replace('\\', '/')
+                pairs.append((rel, rel))
+        pairs.sort()
+    else:
+        pairs = FILES
 
     total = 0
     failures = []
     print('=== 脱敏：%s -> %s ===' % (args.src, args.dst))
-    for rel_src, rel_dst in FILES:
+    print('=== 清单来源：%s（%d 项）===' % ('--walk 遍历' if args.walk else 'FILES',
+                                        len(pairs)))
+    for rel_src, rel_dst in pairs:
         src = os.path.join(args.src, rel_src)
         dst = os.path.join(args.dst, rel_dst)
         if not os.path.exists(src):

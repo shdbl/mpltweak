@@ -119,8 +119,23 @@ def main():
                     warns += 1
                     break
 
+    # 必备文件：**优先用包自己声明的** `_required_files`（CLAIMS.json）——
+    # 这样每个版本的增量包可以自报"我该有哪些文件"，而守卫仍然**真的逐个检查**
+    # （不是把检查关掉）。没有声明时退回 0.1.10 的固定清单 ⇒ 既有行为一字不变。
+    required = REQUIRED
+    _cp = os.path.join(root, 'CLAIMS.json')
+    if os.path.exists(_cp):
+        try:
+            with io.open(_cp, 'r', encoding='utf-8') as _fh:
+                _decl = json.load(_fh).get('_required_files')
+            if _decl:
+                required = list(_decl)
+                print('必备文件清单：来自 CLAIMS.json 的 _required_files（%d 项）'
+                      % len(required))
+        except (ValueError, OSError):
+            pass
     # 必备文件
-    for req in REQUIRED:
+    for req in required:
         if not os.path.exists(os.path.join(root, req)):
             fails.append('缺少必备文件: %s' % req)
 

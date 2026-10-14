@@ -1,0 +1,163 @@
+{
+  "version": "",
+  "generated_at": "2026-10-14T22:02:03+0800",
+  "generator": "bench/tools/build_evidence_manifest.py",
+  "guard": "python bench/tools/check_evidence_publishable.py --root bench/evidence/0.1.11",
+  "files": [
+    {
+      "path": "CLAIMS.json",
+      "bytes": 7323,
+      "sha256": "cc639c476a6d80794af56e2f6970d3b41e2c03c269b928b78d81d043cef49a29"
+    },
+    {
+      "path": "COVERAGE.md",
+      "bytes": 2814,
+      "sha256": "617119b4b2b0daccd038e16570389ab437d400a4cc16a1437f6ed1ba74e23564"
+    },
+    {
+      "path": "README.md",
+      "bytes": 5294,
+      "sha256": "f7e6bb274e24f8c85d19e37e009f52a9fba1614924777a6b2c18aa193df4520d"
+    },
+    {
+      "path": "ast_fuzz/ASSERTIONS.md",
+      "bytes": 3938,
+      "sha256": "f41179e4660b01a68a9b7e7646aedb11a7958ca866e7124109b362d1ef903c2d"
+    },
+    {
+      "path": "ast_fuzz/ast_fuzz_gen.py",
+      "bytes": 12048,
+      "sha256": "d388b3a9692ee1eb4a67ce8ceaed1357da597dcb428db8a83c856a30f2f75855"
+    },
+    {
+      "path": "ast_fuzz/shard_0_seeds000-249.log",
+      "bytes": 7588,
+      "sha256": "a6aed5244ae536fa3a2ac262949ef6605f14e59562c144ecb7e1c0d8226a700b"
+    },
+    {
+      "path": "ast_fuzz/shard_1_seeds250-499.log",
+      "bytes": 7632,
+      "sha256": "5ba645255854001655909339b53256452e0e9845db830728461ea852150409fd"
+    },
+    {
+      "path": "ast_fuzz/shard_2_seeds500-749.log",
+      "bytes": 7632,
+      "sha256": "161cb0dc3ef7cef0d607af0974c3dc7c181ac197c25c56cce8341c997f318923"
+    },
+    {
+      "path": "ast_fuzz/shard_3_seeds750-999.log",
+      "bytes": 7632,
+      "sha256": "79edd899378e703b7d08e2ca7aed17e41da1d879c435112ca2898e092bd806b5"
+    },
+    {
+      "path": "ast_fuzz/test_ast_fuzz.py",
+      "bytes": 29698,
+      "sha256": "8d7fcce2f1acfade2de3fec4a8258cd3108d9c58170ea6a88c63be731150a70a"
+    },
+    {
+      "path": "ast_fuzz/corpus/README.md",
+      "bytes": 2557,
+      "sha256": "1ecfe1549497f402182e0209b700c87f2a2d4c4816fce2f788ca8a87f9be92e4"
+    },
+    {
+      "path": "ast_fuzz/corpus/corpus.json",
+      "bytes": 3350,
+      "sha256": "e6a2659cf30ab160a6378803269a92da8a6005dcf23dc590e9db293dc8ef9a50"
+    },
+    {
+      "path": "cli_fuzz/DENOMINATOR.md",
+      "bytes": 3420,
+      "sha256": "113054ccd2fa8c957884c20fe349514b2f6b93b1ba2a78d43e869b6be7825a6a"
+    },
+    {
+      "path": "cli_fuzz/run_N240.log",
+      "bytes": 5272,
+      "sha256": "ffa42a856ef8433b5b6dfd64491f6dcd78cf485a27c28eb67072140330d7fe57"
+    },
+    {
+      "path": "cli_fuzz/test_cli_fuzz.py",
+      "bytes": 26373,
+      "sha256": "37d3ac561da97a2e6a97c2c99798e8606cf68efc834d708af7e40ceb96a08418"
+    },
+    {
+      "path": "_meta/tree_fingerprint.txt",
+      "bytes": 258,
+      "sha256": "39187f3f786585c72e738a57ba9b3249db3980efc6076d789482aafc59fd47ee"
+    }
+  ],
+  "claims": [
+    {
+      "id": "ast-fuzz-1000",
+      "layer": "runtime",
+      "statement": "随机语法 **1,000 例**（4 片 × 250，并行）全部 `ALL PASS`；三条不变量零违约：承诺违约 0 / 安全降级第四种 0 / 不幂等 0",
+      "artifacts": [
+        "ast_fuzz/shard_0_seeds000-249.log",
+        "ast_fuzz/shard_1_seeds250-499.log",
+        "ast_fuzz/shard_2_seeds500-749.log",
+        "ast_fuzz/shard_3_seeds750-999.log"
+      ],
+      "command": "& $py tests/test_ast_fuzz.py 250 --offset {0,250,500,750}",
+      "reproducibility": "rerun-from-repo",
+      "note": "本包实测 **366.1 / 369.9 / 366.7 / 371.2 s 每片（250 例）⇒ 1.46~1.48 s/例**，4 片并行墙钟约 6.2 分钟。同一命令在机器负载更重时（另一会话的 4 片并行 + 其他 agent 在跑）实测为 **861~879 s/片 ⇒ 3.45~3.52 s/例**。两个数都是实测，差别来自负载 ⇒ 耗时按 machine-dependent 处理。"
+    },
+    {
+      "id": "ast-fuzz-invariants",
+      "layer": "runtime",
+      "statement": "每片的每条判据实得都是 **0**：坏语法 0 / 越界改写 0 / 承诺≠事实 0 / 第四种结果 0 / figsize 越界改写 0 / 不幂等 0 / 对照失败 0 / 语义抽检失败 0",
+      "artifacts": [
+        "ast_fuzz/ASSERTIONS.md",
+        "ast_fuzz/shard_0_seeds000-249.log"
+      ],
+      "command": "见 claims[0]（每个 `0` 对应哪条判据见 ast_fuzz/ASSERTIONS.md 的表）",
+      "reproducibility": "rerun-from-repo",
+      "note": "ASSERTIONS.md 逐条列出『日志里的原文名 → 报出来的 0 是什么 → 为什么它必须是 0』，并对每个 0 说明它防的是哪种失败。"
+    },
+    {
+      "id": "ast-fuzz-coverage",
+      "layer": "runtime",
+      "statement": "形态覆盖 **9/9**；`形态 × figsize 写法` 格子覆盖 **18/18**；固定 corpus **13/13 与实测一致**",
+      "artifacts": [
+        "ast_fuzz/shard_0_seeds000-249.log",
+        "ast_fuzz/corpus/corpus.json"
+      ],
+      "command": "& $py tests/test_ast_fuzz.py 36（全覆盖最小规模）；& $py tests/test_ast_fuzz.py --corpus",
+      "reproducibility": "rerun-from-repo",
+      "note": "『格子覆盖完整』是**防恒绿**的闸门：9 种对抗形态 × 4 种 figsize 写法必须都跑到，否则『全部降级』可能只是『没生成到该形态』。corpus 里 `seed` 就是最小化样本（脚本从 seed 确定性重建，故不存 1,000 份脚本）。"
+    },
+    {
+      "id": "cli-combos-denominator",
+      "layer": "runtime",
+      "statement": "命令行组合分母 **5,880 = 7 命令 × 10 输入 × 6 参数文件 × 14 选项**（确定性枚举，不是随机拼）",
+      "artifacts": [
+        "cli_fuzz/DENOMINATOR.md",
+        "cli_fuzz/test_cli_fuzz.py"
+      ],
+      "command": "& $py tests/test_cli_fuzz.py（脚本每次运行都打印分母与实跑条数）",
+      "reproducibility": "rerun-from-repo",
+      "note": "分母是**枚举**、实跑是**分层抽样**（保证每个命令都抽到）。DENOMINATOR.md 列出四个维度的全部取值与抽样口径。"
+    },
+    {
+      "id": "cli-combos-n240",
+      "layer": "runtime",
+      "statement": "`N=240` 那次实测：**ALL PASS**，命令覆盖 7/7、输入覆盖 10/10、跳过 0 条；rc 分布 `[(0,10),(1,1),(2,229)]`",
+      "artifacts": [
+        "cli_fuzz/run_N240.log"
+      ],
+      "command": "& $py tests/test_cli_fuzz.py 240（seed 默认 0，可用 MPLTWEAK_CLIFUZZ_SEED 改）",
+      "reproducibility": "rerun-from-repo",
+      "note": "实测 **42.1 s ⇒ 0.18 s/组合**（machine-dependent）。CI smoke 默认 N=12、秒级。脚本显式断言『不是全 rc=0 的假绿』。"
+    },
+    {
+      "id": "cli-combos-assertions",
+      "layer": "runtime",
+      "statement": "每次调用断言五条：① 无未处理 traceback ② rc ∈ {0,1,2,4} 且与文档口径一致 ③ 报错说人话 ④ `--json` 恒可解析（apply 失败带 error_code）⑤ en 下无中文",
+      "artifacts": [
+        "cli_fuzz/DENOMINATOR.md",
+        "cli_fuzz/run_N240.log"
+      ],
+      "command": "见 claims[4]",
+      "reproducibility": "rerun-from-repo",
+      "note": "五条各配 teeth（单点变异必须让判据变红）。断言 3 刻意写成『stdout 或 stderr 至少一路说到点子上』—— `apply` 不带 --json 时人读错误走 stdout，那是产品既定行为，按字面要求『必须 stderr』会误报。"
+    }
+  ]
+}

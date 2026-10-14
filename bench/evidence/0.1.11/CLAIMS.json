@@ -1,0 +1,110 @@
+{
+  "_what_this_is": "mpltweak 0.1.11 本轮**新增**两个数字的原始产出与复现入口：『随机语法 1,000 例』与『命令行组合 5,880 种』。目的：让 README 里这两行能被第三方查到、并尽可能自己重跑。",
+  "_why": "2026-10-14 用户问『这一版相关的证据传上去了吗』——核查结论是**没有**：本地与远端只有 evidence-0.1.10，而本轮新加的两行在 README 里**连证据链接都没有**，数字当时只活在团队任务记录里（t77 / t86）。本目录即为整改结果。",
+  "_how_to_use": [
+    "1. 先读 README.md（人读索引：哪个数字去哪查）。",
+    "2. 要机器可读映射，读本文件 claims[]（每个数字 → 产物 + 命令 + 可复现等级）。",
+    "3. 要校验文件完整性，读 MANIFEST.json（每个文件的 sha256，取自**发布树**）。",
+    "4. 要自己复算，按 claims[].command 跑（生成器与驱动器都已入库：ast_fuzz/、cli_fuzz/）。"
+  ],
+  "_required_files": [
+    "README.md",
+    "COVERAGE.md",
+    "CLAIMS.json",
+    "ast_fuzz/ASSERTIONS.md",
+    "ast_fuzz/ast_fuzz_gen.py",
+    "ast_fuzz/test_ast_fuzz.py",
+    "ast_fuzz/corpus/corpus.json",
+    "ast_fuzz/shard_0_seeds000-249.log",
+    "ast_fuzz/shard_1_seeds250-499.log",
+    "ast_fuzz/shard_2_seeds500-749.log",
+    "ast_fuzz/shard_3_seeds750-999.log",
+    "cli_fuzz/DENOMINATOR.md",
+    "cli_fuzz/run_N240.log",
+    "cli_fuzz/test_cli_fuzz.py",
+    "_meta/tree_fingerprint.txt"
+  ],
+  "_coverage_scope": "**增量包**：只覆盖 0.1.11 新增的『随机语法』与『命令行组合』两行。另外三行（静态语料真跑 / 全量真跑 onepass / 窗口交互与离屏矩阵）**不在本包**，仍指向 bench/evidence/0.1.10/。详见 COVERAGE.md。",
+  "_reproducibility_levels": {
+    "rerun-from-repo": "只要有仓库就能重跑（生成器与驱动器已入库，输入样本在临时目录里确定性重建，不依赖外部语料）。",
+    "machine-dependent": "墙钟耗时随机器与并发负载变化。本包只发布**实测值**与测量环境，不声称它是常量（同一命令在负载更重的机器上实测过 3.45~3.52 s/例，见 claims[0].note）。"
+  },
+  "_measurement_environment": {
+    "python": "3.10.19",
+    "matplotlib": "3.10.8",
+    "platform": "Windows",
+    "interpreter_path_redacted": "<python>",
+    "note": "解释器与工作目录的具体路径已在脱敏时替换为占位符；这不影响任何结论。"
+  },
+  "_tree_fingerprint": {
+    "head": "a00604f366ecde4724a12a4587dafa1b7b04d1b9",
+    "branch": "wip/0.1.11-night",
+    "modified_files": 3,
+    "untracked_files": 0,
+    "diff_stat": "3 files changed, 65 insertions(+), 85 deletions(-)",
+    "captured_utc": "2026-10-14T13:51:56Z",
+    "artifact": "_meta/tree_fingerprint.txt",
+    "note": "本包的全部产出都取自这个指纹的树。**开发期的红可能来自别人的半成品** ⇒ 判据是看指纹，不是换基线。"
+  },
+  "claims": [
+    {
+      "id": "ast-fuzz-1000",
+      "layer": "runtime",
+      "statement": "随机语法 **1,000 例**（4 片 × 250，并行）全部 `ALL PASS`；三条不变量零违约：承诺违约 0 / 安全降级第四种 0 / 不幂等 0",
+      "artifacts": [
+        "ast_fuzz/shard_0_seeds000-249.log",
+        "ast_fuzz/shard_1_seeds250-499.log",
+        "ast_fuzz/shard_2_seeds500-749.log",
+        "ast_fuzz/shard_3_seeds750-999.log"
+      ],
+      "command": "& $py tests/test_ast_fuzz.py 250 --offset {0,250,500,750}",
+      "reproducibility": "rerun-from-repo",
+      "note": "本包实测 **366.1 / 369.9 / 366.7 / 371.2 s 每片（250 例）⇒ 1.46~1.48 s/例**，4 片并行墙钟约 6.2 分钟。同一命令在机器负载更重时（另一会话的 4 片并行 + 其他 agent 在跑）实测为 **861~879 s/片 ⇒ 3.45~3.52 s/例**。两个数都是实测，差别来自负载 ⇒ 耗时按 machine-dependent 处理。"
+    },
+    {
+      "id": "ast-fuzz-invariants",
+      "layer": "runtime",
+      "statement": "每片的每条判据实得都是 **0**：坏语法 0 / 越界改写 0 / 承诺≠事实 0 / 第四种结果 0 / figsize 越界改写 0 / 不幂等 0 / 对照失败 0 / 语义抽检失败 0",
+      "artifacts": ["ast_fuzz/ASSERTIONS.md", "ast_fuzz/shard_0_seeds000-249.log"],
+      "command": "见 claims[0]（每个 `0` 对应哪条判据见 ast_fuzz/ASSERTIONS.md 的表）",
+      "reproducibility": "rerun-from-repo",
+      "note": "ASSERTIONS.md 逐条列出『日志里的原文名 → 报出来的 0 是什么 → 为什么它必须是 0』，并对每个 0 说明它防的是哪种失败。"
+    },
+    {
+      "id": "ast-fuzz-coverage",
+      "layer": "runtime",
+      "statement": "形态覆盖 **9/9**；`形态 × figsize 写法` 格子覆盖 **18/18**；固定 corpus **13/13 与实测一致**",
+      "artifacts": ["ast_fuzz/shard_0_seeds000-249.log", "ast_fuzz/corpus/corpus.json"],
+      "command": "& $py tests/test_ast_fuzz.py 36（全覆盖最小规模）；& $py tests/test_ast_fuzz.py --corpus",
+      "reproducibility": "rerun-from-repo",
+      "note": "『格子覆盖完整』是**防恒绿**的闸门：9 种对抗形态 × 4 种 figsize 写法必须都跑到，否则『全部降级』可能只是『没生成到该形态』。corpus 里 `seed` 就是最小化样本（脚本从 seed 确定性重建，故不存 1,000 份脚本）。"
+    },
+    {
+      "id": "cli-combos-denominator",
+      "layer": "runtime",
+      "statement": "命令行组合分母 **5,880 = 7 命令 × 10 输入 × 6 参数文件 × 14 选项**（确定性枚举，不是随机拼）",
+      "artifacts": ["cli_fuzz/DENOMINATOR.md", "cli_fuzz/test_cli_fuzz.py"],
+      "command": "& $py tests/test_cli_fuzz.py（脚本每次运行都打印分母与实跑条数）",
+      "reproducibility": "rerun-from-repo",
+      "note": "分母是**枚举**、实跑是**分层抽样**（保证每个命令都抽到）。DENOMINATOR.md 列出四个维度的全部取值与抽样口径。"
+    },
+    {
+      "id": "cli-combos-n240",
+      "layer": "runtime",
+      "statement": "`N=240` 那次实测：**ALL PASS**，命令覆盖 7/7、输入覆盖 10/10、跳过 0 条；rc 分布 `[(0,10),(1,1),(2,229)]`",
+      "artifacts": ["cli_fuzz/run_N240.log"],
+      "command": "& $py tests/test_cli_fuzz.py 240（seed 默认 0，可用 MPLTWEAK_CLIFUZZ_SEED 改）",
+      "reproducibility": "rerun-from-repo",
+      "note": "实测 **42.1 s ⇒ 0.18 s/组合**（machine-dependent）。CI smoke 默认 N=12、秒级。脚本显式断言『不是全 rc=0 的假绿』。"
+    },
+    {
+      "id": "cli-combos-assertions",
+      "layer": "runtime",
+      "statement": "每次调用断言五条：① 无未处理 traceback ② rc ∈ {0,1,2,4} 且与文档口径一致 ③ 报错说人话 ④ `--json` 恒可解析（apply 失败带 error_code）⑤ en 下无中文",
+      "artifacts": ["cli_fuzz/DENOMINATOR.md", "cli_fuzz/run_N240.log"],
+      "command": "见 claims[4]",
+      "reproducibility": "rerun-from-repo",
+      "note": "五条各配 teeth（单点变异必须让判据变红）。断言 3 刻意写成『stdout 或 stderr 至少一路说到点子上』—— `apply` 不带 --json 时人读错误走 stdout，那是产品既定行为，按字面要求『必须 stderr』会误报。"
+    }
+  ]
+}
