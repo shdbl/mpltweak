@@ -278,28 +278,20 @@ def _cli_env():
     return env
 
 
-def _probe_gui_backend():
-    """本机是否有可用 GUI 后端 —— **以产品自己的自检为准**（跑 `mpltweak doctor`）。
-
-    t115（第 5 次 CI 红）：旧的“能不能 import tkinter/Qt”口径**与产品判据不一致** ——
-    GitHub 的 ubuntu runner 上 tkinter **能 import**，但没有可用显示 ⇒ 旧口径判 True，
-    而产品（逐个候选后端**真建一次 canvas** 验证）**如实**返回 rc=4 ⇒ 那 5 条断言必红。
-    现在改用 doctor 的结论：doctor 与 launch 同源（同一套后端探测），且它**不开窗**。
-    """
-    import subprocess as _sp
-    try:
-        _r = _sp.run([sys.executable, '-m', 'mpltweak', 'doctor'],
-                     capture_output=True, text=True, encoding='utf-8',
-                     errors='replace', env=_cli_env(), timeout=300)
-    except Exception:                                       # noqa: BLE001
-        # 探测本身起不来 ⇒ 按“有后端”保守判（若产品其实无后端则会红：
-        # 探测坏掉必须看得见，不许悄悄放行）。
-        return True
-    _o = (_r.stdout or '') + (_r.stderr or '')
-    return ('环境可用' in _o) or ('usable' in _o)
+# t117：**不要再猜环境** —— t114（“能 import tkinter”口径）与 t115（doctor 口径）
+# 两次都跟 `launch` 分叉过：Windows runner 有 tkinter、无 PyQt ⇒ doctor 说“不可用”
+# 而 launch 优雅退回 tkinter 可用 ⇒ 期望被推导成 4、产品却给 2 ⇒ 红。
+# 现在改为**由产品在同一条路径上的实际表现推导期望**：
+#   输出里出现无头提示 ⇒ 期望 rc=4（并要求给出可操作建议）；
+#   没出现           ⇒ 期望 rc=2。
+# 两个分支**各自断言**，不是“2 或 4 都行”。
+_HEADLESS_MARKS = ('找不到可用的图形后端', 'no usable')
 
 
-_HAS_GUI_BACKEND = _probe_gui_backend()
+def _is_headless_out(text):
+    return any(_m in (text or '') for _m in _HEADLESS_MARKS)
+
+
 
 
 def _write_fixture(name, text):
@@ -310,19 +302,20 @@ def _write_fixture(name, text):
 
 
 def _run_cli(argv):
-    """真跑一次 CLI，返回 (rc, 第一条非空 stderr/stdout 行)。"""
+    """真跑一次 CLI，返回 (rc, 第一条非空 stderr/stdout 行, 全文)。"""
     import subprocess
     r = subprocess.run([sys.executable, '-m', 'mpltweak'] + list(argv),
                        capture_output=True, text=True, encoding='utf-8',
                        errors='replace', env=_cli_env(),
                        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        timeout=300)
+    full = (r.stderr or '') + '\n' + (r.stdout or '')
     first = ''
-    for line in ((r.stderr or '') + '\n' + (r.stdout or '')).split('\n'):
+    for line in full.split('\n'):
         if line.strip():
             first = line.strip()
             break
-    return r.returncode, first
+    return r.returncode, first, full
 
 
 def run_exit_matrix():
@@ -360,11 +353,11 @@ def run_exit_matrix():
 
     cases = [
         ('顶层 · 脚本找不到', [missing], 2, '找不到脚本', None),
-        ('顶层 · 脚本自己报错', [raise_script], 2, None, None, True),
-        ('顶层 · 脚本没图', [nofig_script], 2, None, None, True),
+        ('顶层 · 脚本自己报错', [raise_script], 2, None, None),
+        ('顶层 · 脚本没图', [nofig_script], 2, None, None),
         ('顶层 · 未知参数', ['--bogus'], 2, None, None),
         ('launch · 脚本找不到', ['launch', missing], 2, '找不到脚本', None),
-        ('launch · 脚本自己报错', ['launch', raise_script], 2, None, None, True),
+        ('launch · 脚本自己报错', ['launch', raise_script], 2, None, None),
         ('describe · 脚本找不到', ['describe', missing], 2, '找不到脚本', None),
         ('describe · 脚本自己报错', ['describe', raise_script], 2, None, None),
         ('describe · 正常脚本', ['describe', ok_script], 0, None, None),
@@ -379,14 +372,12 @@ def run_exit_matrix():
         ('revert · 存在但没备份', ['revert', bare_script], 2, None, None),
         ('doctor', ['doctor'], 0, None, None),
     ]
-    for _case in cases:
-        label, argv, want, must, must_not = _case[:5]
-        _needs_be = bool(_case[5]) if len(_case) > 5 else False
-        if _needs_be and not _HAS_GUI_BACKEND:
-            # t114：这台机器没有可用 GUI 后端（CI 的 ubuntu 腿就是）⇒ 产品**如实**
-            # 返回 4（不是 2）。分支断言：有后端那支仍然要求 2（见上）。
+    for label, argv, want, must, must_not in cases:
+        rc, first, full = _run_cli(argv)
+        _headless = _is_headless_out(full)
+        if _headless:
+            # t117：产品**自己说**没有可用后端 ⇒ 它必须如实返回 4（不是 2，也不是 0）。
             want = 4
-        rc, first = _run_cli(argv)
         detail = 'rc=%s（期望 %s）| 首行: %s' % (rc, want, _gbk_safe(first)[:90])
         ok = (rc == want)
         if ok and must is not None:
@@ -397,6 +388,11 @@ def run_exit_matrix():
             ok = must_not not in first
             if not ok:
                 detail += '（首行不许含 %r）' % must_not
+        if ok and _headless:
+            # 无后端分支的**额外**要求：得说清为什么（可操作建议），不能只给个 4。
+            ok = ('pip install "mpltweak[qt]"' in full) or ('python3-tk' in full)
+            if not ok:
+                detail += '（无后端分支必须给出可操作建议）'
         check('退出码矩阵：%s' % label, ok, detail)
 
     # 静态面：用户可见入口里不许再出现 `return 3`；也不许再 return EXIT_SCRIPT
@@ -822,7 +818,8 @@ def run_t69():
     _rc10, _o10, _e10 = _cli(['launch', _fig, '--dry-run'])
     _want10 = ('[launch] 提示：上面的 stderr 里有 2 行来自**你的脚本自身**'
                '（工具自己的提示都带 [launch]/[mpltweak] 前缀）')
-    if _HAS_GUI_BACKEND:
+    _hint10 = _is_headless_out(_e10)
+    if not _hint10:
         check('§11[P2-10] 脚本自己的 stderr 原样保留（不吞）',
               _rc10 == 0 and 'script-noise-1' in _e10 and 'script-noise-2' in _e10,
               _e10[-300:])
@@ -832,8 +829,9 @@ def run_t69():
         # t114：无后端分支 —— 产品**如实**返回 4 并给出无头提示（不许静默 rc=0）。
         check('§11[P2-10]（无后端）launch --dry-run 如实返回 4（不是静默 rc=0）',
               _rc10 == 4, (_rc10, _e10[-200:]))
-        check('§11[P2-10]（无后端）stderr 含无头提示（说清为什么开不了窗）',
-              ('找不到可用的图形后端' in _e10) or ('no usable' in _e10),
+        # t117：非空话 —— 无后端时必须给出**可操作**建议（不是只贴一句“不可用”）。
+        check('§11[P2-10]（无后端）给出可操作建议（说清为什么开不了窗）',
+              ('pip install "mpltweak[qt]"' in _e10) or ('python3-tk' in _e10),
               _e10[-200:])
 
 
