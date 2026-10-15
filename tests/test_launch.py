@@ -279,20 +279,24 @@ def _cli_env():
 
 
 def _probe_gui_backend():
-    """本机是否有可用 GUI 后端 —— 与 `launch` 同源（Qt 优先，退回 tkinter）。
+    """本机是否有可用 GUI 后端 —— **以产品自己的自检为准**（跑 `mpltweak doctor`）。
 
-    CI 的 ubuntu 腿刻意 `--no-deps`、不装 PyQt5 ⇒ 这里 False，而 `launch` 会
-    **如实**返回 rc=4（“没有可用图形后端”，见 messages/launch 的退出码口径）。
-    t114：因此这些断言必须**两个分支各自断言**（有后端 ⇒ 2；无后端 ⇒ 4+提示），
-    不能写成“2 或 4 都行”那种放宽 —— 那会把产品真的坏掉也放过去。
+    t115（第 5 次 CI 红）：旧的“能不能 import tkinter/Qt”口径**与产品判据不一致** ——
+    GitHub 的 ubuntu runner 上 tkinter **能 import**，但没有可用显示 ⇒ 旧口径判 True，
+    而产品（逐个候选后端**真建一次 canvas** 验证）**如实**返回 rc=4 ⇒ 那 5 条断言必红。
+    现在改用 doctor 的结论：doctor 与 launch 同源（同一套后端探测），且它**不开窗**。
     """
-    for _m in ('PyQt5', 'PyQt6', 'PySide6', 'PySide2', 'tkinter'):
-        try:
-            __import__(_m)
-            return True
-        except Exception:                                   # noqa: BLE001
-            continue
-    return False
+    import subprocess as _sp
+    try:
+        _r = _sp.run([sys.executable, '-m', 'mpltweak', 'doctor'],
+                     capture_output=True, text=True, encoding='utf-8',
+                     errors='replace', env=_cli_env(), timeout=300)
+    except Exception:                                       # noqa: BLE001
+        # 探测本身起不来 ⇒ 按“有后端”保守判（若产品其实无后端则会红：
+        # 探测坏掉必须看得见，不许悄悄放行）。
+        return True
+    _o = (_r.stdout or '') + (_r.stderr or '')
+    return ('环境可用' in _o) or ('usable' in _o)
 
 
 _HAS_GUI_BACKEND = _probe_gui_backend()

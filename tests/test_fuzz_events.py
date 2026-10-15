@@ -1333,12 +1333,23 @@ def _inv_teeth():
     check('§t82⑤【有牙】手势后工具"僵住"（后续点击不再选中）⇒ 无死锁断言必红',
           ok_bad is False, det_bad[:120])
 
-    # ⑥ 延迟预算：把一次刷新拖慢到 **250ms** ⇒ p95 必然远超预算（满载下也稳超）
+    # ⑥ 延迟预算牙齿（**相对化**，t116）——
+    # 病根（实测）：原来固定 `sleep(0.25)` 去逼"p95 > 预算 700ms"，这**依赖机器速度**：
+    #   需要 **基线 p95 > 700 − 250 = 450ms** 才成立。
+    #   · CI（ubuntu / py3.12）实测注入后 `p95=664.0ms` ⇒ **仍 ≤ 700 ⇒ 牙齿不咬**（假红，
+    #     不是产品回归）；· 本机（负载中）注入后 `p95=808.5ms` ⇒ 咬得住。
+    # ⇒ 修法：**先量本机基线 p95**，再注入「预算 − 基线 p95 + 余量150ms」。
+    #   注入后 p95 ≈ 基线 + 注入 = 基线 + (预算 − 基线 + 150) = 预算 + 150ms > 预算 ✓
+    #   **与机器速度无关**（无论基线是 200ms 还是 500ms 都成立，只要拖拽至少触发 1 次刷新）。
+    # ⚠️ **没有放宽产品侧的预算判据**：`_BUDGET_P95_MS` 仍是 700.0，一个字没动。
     _orig_refresh = Tweak._refresh
     import time as _t
+    _ok_base, _det_base = _inv6_latency(reps=6)
+    _base_p95 = float(_det_base.split('p95=')[1].split(' ms')[0])
+    _inject_ms = max(150.0, _BUDGET_P95_MS - _base_p95 + 150.0)
 
     def _refresh_slow(self, *a, **k):
-        _t.sleep(0.25)
+        _t.sleep(_inject_ms / 1000.0)
         return _orig_refresh(self, *a, **k)
 
     Tweak._refresh = _refresh_slow
@@ -1346,8 +1357,10 @@ def _inv_teeth():
         ok_bad, det_bad = _inv6_latency(reps=6)
     finally:
         Tweak._refresh = _orig_refresh
-    check('§t82⑥【有牙】单次刷新拖慢 250ms ⇒ 延迟预算（p95）必红',
-          ok_bad is False, det_bad[:120])
+    check('§t82⑥【有牙】按**实测基线**注入 %.0fms（= 预算 − 基线 + 150）⇒ 延迟预算（p95）必红'
+          % _inject_ms,
+          ok_bad is False,
+          '基线 %s ｜ 注入后 %s' % (_det_base, det_bad[:70]))
 
 
 # =====================================================================
