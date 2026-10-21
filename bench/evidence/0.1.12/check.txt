@@ -1,0 +1,135 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_check.py
+§1 整齐的 2x2 零误报
+  OK   没有问题
+  OK   读到 4 个轴
+  OK   退出码 0
+§2 乱排挑出问题
+  OK   至少 3 个问题
+  OK   检出不对齐/大小不一
+  OK   退出码 1
+§3 越界 + 重叠
+  OK   检出越界
+  OK   检出重叠
+§4 对称的不齐只报一次
+  OK   没有重复的对称问题
+§5 跨网格的 x0 不会被拆列（间距不均要报出来）
+  OK   检出间距不均
+§6 边界
+  OK   不存在的脚本 → 退出码 2
+  OK   stdout 干净（错误走 stderr）
+§7 布局引擎冲突（constrained_layout）单独报，且不改退出码
+  OK   检出 constrained_layout
+  OK   带行号（用户才知道去哪改）
+  OK   布局引擎不进 problems（整齐的图不该被骂）
+  OK   退出码仍是 0（不是 error 级）
+§7b 没开布局引擎的脚本 → layout_engine 为空
+  OK   干净脚本无 layout_engine 噪音
+  OK   人读输出里也有提示（zh，带行号）
+  OK   人读输出里也有提示（en，同一处冲突带行号）
+§8 文字渲染尺寸（真实外框，不是几何框）
+  OK   干净图确实检查了文字（有 n_texts）
+  OK   干净图零文字误报
+  OK   文字超出画布 → 进 problems（error）
+  OK   退出码 1（客观可判定，算真问题）
+  OK   超长刻度标签互相压住 → warn
+  OK   互压只降 warn，不进 problems
+  OK   标注互压 → 只提示、不失败
+  OK   --no-text 回到纯几何口径
+§9 轴范围不统一（多面板常见毛病）
+  OK   2/3 面板范围一致、第三个不同 → 提示
+  OK   范围不统一只提示、不算问题（rc 仍 0）
+  OK   各自为政（没有多数派）→ 不报
+§7c 布局引擎启发式：不误报用户自己的 helper
+  OK   用户自己的 save_plot(constrained_layout=True) 不该被当成布局引擎
+  OK   第三方 helper 仍会被报（已知的保守启发式边界）
+§7d 布局引擎：裸名 / 关键字 / set_layout_engine 形式（T11 / E15）
+  OK   E15 检出：裸名 subplots(layout='constrained')
+  OK   E15 检出：裸名 figure(constrained_layout=True)
+  OK   E15 检出：关键字 set_layout_engine(layout='compressed')
+  OK   E15 检出：位置 set_layout_engine('tight')（每次绘制重跑 → autolayout）
+  OK   E15 检出：layout='tight'（TightLayoutEngine）
+  OK   E15 检出：rcParams 下标赋值 figure.autolayout
+  OK   E15 检出：rcParams 下标赋值 constrained_layout.use
+  OK   E15 不误报（假阳性回归）：用户自己的 save_plot(constrained_layout=True)
+  OK   E15 不误报（假阳性回归）：用户自己的 show_it(layout='constrained')
+  OK   E15 不误报（假阳性回归）：关掉布局引擎 set_layout_engine(None)
+  OK   E15 不误报（假阳性回归）：layout='none'（不启用引擎）
+  OK   E15 不误报（假阳性回归）：变量布局参数（静态扫不到，已知边界）
+  OK   E15 端到端：裸名 subplots(layout=...) 被 check 报出（带行号）
+  OK   E15 端到端：人读输出指到第 5 行
+§9b 视图外的刻度不能算"超出画布"（假阳性回归）
+  OK   视图外的刻度不报越界（否则是假阳性）
+  OK   文字检查确实跑了（不是靠跳过它蒙对）
+§10 check --strict：布局引擎冲突升级为问题（接 CI 用）
+  OK   默认只是提示：rc=0 且不进 problems
+  OK   --strict → rc=1 且问题落在 problems 里
+  OK   原始冲突信息仍然保留在 layout_engine 里
+§11 CH-4：bbox_inches=tight 的图不再误报 text_out_of_canvas
+  OK   识别出 tight 口径
+  OK   越界文字不再进 problems（0.1.8 是 8 条 error）
+  OK   降级成 warning 且标明 downgraded
+  OK   rc=0（README 的 CI 配方不再恒红）
+  OK   --no-tight 回到 0.1.8 口径（error）
+  OK   --no-tight → rc=1（这是"真的会被裁"的旧口径）
+  OK   非 tight 脚本不受影响（仍然 error）
+§12 A4：check --static 完全不执行脚本，并明说没检查什么
+  OK   输出标了 static
+  OK   脚本**真的没有被执行**（marker 文件不存在）
+  OK   静态也能报出布局引擎冲突
+  OK   note 明说"没执行、这些都没查"
+  OK   not_checked 列出没检查的规则
+  OK   静态干净 → ok/rc=0
+  OK   --static --strict + 冲突 → rc=1
+  OK   语法错误 → rc=2 + syntax_error（"跑不起来"）
+§13 CH-3：--tol 只收有限正数（不再吐 Infinity / 静默关掉检查）
+  OK   --tol inf → rc=2（用法错误）
+  OK   --tol inf 的 stdout 不含非法 JSON 字面量
+  OK   --tol inf → 参数层拒绝（不是 internal_error JSON）
+  OK   --tol -inf → rc=2（用法错误）
+  OK   --tol -inf 的 stdout 不含非法 JSON 字面量
+  OK   --tol -inf → 参数层拒绝（不是 internal_error JSON）
+  OK   --tol nan → rc=2（用法错误）
+  OK   --tol nan 的 stdout 不含非法 JSON 字面量
+  OK   --tol nan → 参数层拒绝（不是 internal_error JSON）
+  OK   --tol 0 → rc=2（用法错误）
+  OK   --tol 0 的 stdout 不含非法 JSON 字面量
+  OK   --tol 0 → 参数层拒绝（不是 internal_error JSON）
+  OK   --tol -1 → rc=2（用法错误）
+  OK   --tol -1 的 stdout 不含非法 JSON 字面量
+  OK   --tol -1 → 参数层拒绝（不是 internal_error JSON）
+  OK   合法 tol 照常工作
+§14 CH-12：机器可读的 msg 也跟随语言（--lang 进了 check/describe）
+  OK   --lang en → problems[].msg 全 ASCII
+  OK   --lang zh → 中文（默认行为不变）
+  OK   describe 也接受 --lang（SKILL.md 一直列着它）
+§15 归因改动不越界：check 的失败路径与退出码语义都不变
+  OK   脚本跑不起来 → rc=2 + error_code=collect_failed（方案 A 后仍是 2）
+  OK   check 的失败 JSON **不带**写回归因字段（归因只属于 apply 那条链）
+  OK   --static 是"脚本跑不起来"时的出路：不执行脚本 → rc=0
+  OK   --static + --lang en 同样可用
+  OK   文件不存在 → 仍 rc=2 + file_not_found
+  OK   §15 夹具的"需要参数"报错文本本身**不含**缺数据字样（断言可信）
+  OK   §15 需要参数的报错**不**被归成缺依赖（伪装问题的反向锁）
+  OK   §15 判据只会落在 needs_args / cannot_run 两档之一
+  OK   §15 判不出原因时**绝不**误报 tool_bug（不吓用户）
+  OK   §16[zh] colorbar × aspect_locked 轴相交 → 1 条 colorbar_overlap warn（过去静默通过）
+  OK   §16[zh] 这条 warn 带人话 msg + 稳定 rule 名
+  OK   §16[en] colorbar × aspect_locked 轴相交 → 1 条 colorbar_overlap warn（过去静默通过）
+  OK   §16[en] 这条 warn 带人话 msg + 稳定 rule 名
+  OK   §16 en 下 check 的整份输出仍是纯 ASCII（含新规则）
+  OK   §16[zh] 反例：不重叠的 colorbar **不**误报
+  OK   §16[en] 反例：不重叠的 colorbar **不**误报
+  OK   §16 既有设计不变：aspect_locked 轴仍不进几何比对（也不误报新规则）
+  OK   §17① 轴 rect 三读者一致（R1 `toolbox._bbox` / R2 `verify._state` / R3 `check._pos`，容差 5e-05 = 采集侧 4 位小数半量子）
+  OK   §17② 矩阵**含 colorbar 轴**（接缝①的载体；6 个形状里 2 个 colorbar 轴）
+  OK   §17②b【接缝①·常驻】colorbar rect 的**两个读者都等于源码声明值**（`get_position(original=True)`，容差 5e-05）—— 2 个 colorbar 轴
+  OK   §17③ 画布两读者一致（R4 `toolbox._canvas_geometry` vs R2 `verify._state`，英寸容差 0.005 = 窗口导出 2 位小数半量子；px 按"没 resize 过为 None"的规范口径）
+  OK   §17④ 图数量两读者一致（R5 静态 `count_figures(figure_only=True)` vs R2 运行时）
+  OK   §17⑤【接缝②·数据级】报告现场的 polar×colorbar 重叠在**两个读者的数据里都可见**（R1 x/y 重叠 = 0.2754/0.0059；R2 判定 = True）—— check 侧"看不见"的原因是它把 aspect_locked 轴排除在几何比对之外（§16 设计），不是数据缺失
+  OK   §17⑥【有牙·接缝①】把 R1 改回 `ax._position`（active）⇒ colorbar rect 与**源码声明值**差 0.0874 > 容差 5e-05 ⇒ §17②b 必红
+  OK   §17⑦【有牙·接缝③】把 R4 的英寸改回 `px/100`（历史写法；英寸 (6,4) × dpi=200 ⇒ px (1200,800) ⇒ 历史写法算出 12 英寸）⇒ 与 R2 差 6.000 > 容差 0.005 ⇒ §17③ 必红
+  OK   §17⑧【有牙·图数量】把 R5 改回 t36 前口径（`fig.subplots` 也算新图）⇒ fig_subplots 报 2 张而运行时只有 1 张 ⇒ §17④ 必红
+
+ALL PASS
+
+[rc=0]  49.6s

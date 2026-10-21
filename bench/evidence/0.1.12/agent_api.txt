@@ -1,0 +1,254 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_agent_api.py
+§1 describe 输出干净 JSON
+  OK   exit 0
+  OK   version = SCHEMA_VERSION(4)
+  OK   script 名
+  OK   figsize_in 两项
+  OK   ax0.pos 四项
+  OK   aspect_locked 是 bool
+  OK   含字号/grid 字段
+§2 describe --all-figs
+  OK   n_figs 与 figures 数一致
+  OK   每张图都带 axes
+§3 describe --compact
+  OK   紧凑版更短且合法
+§4 schema
+  OK   $schema 声明
+  OK   required 含 version
+  OK   axis 属性齐全
+  OK   additionalProperties=False（顶层收紧，schema 校验自己的产物）
+  OK   --all-figs 的 figures 在 schema 里
+  OK   axis 层仍宽松（未知轴字段继续被忽略）
+  OK   jsonschema 校验 describe 产物
+§5 apply --json
+  OK   含 ok/files
+  OK   预览也算一条结果
+  OK   每条 files[] 都带 external_modified 布尔键（正常路径 false）
+  OK   每条 files[] 恒有 verify_passes + semantic_basis（t45）
+  OK   verify_passes 类型是 int（不是 bool/None）
+  OK   预览（没写回、没重跑）时 verify_passes=0
+  OK   语义依据未知时 semantic_basis 是空串（不是缺键）
+§6 闭环：describe → 改数字 → apply --write
+  OK   describe 读到原始位置
+  OK   apply --write 成功
+  OK   --json 如实回报 style（写回路径原先漏设 → 人读消息永远说"插入调整块"）
+  OK   正常原位写回只重跑 1 遍（verify_passes=1，t39 起的单遍口径）
+  OK   语义依据如实回报 live / live+savefig
+  OK   源码里的位置被原位改写
+  OK   字号被原位改写
+  OK   脚本里没留下工具痕迹
+§7 figsize_in 不受 dpi 影响
+  OK   figsize_px 是 200dpi 的真实像素
+  OK   figsize_in 仍是 8x4 英寸（没被 dpi 带偏）
+§8 多图闭环：fig_index 必须贯穿 describe → apply
+  OK   describe 产物带 fig_index（默认最后一张 = 1）
+  OK   describe 产物带 n_figs=2
+  OK   参数落到第 2 张图（目标图）
+  OK   第 1 张图未被误改（这是 P0 的核心断言）
+§9 --json 成功路径的 stdout 必须是 UTF-8
+  OK   schema 的 stdout 能按 UTF-8 解码
+  OK   payload 里确实有中文（否则这条断言测不到编码）
+  OK   check --json 的中文可按 UTF-8 解码
+§10 顶层兜底（guard_json_main）异常路径可用
+  OK   退出码 2 = "跑不起来"（不是被 NameError 带走）
+  OK   异常路径仍给出结构化 JSON
+  OK   internal_error 带 attribution=tool_bug（工具侧，不是脚本侧）
+  OK   next_step 是可直接执行的英文指引（机器可读通道不跟随语言）
+  OK   stderr 打出了人话而不是 NameError
+§11 布局引擎冲突要跟着 apply 的落地结果一起报出来
+  OK   describe 产物带 layout_engine（constrained_layout 冲突）
+  OK   网格轴退到块模式（本用例的前提）
+  OK   JSON 的 layout_conflicts 带出了冲突
+  OK   重复 apply = no_change（幂等，不再重复落盘）
+  OK   重复 apply 不落盘（applied=False）
+  OK   人读输出也提示了（带行号）
+§12 轴范围 xlim：describe → 改数字 → apply --write → 语义验证
+  OK   schema 版本 = 4（xlim/ylim 是 v4 新增字段）
+  OK   显式固定过的 xlim 被采到（autoscale 的不采）
+  OK   范围被原位改写
+  OK   语义验证通过（重跑后范围真的等于参数）
+  OK   能跑通验证通过
+§13 快速验证档 --verify-fast 的契约
+  OK   --json 如实回报 verify_mode=fast / verified=None（不谎称验证过）
+  OK   --verify-fast 没重跑 → verify_passes=0（不是缺键、不是 None）
+  OK   --verify-fast 没有语义判定依据 → semantic_basis 空串
+§13c 取不到目标图状态 → 回退两遍：verify_passes=2 / 语义无依据 / 原因可见
+  OK   取不到状态 → writeback 如实回报 verify_passes=2（回退两遍）
+  OK   没验到就不许说验过：verified/semantic 都是 None
+  OK   回退原因在 warnings 里可见（用户与 agent 都读得到）
+  OK   回退不代表放弃写回（字号仍然落盘）
+  OK   --json 白名单里回退场景仍是 int 2（键恒存在、类型固定）
+  OK   回退时 semantic_basis 是空串（从 None 归一，不是缺键）
+  OK   回退原因也进了 --json 的 warnings（机器可读通道能追）
+  OK   人读输出（zh）用原话说清"没有重跑脚本"与不保证什么
+  OK   快速档不再打印"Agg 重跑验证通过"（zh）
+  OK   快速档仍然把改动写出去了
+  OK   人读输出（en）同样说清 "NOT re-run" 与不保证什么
+  OK   快速档不再打印英文的"Agg re-run check passed"
+  OK   --no-verify 与 --verify-fast 互斥 → rc=2
+  OK   互斥报错补齐后果口径（不会自动回滚 / 唯一的自动安全网 / 不重跑脚本）
+  OK   互斥错误在 --json 下给出可解析 JSON（ok=false + error）
+§14 apply --strict：有布局引擎冲突时拒绝写回（要放行得显式说）
+  OK   --strict 拒绝写回 → rc=2
+  OK   代码一个字节没动
+  OK   stderr 说清原因与放行办法
+  OK   显式 --allow-layout-conflict 后可以写回
+§15 执行边界（A1/A2）：sys.exit() 的脚本不能把 describe --all-figs 打空
+  OK   exit0.py → rc=0（退出码不被脚本顶掉）
+  OK   exit0.py → 输出完整的 figures 包装
+  OK   exit0.py → 单图路径同样正常（行为一致）
+  OK   exit3.py → rc=0（退出码不被脚本顶掉）
+  OK   exit3.py → 输出完整的 figures 包装
+  OK   exit3.py → 单图路径同样正常（行为一致）
+  OK   sexit7.py → rc=0（退出码不被脚本顶掉）
+  OK   sexit7.py → 输出完整的 figures 包装
+  OK   sexit7.py → 单图路径同样正常（行为一致）
+§16 执行边界（A1/A3）：同一进程连查多个脚本不再互相污染
+  OK   B 第一次：ModuleNotFoundError（B 目录没有 only_a）
+  OK   跑过 A 之后同一个 B **仍然** ModuleNotFoundError（判定不翻转）
+  OK   sys.path 采集后原样还原
+  OK   sys.modules 没有新增用户脚本的模块
+  OK   rcParams 不串味：污染脚本前后 clean 的字号一致（12.0）
+§17 退出码矩阵（CH-6）：describe 的失败码与 check/apply 一致
+  OK   describe 找不到脚本 → rc=2（0.1.8 是 1）
+  OK   结构化 JSON 仍给 error_code
+  OK   check 找不到脚本 → rc=2（两边一致）
+§18 CH-9：schema 不再忽略参数（--help / 未知参数）
+  OK   schema 本身照常输出
+  OK   --help → 用法，而不是原样吐 JSON
+  OK   未知参数 → rc=2（0.1.8：rc=0 且照常吐 JSON）
+  OK   stdout 干净（错误走 stderr）
+  OK   --compact 仍然可用
+§19 T26：describe 的图元字段（cmap / legend / lines）
+  OK   旧 state（采集侧没给）→ 三个键都不出现（不是 lines: [] 假字段）
+  OK   新 state → 三个键被原样搬运
+  OK   colorbar：describe 正常
+  OK   colorbar：产物通过 mpltweak schema
+  OK   legend：describe 正常
+  OK   legend：产物通过 mpltweak schema
+  OK   plain：describe 正常
+  OK   plain：产物通过 mpltweak schema
+  OK   colorbar 图：ax0 采到 cmap=viridis
+  OK   colorbar 图：lines 是真实线（index/linewidth/color 齐全，不再恒 []）
+  OK   legend 图：条目文本/句柄数来自图例自身（无 label 的线不进图例）
+  OK   legend 图：字号与标准位名也采到
+  OK   普通折线图：lines 有 1 项、颜色归一成 #rrggbb
+  OK   没有图像/图例的轴：这两键不出现（不是 null 占位）
+  OK   --all-figs 产物同样通过 schema
+§20 T26/T25：字号 x/y 分列（tick_fontsize_y）与 compare 的独立口径
+  OK   describe 采集 x/y 刻度字号（9 / 13，不再只有 x）
+  OK   describe 采集 x/y 轴标签字号（8 / 15）
+  OK   只改 y 刻度字号（x 相同）→ compare 必须报出 tick_fontsize_y
+  OK   x/y 都对 → 不报
+  OK   T73（零兼容）：参数没带 label_fontsize_y → 只按 x 比（x 不同必须报）
+  OK   新参数带 label_fontsize_y：y 独立比（不同 → 报）
+  OK   新参数带 label_fontsize_y：x 独立比（不同 → 报）
+  OK   语义验证端到端覆盖 tick_fontsize_y（不再假通过）
+§21 失败归因：脚本跑不起来 vs 工具改坏了，四类各给一句下一步
+  OK   ①缺依赖 → attribution=script_cannot_run
+  OK   ①缺依赖 → detail 是稳定英文短原因
+  OK   ①人读输出印出分类「脚本跑不起来」
+  OK   ①下一步：明说没改源码 + `check <脚本> --static`
+  OK   ①--json 的 next_step 可直接执行
+  OK   ①缺依赖**不**被伪装成"需要参数"（不许乱猜）
+  OK   ②脚本要 argv → attribution=script_needs_args
+  OK   ②★「需要参数」不得伪装成「缺数据/缺依赖」
+  OK   ②人读输出印出分类「脚本需要命令行参数」
+  OK   ②下一步给出可照抄的 `apply <脚本> --write -- <参数...>`（原文含 `<`）
+  OK   ②--json 的 next_step 带 `-- <your args...>` 写法
+  OK   ③无头跑不通 → attribution=script_needs_gui_or_headless_impossible
+  OK   ③人读输出印出分类「无头环境跑不通」
+  OK   ③下一步：--static + 确要写回时的两个弱保证开关
+  OK   ③反向对照：给了窗口后同一脚本正常写回（不是夹具恒失败）
+  OK   ④工具自身异常 → 退出码仍是 2（方案 A 统一后不变）
+  OK   ④--json：error_code=internal_error + attribution=tool_bug
+  OK   ④人读输出明说「源码一个字节都未修改」+「这是工具的 bug」
+  OK   ⑤cli 帮助不再出现"脚本报错或工具自身异常"的合并表述
+  OK   ⑤cli 帮助把工具侧 internal_error 单列并点明与用户脚本无关
+  OK   ⑤cli 帮助列出 attribution 的取值（agent 可据此分支）
+  OK   ⑤cli 帮助声明统一后的退出码集合 0 / 1 / 2 / 4（版本标注=0.1.11）
+  OK   ⑤cli 帮助注明 0.1.9 的退出码 3 已退役、不再由任何路径产生
+  OK   ⑤cli 帮助保留 1 / 2 的语义（CI 依赖：非零仍是失败）
+  OK   ⑥英文界面：归因分类也出英文
+  OK   ⑥英文下 next_step 仍是 ASCII 可执行命令
+  OK   ⑥英文分支的 attribution 取值与中文一致（机器可读值不翻译）
+  OK   ⑥b中文分支同样有归因（attribution + 人读归因行）
+  OK   ⑥b分类判据=稳定信号（semantic/缺信号都不算重跑失败）
+  OK   ⑥b只给文案、不给信号 ⇒ 不分类（判据不再依赖任何语言的文案）
+  OK   ⑥b归因证据来自 verify_fail_tail（不再从 err 里切中文标记）
+  OK   ⑦stderr 命中 argparse 强证据 → script_needs_args/argparse
+  OK   ⑦参数已透传时不再叫他"去传参数"（detail=configured_args）
+  OK   ⑦无 stderr + 参数已给 → 保守归 script_cannot_run/unknown
+  OK   ⑦无 stderr + sys.argv[1] 强证据 + 未传参 → static_args
+  OK   ⑦分类器永不从脚本 stderr 判出 tool_bug（只有 internal_error 才是）
+  OK   ⑦分类器只产出三类（工具侧那类由 guard 产出）
+§22 可重跑预检：写回/开窗前静态预警五类重跑风险（绝不执行脚本）
+  OK   §22-missing_dependency 静态判出该风险
+  OK   §22-missing_dependency 人读提示含风险名 + 可照抄的下一步
+  OK   §22-missing_dependency JSON 字段齐（next_step/attribution/hint/evidence）
+  OK   §22-needs_args 静态判出该风险
+  OK   §22-needs_args 人读提示含风险名 + 可照抄的下一步
+  OK   §22-needs_args JSON 字段齐（next_step/attribution/hint/evidence）
+  OK   §22-network 静态判出该风险
+  OK   §22-network 人读提示含风险名 + 可照抄的下一步
+  OK   §22-network JSON 字段齐（next_step/attribution/hint/evidence）
+  OK   §22-stdin 静态判出该风险
+  OK   §22-stdin 人读提示含风险名 + 可照抄的下一步
+  OK   §22-stdin JSON 字段齐（next_step/attribution/hint/evidence）
+  OK   §22-gui 静态判出该风险
+  OK   §22-gui 人读提示含风险名 + 可照抄的下一步
+  OK   §22-gui JSON 字段齐（next_step/attribution/hint/evidence）
+  OK   §22 预检标签与 t11 的四类归因同值（agent 可用同一套标签分支）
+  OK   §22 文案双语句柄存在: preflight_missing_dependency
+  OK   §22 文案双语句柄存在: preflight_needs_args
+  OK   §22 文案双语句柄存在: preflight_network
+  OK   §22 文案双语句柄存在: preflight_stdin
+  OK   §22 文案双语句柄存在: preflight_gui
+  OK   §22 干净脚本静默通过（risks=[] 且一条提示都不打）
+  OK   §22 同目录本地模块（import 旁边那个 .py）不算缺依赖 —— 不误报
+  OK   §22 参数已透传 → 不再叫用户去传参数（不重复、不误导）
+  OK   §22 预检**绝不执行脚本**（金丝雀的模块级写盘没有发生）
+  OK   §22 失败即放行：文件不存在 / 传目录 / 语法错误 → 一律当无风险，绝不抛
+  OK   §22-apply 写回前打印人读预检（含下一步）
+  OK   §22-apply --json 带顶层 preflight.risks（机器可读）
+  OK   §22-apply --json 时人读预检走 stderr（stdout 只有 JSON）
+  OK   §22-apply --json 每条风险带 next_step/attribution
+  OK   §22 --verify-fast（这次不重跑）→ 预检静默、JSON 不带 preflight
+  OK   §22-apply 干净脚本静默（人读无提示、JSON risks 为空）
+  OK   §22-launch 开窗前向 stderr 给一次提示（不阻塞）
+  OK   §22-launch 干净脚本静默（stderr 一个字不打）
+  OK   §22-launch MPLTWEAK_NO_HINT=1 静默（批量脚本开关）
+  OK   §22-launch 预检无风险/出岔子 → 返回 False，绝不影响开窗
+  OK   §23① 脚本不存在：rc=2 + error_code=file_not_found
+  OK   §23② 没有参数文件：rc=2 + error_code=no_params
+  OK   §23③ --no-verify 与 --verify-fast 互斥：rc=2 + error_code
+  OK   §23④ 参数缺 version：rc=2 + error_code=bad_params（files[].reason 仍在）
+  OK   §23⑤ 成功载荷不加 error_code（既有键集/语义不变）
+  OK   §23⑥ en 下「preview」的人读输出全 ASCII
+  OK   §23⑥ en 下「dry-run」的人读输出全 ASCII
+  OK   §23⑥ en 下「write」的人读输出全 ASCII
+  OK   §23⑥ en 下「mutex」的人读输出全 ASCII
+  OK   §23⑥ en 下「no params」的人读输出全 ASCII
+  OK   §23⑥ en 下「script missing」的人读输出全 ASCII
+  OK   §23⑥ en 下「params bad (no version)」的人读输出全 ASCII
+  OK   §23⑥ en 下「params bad --json」的人读输出全 ASCII
+  OK   §23⑥ en 下「params bad JSON」的人读输出全 ASCII
+  OK   §23⑦ 坏 JSON（截断）归 bad_params，不是 tool_bug
+  OK   §23⑦ 坏 JSON（多余逗号）归 bad_params，不是 tool_bug
+  OK   §23⑦ 坏 JSON（编码坏）归 bad_params，不是 tool_bug
+  OK   §23⑧ 顶层非对象：结构警告只有 1 行（旧版逐字符打了 541 行）
+  OK   §23⑧ A3：拒写的人读错误只在 stderr（stdout 保留结构警告这条报告）
+  OK   §23⑧ JSON 里的 err 是一句完整的话（旧版是逐字符用 "; " 拼的乱码）
+  OK   §24① 只读预览成功：stderr **一个字都不打**（rc=0）
+  OK   §24② 写回成功：stderr **一个字都不打**（rc=0，成功摘要仍在 stdout）
+  OK   §24② 写回成功的报告仍在 stdout（不是被整体搬到 stderr）
+  OK   §24③ 脚本不存在：rc=2 + 错误行只在 stderr（stdout 一行都没有）
+  OK   §24④ 参数文件坏：rc=2 + 拒写/未写回两行只在 stderr，stdout 只剩报告
+  OK   §24⑤ 脚本在参数之后被改过（外部改动）：rc=1 + 提示只在 stderr
+  OK   §24⑥ --json 失败：stdout 只有 JSON（可解析）+ rc/error_code 一字不变
+  OK   §24⑥ 脚本不存在 --json：人读行一个字都不打（stderr 空，错因在载荷里）
+  OK   §24⑥ 参数文件坏 --json：JSON 依然可解析、人读错误只在 stderr
+
+ALL PASS
+
+[rc=0]  89.8s

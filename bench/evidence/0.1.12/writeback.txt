@@ -1,0 +1,1081 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_writeback.py
+PASS | reason=best_effort（未命名 colorbar 轴的目标证不出，如实报没能落地） | best_effort | pending=['ax2.clim', 'ax2.cmap', 'ax2.pos'] | err=
+PASS | fig 变量=fig | fig
+PASS | figsize 原位替换
+PASS | 插入点=before(savefig) | before
+PASS | Agg 验证通过
+PASS | figsize 已替换 (12, 4.8)
+PASS | T70 块内无运行期下标/动态定位
+PASS | T70 ax0/ax1 用可证的容器元素（axes[0] / axes[1]）
+PASS | T70 未命名 colorbar 轴：块里没有它、但如实进 pending
+PASS | 非 colorbar mappable 用变量 im
+PASS | 块在 savefig 之前
+PASS | 备份已生成
+PASS | 再次写回不重复落盘（reason ∈ {no_change, best_effort}） | best_effort
+PASS | 重复写回不落盘：applied=False 且没写备份 | applied=False backup=None
+PASS | 块标记仍各 1 个 | start=1 end=1
+PASS | 坏参数写回 reason=FAIL | fail
+PASS | 验证失败已标记
+PASS | 已回滚到原内容
+PASS | T70-B 纯 pyplot 单图：可证 → 照常写块、验证通过 | gcf=True reason=ok verified=True
+PASS | T70-B 块用 plt.gcf().axes[k]，且把"凭什么可证"写进块注释 | ['# 目标定位：本文件只有一次建图、没有 colorbar/inset/twin/… 额外建轴（也没有 close），因此 plt.gcf().axes[k] 就是静态第 k 条轴', 'plt.gcf().axes[0].set_position([0.1500, 0.1500, 0.7500, 0.7500])']
+PASS | T70-B 写盘后确实换了内容（不是字节不变）
+PASS | 无 plt 导入 → NO_FIG | no_fig
+PASS | NO_FIG 不落盘
+PASS | colorbar function 刻度不生成
+PASS | from_list cmap 跳过
+PASS | from_list cmap 有警告
+PASS | 普通轴 log 刻度仍生成
+PASS | T74 多图 + 未命名 figure：编号可证 → 块用 plt.figure(2).axes[0]（块内无运行期下标） | gcf=True fig=plt.gcf() reason=best_effort anchor=before pending=None
+PASS | T74 figure 级（figsize）仍能落地（第 2 张图的字面量被原位改掉）
+PASS | fig_index=0 → 锚定第一个 savefig（第 7 行） | anchor=before line=7
+PASS | fig_index=0 写回验证通过 | True
+PASS | 块确实插在 a.png 的 savefig 之前
+PASS | 语义验证识别"布局被 savefig 之后的代码覆盖"→ 拒绝写回（不再静默换到脚本尾） | reason=fail applied=False err=目标值在重跑后仍未达标：ax0 位置 [0.05, 0.05, 0.5, 0.5]≠[0.3, 0.2, 0.6, 0.7]（脚本本身能跑通）。提示：脚本在第 6 行（savefig/plt.show）之后可能还有会覆盖布局的调用；把那些调用移到 savefig 之前，或用 --style inplace。。已回滚。尝试：[{'anchor': 'before', 'line': 6, 'ok':
+PASS | （对照）关掉语义验证 → 静默放过 | anchor=before
+PASS | T70 循环里 pyplot 建图建轴：目标证不出 → 拒绝写（不插块、字节不变） | reason=best_effort applied=False pending=['ax0.pos']
+PASS | T70 拒绝写时没有留下任何守卫块痕迹
+PASS | B3 ax0 配到 a、ax1 配到 b（不再都取排序第一个）
+PASS | B3 不再报"多个 mappable"警告
+PASS | B3 写回后语义验证通过（clim 真的落在各自轴上） | v=True semantic=True
+发现 2 份参数文件（一次会话改过多张图）——逐张落实：
+==============================================================
+# target.fig0.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_12\.tweak_params\target.fig0.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.5000, 0.5000]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_12\target.py）；图已更新（重跑 + 语义验证通过）
+  · 保持原样: 脚本创建了 2 处图（运行期共 2 张），改用 plt.gcf() 定位第 1 张（按记录定位）
+==============================================================
+# target.json  （第 2 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_12\.tweak_params\target.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.4000, 0.4000, 0.5000, 0.5000]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_12\target.py）；图已更新（重跑 + 语义验证通过）
+  · 保持原样: 脚本创建了 2 处图（运行期共 2 张），改用 plt.gcf() 定位第 2 张（按记录定位）
+==============================================================
+多图落实小结：共 2 张，成功 2，失败 0
+PASS | 多图：apply 返回 0 | rc=0
+PASS | 多图：两份参数都落实了（脚本里 2 个调整块） | blocks=2
+PASS | 多图：第 1 张的块在 a.png 之前
+PASS | 多图：第 2 张的块在 b.png 之前
+PASS | 多图：改动过的参数文件被保留
+PASS | 多图：未改动的参数文件被清掉
+PASS | 多图：所有 .lock 都清掉
+PASS | 原位：add_axes 的 4 个数字被替换 | fig = plt.figure(figsize=(6, 4))
+PASS | 原位：title 字号被替换
+PASS | 原位：grid 被替换
+PASS | 原位：不再插入调整块
+PASS | 原位：Agg + 语义验证通过 | v=True s=True
+PASS | 原位：legend 改不了 → 有跳过警告
+PASS | 原位：备份在**脚本旁**的 .tweak_params 里（RC-10：不再跟着 --params 走） | D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_14\.tweak_params\target.tweak.bak
+PASS | 原位：幂等（第二次写回不再改动文件）
+PASS | 原位+figsize：fig1 的 figsize 不被误改
+PASS | 原位+figsize：fig2 的 figsize 被替换
+PASS | 原位+figsize：fig2 的 add_axes 数字替换不错位
+PASS | 原位+figsize：fig2 的 title 字号替换
+PASS | 原位+figsize：验证通过 | v=True s=True
+PASS | cax：ax1(idx2) 的位置数字被改
+PASS | cax：colorbar 槽(cax) 不被误改
+PASS | cax：验证通过 | v=True s=True
+PASS | 中文：set_title 字号替换不错位
+PASS | 中文：只给 x → y 标签字号保持源码原值（T73 零兼容） | ["ax.set_ylabel('数值', fontsize=16)"]
+PASS | 中文：add_axes 不被破坏
+PASS | 中文：验证通过 | v=True s=True
+PASS | 宿主轴：add_axes 数字不被改（原位无效）
+PASS | 宿主轴：字号照常原位改
+PASS | 宿主轴：警告说明 colorbar 决定位置
+PASS | 宿主轴：验证通过 | v=True s=True
+PASS | fraction：源码里的 fraction=0.28 原样保留（不再被反推成 0.0815152）
+PASS | fraction：宿主轴 add_axes 不被改（原位无效）
+PASS | fraction：宿主轴字号照常原位改
+PASS | fraction：colorbar 轴位置进"未原位应用"清单（不再静默丢） | ['ax0 未原位应用：pos（该轴是 colorbar 的宿主，位置由 colorbar 决定，保持原样；拖 colorbar 轴可调，或 --style block）（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax1 未原位应用：clim、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要
+PASS | fraction：验证通过 | v=True s=True
+PASS | 超时：不失败回滚 | best_effort
+PASS | 超时：verified=None 且有超时警告
+PASS | 原子写：内容正确 | 'AAA\nBBB\n'
+PASS | 原子写：不留 .mpltweak-*.tmp 临时文件
+PASS | 原子写：换行符仍是 LF，未被悄悄改成 CRLF
+PASS | 原子写：替换失败会抛错（不静默吞掉）
+PASS | 原子写：替换失败后原文件内容完好（不是 0 字节） | len=201
+PASS | 原子写端到端：替换失败 → 脚本未被破坏 | len=201
+PASS | 原子写端到端：如实报错而不是假装成功 | fail
+PASS | 回滚说明：成功时返回「已回滚」且内容确实被拷回 | 'ORIG\n'
+PASS | 回滚说明：失败时如实报告（含「回滚也失败」与备份路径） | 回滚也失败了（FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Agent\\deepseek\\mpltw
+PASS | 回滚说明：失败时绝不谎称「已回滚」 | 回滚也失败了（FileNotFoundError: [Errno 2] No such file or directory: 'D:\\Agent\\deepseek\\mpltw
+PASS | 回滚说明：失败后坏内容留在盘上（这正是必须如实告知的原因） | 'BROKEN\n'
+==============================================================
+# target.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\.tweak_params\target.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.0800, 0.5500, 0.3800, 0.3800]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\target.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+PASS | auto：网格轴（subplots）→ 自动改用插入调整块 | rc=0 blocks=1
+PASS | auto：退到块模式后确实改到了位置
+==============================================================
+# target.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\.tweak_params\target.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.2000, 0.2000, 0.5000, 0.5000]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 1 处（D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\target.py）；图已更新（重跑 + 语义验证通过）
+PASS | auto：add_axes 字面量 → 原位改，不插块 | ['ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])']
+==============================================================
+# target.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\.tweak_params\target.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.0800, 0.5500, 0.3800, 0.3800]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[i] 本次**没有重跑**脚本：写回结果未经运行验证
+  · 保持原样: ax0 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）
+  · 保持原样: 本图有 1 处目标值无法原位写回（ax0.pos）→ 需要调整块才能落地（实测不一致）
+PASS | --style inplace：显式指定时不得退到块模式 | rc=1
+==============================================================
+# target.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\.tweak_params\target.json
+脚本: target.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos、ax0.xscale、ax0.yscale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.2000, 0.2000, 0.5000, 0.5000]
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\target.py）；图已更新（重跑 + 语义验证通过）
+PASS | --style block：显式指定时即使能原位改也插块 | rc=0
+PASS | 互斥锁：第二个写回被挡住（超时报错） | blocked=True waited=0.63
+PASS | 互斥锁：是等待后超时，不是立刻失败 | 0.63
+PASS | 互斥锁：释放后锁文件已删除 | D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_24\.tweak_params\target.apply.lock
+PASS | 互斥锁：陈旧锁（持有者已死）被清理，不误挡
+PASS | 备份：固定名 target.tweak.bak 仍生成（兼容 README/测试/用户习惯） | D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_24\.tweak_params\target.tweak.bak
+PASS | 备份：同时生成带 pid 的专属副本（并发不互相覆盖）
+PASS | M16：有替换被重叠跳过时给出警告 | ['ax0 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax1 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 2 处目标值无法原位写回（ax0.pos、ax1.pos）→ 需要调整块才能落地（没重跑脚本，按保守判据）']
+PASS | M16：changes 只算真正落盘的（重名轴的位置字面量无从归属 → 不计入 changes） | changes=[]
+PASS | M16：重名轴（两处同名 add_axes）的位置一律不进原位改动，明说 pending、源码原样（不许声称改了但没改） | pending=['ax0.pos', 'ax1.pos'] | ['ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])', 'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])']
+PASS | 写回不给脚本加 BOM（否则 compile 报 U+FEFF） | b'import m'
+PASS | 写回后确实改了内容（不是空跑） | b' matplotlib.pyplot as plt\nfig = plt.figure(figsize=(6, 4))\nax = fig.add_axes([0.2, 0.2, 0.5, 0.5])\nfig.savefig("o.png")\n'
+PASS | 带 BOM 的脚本也能写回（原先直接抛 UnicodeDecodeError） | ok / b'\xef\xbb\xbfimpor'
+PASS | 写回保留原有的 BOM（不再静默删除） | b'\xef\xbb\xbfimpor'
+PASS | 元组 add_axes((...)) 原位写回（原先静默进 skipped） | reason=ok pos=[0.25, 0.3, 0.35, 0.45]
+PASS | 元组写回不改容器类型（仍然是一对圆括号，不是方括号） | ['ax = fig.add_axes((0.25, 0.3, 0.35, 0.45))']
+PASS | 元组写回被记进 covered（不是"改了 0 处"） | ['ax0.pos']
+PASS | 负数 pos 原位改写（-0.02 → 0，原先整项进 skipped） | ['ax = fig.add_axes([0, 0.10, 0.80, 0.80])']
+PASS | 只改真正变了的数字（未变的 0.10 / 0.80 原样保留） | ['ax = fig.add_axes([0, 0.10, 0.80, 0.80])']
+PASS | set_xlim(a, b) 原位改写（负数范围要认） | ['ax.set_xlim(0, 2)']
+PASS | set_ylim(a, b) 原位改写 | ['ax.set_ylim(0.5, 8.5)']
+PASS | 三处都被记进 covered（不是"改了 0 处"） | ['ax0.pos', 'ax0.xlim', 'ax0.ylim']
+PASS | set_xlim((a, b)) 容器写法原位改写 | ['ax.set_xlim((0, 2))']
+PASS | set_ylim(ymin=, ymax=) 关键字写法原位改写 | ['ax.set_ylim(ymin=0.5, ymax=8.5)']
+PASS | 没有 set_xlim 可改 → 明确进"未原位应用"（不静默） | ['ax0 未原位应用：pos、xlim（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 2 处目标值无法原位写回（ax0.pos、ax0.xlim）→ 需要调整块才能落地（没重跑脚本，按保守判据）']
+PASS | 块模式会带上 set_xlim（--style block 不丢范围） | ['ax.set_xlim(0, 4)']
+PASS | 写回后源码确实变了（前提） | ['ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])']
+PASS | 写回留了备份（revert 的依据） | D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\.tweak_params\target.tweak.bak
+回退预览：target.py  ←  D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\.tweak_params\target.tweak.bak（备份于 2026-10-20 23:20）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 1 行、删除 1 行：
+    -ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])
+    +ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])
+
+  这是预览，你的代码没有被改动。确认回退：mpltweak revert target.py --write
+PASS | revert 默认只预览：rc=0 且代码一个字节没动
+PASS | 预览阶段不会生成 revert.bak
+回退预览：target.py  ←  D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\.tweak_params\target.tweak.bak（备份于 2026-10-20 23:20）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 1 行、删除 1 行：
+    -ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])
+    +ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])
+
+√ 已回退：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\target.py
+  回退前的那份留档：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\.tweak_params\target.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+PASS | revert --write rc=0
+PASS | 回到写回前的原文 | import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig = plt.figure(figsize=(6, 4))
+ax = fig.add_axes([0.10, 0.10, 0.40
+PASS | revert 自身可逆：留了 revert.bak，内容是回退前那份 | D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\.tweak_params\target.revert.bak
+PASS | 没有备份时 rc=2（并给出去哪找备份的说明）
+PASS | 脚本不存在时 rc=2
+PASS | 快速档标记 verify_mode=fast、且不声称验证通过 | ('fast', None)
+PASS | 快速档仍然把改动写进去了 | ['ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])']
+PASS | 语法坏了 → reason=fail，且错误里点名"快速验证" | 快速验证失败：写回后的源码语法错误（已回滚）：invalid syntax (<unknown>, line 8)
+PASS | 语法坏了 → 已回滚，磁盘上没留下坏脚本 | igsize=(6, 4))
+ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])
+fig.savefig("o.png")
+
+PASS | cell 身份不一致 → 比对失败且信息里点名"轴序变了" | ['ax0 的网格身份 [1, 3, 0, 0]≠[1, 4, 0, 0]（轴序变了：块按下标寻址会改错面板）']
+PASS | cell 一致 → 不报（否则会误伤正常写回） | []
+PASS | 块注释里带出轴身份（出问题人一眼能对上） | ['# 轴身份（调图时）：ax0=网格[1, 3, 0, 0]']
+PASS | 值与源码一致 → reason=no_change（不再谎报"改了 N 处"） | no_change / changes=[]
+PASS | no_change 时源码一个字节都没变 |  0.40, 0.40])
+ax.set_xlim(-0.01, 1.01)
+fig.savefig("o.png")
+
+PASS | 第一张图的图内没有 set_xlim → 不能去改第二张图那一行 | ['ax.set_xlim(0.0, 10.0)']
+PASS | 该字段如实进"未原位应用"（不静默） | ['ax0 未原位应用：xlim（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 1 处目标值无法原位写回（ax0.xlim）→ 需要调整块才能落地（没重跑脚本，按保守判据）']
+PASS | 实测该轴不再是网格轴（cell=None）→ 判失败 | ['ax0 的网格身份对不上：期望 [1, 2, 0, 0]，实测该轴不是网格轴（轴序/结构变了：块按下标寻址会改错面板）']
+PASS | 实测侧没这个字段（旧参数/采集失败）→ 不判，保持向后兼容 | []
+PASS | cell 不同 → 判失败（此前已有）
+PASS | 40 前置：能采集到图状态（造"与源码完全一致"的参数）
+PASS | 40 E1：参数 == 源码（subplots 网格轴的 pos + grid + 字号）→ no_change | no_change / changes=[] / warnings=[]
+PASS | 40 E1：一个字节都没变、没有插调整块 | ot([1, 2, 3])
+ax.set_title("t", fontsize=12)
+ax.grid(True)
+fig.savefig("o.png")
+
+PASS | 40 E1：needs_block=False（不退块）、没写盘、没写备份 | nb=False applied=False backup=None
+PASS | 48 T11：no_change 不再刷"未原位应用"警告（warnings 为空） | []
+PASS | 40 E1b：pos 与实测不同 → best_effort + needs_block=True（该退块） | best_effort / nb=True / warnings=['ax0 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 1 处目标值无法原位写回（ax0.pos）→ 需要调整块才能落地（实测不一致）']
+PASS | 40 E1b：判定阶段仍然没动磁盘
+PASS | 41 E2：参数缺 grid 键 → ax.grid(True) 原样保留 + no_change | no_change / ['ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])', 'ax.grid(True)', 'fig.savefig("o.png")']
+PASS | 41 E2：不再谎报"未原位应用：grid"（RC-3） | []
+PASS | 41 E2b：显式 grid=false 仍然生效（"缺键=未设置"≠"不能关网格"） | ['ax0.grid'] / ['ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])', 'ax.grid(False)', 'fig.savefig("o.png")']
+PASS | 42 RC-8：只有 figsize_in → rc0 且只改 figsize 字面量（不再 no_axes 早退） | ok / ['fig, ax = plt.subplots(figsize=(8, 5))', 'ax.plot([1, 2, 3])', 'fig.savefig("o.png")']
+PASS | 42 RC-9：changes 里如实出现 figsize（不再空 changes 却改了盘） | ['figsize']
+PASS | 42 RC-8b：块模式同样不能因"没有 axes 项"而拒绝（figsize 照样落地） | ok / ['import matplotlib.pyplot as plt', 'fig, ax = plt.subplots(figsize=(8, 5))', 'ax.plot([1, 2, 3])', 'fig.savefig("o.png")']
+PASS | 43 E3：写盘后语义验证抛异常 → reason=fail 且脚本逐字节复原 | fail / 写回后验证异常（TypeError: float() argument must be a string or a real number, not 'NoneType'）：已回滚 / ['ax.plot([1, 2, 3])', 'fig.savefig("o.png")']
+PASS | 43 E3：err 里明确写了回滚结果（不是"静默留半成品"） | 写回后验证异常（TypeError: float() argument must be a string or a real number, not 'NoneType'）：已回滚
+PASS | 44 E5：干净往返 no_change —— fraction 字面量一个字符都不动 | no_change / ['ax = fig.add_axes([0.10, 0.10, 0.65, 0.80])', 'im = ax.imshow(np.arange(12).reshape(3, 4))', 'fig.colorbar(im, ax=ax, fraction=0.15)', 'fig.savefig("o.png")']
+PASS | 44 E5/幂等：第二次 apply 同一份参数仍是 no_change | no_change
+PASS | 44 E5：两次都没有改动磁盘（字节级）
+PASS | 45 RC-10：备份落在**脚本旁**（不再跟着 --params 目录走） | backup='D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_45\\.tweak_params\\target.tweak.bak'
+PASS | 45 RC-10 前置：写回确实改了脚本
+回退预览：target.py  ←  D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_45\.tweak_params\target.tweak.bak（备份于 2026-10-20 23:20）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 1 行、删除 1 行：
+    -ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])
+    +ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])
+
+√ 已回退：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_45\target.py
+  回退前的那份留档：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_45\.tweak_params\target.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+PASS | 45 RC-10：接着直接 revert（不带 --params）必须成功（原先 rc=2 找不到备份） | rc=0
+PASS | 45 RC-10：revert 后脚本逐字节回到原文 | ['ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])', 'ax.plot([1, 2, 3])', 'fig.savefig("o.png")']
+PASS | 47 E4：imshow（aspect 锁定）+ 参数与实测一致 → no_change（不误退块） | no_change / []
+PASS | 47 E4：拖过 aspect 锁定轴的位置 → needs_block=True（该退块，不许静默丢） | best_effort / nb=True / ['ax0 未原位应用：pos（该轴是 colorbar 的宿主，位置由 colorbar 决定，保持原样；拖 colorbar 轴可调，或 --style block）（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax1 未原位应用：clim、pos、spines、xlim、ylim（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 6 处目标值无法原位写回（ax0.pos、ax1.clim、ax1.pos、ax1.spines、ax1.xlim、ax1.ylim）→ 需要调整块才能落地（实测不一致）']
+PASS | 49a T11：只改 y 标签字号 → y 变（fontsize=15） | ['ax.set_xlabel("x", fontsize=10)', 'ax.set_ylabel("y", fontsize=15)']
+PASS | 49a T11：x 标签字号**不被覆盖**（仍是 fontsize=10） | ['ax.set_xlabel("x", fontsize=10)', 'ax.set_ylabel("y", fontsize=15)']
+PASS | 49a T11：changes 只报 y 那一个字段（x 是空改、不进账） | ['ax0.label_fontsize_y']
+PASS | 49a T11：语义验证通过（verify 只认 label_fontsize，门要开对） | v=True s=True err=
+PASS | 49b T73：无 label_fontsize_y → x 写 14、y 保持源码原值 11 | ['ax.set_xlabel("x", fontsize=14)', 'ax.set_ylabel("y", fontsize=11)']
+PASS | 49b T11：语义验证通过 | v=True s=True
+PASS | 49c T11：块模式 x=10 / y=15 分开写（不再同值） | ['ax.yaxis.label.set_fontsize(15)']
+PASS | 49d T73：块模式无 y → 只写 x 那一行（y 不出现） | ['ax.xaxis.label.set_fontsize(14)']
+PASS | 50 L0-1：等值 figsize（列表容器）→ no_change 且 changes=[] | no_change / changes=[]
+PASS | 50 L0-1/L0-3：等值 figsize（列表容器）→ 字节一个都不动（sha 相同） | 858ff2d08024 != 858ff2d08024
+PASS | 50 L0-1：等值 figsize（列表容器）→ 原写法原样保留（未被规范化） | fig = plt.figure(figsize=[6, 3])
+PASS | 50 L0-1：等值 figsize（双空格）→ no_change 且 changes=[] | no_change / changes=[]
+PASS | 50 L0-1/L0-3：等值 figsize（双空格）→ 字节一个都不动（sha 相同） | d1788e04c745 != d1788e04c745
+PASS | 50 L0-1：等值 figsize（双空格）→ 原写法原样保留（未被规范化） | fig = plt.figure(figsize=(6.4,  4))
+PASS | 50 L0-1：等值 figsize（.0 写法）→ no_change 且 changes=[] | no_change / changes=[]
+PASS | 50 L0-1/L0-3：等值 figsize（.0 写法）→ 字节一个都不动（sha 相同） | 3e25bf0e2cbc != 3e25bf0e2cbc
+PASS | 50 L0-1：等值 figsize（.0 写法）→ 原写法原样保留（未被规范化） | fig = plt.figure(figsize=(4., 4.))
+PASS | 50 L0-1：等值 figsize（无空格）→ no_change 且 changes=[] | no_change / changes=[]
+PASS | 50 L0-1/L0-3：等值 figsize（无空格）→ 字节一个都不动（sha 相同） | f23e08f9f491 != f23e08f9f491
+PASS | 50 L0-1：等值 figsize（无空格）→ 原写法原样保留（未被规范化） | fig = plt.figure(figsize=(16,10))
+PASS | 50 L0-1：等值 figsize（空格+小数）→ no_change 且 changes=[] | no_change / changes=[]
+PASS | 50 L0-1/L0-3：等值 figsize（空格+小数）→ 字节一个都不动（sha 相同） | e0586de9ef27 != e0586de9ef27
+PASS | 50 L0-1：等值 figsize（空格+小数）→ 原写法原样保留（未被规范化） | fig = plt.figure(figsize=(7.0, 6.9))
+PASS | 50 L0-1b：值确实变了 → 写回，且**保留列表容器**（[8, 5]） | ['figsize'] / fig = plt.figure(figsize=[8, 5])
+PASS | 51 L0-2：cax 位置 == 源码现值 → no_change（不得 best_effort/退块） | no_change / nb=False / skipped=[]
+PASS | 51 L0-2：cax 位置 == 源码现值 → 脚本字节不变
+PASS | 51 L0-2b：cax 位置**不同** → 仍然 best_effort + needs_block（该退块） | best_effort / nb=True
+PASS | 51c T12：建图区间之外的 add_axes 字面量也构成等价证明
+PASS | 51c T12：值不同 → 不给证明（宁可保守退块，也不静默丢掉真差异）
+PASS | 52a L0-4：第一次（原位）确实写盘并做了备份 | ok
+PASS | 52a L0-4：第二次（退块）用了**同一份**备份（没有被覆盖） | 'D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_50\\.tweak_params\\target.tweak.bak'
+PASS | 52a L0-4：备份内容仍是**原件**（fontsize=10，不是中间态 16） | ax.set_title("t", fontsize=10)
+PASS | 52b L0-4/auto：位置确实不同 → auto 退块（auto_fallback=true / style=block） | 跑脚本，最长 300s）
+[OK] 已写回（插入调整块，D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_50\target.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 52b：块已落地（脚本里有 auto layout 块）
+PASS | 52b L0-4：auto 之后 revert 逐字节回到原件（不再留下半成品） | teback_82000\case_50\target.py
+  回退前的那份留档：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_50\.tweak_params\target.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+
+PASS | 52c L0-2：等值（pos + 字号都没变）→ no_change，不插块、不改字节 | e_fontsize、figsize (4, 3) → (4, 3)（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.8750, 0.1300, 0.0200, 0.6900]
+      字号 title=10 label=None tick=None
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53a A：pos 写不了且不同 → best_effort + needs_block=True，不写盘 | best_effort / nb=True
+PASS | 53b B（INT-2）：figsize 落地 + pos 写不了 → needs_block=True（不许静默丢） | nb=True applied=True pending=['ax0.pos'] changes=['figsize']
+PASS | 53c C：figsize 等值 + pos 不同 → needs_block=True，字节不变 | nb=True applied=False
+PASS | 53d B + 允许重跑：实测回比同样判 needs_block=True（两种校验档一致） | nb=True pending=['ax0.pos']
+PASS | 53e A（fast）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | Local\Temp\mpltweak_shim\mpltweak_t15cli_df228f296636\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53e A（rerun）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | 0.6000, 0.6000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t15cli_62fcbb6a6d29\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+
+PASS | 53e B（fast）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | Local\Temp\mpltweak_shim\mpltweak_t15cli_75684e5ab922\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53e B（rerun）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | 0.6000, 0.6000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t15cli_ea5df4d635d6\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+
+PASS | 53e C（fast）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | Local\Temp\mpltweak_shim\mpltweak_t15cli_e66324586539\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53e C（rerun）：pos 落到源码里（set_position）且退块留档一致 | rc=0 | 0.6000, 0.6000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t15cli_4381ae27e307\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+
+PASS | 53f 显式 inplace + pos 写不了 → rc=1 且 JSON 里 needs_block=true/pending | rc=1 | 有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+  · 保持原样: ax0 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）
+  · 保持原样: 本图有 1 处目标值无法原位写回（ax0.pos）→ 需要调整块才能落地（没重跑脚本，按保守判据）
+
+PASS | 53f 显式 inplace：明确打印"没能落地"的字段（不是埋在 warnings 里） | 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+  · 保持原样: ax0 未原位应用：pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）
+  · 保持原样: 本图有 1 处目标值无法原位写回（ax0.pos）→ 需要调整块才能落地（没重跑脚本，按保守判据）
+
+PASS | 53g T14-D1：title_fontsize 无源码写法但等值 → no_change、字节不变、不插块 | 次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+      字号 title=12.0 label=None tick=None
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53g T14-D1：label_fontsize 无源码写法但等值 → no_change、字节不变、不插块 | 次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+      字号 title=None label=10.0 tick=None
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53g T14-D1：tick_fontsize 无源码写法但等值 → no_change、字节不变、不插块 | one)
+会改：ax0.pos、ax0.tick_fontsize（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53g T14-D1：spines 无源码写法但等值 → no_change、字节不变、不插块 | ize_in=None  (px=None)
+会改：ax0.pos（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53g T14-D1：grid 无源码写法但等值 → no_change、字节不变、不插块 | 0.grid（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+      grid=True  spines={}
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53g T14-D1：xscale 无源码写法但等值 → no_change、字节不变、不插块 | scale（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.8000, 0.8000]
+      scale x=linear y=None
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 53h 反向：title_fontsize=20.0 与现值不同 → 必须落地（含 fontsize=20 或 set_fontsize(20)），绝不静默吞 | ] 已原位写回 1 处（C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t15d1n_4bddc5162b94\fig.py）
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53h 反向：spines={'top': False} 与现值不同 → 必须落地（含 'top'），绝不静默吞 | Local\Temp\mpltweak_shim\mpltweak_t15d1n_ed3093855640\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53h 反向：tick_fontsize=7.0 与现值不同 → 必须落地（含 labelsize=7），绝不静默吞 | Local\Temp\mpltweak_shim\mpltweak_t15d1n_4b0faaaab51d\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 53h-A2：源码有 `ax.set_title("t")` ⇒ title_fontsize=20 就地补进去（applied=true / 不插块 / 不再报"没有对应写法"） | ['ax0.title_fontsize'] | ['ax.set_title("t", fontsize=20)', 'ax.plot([1, 2, 3])', 'ax.grid(True)', 'fig.savefig("out_grid.png")']
+PASS | 53i 源码里有 rcParams 改字号 → 放弃默认值证明（不许谎称"现值=默认值"），并显式补 fontsize=12 落地（不静默吞） | nb=False | ['ax.set_title("t", fontsize=12)', "plt.rcParams['axes.titlesize'] = 12"]
+PASS | 53j 函数内创建的 cax：字面量等值 → no_change，不插块 | no_change / nb=False
+PASS | 53j 反向：cax 位置确实不同 → needs_block=True（保守侧不变） | nb=True pending=['ax0.pos']
+PASS | 54a 字面量路径认 `size=`：set_title(size=目标，非默认值) → no_change | no_change / nb=False
+PASS | 54b set_title(size=非默认) + 目标=默认值 → 必须退块（不许当等值） | nb=True pending=['ax0.title_fontsize']
+PASS | 54b 端到端：size=20 的脚本 + 目标 12 → 目标值写进源码（title.set_fontsize(12)） | rc=0 | _8a2a56482446\fig.py）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 54c `figsize=`/`markersize=` 里的 'size' 子串不得打死证明 → no_change | no_change / nb=False
+PASS | 54e rcParams 赋值（认不出 → 保守） → needs_block=True | nb=True reason=best_effort
+PASS | 54f style.use（全局样式） → needs_block=True | nb=True reason=best_effort
+PASS | 54h labelsize= 恰等于目标 → 可证等值 → needs_block=False | nb=False reason=no_change
+PASS | 54i 有 spine 被隐藏 → 默认值结论不成立 → needs_block=True | nb=True reason=best_effort
+PASS | 54j 源码是 log、目标是 linear → 必须落地（旧实现静默 no_change） → needs_block=True | nb=True reason=best_effort
+PASS | 54d set_title(fontsize=20) → 目标 12 原位改（fontsize=12 写进源码） | reason=ok | ["ax.set_title('t', fontsize=12)"]
+PASS | 54g tick_params(labelsize=8) → 目标 10 原位改（labelsize=10 写进源码） | reason=ok | ['ax.tick_params(labelsize=10)']
+PASS | 55a spines=True 的块行：`spines['top'].set_visible(True)` 真的写进源码 | de =====
+# 本块由 mpltweak 自动生成于 2026-10-20 23:20（可手动微调，勿删上下两行标记）
+ax.spines['top'].set_visible(True)
+ax.spines['bottom'].set_visible(True)
+ax.spines['left'].set_visible(True)
+ax.spines['right'].set_visible(True)
+# ===== end auto layout =====
+fig.savefig("o.png")
+
+PASS | 55b 块表达不了的字段 → needs_block=true + pending=[ax0.xscale]（不报 ok） | reason=best_effort nb=True pending=['ax0.xscale']
+PASS | 55c 语义回比失败 → 文案"目标值在重跑后仍未达标：<字段清单>"（不是"重跑失败"） | reason=fail err=目标值在重跑后仍未达标：ax0.pos 实测 [0.125, 0.11, 0.775, 0.77] ≠ 参数（脚本本身能跑通）。提示：脚本在第 7 行（savefig/plt.show）之后可能还有会覆盖布局的调用；把那些调用移到 savefig 之前，或用 --style inplace。。已回滚。尝试：[{'anc
+PASS | 55c 全候选失败 → 脚本回滚到写回前（逐字节一致）
+PASS | 56a 多图逐张写回：两张都落地（不是第二张被判 stale） | rc=0 blocks=2
+PASS | 56a 两张的位置都写进了源码 | 更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  · 保持原样: 脚本创建了 2 处图（运行期共 2 张），改用 plt.gcf() 定位第 2 张（按记录定位）
+==============================================================
+多图落实小结：共 2 张，成功 2，失败 0
+
+PASS | 56b 真 stale（脚本比两份参数都新）→ 拦住且脚本未被改 | rc=1 | 脚本在参数保存之后被修改过（套用旧参数会覆盖你手改的内容）；确要套用请加 --force
+!! 跳过 fig.fig1.json：脚本在参数保存之后被修改过（套用旧参数会覆盖你手改的内容）；确要套用请加 --force
+==============================================================
+多图落实小结：共 2 张，成功 0，失败 2
+
+PASS | 56c 第二批（mtime 正常）不再被判 stale —— 落地过的参数已同步 mtime | rc=0 p1=1792509648.90 script=1792509644.78 | ----------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+==============================================================
+多图落实小结：共 2 张，成功 2，失败 0
+
+PASS | 57a ②层取不到图状态 → verified 不得为 true（如实 null）+ semantic=null | verified=None semantic=None
+PASS | 57a layers 三态如实（syntax=True / rerun=True / semantic=None） | layers={'syntax': True, 'rerun': True, 'semantic': None}
+PASS | 57a 人读输出不得说"已验证"（要明说只确认了能跑通） | 义比对**（第③层没跑）：只确认了"脚本能跑通"，不保证布局真的落到目标图上
+  · 语义验证未能判定（脚本不存图/跑不通），仅按"能跑通"判定
+  · 保持原样: 单遍验证未取到目标图状态（脚本没有留下任何图（可能存完图就 close 了））→ 已回退到两遍口径：脚本按原样重跑判定"还跑得通吗"，语义层如实记为"没有验到"
+  · 保持原样: 语义验证未取到目标图状态（未能取到图状态（脚本没有留下任何图（可能存完图就 close 了））），本次只确认了"脚本能跑通"，**没有**验证布局是否落到目标图上
+
+PASS | 57b --verify-fast → layers 只有 syntax=true，rerun/semantic 都是 None | layers={'syntax': True, 'rerun': None, 'semantic': None}
+PASS | 57b --verify-fast 人读明说"只做了语法检查" |  已原位写回 1 处（C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t23fast_95c195a4c14d\fig.py）
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 5858a 单行复合语句 savefig：块必须插在 savefig **之前**（block） | rc=0 blk=[6] sav=[10] | ------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t2358a_0aead5558b2b\fig.py）；图已更新（重跑 + 语义验证通过）
+
+PASS | 5858a 写回后源码仍然合法（缩进没坏） | True
+PASS | 5858b 单行复合语句 savefig：块必须插在 savefig **之前**（auto） | rc=0 blk=[6] sav=[10] | -------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t2358b_9ebe142fccbc\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+
+PASS | 5858b 写回后源码仍然合法（缩进没坏） | True
+PASS | 58c 唯一锚点只能落在 savefig 之后 → 拒绝写回（fail + 脚本未动） | reason=fail err=找不到合规锚点：本脚本有 savefig/plt.show，而所有可用锚点都落在**最后一个 savefig 之后**：那样调整块写进去也不会反映到保存的图上，已拒绝写回（未改动脚本）。可手动加一句 `fig.savefig(...)` 之前的定位调用，或用 --style in
+PASS | 59a 脚本本身跑不通（缺数据）→ 默认回滚、不留写回、rc≠0 | rc=1 源码被改=False | 败[fail]: 脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证这次写回是否可用 → 默认**不保留**：已回滚。确实要保留请显式加 --keep-unverified，或先修好脚本（让它能在无头环境跑通）再来写回。
+  归因：脚本跑不起来（无法确定原因）
+  工具没有改动你的源码（已回滚）。下一步：`mpltweak check fig.py --static`（不执行脚本，只做静态检查）
+
+PASS | 59b --verify-fast：语法合法 → 保留写回，但 layers 只有 syntax、人读标注级别 | rc=0 layers={'syntax': True, 'rerun': None, 'semantic': None} | ）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 59c 写回后语法坏 → 无条件 ast.parse 抓住：fail + 回滚 + 明确指出语法错 | reason=fail err=写回后源码语法错误（已回滚）：invalid syntax (<unknown>, line 10)
+PASS | 59d 缺数据脚本：默认回滚（保留=False） | rc=1 kept=False | 通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证这次写回是否可用 → 默认**不保留**：已回滚。确实要保留请显式加 --keep-unverified，或先修好脚本（让它能在无头环境跑通）再来写回。
+  归因：脚本跑不起来（无法确定原因）
+  工具没有改动你的源码（已回滚）。下一步：`mpltweak check fig.py --static`（不执行脚本，只做静态检查）
+
+PASS | 59e 缺数据脚本：--keep-unverified 保留（保留=True） | rc=0 kept=True | · 保持原样: 单遍验证没拿到结论（FileNotFoundError: [Errno 2] No such file or directory: 'no_such_data.csv'）→ 已回退到原样重跑判定
+  · 保持原样: 脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证写回结果；按 --keep-unverified 保留本次写回，请自行运行确认
+
+PASS | 60a 单一 labelsize + 参数分列 x/y → 原位写不了 → needs_block=True | nb=True pending=['ax0.tick_fontsize_y']
+PASS | 60a 退块后：y 用 11（x 不许被 y 的值顶掉；x=10 与源码相同 → 块里不必重写） | ['ax.tick_params(labelsize=10)', "ax.tick_params(axis='y', labelsize=11)"]
+PASS | 60b 源码已分列 → 原位各改各的（x=12、y=15，changes 两个字段） | changes=['ax0.tick_fontsize', 'ax0.tick_fontsize_y'] | ["ax.tick_params(axis='x', labelsize=12)", "ax.tick_params(axis='y', labelsize=15)"]
+PASS | 60c 老参数文件（无 tick_fontsize_y）→ 仍是单行 labelsize=12（兼容不变） | ['ax.tick_params(labelsize=12)']
+PASS | 60d 只改 y（11→13）：x 保持 10、y 变 13（x 的 10 不重写） | rc=0 | ----------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t23tick4_f989b6a47d1a\fig.py）；图已更新（重跑 + 语义验证通过）
+
+PASS | 61a cmap 等值（T26 新字段）→ no_change、字节不变、不插块 | no_change / nb=False pending=[]
+PASS | 61b legend 等值（loc 一致）→ no_change、不插块 | no_change / nb=False pending=[]
+PASS | 61c tick_fontsize_y 等值 → no_change、不插块 | no_change / nb=False pending=[]
+PASS | 61d describe→原样 apply 干净往返：no_change 且字节不变 | rc=0 |    grid=False  spines={'left': False, 'right': False, 'bottom': False, 'top': False, 'outline': True}
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 61e describe→原样 apply 干净往返：no_change 且字节不变 | rc=0 | : True, 'top': True}
+      scale x=linear y=linear
+      line0 linewidth=1.5 color=#1f77b4
+      图例 loc=upper right fontsize=10.0
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 61f describe→原样 apply 干净往返：no_change 且字节不变 | rc=0 | s={'left': True, 'right': True, 'bottom': True, 'top': True}
+      scale x=linear y=linear
+      line0 linewidth=1.5 color=#1f77b4
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 61e _pv_live_field 认识 T26 的新字段（等值 False / 不等 True） | cmap/legend/lines/tick_y 的 live 回比
+PASS | 62a A1：参数不给 scale（源码是 log）→ no_change / 字节不变 / 不插块 | no_change / nb=False pending=[]
+PASS | 62b A2：scale 写成源码真值 log → no_change / 不插块 | no_change / pending=[]
+PASS | 62c B3：真实 pos 目标 + 源码 plt.yscale(log) → 块里不得出现 linear scale；显式但等值的字段（scale/字号）也不进块 | rc=0 | ['ax.tick_params(labelsize=10)', "plt.yscale('log')", 'ax.set_position([0.2000, 0.2000, 0.6000, 0.6000])', "ax.set_xscale('log')", "ax.set_yscale('log')"]
+PASS | 62c B3：写回后真跑一遍，第一条轴仍是 log | yscale=log
+
+PASS | 62d M4：没有字段需要落地 → 不写块（no_change + 字节不变） | no_change / []
+PASS | 62e 显式 linear（源码 log）→ 仍然要落地（needs_block + pending） | nb=True pending=['ax0.xscale']
+PASS | 63a 2 份参数一次 apply --write：两张都落地（脚本确实被改过） | rc=0 blocks=2 | 更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  · 保持原样: 脚本创建了 2 处图（运行期共 2 张），改用 plt.gcf() 定位第 2 张（按记录定位）
+==============================================================
+多图落实小结：共 2 张，成功 2，失败 0
+
+PASS | 63b 2 份参数一次 apply → revert：脚本 sha256 == 原件（备份没被第二次写盘覆盖） | rc=0 sha相等=True | t_position([0.5000, 0.5000, 0.3000, 0.3000])",
+    "-# ===== end auto layout ====="
+  ],
+  "written": true,
+  "revert_bak": "C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t36_acd7da11ef7e\\.tweak_params\\fig.revert.bak"
+}
+
+PASS | 6363c 批量 apply（两处都落地=True）→ revert（首份备份 --first）→ sha256 == 原件 | rc=0 sha相等=True | )"
+  ],
+  "written": true,
+  "revert_bak": "C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t36x_45b53e6051db\\.tweak_params\\fig.revert.bak"
+}
+
+PASS | 63d 预览与实际一致：两处改动都出现在预览里（ax1 + ax2） | changed=True diff={'added': 2, 'removed': 2} lines=['-ax1 = fig1.add_axes([0.2, 0.2, 0.6, 0.6])', '-ax2 = fig2.add_axes([0.5, 0.5, 0.3, 0.3])', '+ax1 = fig1.add_axes([0.10, 0.10, 0.80, 0.80])', '+ax2 = fig2.add_axes([0.10, 0.10, 0.80, 0.80])']
+PASS | 6363d 批量 apply（两处都落地=True）→ revert（默认备份）→ sha256 == 原件 | rc=0 sha相等=True | )"
+  ],
+  "written": true,
+  "revert_bak": "C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t36x_50a0d1586a6c\\.tweak_params\\fig.revert.bak"
+}
+
+PASS | 64a 同名两轴：第 2 个轴按**本轴窗口**精确归属 → 就地落地（不再是静默 no_change） | ok changes=['ax1.grid'] | ['ax.grid(True)', 'ax.grid(True)']
+PASS | 64b auto：同名第 2 个轴的改动**落地**（就地改到本轴那一行，不插块） | rc=0 | pltweak_t41dup2_af9d4ca0b83c\fig.py）
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 64c 逐轴等于源码现值 → auto 下 no_change、字节不变、不插块 | rc=0 | -------------
+ax0  位置（参数里没给，保持原样）
+      grid=True  spines={}
+ax1  位置（参数里没给，保持原样）
+      grid=False  spines={}
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 64d pid 副本失败不再静默：warning 含路径与 errno | ['pid 专属备份写不出来（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t41bak_c7203a8af6a9\\.tweak_params\\fig.tweak.82000.bak，errno=2：[Errno 2] fake long path）；`revert --first` 将没有可用副本，请用默认 r
+PASS | 64e 无 pid 副本 → revert --first 失败（rc≠0 + no_first_backup） | apply rc=0 revert rc=2 | ams 下没有 `<脚本名>.tweak.<pid>.bak`）：无法回到**最早**状态。
+  · 常见原因：备份目录路径过长（Windows MAX_PATH 260），pid 副本没写出来 —— 本次写回会给出相应 warning。
+  · 固定名备份回到的是它建立那一刻的原文（通常是你第一次改这张图之前），不要拿它当 --first 用；只想要这个默认回退，请去掉 --first。
+
+PASS | 64f [Windows] `_long_path` 给超长绝对路径加 \\?\ 前缀（短路径不变） | short='C:\\a\\b.txt' long='\\\\?\\C:\\xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+PASS | 65a Bug5：subplots(2,3) + spines → 退块落地（不再 no_change/文件未改） | rc=0 | ）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 65b Bug3：混合参数下 reason 不得是 no_change、changes 并进原位已落盘的、backup 如实 | reason='best_effort' changes=['ax0.pos'] backup='C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t42b3_e608612c36fd\\.tweak_params\\fig.tweak.bak'
+PASS | 65c Bug4：行内复合语句上的锚点 → 块插到整行行首，写回后语法合法（rc=0） | rc=0 | 在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t42b4_9ad311271ec7\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 保持原样: 脚本创建了 2 处图（运行期共 ? 张），改用 plt.gcf() 定位第 2 张（按记录定位）
+
+PASS | 6666a Bug8：无 savefig/show + 无末尾换行 → 哨兵独占一行 且第二次 apply = no_change | rc1=0 rc2=0 块数=1 独占=True | [0.2000, 0.2000, 0.6000, 0.6000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 6666b Bug8：末行缩进语句 + 无末尾换行 → 哨兵独占一行 且第二次 apply = no_change | rc1=0 rc2=0 块数=1 独占=True | [0.2000, 0.2000, 0.6000, 0.6000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | 68 full/both：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=True L2=True rc=0） | rc=0 L1=True L2=True changed=True
+PASS | 68 full/idx1：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 68 full/idx0：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 68 fast/both：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=True L2=True rc=0） | rc=0 L1=True L2=True changed=True
+PASS | 68 fast/idx1：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 68 fast/idx0：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 68 noverify/both：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=True L2=True rc=0） | rc=0 L1=True L2=True changed=True
+PASS | 68 noverify/idx1：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 68 noverify/idx0：sha 变了就必须只有目标轴那行变，否则必须 rc≠0（L1=False L2=False rc=1） | rc=1 L1=False L2=False changed=False
+PASS | 69a 无 figsize 字面量 + 目标不同 → reason≠no_change ∧ needs_block ∧ pending 含 figsize | reason='best_effort' needs_block=True pending=['figsize']
+PASS | 69a-e2e auto 路径最终把尺寸落地（set_size_inches 出现在脚本里） | rc=0 | ['fig.set_size_inches(9, 5)']
+PASS | 69b 干净往返（字面量与目标等值）→ no_change 且字节不变 | reason='no_change' bytes_same=True
+PASS | 69c 无字面量 + 参数等于默认尺寸(6.4x4.8) → no_change / 字节不变 / 不插块 / 不写 set_size_inches | reason='no_change' bytes_same=True block=False ssi=False
+PASS | 69c-v2 脚本 set_size_inches(6.4,4.8) + 参数相等 → no_change / 字节不变 / 不再写一行 | reason='no_change' bytes_same=True block=False
+PASS | 70① pos_zero → 参数层硬错误（拒写） | ['axes[0].pos[2]（width） 必须 > 0，实际是 0']
+PASS | 70① pos_negative_offscreen → 参数层硬错误（拒写） | ['axes[0].pos 整块都在画布外（left=-1 bottom=-1 w=0.5 h=0.5）：写进源码后这块面板在图上看不到（left/bottom 为负但**有可见部分**是允许的，这里拒的是完全跑到画布外）']
+PASS | 70① pos_neg_inf → 参数层硬错误（拒写） | ['axes[0].pos 含非数值/非法数值元素: inf']
+PASS | 70① figsize_zero → 参数层硬错误（拒写） | ['figsize_in[0] 必须 > 0，实际是 0']
+PASS | 70① figsize_negative → 参数层硬错误（拒写） | ['figsize_in[0] 必须 > 0，实际是 -1']
+PASS | 70① fontsize_negative → 参数层硬错误（拒写） | ['axes[0].title_fontsize 不能为负（实际 -5）：matplotlib 渲染异常']
+PASS | 70① axis_index_negative → 参数层硬错误（拒写） | ['axes[0].index 为负（-1）：轴序号是 0 基，负数会被 Python 当成"最后一张"，静默写到别的轴上']
+PASS | 70① bad_version → 参数层硬错误（拒写） | ['version=1 与当前规范 4 不符（旧版/未知版参数一律拒写，以免按错误语义改代码；请用 `mpltweak describe <脚本>` 重新导出）']
+PASS | 70① no_version → load 后仍被识别为硬错误（normalize 不能把它洗白） | ['参数文件缺少 version 字段（本规范要求 version=4）—— 这份文件可能不是本工具导出的，或被人手改掉了版本号；拒写。请用 `mpltweak describe <脚本>` 重新导出。']
+PASS | 70② axis_index_99 → 引擎层拒写（bad_params / 字节不变 / 无块） | reason='bad_params' bytes_same=True block=False err=axes[0].index=99 越界：这份参数里最多只有 1 个轴槽（参数自报 1 条 / 脚本里可寻址 0 个），轴序号是 0 基。请用
+PASS | 70② bad_fig_index → 引擎层拒写（bad_params / 字节不变 / 无块） | reason='bad_params' bytes_same=True block=False err=fig_index=99 越界：脚本里只有 1 张图（参数自报 未记录），图号是 0 基。请用 `mpltweak describe <脚本
+PASS | 70③ CLI pos_zero → rc=2 / ok=false / reason=bad_params / 字节不变 / 无块 | rc=2 ok=False reason='bad_params' bytes_same=True
+PASS | 70③ CLI figsize_negative → rc=2 / ok=false / reason=bad_params / 字节不变 / 无块 | rc=2 ok=False reason='bad_params' bytes_same=True
+PASS | 70③ CLI no_version → rc=2 / ok=false / reason=bad_params / 字节不变 / 无块 | rc=2 ok=False reason='bad_params' bytes_same=True
+PASS | 70③ CLI axis_index_99 → rc=2 / ok=false / reason=bad_params / 字节不变 / 无块 | rc=2 ok=False reason='bad_params' bytes_same=True
+PASS | 70④ 合法：pos 的 left/bottom 为负（仍有可见部分）→ 不得拒绝，正常落地 | reason='ok' bytes_changed=True
+PASS | 70④ 合法：xlim 反转（倒置轴）→ 接受且落地 | reason='ok' | ['axes[0].set_xlim(5, 1)']
+PASS | 70④ fontsize == 0 → 不进硬错误，但进提示 | errs=[] probs=['axes[0].title_fontsize = 0：这处文字会看不见（matplotlib 允许，故不拒写）']
+PASS | 70⑤ pos_3_elems 仍被硬错误拦住（未退步） | ['axes[0].pos 必须是 4 个数字（实际 3 个）: [0.1, 0.1, 0.5]']
+PASS | 70⑤ figsize_str 仍被硬错误拦住（未退步） | ["figsize_in 必须是 2 个数字的数组，实际是 'abc'"]
+PASS | 70⑤ xscale_bogus 仍被硬错误拦住（未退步） | ["axes[0].xscale 不是支持的轴尺度: 'bogus'（允许 linear、log、symlog、logit、asinh、function、functionlog）"]
+PASS | 70⑤ spines_str 仍被硬错误拦住（未退步） | ["axes[0].spines 必须是对象: 'top'"]
+PASS | 69e-R1 读取器：figsize= 字面量 → [9.0, 5.0] | [9.0, 5.0]
+PASS | 69e-R2 读取器：后置 set_size_inches 覆盖 → [4.0, 3.0] | [4.0, 3.0]
+PASS | 69e-R3 读取器：变量尺寸（有语句但读不出）→ None（未知） | None
+PASS | 69e-R4 读取器：完全没有尺寸语句 → rcParams 默认 [6.4, 4.8] | [6.4, 4.8]
+PASS | 69e-P1 不变量[声称已改（已写盘）]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='ok' nb=False pending=[] bytes_same=False eff=[6.4, 4.8]
+PASS | 69e-P2 不变量[声称已改（已写盘）]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='ok' nb=False pending=[] bytes_same=False eff=[6.4, 4.8]
+PASS | 69e-P3 不变量[声称已改（已写盘）]：生效尺寸 [4.0, 3.0] vs 目标 [4.0, 3.0] | reason='ok' nb=False pending=[] bytes_same=False eff=[4.0, 3.0]
+PASS | 69e-P3' 不变量[未写盘+已申报退块]：生效尺寸 [4.0, 3.0] vs 目标 [9.0, 5.0] | reason='best_effort' nb=True pending=['figsize'] bytes_same=True eff=[4.0, 3.0]
+PASS | 69e-P4 不变量[声称无需改动+未写盘]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='no_change' nb=False pending=[] bytes_same=True eff=[6.4, 4.8]
+PASS | 69e-P5 不变量[声称无需改动+未写盘]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='no_change' nb=False pending=[] bytes_same=True eff=[6.4, 4.8]
+PASS | 69e-P7 不变量[未写盘+已申报退块]：生效尺寸 None vs 目标 [6.4, 4.8] | reason='best_effort' nb=True pending=['figsize'] bytes_same=True eff=None
+PASS | 71① 值相等的内联 cax pos → 原位判"本来就对"（no_change、不写盘、不申退块） | reason='no_change' nb=False pending=[]
+==============================================================
+# p.json
+参数文件: C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67a_14dcad016cd5\p.json
+脚本: fig.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.7800, 0.1800, 0.2000, 0.0300]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+PASS | 71① auto 全流程：值相等 → 字节不变、无调整块、无 set_position | rc=0 | []
+PASS | 71①b 值不同 + 循环建轴：原位写不了 → best_effort + needs_block（不写盘） | reason='best_effort' nb=True applied=False
+==============================================================
+# p.json
+参数文件: C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67b_525b40ba5e50\p.json
+脚本: fig.py
+画布: figsize_in=None  (px=None)
+会改：ax0.pos（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.1000, 0.1000, 0.5000, 0.5000]
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+  · 保持原样: 块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴或别的图上）→ 按 fail-closed 处理，本次不写：ax0.pos
+PASS | 71①b auto 退块时 fail-closed：不许把位置写到 fig.axes[0]（字节不变、不插块） | rc=0 | []
+==============================================================
+# p.json  （第 1 张图）
+参数文件: C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67c_93b406b6d5bb\p.json
+脚本: fig.py
+画布: figsize_in=[6.0, 4.0]  (px=None)
+会改：figsize (10, 7) → (6, 4)（未列出的字段本次不动）
+--------------------------------------------------------------
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 1 处（C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67c_93b406b6d5bb\fig.py）
+  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+PASS | 71② 20 图：第 1 次原位落地（只改目标图那一处字面量） | rc=0 | ['f0 = plt.figure(figsize=(6, 4))', 'f1 = plt.figure(figsize=(18, 12))', 'f2 = plt.figure(figsize=(18, 12))']
+==============================================================
+# p.json  （第 1 张图）
+参数文件: C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67c_93b406b6d5bb\p.json
+脚本: fig.py
+画布: figsize_in=[6.0, 4.0]  (px=None)
+会改：figsize (10, 7) → (6, 4)（未列出的字段本次不动）
+--------------------------------------------------------------
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+PASS | 71② 同一参数第 2 次 apply 幂等：no_change、字节不变、不插块 | rc=0 | 新增行=[]
+PASS | 72① 坏参数：rc=2、未写盘、人读不得出现「已写回」，须如实「未写回」+ 原因码 | rc=2 | ['[--] 未写回[bad_params]：脚本未被改动（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t68_d6bb2383064a\\fig.py）']
+PASS | 72② 块目标证不出（一个字节都没写）：人读不得说「已写回」，须「未写回」+ 原因码 | rc=0 | ['[--] 未写回[best_effort]：脚本未被改动（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t68_019c08c2a0a5\\fig.py）']
+PASS | 72③a 正常原位写盘：人读仍明确「已原位写回」，且数字真的落地 | rc=0 | ['[OK] 已原位写回 1 处（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t68_5dbd924e49e8\\fig.py）']
+PASS | 72③b 正常插入调整块：人读仍说「已写回」、块真进文件 | rc=0 | ['[OK] 已写回（插入调整块，C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t68_09818d6c9411\\fig.py）']
+PASS | 72④ 拒绝执行（no_axes）：人读给出原因码、不说「已写回」 | rc=1 | ['[X] 写回失败[no_axes]: ']
+PASS | 73① 目标可证 → 块用变量名，块内无运行期下标/动态定位 | # ===== auto layout (generated) - do not edit inside =====
+# 本块由 mpltweak 自动生成于 2026-10-20 23:21（可手动微调，勿删上下两行标记）
+ax.set_xlim(0, 4)
+# ===== end auto layout =====
+PASS | 73① 成功路径没退步：真写盘（applied=True 且块进文件） | applied=True
+PASS | 73② 目标不可证 → 拒绝写：不插块 + 字节不变 + applied=false + pending 非空 | reason='best_effort' applied=False pending=['ax0.xlim', 'fig.func_multi_return']
+PASS | 73② 人读照实说「未写回」，绝不许出现「已写回」 | ['  · 保持原样: 函数 draw 里的 `return` 不是"函数末尾恰好一条"（有多条 return，或有提前 return）：figure 是在这个函数里建的，只有"末尾一条 `return fig`"才能证明存图前那份 fig 就是你要调的图 —— 本次**没有写回**（脚本一个字节都没动）。下一步：把多余的 return 合并成末尾一条 `return fig`（提前返回的分支改成 `fig = ...` 后继续往下走），再跑一次 apply。', '[--] 未写回[best_effort]：脚本未被改动（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t73b_fe4c669d3063\\fig.py）']
+PASS | 73② 拒绝时**自动**打印建议片段（中文）：有原因 + 有骨架 + 无「已写回」 | ['# --- 手动落实片段（可选；粘贴后把 <ax> / <fig> / <mappable> 换成你自己的变量名）---', '  #     -> <ax>.set_xlim(0, 4)']
+PASS | 73② 拒绝时**自动**打印建议片段（英文一份，走同一渲染器） | ['# --- Manual snippet (optional; replace <ax> / <fig> / <mappable> with your own names) ---']
+PASS | 73② 片段正文里没有运行期下标（不一边禁一边教） | []
+PASS | 73② --snippet 正文与新渲染器一致（旧 zip(fig.axes, ...) 形态已消失） | []
+PASS | 73③ figure 级（figsize）仍能落地（原位改字面量或块里 set_size_inches），且块只承载轴字段、块内没有下标 | style='block' figsize_edited=True
+PASS | 76① 首次写盘落地 figsize（原位改数字） | reason='ok' applied=True
+PASS | 76② 固定名备份 = **批前原件**（sha 与 pristine 逐字节相同） | bak=len=228
+PASS | 76③ 第二次写盘**幂等**：reason=no_change 且字节一个都不变 | reason='no_change' bytes_same=True
+PASS | 76④ 第二次写盘**不覆盖**固定名备份（首份优先） | bak_same=True
+PASS | 76⑥ 第二次用**不同参数**真写盘后，备份仍是**批前原件**（不是中间态） | changed=True bak_orig=True
+回退预览：fig.py  ←  C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t71_ed39e1213258\.tweak_params\fig.tweak.bak（备份于 2026-10-20 23:21）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 1 行、删除 1 行：
+    -fig, ax = plt.subplots(figsize=(8, 3))
+    +fig, ax = plt.subplots(figsize=(10, 6))
+
+√ 已回退：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t71_ed39e1213258\fig.py
+  回退前的那份留档：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t71_ed39e1213258\.tweak_params\fig.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+PASS | 76⑤ revert 回到**批前原件**（字节 == pristine） | ['fig, ax = plt.subplots(figsize=(10, 6))']
+PASS | 77① 只给 x → y 侧 set_ylabel 逐字节不变、changes 不含 y 侧 | changes=['ax0.label_fontsize']
+PASS | 77② x/y 都给且都不同 → 两侧都改、changes 两侧都报 | changes=['ax0.label_fontsize', 'ax0.label_fontsize_y']
+PASS | 77③ 窗口风格参数（x/y 都给且已等于源码）→ no_change、两边都不动 | reason='no_change'
+PASS | 78① describe（单图）导出 y 侧字号且=源码真值（x=11 / y=17、tick x=9 / y=13） | label_fontsize=11.0 label_fontsize_y=17.0 tick_fontsize=9.0 tick_fontsize_y=13.0
+PASS | 78① describe --all-figs 同样带两个 y 字段且值正确 | label_fontsize_y=17.0 tick_fontsize_y=13.0
+PASS | 78① 纯增量：既有键的相对顺序不变，且两个新键都在 | keys=['index', 'pos', 'aspect_locked', 'title_fontsize', 'label_fontsize', 'tick_fontsize', 'is_colorbar', 'clim', 'cell', 'xlim', 'ylim', 'xscale', 'yscale', 'grid', 'spines', 'label_fontsize_y', 'tick_fontsize_y', 'lines']
+PASS | 78② 全部与源码一致（含 y）→ 语义层通过 | ok=True detail=''
+PASS | 78② **y 标签字号写错**（17→23）→ 语义层必须判失败（不是 pass） | ok=False detail='ax0 label_fontsize_y 23≠17.0'
+PASS | 78② **y 刻度字号写错**（13→19）→ 语义层必须判失败 | ok=False detail='ax0 tick_fontsize_y 19≠13.0'
+PASS | 78② 只给 x（x 的期望=源码 y 的值）→ 必须失败（不许拿 y 洗白 x） | ok=False detail='ax0 label_fontsize 17≠11.0'
+PASS | 78③ 已请求但实际值取不到 → 记进未判定清单，且**不算失败** | unjudged=['ax0.label_fontsize_y'] bad=[]
+PASS | 78③ 轴没有 y 刻度标签时（实际值取不到）→ detail 里**列出来**（不谎报通过） | ok=True detail='未判定字段（已请求但比不了）: ax0.tick_fontsize_y'
+PASS | 78④ 只给 x（label_fontsize=22）→ x 落地、y 一个字节不动（T73 不变量） | reason='ok' y_kept=True x_written=True
+PASS | 74① 多图编号可证 → 块用 plt.figure(2).axes[0]，且不含 gcf/gca/fig.axes[ | ['# 目标定位（T74）：建图调用可静态编号、模块层没有 close、也没有 colorbar/inset/twin/… 额外建轴，因此 plt.figure(2).axes[k] 就是**目标图**静态第 k 条轴', 'plt.figure(2).axes[0].set_xlim(0, 5)']
+PASS | 74② 有 close(2) → 拒绝写（字节不变 + pending 非空 + 不插块） | applied=False pending=['ax0.xlim']
+PASS | 74② 循环里建图 → 编号不可枚举 → 拒绝写（字节不变 + pending 非空） | applied=False pending=['ax0.xlim']
+PASS | 74③ 单图 pyplot 既有路径不退步（仍用 plt.gcf().axes[0]） | ['# 目标定位：本文件只有一次建图、没有 colorbar/inset/twin/… 额外建轴（也没有 close），因此 plt.gcf().axes[k] 就是静态第 k 条轴', 'plt.gcf().axes[0].set_xlim(0, 5)']
+PASS | 69e-R1 读取器：figsize= 字面量 → [9.0, 5.0] | [9.0, 5.0]
+PASS | 69e-R2 读取器：后置 set_size_inches 覆盖 → [4.0, 3.0] | [4.0, 3.0]
+PASS | 69e-R3 读取器：变量尺寸（有语句但读不出）→ None（未知） | None
+PASS | 69e-R4 读取器：完全没有尺寸语句 → rcParams 默认 [6.4, 4.8] | [6.4, 4.8]
+PASS | 69e-P1 不变量[声称已改（已写盘）]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='ok' nb=False pending=[] bytes_same=False eff=[6.4, 4.8]
+PASS | 69e-P2 不变量[声称已改（已写盘）]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='ok' nb=False pending=[] bytes_same=False eff=[6.4, 4.8]
+PASS | 69e-P3 不变量[声称已改（已写盘）]：生效尺寸 [4.0, 3.0] vs 目标 [4.0, 3.0] | reason='ok' nb=False pending=[] bytes_same=False eff=[4.0, 3.0]
+PASS | 69e-P3' 不变量[未写盘+已申报退块]：生效尺寸 [4.0, 3.0] vs 目标 [9.0, 5.0] | reason='best_effort' nb=True pending=['figsize'] bytes_same=True eff=[4.0, 3.0]
+PASS | 69e-P4 不变量[声称无需改动+未写盘]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='no_change' nb=False pending=[] bytes_same=True eff=[6.4, 4.8]
+PASS | 69e-P5 不变量[声称无需改动+未写盘]：生效尺寸 [6.4, 4.8] vs 目标 [6.4, 4.8] | reason='no_change' nb=False pending=[] bytes_same=True eff=[6.4, 4.8]
+PASS | 69e-P7 不变量[未写盘+已申报退块]：生效尺寸 None vs 目标 [6.4, 4.8] | reason='best_effort' nb=True pending=['figsize'] bytes_same=True eff=None
+PASS | 79① T78：只给 tick_fontsize → 只改 axis="x" 那条，axis="y" 那条一个字节不动 | x=['ax.tick_params(axis="x", labelsize=16)'] y=['ax.tick_params(axis="y", labelcolor="red", labelsize=10)']
+PASS | 79② T78：changes 只报 tick_fontsize（不谎报改过 y 侧） | [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast
+[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）
+
+PASS | 79③ 不带 axis= 的 tick_params(labelsize=) 仍是原位目标（改成 16，不插块） | ['ax.tick_params(labelsize=16)']
+PASS | 79④ axis= 是变量（证不出）→ 那条 labelsize 必须原样不动 | ['ax.tick_params(axis=_side, labelsize=10)', "ax.tick_params(axis='x', labelsize=16)"]
+PASS | 79⑤ T78②：块里 x 侧写成 axis='x'（不许用不带 axis= 的写法连 y 一起改） | ["ax.tick_params(axis='x', labelsize=16)"]
+PASS | 84① 同图重名轴 + 参数只给 index=0 → 禁止原位写回（applied=false / pending 非空） | reason='best_effort' applied=False pending=['ax0.tick_fontsize']
+PASS | 84① 字节 sha256 一个字节都没变 | ab6f8f6c3a09e5b9 -> ab6f8f6c3a09e5b9
+PASS | 84① 人读如实说「未写回」，且**不许**出现「已原位写回」 | ['"ax0 未原位应用：tick_fontsize（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）",', '"本图有 1 处目标值无法原位写回（ax0.tick_fontsize）→ 需要调整块才能落地（没重跑脚本，按保守判据）"', '[--] 未写回[best_effort]：脚本未被改动（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t84dup_983d32ff5515\\fig.py）']
+PASS | 84① 源码里那条 tick_params 的字面量原样（labelsize=10） | ['ax.tick_params(axis="x", labelsize=10)']
+PASS | 84② 对照：参数覆盖全部被绑定轴 → 允许原位写（applied=true、字节变了） | reason='best_effort' applied=True pending=['ax1.tick_fontsize']
+PASS | 85① figsize-only（covered 空）→ 语义层照跑且通过（semantic is True，不再是 None） | reason='ok' semantic=True verified=True err=''
+PASS | 85② 原位写回生效：源码里的 figsize 变成目标值 | ['fig, ax = plt.subplots(figsize=(7, 3.5))']
+PASS | 86① 磁盘未变 → 放行（返回 None） | None
+PASS | 86② 磁盘与 src 不一致（编辑器保存过）→ 拒绝写盘（返回原因） | '检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。若仍要写回，请先保存并重跑本命令'
+PASS | 87① apply --write -- --n 7：脚本参数透传给重跑，验证通过并写回（rc=0） | rc=0 ['正在验证（子进程重跑脚本，最长 300s）', '[OK] 已原位写回 1 处（C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t87a_a08a246da7f7\\fig.py）；图已更新（重跑 + 语义验证通过）']
+PASS | 87① 源码真的被改：ax.grid(False) → ax.grid(True) | ['ax.grid(True)']
+PASS | 87② 对照（不带参数）：脚本缺参跑不通 → 写回失败（rc≠0，未落地） | rc=1 ['[i] 以上只是预警，不影响本次动作；想跳过重跑就用 --verify-fast（只查语法）或 --keep-unverified（保留写回，先用版本控制）。', '[X] 写回失败[fail]: 脚本本身在无头环境跑不通（缺数据/依赖，或需要 GUI/交互），无法用 Agg 验证这次写回是否可用 → 默认**不保留**：已回滚。确实要保留请显式加 --keep-unverified，或先修好脚本（让它能在无头环境跑通）再来写回。']
+PASS | 87② 回滚后源码原样（ax.grid(False) 还在、没有 ax.grid(True)） | ['ax.grid(False)']
+PASS | 87③ 块路径透传：原位写不了 pos → auto 退块，带参重跑 + 语义验证通过 | rc=0 ['正在验证（子进程重跑脚本，最长 300s）', '[OK] 已写回（插入调整块，C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t87c_e1f08c94aad7\\fig.py）；图已更新（重跑 + 语义验证通过）']
+PASS | 87④ 库级 writeback(script_args=...)：验证通过、语义通过、真实写回 | reason='ok' verified=True semantic=True err=''
+PASS | 88① 无赋值 plt.subplot(1,2,1) 不再崩：apply --json 返回正常报告（非 internal_error） | rc=0 ['（无改动）']
+PASS | 88② 槽位复用：相同 plt.subplot(1,2,1) 重复调用仍判为复用（1 条轴，不新建） | entries=1 ok=True
+PASS | 88③ 槽位不同：subplot(1,2,1) + subplot(1,2,2) 仍是 2 条新建轴 | entries=2 ok=True
+PASS | 89① 磁盘内容未变 → _check_external_edit 放行（None）
+PASS | 89② 磁盘内容变过 → 拒绝，并给机器可读字段（reason/external_modified/指纹） | {'reason': 'external_modified', 'external_modified': True, 'err': '检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。若仍要写回，请先保存并重跑本命令', 'next_step': 'mpltweak apply D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback
+PASS | 89③ 人读文案含"你的改动未被覆盖"+下一步（--write） | '检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。若仍要写回，请先保存并重跑本命令'
+PASS | 89④ 兼容入口 _guard_external_edit 仍返回一句原因文本（§86 的旧契约）
+PASS | 89⑤ messages 的 external_modified 中英齐备、且都 GBK 可编码（终端不炸）
+PASS | 89⑥ 落盘前发现外部改动 → 本次写回放弃（reason=external_modified） | reason='external_modified' external_modified=True
+PASS | 89⑦ 用户的改动**一个字都没被覆盖**（我们的写回没落盘） | , 3])
+fig.savefig("out89.png")
+# USER-EDIT-89 用户在验证期间自己加的一行
+
+PASS | 89⑧ 结论里如实说明（人读/JSON 同一个 err） | '检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。若仍要写回，请先保存并重跑本命令'
+PASS | 89⑨ 验证失败要回滚、但磁盘已被外部改过 → **跳过回滚**，保留用户版本 | reason='fail' | savefig("out89.png")
+# USER-EDIT-89 用户在验证期间自己加的一行
+
+PASS | 89⑩ 回滚被跳过这件事写进了结论（不是静默） | '回，请先保存并重跑本命令（本次未回滚；磁盘上保留的是你保存的版本，备份在 D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_89c\\.tweak_params\\fig89c.tweak.bak）。确实要保留请显式加 --keep-unverified。'
+PASS | 89⑪ 对照：无外部改动 → 正常写回成功、且没有外部改动标记（正常路径零变化） | reason='ok' verified=True
+PASS | 89⑫ 对照：守卫在正常路径上确实放行（源码真的被改了） | ['ax = fig.add_axes((0.2, 0.2, 0.5, 0.5))']
+PASS | 89⑬ E2E：慢脚本验证窗口里用户保存 → 保存这一版仍在磁盘上（未被回滚覆盖） | saved=True | tail=savefig("out89.png")
+# USER-EDIT-89 用户在验证期间自己加的一行
+
+PASS | 89⑭ E2E：人读/JSON 都如实报出"外部修改、你的改动未被覆盖" | rc=1 | k\mpltweak\tests\.tmp_writeback_82000\case_89e\.tweak_params\fig89e.tweak.bak））：ax0 位置 [0.2, 0.2, 0.5, 0.5]≠[0.1, 0.1, 0.4, 0.4]; 磁盘上那张图（最后一次 savefig）ax0 位置 [0.2, 0.2, 0.5, 0.5]≠[0.1, 0.1, 0.4, 0.4]
+
+PASS | 89⑮ E2E：退出码仍是非 0（写回没成功，用户必须知道） | rc=1
+PASS | 89⑯ apply --json 逐字布尔键：真命中时 files[0].external_modified is true | {'params': 'fig89f.json', 'reason': 'external_modified', 'style': 'inplace', 'changes': [], 'applied': False, 'block_lines': 0, 'auto_fallback': False, 'inplace_reason': None, 'inplace_changes': [], 'needs_block': False,
+PASS | 89⑰ apply --json 三条机器可读线索齐（reason + err + next_step） | {'params': 'fig89f.json', 'reason': 'external_modified', 'style': 'inplace', 'changes': [], 'applied': False, 'block_lines': 0, 'auto_fallback': False, 'inplace_reason': None, 'inplace_changes': [], 'needs_block': False,
+PASS | 89⑱ JSON 报的是"已放弃"：files[0].applied is False（没写盘） | False
+PASS | 90① 块模式"验证失败 → 换锚点重试"之后：**磁盘字节 == 原始字节**（no-tamper 不变量） | before=240 after=240（差 +0 字节）
+PASS | 90② 不再把"我们自己刚写的块"误报成外部改动 | reason='fail' external_modified=None
+PASS | 90③ 如实报"没写"（applied=False）且磁盘上不留调整块 | applied=False reason='fail'
+PASS | 90④ 夹具确实走到了"换锚点重试"（≥2 个候选），否则本用例会退化成空跑 | attempts=[{'anchor': 'before', 'line': 6, 'ok': False}, {'anchor': 'before', 'line': 9, 'ok': False}]
+PASS | 91① 默认档（verify+semantic）：apply --write --dry-run **会跑**你的脚本（标记文件出现） | rc=0 marker=True ['[预览] 将插入调整块: D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t91a\\fig.py（未落盘）', '[i] dry-run 预览（未落盘）：这批参数含"原位写不了"的字段 —— 默认档会尝试**实测回比**（这一步会**重跑一遍你的脚本**），因此**不排除本次已经跑过它**；预览结果未经运行验证。（--verify-fast / --no-verify / --no-semantic 不做实测回比、不重跑）']
+PASS | 91② 但**不写你的脚本**：dry-run 之后源码字节不变（"会跑"≠"会改"） | src_unchanged=True
+PASS | 91③ --verify-fast：不跑脚本（标记文件不出现），源码也不变 | rc=0 marker=False
+PASS | 91④ --no-verify：不跑脚本（标记文件不出现），源码也不变 | rc=0 marker=False
+PASS | 91⑤ --no-semantic：不跑脚本（触发条件里 `verify and semantic` 的 semantic 那一半） | rc=0 marker=False
+PASS | 91⑥ 对照：参数里**没有**"原位写不了"的字段时，默认档也不跑脚本（触发条件钉死） | rc=0 marker=False
+PASS | 92① 默认成功只报一行：结果段恰好 1 条 [OK]（且带关键数字"已原位写回 1 处"） | rc=0 [OK]x1 ['[OK] 已原位写回 1 处（D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t92a\\fig.py）；图已更新（重跑 + 语义验证通过）']
+PASS | 92② 默认档不再打细节行（逐处清单 / 备份路径都收进 -v） | ['==============================================================', '# p.json  （第 1 张图）', '参数文件: D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t92a\\p.json', '脚本: fig.py', '画布: figsize_in=None  (px=None)', '会改：ax0.pos（未列出的字段本次不动）', '--------------------------------------------------------------', 'ax0  位置 [0.2000, 0.2000, 0.5000, 0.5000]', '--------------------------------------------------------------', '  正在验证（子进程重跑脚本，最长 300s）', '[OK] 已原位写回 1 处（D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t92a\\fig.py）；图已更新（重跑 + 语义验证通过）']
+PASS | 92③ 加 -v 细节全回来：>=3 条 [OK]（逐处清单 + 两层验证的确认行） | rc=0 [OK]x3 ['  原位修改 1 处: ax0.pos', '  备份: D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t92b\\.tweak_params\\fig.tweak.bak', '  [OK] Agg 重跑验证通过', '  [OK] 语义验证通过（目标图状态 == 参数）']
+PASS | 92④ 前置：这次写回**真的落盘了**（源码里 add_axes 的数字被改）——排除"因为没成功才只有一行"的假绿 | ax = fig.add_axes([0.2, 0.2, 0.5, 0.5])
+PASS | 92⑤ 结构性对照（与文案无关）：默认档的输出行数严格少于 -v | default=11 verbose=15
+PASS | 93① 前置真凭据：dry-run 默认档**确实跑了**脚本（标记文件出现） | rc=0 marker=True
+PASS | 93② dry-run 默认档**不许**说"没有重跑"（旧版正是在这里说反） | ['[i] dry-run 预览（未落盘）：这批参数含"原位写不了"的字段 —— 默认档会尝试**实测回比**（这一步会**重跑一遍你的脚本**），因此**不排除本次已经跑过它**；预览结果未经运行验证。（--verify-fast / --no-verify / --no-semantic 不做实测回比、不重跑）']
+PASS | 93③ dry-run + --verify-fast 出**快速档专属**文案，不再错挂 --no-verify | ['[!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast', '[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）']
+PASS | 93④ dry-run + --no-verify（确实没跑）**如实打降级提示**（旧版该说时不说） | ['[i] 本次**没有重跑**脚本（--no-verify）：写回结果未经运行验证']
+PASS | 93⑤ 写盘路径 + --no-verify 同样如实打降级提示（旧版被 `not args.no_verify` 压掉） | ['--------------------------------------------------------------', '[OK] 已原位写回 1 处（D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t93d\\fig.py）', '[i] 本次**没有重跑**脚本（--no-verify）：写回结果未经运行验证']
+PASS | 93⑥ 写盘路径 + --verify-fast 出快速档文案，且**不**打假"未能判定" | ['[OK] 已原位写回 1 处（D:\\Agent\\deepseek\\mpltweak\\tests\\.tmp_writeback_82000\\case_t93e\\fig.py）', '  [!] 快速验证：只检查了语法（源码能被 Python 解析，写坏会当场回滚）。**没有重跑脚本** —— 不保证能跑通、也不保证布局真的落到目标图上。正式落实请去掉 --verify-fast', '[i] 本次只做了**语法检查**：没有重跑脚本、没有比对布局是否真的等于参数（--verify-fast 的弱保证）']
+PASS | 93⑦ dry-run 也不打假"语义验证未能判定（脚本不存图/跑不通）"
+PASS | 93⑧ 写盘路径：res.layers.rerun=None → 真没跑；不是 None → 跑过（含失败那遍）
+PASS | 93⑨ dry-run：有待回比字段 → may_ran（绝不反过来说没跑）；档位/形状能保证不跑的 → not_ran
+PASS | 93⑩ auto 退块时原位那次的凭据也认（inplace_needs_block，apply.py:826）
+PASS | 93⑪ 真"取不到状态"（rerun 有值 + verified=None + semantic=None）→ 照旧打"未能判定" | ---
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 1 处（D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_t93c\fig.py）
+[i] 本次**没有做语义比对**（第③层没跑）：只确认了"脚本能跑通"，不保证布局真的落到目标图上
+  · 语义验证未能判定（脚本不存图/跑不通），仅按"能跑通"判定
+
+PASS | 93⑫ 语义层**有意跳过**（verified=True）→ 只打"没有做语义比对"，不打假"未能判定" | ---------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 1 处（D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_t93c\fig.py）；已重跑验证
+[i] 本次**没有做语义比对**（第③层没跑）：只确认了"脚本能跑通"，不保证布局真的落到目标图上
+
+PASS | 93⑬ res 里连 semantic 键都没有（= dry-run 早退的形状）→ 不打"未能判定" | ------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已原位写回 1 处（D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_t93c\fig.py）
+[i] 本次**没有重跑**脚本：写回结果未经运行验证
+
+PASS | 94① 形状 A：默认口径仍截在 fig.subplots 那一行（其余调用点不受影响），figure_only=True 才拿到完整区间 | default=(5, 6) figure_only=(5, 1000000000)
+PASS | 94①b 判据只认"接收者可证是 Figure 的 X.subplots(...)"：plt.subplots(...) / 证不出的接收者**仍是**新图分界 | plt.subplots / 不可证接收者都必须返回 False
+PASS | 94② 形状 A（plt.figure + fig.subplots + ravel）：applied=True、needs_block=False、pending 空、块用 a/b/c/d | reason='ok' applied=True needs_block=False pending=None
+PASS | 94②b 既有形状（fig, axs = plt.subplots + ravel，t10 第一半）：同样 applied=True、pending 空、块用 a/b/c/d | reason='ok' applied=True needs_block=False pending=None
+PASS | 94③【有牙】改回改前口径（figure_only 恒 False）→ 形状 A 重新被拒：applied=False、needs_block=True、pending=ax0..ax3.pos、盘上不留块 | reason='best_effort' applied=False needs_block=True pending=['ax0.pos', 'ax1.pos', 'ax2.pos', 'ax3.pos'] block=''
+PASS | 95① 已支持的形式都认：`axs.flat` 属性解包、`axs[1]` 下标、`fig, ax = plt.subplots()`、`fig.add_subplot(...)` / `fig.add_axes([...])` 逐个创建 | {'ax2': 0, 'g': 0, 'h': 1, 'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 0, 'f': 1, 'i': 1, 'ax3': 0, 'ax4': 1}
+PASS | 95②【t52 已修】**调用**形式必须认出来：`a,b,c,d = axs.ravel()` → a..d = 0..3、`e,f = axs.flatten()` → e,f = 0,1（判据同 t10 的 `_ravel_receiver`） | {'ax2': 0, 'g': 0, 'h': 1, 'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 0, 'f': 1, 'i': 1, 'ax3': 0, 'ax4': 1}
+PASS | 95③【有牙】把判据改回只认 `ast.Attribute`（t52 之前）→ 调用形式又认不出来（a..f 全缺），即 95② 的断言在改前代码上必然为假 | {'ax2': 0, 'g': 0, 'h': 1, 'i': 1, 'ax3': 0, 'ax4': 1}
+PASS | 95④ 块目标回归（`axs.ravel()` + 按轴 clim/cmap）：`im0.set_clim(0.2, 0.8)` 与 `im1.set_clim(0.1, 0.9)` / `im1.set_cmap('plasma')` 各就各位，且**不再**出现把 ax1 的值写到 im0 上（`im0.set_clim(0.1, 0.9)`） | ['im0.set_clim(0.2, 0.8)', 'im1.set_clim(0.1, 0.9)', "im1.set_cmap('plasma')"]
+PASS | 96① 形状 A：默认档仍数 2（其余调用点口径一字不变），figure_only 数 1 | default=2 figure_only=1
+PASS | 96①b `plt.subplots(...)` 照旧算新图：`fig, axs = plt.subplots(2,2)` 两种口径都数 1；两张真图（两张都用 `fig.subplots`）figure_only 仍数 2 | B=1 C=2
+PASS | 96② 形状 A（plt.figure + fig.subplots + ravel）：reason=ok、applied/verified 真、pending 空、**不再**出现"创建了 N 处图"警告 | reason='ok' applied=True verified=True pending=None warnings=[]
+PASS | 96③【有牙】改回改前口径 → 形状 A 重新报 best_effort + 出现「创建了 2 处图」警告（牙齿只咬"说假话"这一面，与平台无关） | reason='best_effort' warnings=['脚本创建了 2 处图（运行期共 1 张），改用 plt.gcf() 定位第 1 张（按记录定位）']
+INFO | 96③ 附加观察（不判红、不作为牙齿判据）：改前/改后写出的块文本归一化换行后相同 = True（本机 py3.10-win=True；CI py3.9-windows 实测 False ⇒ 平台/版本敏感，见 t119）
+PASS | 97① 形状 A 的 `fig_index=1` 越界必须被拒（`_fig_index_beyond` 用 figure_only 口径）：fi=1 报「越界：脚本里只有 1 张图」、fi=0 放行 | fig_index=1 越界：脚本里只有 1 张图（参数自报 1），图号是 0 基。请用 `mpltweak descr
+PASS | 97② 形状 A + figsize[10,7] 无 fig_index（原位）：applied=True、`figsize=(10, 7)` 真落地、且**不再**出现假警告「脚本有 2 张图但参数没有 fig_index」 | applied=True 源码含 figsize=(10, 7)=True warnings=['ax0 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax1 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax2 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax3 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 8 处目标值无法原位写回（ax0.grid、ax0.pos、ax1.grid、ax1.pos、ax2.grid、ax2.pos、ax3.grid、ax3.pos）→ 需要调整块才能落地（没重跑脚本，按保守判据）']
+PASS | 97③【有牙】把 `_writeback_inplace` 里的口径改回（figure_only 恒 False）→ applied=False、`figsize=(10, 7)` 没落地、假警告回来 —— 即 97② 在改前代码上必假 | applied=False 含 figsize=(10, 7)=False warnings=['脚本有 2 张图但参数没有 fig_index，无法确定该改哪张的画布尺寸 → 保持原样；请用 describe --fig N 重新导出，或手动改', '画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改', 'ax0 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax1 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax2 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', 'ax3 未原位应用：grid、pos（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动）', '本图有 9 处目标值无法原位写回（ax0.grid、ax0.pos、ax1.grid、ax1.pos、ax2.grid、ax2.pos、ax3.grid、ax3.pos、figsize）→ 需要调整块才能落地（没重跑脚本，按保守判据）']
+PASS | 97④【有牙】把 `count_figures` 的口径改回 → `_fig_index_beyond` 又放行 fi=1（= ① 在改前代码上必假） | 旧口径下 fi=1 的判定=''
+PASS | 98① 覆盖率：writeback.py 里非 docstring 的中文模板（除两条块标记哨兵）全部进了 messages.WB_ZH_TO_EN | 未进表 0 条：[]
+PASS | 98② 表里每条 en 都是纯 ASCII 且占位符个数与 zh 一致（en 渲染不会错位）
+PASS | 98③ zh 语言下 `t_wb` 原样返回（zh 文案逐字不变） | ['（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；需要的话请手动把 fontsize=… 写进这条调用）']
+PASS | 98④【有牙】把一条 en 改回中文 → ② 的 ASCII 判据变红（改前代码上必假） | tampered=['已回滚']
+PASS | 99① 接线：toolbox.py 两处快照都改用"命名 colormap 才记"的判据（旧写法 0 残留） | 旧=0 新=2
+PASS | 99② 自定义 ListedColormap 的 `.name`（'from_list'）不在 mpl.colormaps → 判据会记 null（报告附录 B #6 的前半） | from_list
+PASS | 99③ 命名 colormap（viridis）在 mpl.colormaps → 判据照记（不误伤） | ['magma', 'inferno', 'plasma']
+PASS | 99④【有牙】改回旧判据（直接取 `.name`）→ 自定义 cmap 会被记成 'from_list'，而它编不进 mpl.colormaps（= 99② 在改前代码上必假） | from_list
+PASS | 99⑤ 参数里 `cmap: null` 合法（= 该字段不出现，apply 不报它；报告附录 B #6 后半）
+PASS | 100① dpi=100：**元素类**撤销**不动画布**（快照 with_canvas=False 不带画布） | snap=None 画布=(10.0, 7.0)
+PASS | 100① dpi=150：**元素类**撤销**不动画布**（快照 with_canvas=False 不带画布） | snap=None 画布=(10.0, 7.0)
+PASS | 100① dpi=200：**元素类**撤销**不动画布**（快照 with_canvas=False 不带画布） | snap=None 画布=(10.0, 7.0)
+PASS | 100② dpi=100：**画布类**撤销**把画布还原**到权威英寸 (15.0, 9.5)（C13 契约；旧 px/dpi 换算在 dpi>100 时会缩水） | snap_in=[15.0, 9.5] 画布=(15.0, 9.5)
+PASS | 100② dpi=150：**画布类**撤销**把画布还原**到权威英寸 (15.0, 9.5)（C13 契约；旧 px/dpi 换算在 dpi>100 时会缩水） | snap_in=[15.0, 9.5] 画布=(15.0, 9.5)
+PASS | 100② dpi=200：**画布类**撤销**把画布还原**到权威英寸 (15.0, 9.5)（C13 契约；旧 px/dpi 换算在 dpi>100 时会缩水） | snap_in=[15.0, 9.5] 画布=(15.0, 9.5)
+PASS | 100③【有牙】把"元素类不记画布"改回去 → 拖子图后撤销把画布拉回 15.0×9.5（= 100① 在改前口径上必假） | 画布=(15.0, 9.5)
+PASS | 100④【有牙】把"画布类还原"改回去（画布类也不记）→ 裁白边后撤销还原不了（= 100② 在改前口径上必假；C13 会红） | 画布=(7.0, 4.5)
+PASS | 101① colorbar 轴的 `_bbox` 与**重绘时机无关**且等于 `get_position(original=True)`（= 权威读位置） | 重绘前=[0.78375, 0.11, 0.11625, 0.77] 重绘后=[0.78375, 0.11, 0.11625, 0.77] original=[0.78375, 0.11, 0.11625, 0.77]
+PASS | 101②【有牙】改回旧读法（`ax._position`）→ 重绘后宽度被 locator 改写（0.028875 ≠ 0.11625）→ 两条路径各读一个值，101① 在改前代码上必假 | 旧读法(重绘后)=[0.78375, 0.11, 0.028875, 0.77] 权威=[0.78375, 0.11, 0.11625, 0.77]
+PASS | 101③【报告附录 B #5】describe → apply 零往返：预览 `changes=[]` + 字节未变，`--write` 时 `reason=no_change` 且字节未变（colorbar 位置不再被凭空改） | preview reason='preview' changes=[] / write reason='no_change' 字节未变=True
+PASS | 102①【报告附录 B #2】px=[1500,950] + in=[7.5,4.75]（正好 1/2）→ 拒写（reason=bad_params）+ 人话原因 + 一个字节不动 | reason='bad_params' 字节未变=True err='figsize 参数自相矛盾：figsize_px=[1500, 950] 按 dpi=100.0 折算应是 [15.0, 9.5] in，'
+PASS | 102② 反方向（in 是 2 倍）也拒（成倍矛盾两个方向都拦） | bad_params
+PASS | 102③ 合法参数（in = px/100）**不拒**（守卫不误伤正常写回） | no_change
+PASS | 102④ dpi=200 的脚本（px=[1200,800] + in=[6,4]）**不拒**（按脚本静态 dpi 折算，不误伤合法的 dpi=200 参数） | no_change
+PASS | 102⑤【有牙】把守卫换成 `return `（= 没有这条）→ 坏参数不再被拒（= 102① 在改前代码上必假） | ok
+PASS | 103① dpi=100 × DPR=1（fig.dpi=100.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=100 × DPR=1.5（fig.dpi=150.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=100 × DPR=2（fig.dpi=200.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=150 × DPR=1（fig.dpi=150.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=150 × DPR=1.5（fig.dpi=225.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=150 × DPR=2（fig.dpi=300.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=200 × DPR=1（fig.dpi=200.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=200 × DPR=1.5（fig.dpi=300.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103① dpi=200 × DPR=2（fig.dpi=400.0）：撤销后画布回到操作前原值 | 画布=(15.0, 9.5) snap_in=[15.0, 9.5]
+PASS | 103② 自洽性：逻辑 px/英寸 == rcParams.dpi（与 DPR 无关）、`fig.dpi == rcParams.dpi × DPR`（注入依据）；→ 旧换算 `px/fig.dpi` = 英寸/DPR | px/in 口径 = rcParams.dpi
+PASS | 103③【有牙】把换算改回 `px/fig.dpi` → 矩阵里 **DPR≠1 的 6 格全红**，其中 rcParams=100 × DPR=2（= 用户环境的 fig.dpi=200）正好缩到 1/2 | 旧换算出错的格 = [(100, 1.5, 150.0, (10.0, 6.333)), (100, 2, 200.0, (7.5, 4.75)), (150, 1.5, 225.0, (10.0, 6.333)), (150, 2, 300.0, (7.5, 4.75)), (200, 1.5, 300.0, (10.0, 6.333)), (200, 2, 400.0, (7.5, 4.75))]
+PASS | §104① zh 建块 → en 再跑：仍只有一块、不重复写入（哨兵不跟语言走） | blocks=(1, 1, 0, 0) reason='ok'
+PASS | §104② en 建块 → zh 再跑：同理仍只有一块 | blocks=(1, 1, 0, 0) reason='ok'
+PASS | §104③ 老版本（中文哨兵）的块被新版本**整体替换**（不留旧哨兵、不堆第二块） | blocks=(1, 1, 0, 0) reason='ok'
+PASS | §104④【有牙】检测改回"只认当前语言" → 旧 zh 块认不出、堆出第二块（= §104③ 在改前口径上必红） | blocks=(1, 1, 1, 1)（期望 START≥2 或旧哨兵残留）
+PASS | §106① 对照例 figsize=(6, 4)：等值 → 不写、不报 figsize | edited=False changes=['ax0.pos']
+PASS | §106④b ctrl：对照例**不该**有"画布没落地"的披露（等值本来就不用写） | pending=None warnings=[]
+PASS | §106② var：源码 figsize=(W, H) **一个字节都不许动**（不许替换成 figsize=(6, 4)） | ['W = 6.0', 'H = 4.0']
+PASS | §106③ var：figsize_edited=False 且 changes 里没有 figsize（不许谎报） | edited=False changes=['ax0.pos']
+PASS | §106④ var：拒写要**如实披露**（pending / needs_block / 警告） | pending=['figsize'] needs_block=None warnings=['画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改']
+PASS | §106② expr：源码 figsize=(BASE - 4, 4) **一个字节都不许动**（不许替换成 figsize=(6, 4)） | ['BASE = 10', 'fig = plt.figure(figsize=(BASE - 4, 4))']
+PASS | §106③ expr：figsize_edited=False 且 changes 里没有 figsize（不许谎报） | edited=False changes=['ax0.pos']
+PASS | §106④ expr：拒写要**如实披露**（pending / needs_block / 警告） | pending=['figsize'] needs_block=None warnings=['画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改']
+PASS | §106② env：源码 figsize=(W, 4) **一个字节都不许动**（不许替换成 figsize=(6, 4)） | ['import os', 'W = float(os.environ.get("MPLTWEAK_T88_W", "6"))']
+PASS | §106③ env：figsize_edited=False 且 changes 里没有 figsize（不许谎报） | edited=False changes=['ax0.pos']
+PASS | §106④ env：拒写要**如实披露**（pending / needs_block / 警告） | pending=['figsize'] needs_block=None warnings=['画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改']
+PASS | §106⑤ 拒写 figsize 不影响其它字段：ax0.pos 照常落地（changes 含 ax0.pos） | ['ax0.pos']
+PASS | §106⑥ 运行期行为不变：`W` 仍在源码里被引用（动态配置没被钉死） | ['import os', 'W = float(os.environ.get("MPLTWEAK_T88_W", "6"))', 'fig = plt.figure(figsize=(W, 4))']
+PASS | §106⑦【有牙】把守卫改回去（非字面量也替换成字面量）→ 变量被抹掉、§106② 必红 | after 第 3-4 行=['W = 6.0', 'H = 4.0'] edited=True
+PASS | §106⑧ 与 t66 守卫的交互：px/in 成倍矛盾 → **t66 守卫先拦**（reason=bad_params）且源码一字未动（两道守卫不互相掩盖） | reason=bad_params edited=None
+PASS | §107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[figsize_only] | 差异=[] ｜ 已披露=[] ｜ 未披露=[] ｜ 派生=[] ｜ pending=[]
+PASS | §107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[subplots_2x2] | 差异=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tick_fs', 'fig0.ax0.title_fs'] ｜ 已披露=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tick_fs', 'fig0.ax0.title_fs'] ｜ 未披露=[] ｜ 派生=[] ｜ pending=['ax0.grid', 'ax0.label_fontsize', 'ax0.tick_fontsize', 'ax0.title_fontsize']
+PASS | §107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[gridspec] | 差异=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tick_fs', 'fig0.ax0.title_fs'] ｜ 已披露=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tick_fs', 'fig0.ax0.title_fs'] ｜ 未披露=[] ｜ 派生=[] ｜ pending=['ax0.grid', 'ax0.label_fontsize', 'ax0.tick_fontsize', 'ax0.title_fontsize']
+PASS | §107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[polar_cb] | 差异=['fig0.ax0.cmap', 'fig0.ax1.clim', 'fig0.ax1.ylim'] ｜ 已披露=['fig0.ax0.cmap', 'fig0.ax1.clim'] ｜ 未披露=[] ｜ 派生=['fig0.ax1.ylim'] ｜ pending=['ax1.clim', 'ax1.cmap']
+PASS | §107① 差分：差异**全部已披露或已在台账**（台账外未披露=0）[fig_add_axes] | 差异=[] ｜ 已披露=[] ｜ 未披露=[] ｜ 派生=[] ｜ pending=[]
+§107 已知差异表（只准缩小；3 条）:
+   · ax.xaxis.label.set_fontsize(10) 调用形态 —— 原地路只改"代码里已有的数字"的**已知调用形态**；`ax.xaxis.label.set_fontsize(10)`这种写法它不改写 → 该字段进 pending（如实披露）→ 允许两条路不同。
+   · axs[0,0].grid(False) 形态（subplots-tuple 接收者） —— 同上：subplots 元组下标接收者的 `grid(...)` 不在原地路可改形态里 → 进 pending。
+   · polar 的 sc.set_cmap/set_clim 形态 —— mappable 上的 `set_cmap/set_clim` 与"轴参数"不是同一接收者 → 原地路表达不了（`clim` 已如实进 pending；`cmap` 见上面的未披露台账）。
+§107 派生字段（登记在案）: [('fig0.ax1.ylim',)]
+§107 **已知未披露**台账（0 条；每一条都待派 src/ 单）:
+PASS | §107⑤【有牙】台账已空 ⇒ 抹掉披露后 polar_cb 必红（无兜底；t99 之前这条差异是靠台账"合法化"的） | 差异=['fig0.ax0.cmap', 'fig0.ax1.clim', 'fig0.ax1.ylim'] ｜ 已披露=[] ｜ 未披露=['fig0.ax0.cmap', 'fig0.ax1.clim'] ｜ 派生=['fig0.ax1.ylim'] ｜ pending=[]
+PASS | §107②【有牙】抹掉原地路的披露（pending/needs_block/warnings 全清）→ 「未披露差异=0」必红 | 差异=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tick_fs', 'fig0.ax0.title_fs'] ｜ 已披露=[] ｜ 未披露=['fig0.ax0.grid', 'fig0.ax0.label_fs', 'fig0.ax0.tic
+PASS | §107③【有牙】把某条路的某个值改歪（标题字号 13→17）→ 差分断言必红 | 差异=['fig0.ax0.title_fs'] ｜ 已披露=[] ｜ 未披露=['fig0.ax0.title_fs'] ｜ 派生=[] ｜ pending=[]
+PASS | §107④ 基线自证：同一形状连跑两次，判据结论稳定（且未披露=0） | 差异=[] ｜ 已披露=[] ｜ 未披露=[] ｜ 派生=[] ｜ pending=[] ｜ 差异=[] ｜ 已披露=[] ｜ 未披露=[] ｜ 派生=[] ｜ pending=[]
+PASS | §108① 探针形态（函数里建图 + return fig + 模块层 savefig）：写回成功（reason=ok / applied=true / Agg 重跑 + 语义验证都通过） | reason=ok applied=True verified=True semantic=True err=
+PASS | §108② 块落在**函数内**、且在 `return fig` **之前**（锚点下沉到了函数作用域） | ['# ===== auto layout (generated) - do not edit inside =====', '# ===== end auto layout =====', 'return fig']
+PASS | §108③ 块内缩进与函数体一致（每行 4 格；没有多缩/顶格 => 不会 IndentationError） | ['    # ===== auto layout (generated) - do not edit inside =====', '    # 本块由 mpltweak 自动生成于 2026-10-20 23:22（可手动微调，勿删上下两行标记）', '    ax.set_position([0.1200, 0.1200, 0.7800, 0.7800])']
+PASS | §108④ 块用**可证的名字**寻址（ax / fig）：无运行期下标、无 gcf 兜底、不补 set_size_inches（源码 figsize 是字面量且已等值） | ["ax.set_title('A')", 'ax.set_position([0.1200, 0.1200, 0.7800, 0.7800])', 'ax.title.set_fontsize(15)', 'ax.grid(True)']
+PASS | §108⑤ 同一脚本连跑两次 apply：第二次 no_change 且脚本 **0 字节**变化 | reason='no_change' bytes_same=True
+回退预览：fig.py  ←  C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t108a1_206d538626a4\.tweak_params\fig.tweak.bak（备份于 2026-10-20 23:22）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 0 行、删除 6 行：
+    -    # ===== auto layout (generated) - do not edit inside =====
+    -    # 本块由 mpltweak 自动生成于 2026-10-20 23:22（可手动微调，勿删上下两行标记）
+    -    ax.set_position([0.1200, 0.1200, 0.7800, 0.7800])
+    -    ax.title.set_fontsize(15)
+    -    ax.grid(True)
+    -    # ===== end auto layout =====
+
+√ 已回退：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t108a1_206d538626a4\fig.py
+  回退前的那份留档：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t108a1_206d538626a4\.tweak_params\fig.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+PASS | §108⑥ `revert --write` 字节级回到原文 | ['return fig']
+PASS | §108⑦ a 多 return：拒写（applied=false / reason=best_effort）+ pending 与文案都点名原因 `fig.func_multi_return`，脚本一个字节都没动 | reason=best_effort applied=False pending=['ax0.grid', 'ax0.pos', 'ax0.title_fontsize', 'fig.func_multi_return'] warn=块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴或别的图上）→ 按 fail-closed 处理，本次不写：
+PASS | §108⑦ b 被调用两次：拒写（applied=false / reason=best_effort）+ pending 与文案都点名原因 `fig.func_called_many`，脚本一个字节都没动 | reason=best_effort applied=False pending=['ax0.grid', 'ax0.pos', 'ax0.title_fontsize', 'fig.func_called_many'] warn=块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴或别的图上）→ 按 fail-closed 处理，本次不写：
+PASS | §108⑦ c 方法是 self.ax：拒写（applied=false / reason=best_effort）+ pending 与文案都点名原因 `fig.func_method`，脚本一个字节都没动 | reason=best_effort applied=False pending=['ax0.grid', 'ax0.pos', 'ax0.title_fontsize', 'fig.func_method'] warn=块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴或别的图上）→ 按 fail-closed 处理，本次不写：
+PASS | §108⑧ §25.2 源码 figsize 非字面量：块里仍补 set_size_inches(6, 4)，但**块注释**点名"运行时覆盖你的动态配置"；源码的 figsize=(W, H) 一个字节没动 | edited=False hint_in=True n_setsize=1
+PASS | §108⑨ §25.2 没有第二处 figsize 计算路径：writeback.py 里生成 `.set_size_inches(` 的常量只有 1 处（render_block 的块体那一行） | [(4870, '%s.set_size_inches(%s, %s)')]
+PASS | §108⑩ 真 CLI `apply --write`：rc=0 + applied=true，块落在函数内 return 之前 | rc=0 | ------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[OK] 已写回（插入调整块，C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t108cli_94bb7d2b350f\fig.py）；图已更新（重跑 + 语义验证通过）
+  · 这张图原位改不了（代码里没有可改的数字）→ 改用插入调整块
+
+PASS | §108⑪ 连跑两次 apply：第二次 reason=no_change 且脚本 **0 字节**变化 | rc=0 | .1200, 0.7800, 0.7800]
+      字号 title=15.0 label=None tick=None
+      grid=True  spines={}
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+· 参数与原代码一致，无需改动
+
+PASS | §108⑫ `revert --write` 字节级回到原文（与探针源逐字节相同） | rc=0 |   ],
+  "written": true,
+  "revert_bak": "C:\\Users\\xiang\\AppData\\Local\\Temp\\mpltweak_shim\\mpltweak_t108cli_94bb7d2b350f\\.tweak_params\\fig.revert.bak"
+}
+
+PASS | §108⑬【有牙】新候选 `_func_return_anchor` 换成恒 None（改前行为）⇒ 探针形态回到拒写（本条即证 §108①②④ 真的在咬，不是空转） | reason=best_effort applied=False pending=['ax0.grid', 'ax0.pos', 'ax0.title_fontsize'] block_in_src=False
+PASS | §109① 四个字段全部**原位**补上（不插块）：跨多行参数表、写盘后 ast.parse 通过，Agg 重跑 + 语义验证都过（reason=ok / applied=true / verified+semantic） | reason=ok applied=True verified=True semantic=True | ['    fontsize=15,', 'ax.set_xlabel(', '    fontsize=13,', '    labelsize=9,']
+PASS | §109② 尾随逗号形态不被破坏：补完是 `'A', / fontsize=15, / )`（新参数自己带逗号），全文件没有 `,)` / `(,` / `,,`，且真能 ast.parse | ["    'A',", '    fontsize=15,', '    fontsize=13,']
+PASS | §109③ 同一脚本连跑两次：第二次 no_change 且脚本 **0 字节**变化（idempotent） | reason='no_change' bytes_same=True
+回退预览：fig.py  ←  C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t109a2_62bf03bb3afd\.tweak_params\fig.tweak.bak（备份于 2026-10-20 23:22）
+  可逆范围：本次用的是固定名备份（它建立那一刻的原文） —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first
+  将恢复 0 行、删除 4 行：
+    -    fontsize=15,
+    -    fontsize=13,
+    -    labelsize=9,
+    -    True
+
+√ 已回退：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t109a2_62bf03bb3afd\fig.py
+  回退前的那份留档：C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t109a2_62bf03bb3afd\.tweak_params\fig.revert.bak（再回退一次就回到这里）
+  提示：脚本比参数新了，下次开窗不会自动套用旧参数；确要接着调加 --force-resume
+PASS | §109④ `revert --write` 字节级回到原文
+PASS | §109⑤ 带 `**kwargs` 的调用**一个字都不改**（认不出实际生效的参数），pending 点名该字段、文案说明原因并给下一步 | applied=False pending=['ax0.label_fontsize_y'] | ax0 未原位应用：label_fontsize_y（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；需要的话请手动把 fontsize=… 写进这条调用）（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动） 本图有 1 处目标值无法原位
+PASS | §109⑥ 同一 body 里两处 set_title：只补**后写的那一处**（`B`，语义上它决定最终值），前一处原样、并在 warnings 里如实报告"另有 1 处没改" | applied=True | 已原位补上 title_fontsize：另有 1 处 set_title 调用按"后写的生效"没改；要一并调整请手动改，或用 --style block
+PASS | §109⑦ if/else 两支各一条 set_title：谁是最后生效的**证不出** ⇒ 整条不改（applied=false + pending 点名 + 文案给下一步"手动改或 --style block"） | applied=False pending=['ax0.title_fontsize'] | ax0 未原位应用：title_fontsize（这条轴上有 2 处 set_title 调用，无法唯一确定该补哪一处，没有自动补；请手动改，或用 --style block）（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动） 本图有 1 处目标值无法原位
+PASS | §109⑧ `ax.title.set_fontsize(9)` 被认出来：按"后写的赢"改**这一条**的字面量（9 → 15），不往 set_title 里再塞一个 fontsize | ["ax.set_title('A')", 'ax.title.set_fontsize(15)']
+PASS | §109⑨ set_fontsize(变量)：值不在字面量里 ⇒ 不改、不猜，文案点名原因 | applied=False | ax0 未原位应用：title_fontsize（这份源码里该字号由 set_fontsize(变量) 决定，值不在字面量里，没有自动改写；请手动改）（原位写回只改代码里已有的数字，这些项代码里没有对应写法，保持原样；需要可用 --style block 或手动） 本图有 1 处目标值无法原位写回（ax0.title_
+PASS | §109⑩ 负例不误改（018 型 plt.title/plt.xlabel）：不可证的轴一个字节都不动，该拒的拒（applied=false + pending 点名） | applied=False pending=['ax0.label_fontsize', 'ax0.title_fontsize'] changed=False
+PASS | §109⑩ 负例不误改（gallery 型 axs[i] 循环）：不可证的轴一个字节都不动，该拒的拒（applied=false + pending 点名） | applied=False pending=['ax0.title_fontsize'] changed=False
+PASS | §109⑩ 负例不误改（colorbar 型 cb.ax）：不可证的轴一个字节都不动，该拒的拒（applied=false + pending 点名） | applied=True pending=['ax1.label_fontsize'] changed=True
+PASS | §109⑪【有牙】`_gap_specs` 换成恒 None（= 0.1.11 行为）⇒ 探针 A 一个参数都补不上、四个字段全进 pending（本条即证 §109①真的在咬） | applied=False pending=['ax0.grid', 'ax0.label_fontsize', 'ax0.tick_fontsize', 'ax0.title_fontsize'] same=True
+ALL PASS
+
+[rc=0]  177.9s
+
+--- stderr ---
+[--] 未写回[best_effort]：脚本未被改动（D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_23\target.py）
+# --- 手动落实片段（可选；粘贴后把 <ax> / <fig> / <mappable> 换成你自己的变量名）---
+  # ax0.pos = [0.08, 0.55, 0.38, 0.38]
+  #     -> <ax>.set_position([0.08, 0.55, 0.38, 0.38])
+# --- 想让它自动落地？给 figure/axes 起个名字，再运行一次本工具 ---
+#   fig, ax = plt.subplots(...)      # 一次拿到 figure 和 axes，工具就能把改动落到目标上
+[!] 这些字段代码里没有可改的写法、本次**没能落地**：ax0.pos
+    → 用 --style auto（默认，会自动插入调整块）或 --style block 重新落实；原位模式只改代码里已有的数字。
+[revert] 还没有可回退的备份：D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_33\.tweak_params\target.tweak.bak
+  revert 只能回退"做过 mpltweak apply --write 的脚本"——备份是写回时留下的写回前原文。
+[revert] 找不到脚本: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_32\nope.py
+[--] 未写回[best_effort]：脚本未被改动（C:\Users\xiang\AppData\Local\Temp\mpltweak_shim\mpltweak_t67b_525b40ba5e50\fig.py）
+# --- 手动落实片段（可选；粘贴后把 <ax> / <fig> / <mappable> 换成你自己的变量名）---
+  # ax0.pos = [0.1, 0.1, 0.5, 0.5]
+  #     -> <ax>.set_position([0.1, 0.1, 0.5, 0.5])
+# --- 想让它自动落地？给 figure/axes 起个名字，再运行一次本工具 ---
+#   fig, ax = plt.subplots(...)      # 一次拿到 figure 和 axes，工具就能把改动落到目标上
+==============================================================
+# fig89f.json  （第 1 张图）
+参数文件: D:\Agent\deepseek\mpltweak\tests\.tmp_writeback_82000\case_89f\.tweak_params\fig89f.json
+脚本: fig89f.py
+画布: figsize_in=[6.0, 4.0]  (px=None)
+会改：ax0.pos、ax0.grid、ax0.xscale、ax0.yscale、figsize (6, 4) → (6, 4)（未列出的字段本次不动）
+--------------------------------------------------------------
+ax0  位置 [0.2000, 0.2000, 0.5000, 0.5000]
+      grid=False  spines={}
+      scale x=linear y=linear
+--------------------------------------------------------------
+  正在验证（子进程重跑脚本，最长 300s）
+[X] 写回失败[external_modified]: 检测到脚本在验证期间被外部修改；本次写回已放弃，你的改动未被覆盖。若仍要写回，请先保存并重跑本命令

@@ -1,0 +1,325 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_tweak.py
+PASS | snap 近边吸附 | [0.10000000000000005, 0.1, 0.2, 0.1]
+PASS | snap 吸附后宽不变 | [0.10000000000000005, 0.1, 0.2, 0.1]
+PASS | snap 参考线为一条候选线 | [0.30000000000000004]
+PASS | snap 远边不吸 | [0.15, 0.1, 0.2, 0.1]
+PASS | snap 上边对齐 | [0.1, 0.20000000000000004, 0.2, 0.1]
+PASS | locked resize a 等比
+PASS | locked resize d 等比
+PASS | locked resize A 等比
+PASS | locked resize D 等比
+PASS | locked resize w 等比
+PASS | locked resize s 等比
+PASS | locked resize W 等比
+PASS | locked resize S 等比
+PASS | locked 平移
+[mpltweak] 模式=重图（ghost+blit）全量重绘=36ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_v3.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] Axes(0.1,0.1;0.6x0.6) 图例 -> upper center
+[mpltweak] Axes(0.1,0.1;0.6x0.6) 图例 -> upper left
+PASS | legend 6位循环 | ['upper center', 'upper left']
+PASS | legend 字号保留
+PASS | 字号 title +1
+PASS | 字号 label -1
+PASS | 字号 legend +1
+[mpltweak] 已导出 1 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_v3.json
+PASS | export version = SCHEMA_VERSION
+PASS | export pos | [0.1, 0.1, 0.6, 0.6]
+PASS | export title_fontsize
+PASS | export label_fontsize
+PASS | export legend loc | {'loc': 'upper left', 'anchor': None, 'fontsize': 9.0}
+PASS | export legend fontsize
+PASS | export aspect_locked
+PASS | export cell（手工 add_axes → None） | None
+PASS | export xlim（没显式固定 → None，autoscale 不记） | None
+[mpltweak] 已导出 1 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_v3.json
+PASS | export 显式固定的 xlim 被采集 | [-0.01, 1.01]
+PASS | export 显式固定的 ylim 被采集 | [0.0, 10.0]
+[mpltweak] 模式=重图（ghost+blit）全量重绘=33ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_v3_grid.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 已导出 2 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_v3_grid.json
+PASS | export 网格轴的 cell = [1, 2, 0, col] | [[1, 2, 0, 0], [1, 2, 0, 1]]
+PASS | resize right 边 | [0.1, 0.1, 0.7, 0.3]
+PASS | resize left 边 | [0.2, 0.1, 0.6, 0.3]
+PASS | resize br 角 | [0.1, 0.05, 0.5, 0.3]
+PASS | resize 最小尺寸 | [0.1, 0.1, 0.12000000000000001, 0.3]
+PASS | colorbar 细下限 0.008 | [0.4, 0.1, 0.40800000000000003, 0.3]
+PASS | 面板默认下限 0.02 | [0.4, 0.1, 0.42000000000000004, 0.3]
+PASS | resize 锁比等比 | [0.1, 0.0, 0.9, 0.2]
+PASS | resize 锁比右边缘 | [0.1, 0.04999999999999999, 0.9, 0.25]
+PASS | snap_resize 只吸动边 | ([0.6, 0.1, 0.9, 0.3], [0.6])
+PASS | snap_resize 超容差不吸 | ([0.62, 0.1, 0.9, 0.3], [])
+PASS | hit 右边 | right
+PASS | hit br 角 | br
+PASS | hit 内部无手柄 | None
+[mpltweak] 模式=重图（ghost+blit）全量重绘=30ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_text.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | colorbar 识别
+PASS | 普通轴非 colorbar
+PASS | text_at 标题 | ('text', Text(0.5, 1.0, 'T'))
+[mpltweak] 文本字号 -> 11.0
+PASS | hover 标题 +1 | fs=11.0
+PASS | text_at x刻度 | ('xtick', <Axes: title={'center': 'T'}, xlabel='x', ylabel='y'>)
+PASS | text_at colorbar | ('cb_ticks', <Axes: label='<colorbar>', ylabel='cb'>)
+[mpltweak] 已导出 2 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_text.json
+PASS | 导出 figsize_in | [8.0, 6.0]
+PASS | 导出含 colorbar 轴 | 2
+PASS | colorbar 宽度钉住 | (np.float64(0.44), np.float64(0.06), np.float64(0.02999999999999997), np.float64(0.38))
+PASS | 窄轴 左抓取 | left
+PASS | 窄轴 右抓取 | right
+PASS | 窄轴 中点留移动 | None
+PASS | 水平条 上边抓取 | top
+PASS | 水平条 下边抓取 | bottom
+PASS | 水平条 中点留移动 | None
+PASS | 水平条 左端可抓宽 | tl
+PASS | snap left 不动 y | [0.2, 0.2, 0.5, 0.4005]
+PASS | snap right 不动 y | [0.2, 0.2, 0.5, 0.4005]
+PASS | snap bottom 不动 y1 | [0.2, 0.2, 0.5, 0.4005]
+PASS | snap top 只动 y1 | [0.2, 0.2, 0.5, 0.4]
+PASS | colorbar 被识别 | ''
+PASS | 普通轴不被误判 | ''
+[mpltweak] 模式=重图（ghost+blit）全量重绘=21ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | colorbar locator 已解除 | NoneType
+PASS | colorbar 位置钉住（重绘不改回） | [0.1000, 0.2000, 0.2500, 0.0600]
+PASS | 开窗即已预抓背景 | None 表示首拖要等一次全量重绘
+[mpltweak] 模式=重图（ghost+blit）全量重绘=15ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | 线条模式：数据图元已隐藏 | False
+PASS | 线条模式：标题文字仍可见 | True
+PASS | 线条模式：进过模式标记 | True
+PASS | 线条模式：退出后恢复原状 | line=True wire=False
+[mpltweak] 模式=重图（ghost+blit）全量重绘=10ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | 锁比轴 ↑ 同比放大 | [np.float64(0.23750000000000002), np.float64(0.2), np.float64(0.225), np.float64(0.3)] -> [np.float64(0.228125), np.float64(0.1875), np.float64(0.24375000000000005), np.float64(0.32499999999999996)]
+PASS | 锁比轴 ↑ 中心不动 | [np.float64(0.228125), np.float64(0.1875), np.float64(0.24375000000000005), np.float64(0.32499999999999996)]
+[mpltweak] 模式=重图（ghost+blit）全量重绘=17ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | colorbar 条外刻度标签可命中 | cb_ticks
+PASS | ax.text 面板标注可命中 | text
+[mpltweak] 模式=重图（ghost+blit）全量重绘=13ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | loc=left 面板标题可命中 | kind=text owner_ok=True
+PASS | 标题字号取 loc=left 那个 | 16.0
+[mpltweak] 模式=重图（ghost+blit）全量重绘=13ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | HitMap 已建表 | 13
+PASS | HitMap 查表命中 loc=left 标题 | 13
+PASS | 锚点(0.5,0.5) 中心不动 | [0.30000000000000004, 0.2, 0.2, 0.4]
+PASS | 锚点(0,0) 左下角不动 | [0.2, 0.2, 0.2, 0.4]
+PASS | 吸附可用中线对齐 | [0.3, 0.5, 0.2, 0.1]
+PASS | 中线吸附给出参考线 | [0.4]
+[mpltweak] 模式=重图（ghost+blit）全量重绘=24ms 吸附=True 导出=D:\Agent\deepseek\mpltweak\test_tweak.tweak.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | 对齐左边缘 | [np.float64(0.1), np.float64(0.1), np.float64(0.1)]
+PASS | 垂直均分等间距 | [np.float64(-0.08), np.float64(-0.08)]
+PASS | 连续微调合并为一步 undo | undo +1
+PASS | 撤销可视化：方向键移动生效 | [np.float64(0.095), np.float64(0.11500000000000002), np.float64(0.20000000000000004), np.float64(0.20000000000000004)]
+PASS | 撤销可视化：操作名提到移动 | '移动 ax0'
+[mpltweak] 撤销：移动 ax0、画布尺寸（剩 4 步）
+[mpltweak] 重做：移动 ax0
+PASS | 撤销可视化：undo/redo 不崩
+PASS | 编辑顺序无关（位置/字号/图例） | ((np.float64(0.2), np.float64(0.2), np.float64(0.5), np.float64(0.5)), 14.0, 9.0, '3') vs ((np.float64(0.2), np.float64(0.2), np.float64(0.5), np.float64(0.5)), 14.0, 9.0, '3')
+[mpltweak] 模式=重图（ghost+blit）全量重绘=17ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_step8.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | clim 端点命中
+PASS | clim 拖拽已移除（Alt+拖端点功能删） | (0.0, 100.0)
+PASS | F2：clim 拖拽空函数已删除
+PASS | F2：_fmt_clim 已删除
+PASS | F2：clim 拖拽死属性已删除
+[mpltweak] 线条颜色 -> #1f77b4
+PASS | [/] 键位线宽 | 1.5
+PASS | c 键位颜色
+PASS | C 键位 colormap
+PASS | g 键位 grid
+PASS | s 键位 spines
+PASS | x/y 键位 scale
+[mpltweak] 已导出 2 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_step8.json
+PASS | 导出含 #8 字段
+PASS | 导出含 colorbar clim
+PASS | 白名单：plot 线放行
+PASS | 白名单：未填充等值线放行
+PASS | 白名单：Quiver 拦下
+PASS | 白名单：填色等值线拦下
+PASS | 白名单：scatter 拦下
+PASS | 颜色归一：N×4 数组不炸
+PASS | 颜色归一：坏值返回 None
+[mpltweak] 模式=重图（ghost+blit）全量重绘=14ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_step8_q.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 线条颜色 -> #1f77b4
+PASS | c 键命中 Quiver 不抛异常
+PASS | c 键不动 scatter 颜色
+[mpltweak] 线条颜色 -> #ff7f0e
+PASS | c 键悬停线条仍生效 | #1f77b4 -> #ff7f0e
+PASS | F4：续调恢复 loc=left 标题字号 | left=20.0
+PASS | F4：续调恢复 loc=right 标题字号 | right=20.0
+PASS | F4：续调恢复中间标题字号 | mid=20.0
+PASS | F4：label 按 x/y 各自套用 | x=11.0 y=13.0
+PASS | F4：字号类续调计入 n（不再误判未套用） | n=2
+PASS | T73（零兼容）：只给 label_fontsize → 只套 x，y 保持 13 不被改成 15 | x=15.0 y=13.0
+[mpltweak] 模式=重图（ghost+blit）全量重绘=11ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_figsize_dpi200.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 已导出 1 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_figsize_dpi200.json
+PASS | T25-#1：dpi=200 导出 figsize_in == [6.0, 4.0] | figsize_in=[6.0, 4.0]（dpi=200, px=[1200, 800]）
+[mpltweak] 模式=重图（ghost+blit）全量重绘=16ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_figsize_dpi100.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 已导出 1 个子图 -> C:\Users\xiang\AppData\Local\Temp\test_figsize_dpi100.json
+PASS | T25-#1：dpi=100 导出 figsize_in == [6.0, 4.0] | figsize_in=[6.0, 4.0]（dpi=100, px=[600, 400]）
+[mpltweak] 模式=重图（ghost+blit）全量重绘=11ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_double_open.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | T25-#2a：锁被接管时 stderr 有大响提示 | '[mpltweak] 参数未保存：C:\\Users\\xiang\\AppData\\Local\\Temp\\test_double_open.json 已被 pid=1034095 的新窗口接管，本窗口的改动不会落盘。补救：关闭新窗口后重试，或按 e 手动导出到别的路径。\n'
+PASS | T25-#2a：锁被接管时不落盘（不覆盖新会话） | file exists=False
+[mpltweak] 模式=重图（ghost+blit）全量重绘=16ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_legend_handles.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | T25-#2c：_init_legends 用图例自身 handles（2 条不是 3 条） | handles=2 labels=['a', 'c']
+PASS | T25-#2c：labels 是图例自身文本 | ['a', 'c']
+PASS | T25-#2c：重建后仍 2 条（l2 不被加回） | 2
+[mpltweak] 模式=重图（ghost+blit）全量重绘=15ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_figlegend.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | T25-#2c：fig.legend() 明确提示不接管 | '[mpltweak] 提示：fig.legend()（图级图例）不挂在任何子图上，本工具箱的图例拖拽/循环按子图定位，无法接管它——该图例不会被调整，其余功能正常。\n'
+[mpltweak] 模式=重图（ghost+blit）全量重绘=11ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_fit_a.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] fit: 收到快捷键
+[mpltweak] fit: 完成 → 8.62x6.94 in（原 10.00x8.00）
+[mpltweak] 模式=重图（ghost+blit）全量重绘=12ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_fit_b.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] fit: 收到快捷键
+[mpltweak] fit: 完成 → 8.62x7.58 in（原 10.00x8.00）
+PASS | 0.1.10#1-① fit 内容盒含 suptitle（有标题的高度更大，不被裁） | no-title=6.937 with-title=7.577
+[mpltweak] 模式=重图（ghost+blit）全量重绘=24ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_fit_c.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] fit: 收到快捷键
+[mpltweak] fit: 完成 → 8.62x7.58 in（原 10.00x8.00）
+PASS | 0.1.10#1-② fit 与 dpi 解耦（HiDPI 下不再缩一半：宽≈8.3 而非 ≈4.15） | fiw=8.619
+[mpltweak] 模式=重图（ghost+blit）全量重绘=18ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_drag_norm.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | 0.1.10#2-② 按下记录归一化锚点 | (np.float64(0.3), np.float64(0.3))
+[mpltweak] 拖轴结束 ax0 -> [0.150,0.100,0.400,0.400]
+PASS | 0.1.10#2-② fig.bbox 变化后拖拽增量仍正确（x 移 0.05） | b0=[np.float64(0.1), np.float64(0.1), np.float64(0.4), np.float64(0.4)] b1=[np.float64(0.15), np.float64(0.1), np.float64(0.4), np.float64(0.4)]
+[mpltweak] 画布 3000x2200 超出屏幕可用区 960x516，已自动缩放到屏内 (22%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=19ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_oversize_a.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t19① 开窗瞬间的 figsize 长宽比守恒（未被窗口钳制改形，偏离 <2%） | shown=[np.float64(6.685), np.float64(4.902)] ratio=1.3636 req=1.3636
+PASS | t19①b 缩到屏内（画布 ≤ 可用区 95%） | px=[668, 490] avail=[960, 516]
+PASS | t19①c _figsize_open 记的是等比尺寸（不再是钳制后的变形值） | [np.float64(6.685), np.float64(4.902)]
+[mpltweak] 画布 3000x2200 超出屏幕可用区 960x516，已自动缩放到屏内 (22%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=25ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_oversize_b.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t19② 窗口仍把画布钳制成 1601x496（3.234）时，守卫恢复等比（偏离 <2%） | after-clamp=[np.float64(6.685), np.float64(4.902)] ratio=1.3636
+PASS | t19②b 钳制守卫确实触发过（提示只打一次）+ 恢复后画布回到屏内 | warned=True px=[668, 490]
+[mpltweak] 画布 3000x2200 超出屏幕可用区 3840x2160，已自动缩放到屏内 (93%)
+[mpltweak] 画布 2798x2052 超出屏幕可用区 1920x1080，已自动缩放到屏内 (47%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=20ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_tk_huge_a.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t20① 映射前按 dpr=1.0 折算（目标=27.98×20.52，与 t16 trace 一致；长宽比守恒） | before_show=[np.float64(27.982), np.float64(20.52)]
+PASS | t20② 映射后自检修正：最终 figsize≈13.99×10.26、长宽比偏差 ≤2% | final=[np.float64(13.991), np.float64(10.26)] ratio=1.3636 dev=0.0000
+PASS | t20②b 画布（逻辑 px）真的落在逻辑屏内（≤ 逻辑屏 95%）+ _figsize_open 同步 | px=[1399, 1026] logical=[1920, 1080] open=[np.float64(13.991), np.float64(10.26)] dpr=2.0
+[mpltweak] 画布 3000x2200 超出屏幕可用区 1920x1080，已自动缩放到屏内 (47%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=85ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_tk_huge_b.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t20③ Tk 上钳制守卫会触发（_warned_offscreen=True）且恢复等比（偏差 ≤2%） | clamped=[np.float64(27.98), np.float64(10.275)] final=[np.float64(13.991), np.float64(10.26)] warned=True
+[mpltweak] 画布 3000x2200 超出屏幕可用区 3840x2160，已自动缩放到屏内 (93%)
+[mpltweak] 画布 2798x1027 超出屏幕可用区 1920x1080，已自动缩放到屏内 (47%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=29ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_tk_huge_c.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t20④ 映射即被钳制：中间态复现 t16 的 27.98×10.27（比值 2.723）→ 修正到 ≤2% | intermediate=[np.float64(27.98), np.float64(10.275)] ratio=2.7231 | final=[np.float64(13.991), np.float64(10.26)] dev=0.0000
+[mpltweak] 画布 3000x2200 超出屏幕可用区 1920x1080，已自动缩放到屏内 (47%)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=82ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_tk_huge_d.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t20⑤ Qt 分支不折算（要么 (1920,1080)，要么本机无 Qt → None；绝不能是 960×540） | avail=(1920, 1080)
+PASS | t20⑤b 本机有 Qt binding → 走 availableGeometry 分支且原样返回（不除 dpr） | (1920, 1080)
+[mpltweak] 模式=重图（ghost+blit）全量重绘=34ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_snap_min_size.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 缩放开始 ax0 bottom
+[mpltweak] DBG ax0 按下=bottom 实际=bottom locked=False origin=['0.1000', '0.3000', '0.5000', '0.7000'] resize=['0.1000', '0.6800', '0.5000', '0.7000'] snap=['0.1000', '0.6800', '0.5000', '0.7000'] (gx=[] gy=[])
+[mpltweak] 缩放结束 ax0 bottom -> [0.100,0.680,0.400,0.020]
+PASS | t24① 往下拖出画布外松手：A 高度 ≥ MIN_SIZE（吸附不得拉过下限） | h=0.02000 (12.0px) MIN_SIZE=0.020
+PASS | t24② 越界候选线被跳过（宁可不吸）：y0 保持 0.6800、h=0.02 ≥ MIN_SIZE | b=[0.1, 0.6799999999999999, 0.5, 0.7] h=0.02000
+PASS | t24③ 合法候选线仍吸附（0.6000 → 0.6041，tol=0.006 内） | b=[0.1, 0.6041, 0.5, 0.7] gy=[0.6041]
+PASS | t24④ min_size 缺省=None 时行为不变（仍会吸到 0.6841，供旧调用方） | [0.1, 0.6841, 0.5, 0.7]
+PASS | t24⑤ 边界线上边吸附仍受 min_size 约束（吸到 1.0 后 h ≥ MIN_SIZE） | b=[0.1, 0.985, 0.5, 1.005] h=0.02000
+[mpltweak] 模式=重图（ghost+blit）全量重绘=12ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_heal.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | t101① 按下 -> 进入拖动，且记下"见过按键" | drag=True seen=True capable=False
+PASS | t101② 带按键的 motion 照常跟手（判据不许提前收尾；能力闸门打开） | b0=[np.float64(0.2), np.float64(0.25), np.float64(0.4), np.float64(0.45)] b1=[np.float64(0.2444), np.float64(0.2833), np.float64(0.4), np.float64(0.45)] capable=True
+[mpltweak] 拖轴结束 ax0 -> [0.244,0.283,0.400,0.450]
+PASS | t101③ motion 报"没有键按着" -> 当次 motion 内拖动已结束（不等 release） | drag=False ax=None
+PASS | t101④ 面板落在"键丢失那一下"之前的位置（蓝框不再跟随） | now=[np.float64(0.2444), np.float64(0.2833), np.float64(0.4), np.float64(0.45)]
+PASS | t101⑤ 收尾后继续移动，面板一个像素都不动 | now=[np.float64(0.2444), np.float64(0.2833), np.float64(0.4), np.float64(0.45)]
+[mpltweak] 模式=重图（ghost+blit）全量重绘=12ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_legacy.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | t101⑥ 老形态 motion（不带 buttons）-> 拖动照旧（离屏合成事件不许误触发） | drag=True capable=False
+[mpltweak] 拖轴结束 ax0 -> [0.244,0.283,0.400,0.450]
+PASS | t101⑦ 真松手照旧收尾（自愈没抢掉正常路径） | drag=False
+[mpltweak] 模式=重图（ghost+blit）全量重绘=16ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_probe.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+PASS | t101⑧ 离屏 Agg 画布 `_mouse_buttons_down` 返回 None（不瞎猜） | None
+[mpltweak] 模式=重图（ghost+blit）全量重绘=21ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_leave.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+[mpltweak] 拖轴结束 ax0 -> [0.233,0.275,0.400,0.450]
+PASS | t101⑨ 离画布兜底（查询=False）-> 收尾 | drag=False
+[mpltweak] 模式=重图（ghost+blit）全量重绘=11ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_leave.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | t101⑨ 离画布兜底（查询=True）-> 仍挂着拖动（不打断） | drag=True
+[mpltweak] 模式=重图（ghost+blit）全量重绘=19ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_leave.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | t101⑨ 离画布兜底（查询=None）-> 仍挂着拖动（不打断） | drag=True
+[mpltweak] 模式=重图（ghost+blit）全量重绘=11ms 吸附=True 导出=C:\Users\xiang\AppData\Local\Temp\test_t101_teeth.json
+[mpltweak] 拖拽/框选/多选都走 blit 预览（松手或停顿才真正落位）；若下面出现 blit 降级提示，说明该后端不支持 blit，会明显卡
+[mpltweak] 键位: 拖面板=移动 拖边/角=缩放 | 悬停标题/x轴/y轴/刻度/图例/colorbar 按 +/- 调字号 | Ctrl+Z撤销 | 悬停文字±字号 | l图例不再支持键位切换（拖图例=8位吸附） | 方向键=移动面板 | Shift+方向键=微调尺寸(中心不动) | 关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图
+[mpltweak] 拖轴开始 ax0
+PASS | t101⑩【有牙】关掉自愈分支 -> "当次 motion 内结束"必红（这里仍挂着拖动） | drag=True
+----
+ALL PASS
+
+[rc=0]  5.6s
+
+--- stderr ---
+D:\Agent\deepseek\mpltweak\tests\test_tweak.py:584: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+  _figF = plt.figure(figsize=(6, 4), dpi=_dpi)
+D:\Agent\deepseek\mpltweak\tests\test_tweak.py:584: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+  _figF = plt.figure(figsize=(6, 4), dpi=_dpi)
+D:\Agent\deepseek\mpltweak\tests\test_tweak.py:604: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+  _figD = plt.figure(figsize=(6, 4))
+[mpltweak] 窗口超出屏幕可用区，已被系统钳制：figsize 被悄悄改过，已恢复为开窗时的尺寸。若画布仍超出屏幕，请手动把窗口拖小一点，或按 Ctrl+F 适配画布到内容。
+[mpltweak] 窗口超出屏幕可用区，已被系统钳制：figsize 被悄悄改过，已恢复为开窗时的尺寸。若画布仍超出屏幕，请手动把窗口拖小一点，或按 Ctrl+F 适配画布到内容。

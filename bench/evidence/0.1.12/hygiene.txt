@@ -1,0 +1,29 @@
+$ D:\Miniconda\envs\longxia\python.exe -m pytest -q tests/test_hygiene.py
+.................................s......s....s.s.s..............         [100%]
+============================== warnings summary ===============================
+tests/test_hygiene.py::test_test_suites_cannot_crash_gbk_console[test_docs.py]
+tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered
+tests/test_hygiene.py::test_call_site_audit_is_ast_not_text
+tests/test_hygiene.py::test_no_real_gui_objects_in_tests
+tests/test_hygiene.py::test_gui_ratchet_whitelist_is_still_needed
+  <unknown>:2: DeprecationWarning: invalid escape sequence '\|'
+
+tests/test_hygiene.py::test_test_suites_cannot_crash_gbk_console[test_real_window.py]
+tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered
+tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered
+tests/test_hygiene.py::test_child_whitelist_structural_guard_bites
+tests/test_hygiene.py::test_call_site_audit_is_ast_not_text
+tests/test_hygiene.py::test_gui_ratchet_whitelist_is_still_needed
+  <unknown>:2: DeprecationWarning: invalid escape sequence '\A'
+
+tests/test_hygiene.py::test_test_suites_cannot_crash_gbk_console[test_tmpdir_discipline.py]
+tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered
+tests/test_hygiene.py::test_call_site_audit_is_ast_not_text
+tests/test_hygiene.py::test_no_real_gui_objects_in_tests
+tests/test_hygiene.py::test_gui_ratchet_whitelist_is_still_needed
+  <unknown>:2: DeprecationWarning: invalid escape sequence '\.'
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+59 passed, 5 skipped, 16 warnings in 38.61s
+
+[rc=0]  39.6s

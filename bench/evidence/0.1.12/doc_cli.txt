@@ -1,0 +1,7 @@
+$ D:\Miniconda\envs\longxia\python.exe tools/doc_cli_options.py
+① 文档列了但 CLI 不认（真漂移）：0 处
+② CLI 有但文档完全没提（提示）：0 处
+   （空）
+结论：OK
+
+[rc=0]  3.5s

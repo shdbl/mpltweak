@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-10-21T07:01:25",
+  "workspace": "D:\\Agent\\deepseek\\mpltweak",
+  "jobs": [
+    {
+      "file": "writeback.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_writeback.py",
+      "rc": 0,
+      "secs": 177.9,
+      "ok": true,
+      "note": "写回套件（含 A1 §108 / A2 §109）"
+    },
+    {
+      "file": "fuzz_events.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_fuzz_events.py",
+      "rc": 0,
+      "secs": 102.6,
+      "ok": true,
+      "note": "交互离屏事件（含 t101 自愈）"
+    },
+    {
+      "file": "figure_matrix.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_figure_matrix.py",
+      "rc": 0,
+      "secs": 469.9,
+      "ok": true,
+      "note": "图形矩阵（含 twinx 硬断言）"
+    },
+    {
+      "file": "tweak.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_tweak.py",
+      "rc": 0,
+      "secs": 5.6,
+      "ok": true,
+      "note": "交互主套件"
+    },
+    {
+      "file": "check.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_check.py",
+      "rc": 0,
+      "secs": 49.6,
+      "ok": true,
+      "note": "静态检查"
+    },
+    {
+      "file": "agent_api.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_agent_api.py",
+      "rc": 0,
+      "secs": 89.8,
+      "ok": true,
+      "note": "agent 契约（含 A3 §24）"
+    },
+    {
+      "file": "cli_output.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe -m pytest -q tests/test_cli_output.py",
+      "rc": 0,
+      "secs": 11.3,
+      "ok": true,
+      "note": "A3 输出契约 14 条"
+    },
+    {
+      "file": "hygiene.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe -m pytest -q tests/test_hygiene.py",
+      "rc": 0,
+      "secs": 39.6,
+      "ok": true,
+      "note": "工程卫生棘轮（GBK 等）"
+    },
+    {
+      "file": "docs.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tests/test_docs.py",
+      "rc": 0,
+      "secs": 0.3,
+      "ok": true,
+      "note": "文档闸门"
+    },
+    {
+      "file": "doc_refs.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tools/check_doc_refs.py",
+      "rc": 0,
+      "secs": 1.0,
+      "ok": true,
+      "note": "文档引用校验"
+    },
+    {
+      "file": "doc_cli.txt",
+      "cmd": "D:\\Miniconda\\envs\\longxia\\python.exe tools/doc_cli_options.py",
+      "rc": 0,
+      "secs": 3.5,
+      "ok": true,
+      "note": "CLI 选项文档一致性"
+    }
+  ]
+}

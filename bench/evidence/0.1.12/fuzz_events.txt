@@ -1,0 +1,71 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_fuzz_events.py
+PASS | hypothesis 可用（pyproject [dev] 应含 hypothesis>=6.0） | hypothesis 6.168.5
+PASS | 拖拽：3 步 motion（含越界）+ 松手≠最后motion → 落位=最后motion | undo=2 redo=2
+PASS | 贴边吸附：ax3 左缘拖到画布左缘（x0→0.0） | undo=1 redo=1
+PASS | 贴边吸附：ax1 右缘拖到画布右缘（x1→1.0） | undo=1 redo=1
+PASS | 贴邻吸附：ax2 左缘 → ax1 左缘（0.54） | undo=1 redo=1
+PASS | 单击（按下即抬起）：位置不变 + 无幽灵撤销步 | undo=0 | undo=0 redo=0
+PASS | Ctrl 多选 + 多选拖拽：两面板同位移（尺寸不变） | ax0 移=0.0400,0.0257 ax1 移=0.0400,0.0257 | undo=1 redo=1
+PASS | 悬停标题/x轴标签/y刻度 + +/-：字号各 ±1 | title 10.0→11.0 xlabel 10.0→11.0 ytick 10.0→11.0 | undo=3 redo=3
+PASS | 方向键：↑/→ 移动 0.005，Shift+↑ 加高 0.025（中心不动） | [0.0700,0.5500,0.4000,0.3800] -> [0.0750,0.5425,0.4000,0.4050]（期望 [0.0750,0.5425,0.4000,0.4050]） | undo=3 redo=3
+PASS | 空格 切线框模式：开→关 后布局不变、状态复原 | wire=False | undo=0 redo=0
+PASS | Ctrl+Z/Ctrl+Y：深序列 + 中途撤销重做 → 全撤/全重做仍往返一致 | undo=3 redo=3
+PASS | 图例拖拽：松手吸附 8 标准位之一（loc 有效 + anchor 清空） | loc=upper right anchor=None | undo=1 redo=1
+PASS | 无意义乱序：裸 motion / 双按下 / 无按下就松开 / 两键同按 / 越界拖拽 | undo=2 redo=2
+PASS | Ctrl+F 裁白边：全撤销后画布/布局还原 | 画布 900x700 → 864x694（changed=True） | undo=2 redo=2
+PASS | 图例未松开改按面板：往返一致 + 几何合法 | undo=1 redo=1
+PASS | colorbar 拖端点：长度变长 + clim 不变 + 往返一致 + 几何合法 | 长度 0.5000→0.5837 clim (0.0, 3.0)→(0.0, 3.0)
+PASS | teeth ② 撤销往返检测器活着（_restore_snap 失效 → ok2 变红） | clean=True bad=False
+PASS | teeth ②b 第 2 条腿（重做→历史末端）检测器活着（_redo_once 失效 → ok2 变红） | clean=True bad=False
+PASS | teeth ③ 松手落位检测器活着（落位被篡改 → ok3 变红） | clean=True bad=False
+PASS | teeth ④ 几何合法检测器活着（面板过小 → ok4 变红） | ok4=False
+PASS | teeth ① 不崩检测器活着（事件处理器抛异常 → ok1 变红） | ok1=False
+PASS | §t82① 影响面：拖 ax0 只改 ax0 的字段（画布不许动） | 越界改动 = []（允许：ax0） | undo=1 redo=1
+PASS | §t82①b 影响面：拖 ax1 只改 ax1 的字段 | 越界改动 = []（允许：ax1） | undo=1 redo=1
+PASS | §t82①c 影响面：**裸点击**（无拖拽）一个字段都不许变 | 越界改动 = []（允许：None） | undo=0 redo=0
+PASS | §t82①d 影响面：Ctrl+F 裁白边只许动画布 + 轴的 pos（位置跟着画布走） | 越界改动 = []（允许：canvas + canvas + 所有轴的 pos） | undo=1 redo=1
+PASS | §t82② 撤销完备性：拖拽序列撤销到底 ⇒ 参数**字节级**回到起点
+PASS | §t82②b 撤销完备性：拖拽 + 裁白边混合序列 ⇒ 同样字节级回到起点
+PASS | §t82③ 命中自洽（点哪中哪；独立 patch 几何判据）[polar+cb]
+PASS | §t82④ 可达性（每个可见对象都有记录在案的路径）[polar+cb]
+PASS | §t82③ 命中自洽（点哪中哪；独立 patch 几何判据）[imshow+cb]
+PASS | §t82④ 可达性（每个可见对象都有记录在案的路径）[imshow+cb]
+PASS | §t82③ 命中自洽（点哪中哪；独立 patch 几何判据）[cb_inside_polar]
+PASS | §t82④ 可达性（每个可见对象都有记录在案的路径）[cb_inside_polar]
+PASS | §t82⑤ 无死锁：手势后仍有逃生路径（Esc 后仍可用 / 不写脚本 / 可撤销）
+PASS | §t82⑥ 延迟预算（离屏 wall time，预算 700 ms p95；真机 blit/DPR 待真窗口）
+PASS | §t82①【有牙】拖拽时顺手改别的轴 ⇒ 影响面断言必红 | 越界改动 = [('ax3', 'pos')]（允许：ax0） | undo=1 redo=1
+PASS | §t82②【有牙】撤销不回放画布 ⇒ 撤销完备性（字节级）必红 | 手势抛异常 ValueError('not enough values to unpack (expected 4, got 2)')
+PASS | §t82⑤【有牙】手势后工具"僵住"（后续点击不再选中）⇒ 无死锁断言必红 | Esc 后仍能选中=False；手势没写任何 .py=True；可撤销步数=0
+PASS | §t82⑥【有牙】按**实测基线**注入 528ms（= 预算 − 基线 + 150）⇒ 延迟预算（p95）必红 | 基线 p50=287.7 ms p95=321.5 ms（预算 700 ms，6 次） ｜ 注入后 p50=1292.7 ms p95=1313.0 ms（预算 700 ms，6 次）
+PASS | §t71① 真实形状口径：极地图**圆**不包含外接矩形角点（patch 层），`_body_contains` 第二层才退到 window_extent 兜底 | patch 内含=False / _body_contains=True
+PASS | §t71② 拾取优先级（后加入者/面积小者优先）⇒ colorbar 中心第一候选 = colorbar | [1]
+PASS | §t71③ 点 colorbar 中心 ⇒ 选中 colorbar（边缘把手让位给真实形状命中） | [1]
+PASS | §t71④ Alt+点击穿透到下一层候选（colorbar 完全落在极地图内：colorbar → 极地图） | 候选=[1, 0] 点击后=[1] Alt 后=[0]
+PASS | §t71⑤ Tab 循环覆盖所有可见对象（含被压住的 colorbar） | [0, 1]
+PASS | §t71⑥【有牙】关掉"真实形状拾取"（改回只认外接矩形/边缘把手）⇒ §t82③ 命中自洽 + §t82④ 可达性**双双必红** | 命中自洽红=ax1 中心(750,440) 在真实几何内，但选中 [0] 可达性红=ax1（中心点击 + Alt+点击都选不中）
+PASS | §t92① 撤销到底后**逐字段**与起点一致（含 canvas.figsize_px/in）[拖拽] | 撤销 1 次后逐字段差异=[]；canvas(px,in)=[('figsize_px', None, None), ('figsize_in', None, None)]；字节相同=True
+PASS | §t92① 撤销到底后**逐字段**与起点一致（含 canvas.figsize_px/in）[拖拽+裁白边] | 撤销 2 次后逐字段差异=[]；canvas(px,in)=[('figsize_px', None, None), ('figsize_in', None, None)]；字节相同=True
+PASS | §t92① 撤销到底后**逐字段**与起点一致（含 canvas.figsize_px/in）[多操作混合] | 撤销 3 次后逐字段差异=[]；canvas(px,in)=[('figsize_px', None, None), ('figsize_in', None, None)]；字节相同=True
+PASS | §t92②【有牙】把 `figsize_px` 的还原去掉（只还原英寸）⇒ §t92① 逐字段断言必红 | 撤销 2 次后逐字段差异=[('canvas', 'figsize_px')]；canvas(px,in)=[('figsize_px', None, None), ('figsize_in', None, None)]；字节相同=False
+PASS | §t101①a 按下 ⇒ 进入拖动（蓝框挂上，位置未变） | drag=True frame=[0.07, 0.55, 0.4, 0.38] pos=[0.07, 0.55, 0.4, 0.38]
+PASS | §t101①b 带按键的 motion 照常跟手（判据不许提前收尾） | drag=True 位移 ok=True 蓝框=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38]
+PASS | §t101①c **当次 motion 内**拖动已结束（不等 button_release） | drag=False ax=None
+PASS | §t101①d 面板落在"键丢失那一下"之前的位置（无按键的 motion 不再跟手） | p1=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38] p2=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38] 蓝框=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38]
+PASS | §t101①e 收尾后再怎么动，蓝框/面板一个像素都不动 | now=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38] 蓝框=[0.11444444444444446, 0.5785714285714286, 0.4, 0.38]
+PASS | §t101② 老形态 motion（不表达按键）⇒ 拖动照旧，不许自愈 | drag=True capable=False
+PASS | §t101②b 真松手照旧收尾（自愈没抢掉正常路径） | drag=False
+PASS | §t101③ 无按键史的 hover 序列不误触发（状态与布局都不动） | pos=[0.07, 0.55, 0.4, 0.38]
+PASS | §t101④ 离画布兜底（确证没键按着）⇒ 收尾 | drag=False
+PASS | §t101④ 离画布兜底（确证还按着）⇒ 不打断 | drag=True
+PASS | §t101④ 离画布兜底（问不出来（Tk/Agg/无 Qt））⇒ 不打断 | drag=True
+PASS | §t101④d 没在拖动时离开画布 ⇒ 无事发生（不抛异常、不改布局）
+PASS | §t101⑤ 离屏 Agg 画布 `_mouse_buttons_down` 返回 None（判不了就不动） | None
+PASS | §t101⑥ zh / en 两臂都自愈成功，且 stdout/stderr 零输出（无新增文案）
+PASS | §t101⑦【有牙】把自愈分支关掉 ⇒ "当次 motion 内结束"必红（这里仍挂着拖动） | _drag=True
+PASS | §t101⑦b【有牙】把"确证没键按着"改坏（永远 True）⇒ ④ 的收尾断言必红 | _drag=True
+PASS | hypothesis 任意乱序手势：不崩/往返/几何（不验落位） | 7s
+PASS | hypothesis 完整拖拽序列：不崩/往返/落位/几何（全验） | 22s
+ALL PASS
+
+[rc=0]  102.6s

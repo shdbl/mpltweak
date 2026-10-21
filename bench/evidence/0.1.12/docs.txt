@@ -1,0 +1,92 @@
+$ D:\Miniconda\envs\longxia\python.exe tests/test_docs.py
+文档锚点 / 相对链接回归网（0.1.10）
+范围：仓库全部 *.md（跳过 .git / 缓存 / 临时目录）；纯文本、零网络、围栏内不校验
+
+---- slug 自证（固定用例，含 t32 的真实实例）----
+OK | slug(`4. 安装 + 快速开始`) == #4-安装--快速开始 | 实得 #4-安装--快速开始
+OK | slug(`11. 执行边界：哪些命令会跑你的脚本`) == #11-执行边界哪些命令会跑你的脚本 | 实得 #11-执行边界哪些命令会跑你的脚本
+OK | slug(`1. 它解决什么问题`) == #1-它解决什么问题 | 实得 #1-它解决什么问题
+OK | slug(`12. 你这个脚本能帮上吗？两个问题`) == #12-你这个脚本能帮上吗两个问题 | 实得 #12-你这个脚本能帮上吗两个问题
+OK | slug(`原位改数字，还是插入调整块`) == #原位改数字还是插入调整块 | 实得 #原位改数字还是插入调整块
+OK | slug(`不适用场景（先说清楚）`) == #不适用场景先说清楚 | 实得 #不适用场景先说清楚
+OK | slug(`License`) == #license | 实得 #license
+OK | slug(`5-minute quick start`) == #5-minute-quick-start | 实得 #5-minute-quick-start
+OK | slug(`Execution boundaries: which commands r`) == #execution-boundaries-which-commands-run-your-script | 实得 #execution-boundaries-which-commands-run-your-script
+OK | slug(`When it does not apply (up front)`) == #when-it-does-not-apply-up-front | 实得 #when-it-does-not-apply-up-front
+OK | slug(`Can it help with your script? Two ques`) == #can-it-help-with-your-script-two-questions | 实得 #can-it-help-with-your-script-two-questions
+---- 真仓库：17 个 *.md / 185 个标题 ----
+（② 的反验即"下列锚点必须 0 处解析失败"；失败清单会逐条打印）
+（⑤ 自仓 URL 判据：owner/repo = shdbl/mpltweak，默认分支 = main；读不到 pyproject.toml 时该项自动跳过）
+OK | ① 文件内锚点：全部命中同文件标题 —— 实得 0 处
+OK | ② 相对链接：目标文件全部存在 —— 实得 0 处
+OK | ③ 相对图片：全部存在（http(s) 一律跳过、零网络） —— 实得 0 处
+OK | ④ 外部链接：格式全部合法（不查可达性） —— 实得 0 处
+OK | ⑤ 自仓 URL：blob/tree 目标全部存在（只认自仓 + main 分支） —— 实得 0 处
+OK | R1 被链接引用的标题：无歧义字符（零容忍） —— 实得 0 处
+OK | R2 新增歧义标题：无（基线之外的都算新增） —— 实得 0 处
+OK | ⑥ 表格列数自洽（转义感知 `\|`；扫描 17 份 *.md + MAINTENANCE.md）—— 实得 0 处
+OK | ⑥ 覆盖钉：确实识别到表格（70 个表块 / 18 份文件，扫描面完整） | 表块 70 / 文件 18（期望 18）
+OK | ⑦ 测试表每行都必须含 `evidence-*` 链接（识别到的测试行 16 行；扫描 17 份 *.md + MAINTENANCE.md）—— 实得 0 处
+OK | ⑦ 覆盖钉：确实识别到测试行（16 行 > 0） | 测试行 16（期望 > 0）
+OK | README 覆盖钉：两份 README 都在扫描面内、且其链接确实被校验（README.en.md=22 条、README.md=22 条） | 缺失文件 []
+---- R2 冻结基线：20 条（只拦新增；某条已不复存在时请从 AMBIG_BASELINE 删掉）----
+     CHANGELOG.md  0.1.9 · 详细修复台账（技术细节）
+     CHANGELOG.md  [0.1.0] — 2026-10-09
+     CHANGELOG.md  [0.1.1] — 2026-10-09
+     CHANGELOG.md  [0.1.2] — 2026-10-09
+     CHANGELOG.md  [0.1.3] — 2026-10-09
+     CHANGELOG.md  [0.1.4] — 2026-10-09（**已发布到 PyPI**）
+     CHANGELOG.md  [0.1.5] — 2026-10-09
+     CHANGELOG.md  [0.1.6] — 2026-10-09
+     CHANGELOG.md  [0.1.7] — 2026-10-10
+     CHANGELOG.md  [0.1.8] — 2026-10-10
+     CHANGELOG.md  修复 · CLI / API / MCP
+     CHANGELOG.md  修复 · GUI
+     CHANGELOG.md  修复 · 写回引擎
+     CHANGELOG.md  修复 · 第三波：退块判据改逐字段三态
+     CHANGELOG.md  修复 · 第二波（L0 复测暴露）
+     CHANGELOG.md  修复 · 第五波
+     CHANGELOG.md  修复 · 第四波：多图 stale + 验证链诚实 + 块锚点硬约束 + 刻度字号分列 + 新开关 --keep-unverified
+     CHANGELOG.md  文档 · 推广
+     docs/agent.md  也可以接进 AI 客户端（MCP）——**可选适配层**
+     skills/mpltweak/SKILL.md  mpltweak —— 交互式调图闭环
+OK | R2 基线已装载（20 条；失效条目只提示、不判红 —— 与 hygiene BASELINE 同语义） | 失效 0 条
+---- teeth：合成样例注入已知错误 ----
+OK | teeth⓪ 干净样例必须 0 问题（防"恒红"与"恒绿"两种假象） | 实得 {'anchor': 0, 'rel': 0, 'img': 0, 'ext': 0}
+OK | teeth① 断锚点必须被报出 | 实得 ['a.md:3  文件内锚点 `#nope` 在本文件找不到对应标题（x）']
+OK | teeth② 不存在的相对链接必须被报出 | 实得 ['a.md:3  相对链接目标不存在 `docs/nope.md`（x）']
+OK | teeth③ 不存在的相对图片必须被报出 | 实得 ['a.md:3  相对图片目标不存在 `pics/nope.png`（i）']
+OK | teeth④ 跨文档断锚点必须被报出（文件存在、slug 不存在） | 实得 anchor=['a.md:3  跨文档锚点 `b.md#nope` 在 `b.md` 里找不到对应标题（x）'] rel=[]
+OK | teeth⑤ 坏外链格式必须被报出（只查格式、零网络） | 实得 ['a.md:3  外部链接格式可疑 `http://nodot`（x）']
+OK | teeth⑥ R1：被链接引用的歧义标题必须报红（并在条目里标【R1】） | 实得 ['a.md:1  【R1】被链接引用的标题含歧义字符：`修复 · GUI`（MIDDLE DOT(U+00B7)）']
+OK | teeth⑦ R2：新增歧义标题（未被引用、不在基线）必须报红（标【R2】） | 实得 ['a.md:1  【R2】新增歧义标题（不在冻结基线里）：`修复 · GUI`（MIDDLE DOT(U+00B7)）']
+OK | teeth⑧ R1 优先于 R2：同时命中时只报 R1（基线豁免不了被引用的标题） | ambig_linked=1 ambig_new=0
+OK | teeth⑨ 失效基线条目必须被报出（提示删除，不判红） | 实得 [('a.md', '不存在 · 标题')]
+OK | teeth⑩ 围栏内不校验是**刻意的开关**：跳过=0 问题、不跳过=2 处问题 | skip=(0, 0) noskip=(1, 1)
+OK | teeth⑪ ⑤ 自仓 URL 指向不存在的文件必须报出（且不再只是"格式合法"） | 实得 selflink=['README.md:3  自仓文件链接目标不存在 `https://github.com/shdbl/mpltweak/blob/main/docs/nope.md`（x）'] ext=[]
+OK | teeth⑫ ⑤ 自仓 URL 目标存在时必须**不报**（防"恒红"） | 实得 selflink=[] ext=[]
+OK | teeth⑬ ⑤ 误报守卫：**别的分支**的自仓 URL 必须不报（本地没那个分支） | 实得 selflink=[] ext=[]
+OK | teeth⑭ ⑤ 误报守卫：**别人的仓库** URL 必须不报（只查格式，交给 ④） | 实得 selflink=[] ext=[]
+OK | teeth⑮ ⑤ 自仓 URL 的 `#锚点` 必须按目标文件标题校验（断锚点报出、文件存在不报 rel） | 实得 anchor=['README.md:3  自仓 URL 锚点 `https://github.com/shdbl/mpltweak/blob/main/docs/b.md#nope` 在 `docs/b.md` 里找不到对应标题（x）'] selflink=[]
+OK | teeth⑯ ⑤ `tree/<dir>` 查目录：存在的目录不报、不存在的目录报出 | ok=[] bad=['README.md:3  自仓目录链接目标不存在 `https://github.com/shdbl/mpltweak/tree/main/docs/nope`（x）']
+OK | teeth17 ⑥ 假阳性守卫：`\|Δ\|` / `\|G2−G0\|∞` 里的 `\|` 是字面竖线，必须算**同一格内**（转义感知 = 3 格 ⇒ 0 问题） | 实得 []
+OK | teeth18 ⑥ 反向：同一段文本用**朴素 split** 必须误报（证明转义感知是承重的） | 朴素实得 2 处：['a.md:5  表格列数不符（表头第 3 行 = 3 格 / 本行 = 5 格）| d\\|Δ\\| | x | y |']
+OK | teeth19 ⑥ 真缺陷必须报出，且点名 文件:行号 + 表头格数 + 本行格数 | 实得 ['a.md:5  表格列数不符（表头第 3 行 = 3 格 / 本行 = 2 格）| 只有两格 | x |']
+OK | teeth20 ⑥ 分隔行格数不符也要报（带【分隔行】标注） | 实得 ['a.md:4  表格列数不符（表头第 3 行 = 3 格 / 本行 = 2 格）【分隔行】|---|---|']
+OK | teeth21 ⑥ 围栏内的"表样"文本不校验（与 ①~⑤ 同一个开关） | 实得 []
+OK | teeth22 ⑥ 奇数反斜杠 = 字面竖线（不切），偶数反斜杠 = 真定界符（要切）—— 故不用 `(?<!\\)\|` | 实得 ['a.md:6  表格列数不符（表头第 3 行 = 2 格 / 本行 = 3 格）| p\\\\|q | r |']
+OK | teeth23 ⑥ table_count 能数出表块（防"一个表都没识别到"的恒绿） | 有表=1 / 无表=0
+OK | teeth24 ⑦ 测试行没有 `evidence-*` 链接必须报出，且点名 文件:行号 | 实得 ['a.md:5  测试行缺 `evidence-*` 证据链接（表头第 3 行）| ① | **测的是**：能不能原位落进源码；427 / 427 |']
+OK | teeth25 ⑦ 误报守卫：带 `evidence-*` 链接的同一行必须**不报**（防"恒红"） | 实得 []
+OK | teeth26 ⑦ 误报守卫：**非测试行**（无 `**测的是**` 标记，如出处表 / 分母表）即使没有链接也不报 | 实得 []
+OK | teeth27 ⑦ 围栏内的"表样"文本不校验（与 ①~⑥ 同一个开关） | 实得 []
+OK | teeth28 ⑦ 白名单通道真的生效：登记进基线的行被豁免（判据本身不放宽） | 无基线 1 处 / 带基线 0 处
+---- 反向验证（把判据弄坏就必须变红）----
+OK | 反向① 把 slug() 换成"只小写"的坏实现 ⇒ 真仓库断锚点数必须 > 0（当前 12 处） | 坏实现 12 处 / 正确实现 0 处
+OK | 反向② 把 R2 基线清空 ⇒ 必须多报出全部 20 条冻结基线（严格多于带基线时的报出数） | 清空基线 20 处 / 恢复基线 0 处 / 基线条数 20
+OK | 反向③ ⑥ 对真仓库：转义感知 = 0 处；换成朴素 split 必须误报 > 0 处（证明"转义感知"确实在挡假阳性，且这条判据不是恒绿） | 转义感知 0 处 / 朴素 4 处
+OK | 反向④ ⑦ 对真仓库：按标记认测试行 = 0 处；放宽成"所有数据行都要链接"必须误报 > 0 处（证明"只认测试行"确实在挡假阳性、且这条判据不是恒绿） | 按标记 0 处 / 一刀切 296 处
+
+ALL PASS
+
+[rc=0]  0.3s

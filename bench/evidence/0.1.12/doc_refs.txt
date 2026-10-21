@@ -1,0 +1,50 @@
+$ D:\Miniconda\envs\longxia\python.exe tools/check_doc_refs.py
+文档引用检查（只报告）：root=D:\Agent\deepseek\mpltweak
+扫描面：docs/**/*.md、README*.md、skills/**/*.md
+
+   docs\boundaries.md:21 | writeback.py:4527 | container = None
+   docs\boundaries.md:21 | verify.py:829-836 | matplotlib.use('Agg')
+   docs\boundaries.md:32 | launch.py:815 | runpy.run_path(script, run_name='__main__')
+   docs\boundaries.md:32 | launch.py:154-162 | import matplotlib
+   docs\consistency-ledger.md:36 | toolbox.py:1697-1753 | self._bg = None            # 画布尺寸变了，缓存背景必须失效重抓
+   docs\exec-boundaries.md:19 | writeback.py:3041 | 宁可不认（回退保守路径），也不要拿别的轴的刻度当本轴的现值。
+   docs\exec-boundaries.md:37 | launch.py:471-487 | """收尾清理：删掉**本轮新产生且未改动**的参数文件 + 全部 ``.lock``。
+   docs\exec-boundaries.md:37 | toolbox.py:1327 | return [x0, y0, w, h + STEP]
+   docs\exec-boundaries.md:37 | writeback.py:4394 | continue
+   docs\exec-boundaries.md:37 | apply.py:418 | * 其余（语义未判定/没跑）→ "；已重跑验证" —— **不许**说"图已更新"，
+   docs\exec-boundaries.md:37 | writeback.py:2387-2394 | """
+   docs\exec-boundaries.md:44 | verify.py:1104 | proc = subprocess.run(cmd, env=_child_env(), stdout=subprocess.DEVNULL,
+   docs\exec-boundaries.md:44 | writeback.py:4531 | unpack = (_unpack_axis_names(tree, container, nr * nc)
+   docs\exec-boundaries.md:45 | launch.py:815 | runpy.run_path(script, run_name='__main__')
+   docs\exec-boundaries.md:45 | launch.py:816 | except SystemExit:
+   docs\exec-boundaries.md:51 | launch.py:471-487 | """收尾清理：删掉**本轮新产生且未改动**的参数文件 + 全部 ``.lock``。
+   docs\exec-boundaries.md:51 | toolbox.py:1327 | return [x0, y0, w, h + STEP]
+   docs\exec-boundaries.md:51 | writeback.py:4394 | continue
+   docs\exec-boundaries.md:51 | apply.py:418 | * 其余（语义未判定/没跑）→ "；已重跑验证" —— **不许**说"图已更新"，
+   docs\exec-boundaries.md:51 | writeback.py:2387-2394 | """
+   docs\exec-boundaries.md:52 | verify.py:1091 | fd, out_path = tempfile.mkstemp(prefix='mpltweak_state_', suffix='.json')
+   docs\exec-boundaries.md:52 | verify.py:1107-1119 | _unlink(out_path)
+   docs\exec-boundaries.md:53 | launch.py:207-211 | 默认 ``~/.mpltweak/tk_hint_shown``；``MPLTWEAK_HOME`` 可改这个家目录
+   docs\exec-boundaries.md:106 | writeback.py:3041 | 宁可不认（回退保守路径），也不要拿别的轴的刻度当本轴的现值。
+   docs\exec-boundaries.md:125 | apply.py:744-746 | ap.add_argument('--dry-run', action='store_true',
+   docs\exec-boundaries.md:149 | apply.py:717 | '用前请先提交到版本控制')
+   docs\params.md:110 | writeback.py:4376 | if nrows * ncols == 1:
+   docs\params.md:110 | writeback.py:4306 | sites = _func_call_sites(tree, scope.name)
+   docs\params.md:111 | writeback.py:4010 | and not re.search(_BLOCK_MARKERS_FIG[field], block):
+   docs\reliability.md:396 | tests/sandbox/sitecustomize.py:42 | _ROOT = os.environ.get('MPLTWEAK_SANDBOX_ROOT')
+   docs\reliability.md:396 | tests/sandbox/sandbox_env.py:52 | env['MPLTWEAK_SANDBOX_ROOT'] = os.path.abspath(playground_root)
+   docs\verify.md:10 | writeback.py:4513 | elif names:
+   docs\verify.md:20 | verify.py:829-836 | matplotlib.use('Agg')
+   docs\verify.md:56 | writeback.py:2266 | elif field == 'spines':
+   docs\verify.md:75 | writeback.py:2291 | for kw in node.keywords:
+   docs\verify.md:76 | revert.py:158-176 | sys.stderr.write(_msg.t_ui('[revert] 找不到脚本: %s\n') % script)
+   docs\verify.md:166 | writeback.py:3041 | 宁可不认（回退保守路径），也不要拿别的轴的刻度当本轴的现值。
+   docs\verify.md:166 | writeback.py:3179 | return str(ev) != str(av)
+   skills\mpltweak\SKILL.md:111 | apply.py:754 | ap.add_argument('--lang', default=None, choices=('auto', 'zh', 'en'),
+   skills\mpltweak\SKILL.md:111 | describe.py:110 | ap.add_argument('--lang', choices=('auto', 'zh', 'en'), default='auto',
+   skills\mpltweak\SKILL.md:111 | check.py:570 | ap.add_argument('--lang', choices=('auto', 'zh', 'en'), default='auto',
+
+引用条数=41 可疑=0 放行（历史留痕）=0
+[OK] 没有"解析不到 / 越界 / 空行"的引用。注意：行号在范围内但指错函数的，本工具判不出来，仍需人工过目上面每一行。
+
+[rc=0]  1.0s
