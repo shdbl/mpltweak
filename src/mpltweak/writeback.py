@@ -36,6 +36,34 @@ mpltweak.writeback —— AST 确定性写回（零 LLM 路径）
 
 失败可预期：结构无法确定时返回结构化失败码（no_fig / fail），绝不静默写错。
 mappable 走结构兜底时给出 best_effort 警告，由人工确认。
+
+快速导航（分区名 → 这一段管什么；**行号看文件末尾的自动索引块**，块由
+``python tools/gen_nav.py --write`` 生成、``--check`` 校验，别手改）
+---------------------------------------------------------------------
+  §1  文件头、结果码与常量表               结果码 / 调整块哨兵 / 建图与 dpi 名单
+  §2  参数取值与字面量、脚本基本定位         _num/_axis_items；找 fig 变量 / 锚点 / savefig
+  §3  AST 基础工具与「坏参数」越界判据       父节点表、语句提升、axes/figure 越界
+  §4  figure dpi 静态推断与 figsize 交叉校验 §25.18 止损：静态推断 dpi 的三条边界
+  §5  脚本结构：figure / 轴 / 循环与变量映射  数图、轴变量、mappable、循环守卫
+  §6  figsize 原位替换与「已经是对的」证明    改 `figsize=` 字面量前先证明它真不一致
+  §7  调用定位                             找 set_title / tick_params 这类调用节点
+  §8  缺参补全（A2）                       源码里已有该字段的调用、只是没带参数
+  §9  图区间与建轴枚举                     第 N 张图的源码区间 / 它辖下建了哪些轴
+  §10 原位写回：apply_inplace              直接改原代码里的数字（不插块）
+  §11 「已经是这个值」的静态证明             字号 / rcParams / cmap / legend / pos
+  §12 备份                                 固定名 .tweak.bak / pid 副本 / 裁剪
+  §13 并发锁与原子写                        同一脚本互斥 + 写完不半截
+  §14 外部改动检测                         落盘前的 sha256 指纹校验（别覆盖别人的改动）
+  §15 语义比对：参数值 vs 实测值             「原位写不了」的字段到底有没有差别
+  §16 原位写回主流程                        改数字 → 备份 → 写盘 → Agg + 语义验证
+  §17 调整块：字段需求与「块表达不了」清单    哪些字段必须进块、哪些块里没写法
+  §18 调整块：mappable 引用、作用域与锚点下沉   函数里 return fig 的锚点下沉（A1）
+  §19 调整块：pyplot 定位可证与目标表达式表    plt.gcf() / plt.figure(n) 什么时候可证
+  §20 调整块生成：render_block              参数 → 纯 matplotlib 代码文本
+  §21 调整块插入 / 替换                      幂等哨兵、缩进对齐、时间戳归一
+  §22 验证：无头重跑与一遍式验证             exit 0 之外还要证明「改动真的生效」
+  §23 写回入口：writeback                   两条路径的唯一入口（校验 → 分派 → 收尾）
+
 """
 
 from __future__ import annotations
@@ -63,6 +91,8 @@ from . import verify as _verify
 # **必须语言无关**：哨兵同时是"识别旧块、整体替换"的锚点。若让它跟随系统语言，
 # 中文系统写一次、英文系统再写一次就认不出旧块 → 堆两个块互相打架。
 # 语言相关的那句说明写在哨兵**下面**，随便变都不影响识别。
+# ==== §1 文件头、结果码与常量表 ====
+
 BLOCK_START = '# ===== auto layout (generated) - do not edit inside ====='
 BLOCK_END = '# ===== end auto layout ====='
 # 旧版中文哨兵（0.1.x 已发布，用户脚本里可能已有）必须继续认，否则会被当成
@@ -134,10 +164,57 @@ MAPPABLE_FACTORIES = ('contourf', 'pcolormesh', 'imshow', 'contour',
                       'scatter', 'bar', 'tripcolor', 'quiver', 'streamplot')
 SAVE_ANCHORS = ('savefig', 'show')
 
+# ---------------------- dpi 静态提取的两个名单 ----------------------------
+# （P0-1 止损**误伤**修复，t103 / MAINTENANCE §25.18；用户侧现场见那里的复现）
+#
+# **白名单**：只有这些调用名上的 ``dpi=`` 才是"这张图的**画布** dpi"。
+#   `figure` / `subplots` / `subplot_mosaic` = `plt.*` 的建图入口（`dpi=` 直接写进
+#   figure）；`Figure` = OO 风格的同义写法（`Figure(figsize=..., dpi=...)`，裸名来自
+#   `from matplotlib.figure import Figure`，或是 `matplotlib.figure.Figure` 的属性链）。
+# **为什么必须按函数名白名单、不能像旧实现那样"任何调用上出现 dpi= 就收"**：
+#   `fig.savefig('x.png', dpi=300)` 是最常见的论文写法（L0 语料 16,126 份里 1,629 份
+#   带它），而 savefig 的 dpi 是**出图像素**、与画布 dpi 无关。旧实现把它当画布 dpi ⇒
+#   `_figsize_inconsistent` 把 `subplots(figsize=(12, 7))` + `savefig(dpi=300)` 判成
+#   "12 in 该是 4 in，差成倍" ⇒ 写回被拒（reason=bad_params / rc=2 / 一个字节不动），
+#   而**预览**（不带 --write）根本不走这条守卫 ⇒ 用户看到"预览正常、一写就报错"。
+#   语料影响面：1,495 份（9.3%）落这个陷阱 —— 这是本版（0.1.13）唯一新增的放行行为。
+DPI_FACTORY_NAMES = FIG_FACTORIES + ('Figure',)
+# ^ 建图名单直接复用 `count_figures` 那份（`FIG_FACTORIES`），dpi 口径就跟着"引擎认定的
+#   建图调用"走，不另立第二份；`Figure` 只在 dpi 这里加：OO 写法是**裸名调用**
+#   `Figure(...)`，而 `count_figures` 是按 `func.attr` 匹配的（Name 没有 attr），
+#   加进 `FIG_FACTORIES` 会把数图逻辑弄错。
+# **黑名单**：这些调用的 ``dpi=`` 是**出图像素 / 画布物理拷贝**口径，不是 figure dpi。
+#   写在这里（而不是只靠"白名单没列它"）是为了让"为什么这个 dpi 不能收"在代码里可读：
+#   将来若有人想"顺手把 dpi 全收回来"，会先撞见这份名单和上面那段现场。名单之外，
+#   认不出名字的调用（`obj.cfg(dpi=300)` 之类）也一律不收 —— 宁可退回设计口径 100，
+#   也不把出图 dpi 当成画布 dpi 去判"参数自相矛盾"。
+DPI_OUTPUT_NAMES = ('savefig', 'savefigv', 'imsave', 'imread',
+                    'print_figure', 'print_png', 'print_svg', 'print_pdf')
+
+# ---------------------- dpi 静态推断的**三条边界**（t104 / 第二批） -----------
+# `_script_dpi` 推断的是**运行期**概念（"这张图"实际多少 dpi），手上却只有**静态**信息。
+# 三条边界越过去，判据就从"看得见的矛盾"变成"猜出来的矛盾"；一猜错就是**误拒**（用户
+# 预览正常、一写就报 bad_params，§25.18 同款现场）。所以三条边界一律按
+# **"判不出 ⇒ 放行 + 在 warnings 里如实说'本次未做换算校验'"** 处理：
+#   1) **多图不同 dpi**：脚本里有 ≥2 个不同的 figure dpi 写法时，"本图当年写的是哪个"
+#      静态看不出来（`fig_index` 只说第几张图，不说它的 dpi）；旧实现"最后一个赢"。
+#      注意 `fig.subplots(2, 2)` 是**建轴**不是建图（t36/t51 同一条判据），
+#      `Figure(...)` 在 AST 里是 `ast.Name`（裸名）而不是 `ast.Attribute`。
+#   2) **非 figure 的 `.dpi =`**：`.dpi` 这个名字太通用（`self.dpi` / `canvas.dpi` /
+#      某个配置对象的 dpi），旧实现**谁写的都收**；只有接收者**可证是 Figure 变量**
+#      时才认（复用 `_fig_receiver_names` + `Figure(...)` / `plt.gcf()` 赋值）。
+#   3) **控制流里的 dpi 写法**：`if/for/while/with/try` 的 body 走没走只有运行期知道
+#      （`if cond: rcParams['figure.dpi'] = 120 else: 150` 静态看是"两个值"）。
+# 宁可漏拦，不可误伤：判不出时**不拦**，但绝不假装"查过了"（必须留 warnings）。
+_DPI_CTRL_NODES = (ast.If, ast.For, ast.AsyncFor, ast.While,
+                   ast.With, ast.AsyncWith, ast.Try)
+
 
 # --------------------------------------------------------------------------
 # 数值格式化（与 apply 的打印口径一致）
 # --------------------------------------------------------------------------
+# ==== §2 参数取值与字面量、脚本基本定位 ====
+
 def _num(v):
     try:
         f = float(v)
@@ -299,6 +376,8 @@ _STMT_TYPES = (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.If,
                ast.Import, ast.ImportFrom, ast.FunctionDef, ast.ClassDef)
 
 
+# ==== §3 AST 基础工具与「坏参数」越界判据 ====
+
 def _parent_map(tree):
     """{id(子节点): 父节点} —— 一次 ast.walk 建好，供"提升到语句"用。"""
     parents = {}
@@ -419,34 +498,300 @@ def _fig_index_beyond(tree, data) -> str:
     return ''
 
 
+# ==== §4 figure dpi 静态推断与 figsize 交叉校验 ====
+
+def _call_leaf(call) -> str:
+    '''调用的**叶子名**：``plt.subplots(...)``→``'subplots'``、``Figure(...)``→
+    ``'Figure'``；认不出（``f()[0](...)``、``(lambda: 0)()``）→ ``''``。'''
+    fn = call.func
+    if isinstance(fn, ast.Attribute):
+        return fn.attr
+    if isinstance(fn, ast.Name):
+        return fn.id
+    return ''
+
+
+def _num_const(node):
+    '''AST 字面数字 → ``float``；不是**字面**数字 → ``None``。
+
+    ``200`` / ``200.0`` 算；``True``（bool 在 Python 里是 int）、变量名 ``dpi``、
+    表达式 ``2 * 100``、``**kwargs`` 展开都不算 —— 静态看不出来就退回设计口径 100，
+    不做"猜"。
+    '''
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) \
+            and not isinstance(node.value, bool):
+        return float(node.value)
+    return None
+
+
+def _dpi_parents(tree):
+    '''``{子节点: 父节点}``（判"这条语句在不在控制流 body 里"要用）。'''
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
+def _dpi_in_control_flow(node, parents) -> bool:
+    '''``node`` 是否落在 ``if/for/while/with/try`` 的 body 里（含嵌套、含函数体内）。'''
+    p = parents.get(node)
+    while p is not None:
+        if isinstance(p, _DPI_CTRL_NODES):
+            return True
+        p = parents.get(p)
+    return False
+
+
+def _fig_var_names_for_dpi(tree):
+    '''**可证是 Figure** 的变量名（``.dpi =`` / ``set_dpi(...)`` 只认这些接收者）。
+
+    直接复用引擎既有的 ``_fig_receiver_names``（``fig = plt.figure(...)``、
+    ``fig, axs = plt.subplots(...)`` 的 fig，t10），再补它不管的两种写法：
+    ``fig = Figure(...)``（OO 裸名，AST 里是 ``ast.Name``）与 ``fig = plt.gcf()``。
+    证不出的接收者（``self.fig``、``canvas``、函数返回值）**一律不认** —— 见文件顶部
+    边界 2。
+    '''
+    names = set(_fig_receiver_names(tree))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and node.targets):
+            continue
+        fn = node.value.func
+        leaf = fn.id if isinstance(fn, ast.Name) else getattr(fn, 'attr', None)
+        if leaf in ('Figure', 'gcf'):
+            names.update(_iter_assign_names(node.targets[0]))
+    return names
+
+
+def _dpi_kw_state(call):
+    '''调用上的 ``dpi=`` → ``(给了 dpi, 字面值)``；值 ``None`` = 给了但不是字面量。'''
+    for kw in call.keywords:
+        if kw.arg == 'dpi':
+            return True, _num_const(kw.value)
+        if kw.arg is None:              # `**opts`：可能带着 dpi，静态看不出来
+            return True, None
+    return False, None
+
+
+def _dpi_vote_call(call, fig_names):
+    '''一个**调用**给出的 figure dpi 证据（T1 的收窄口径 + T9 的三条边界）。
+
+    返回 ``('known', 值, 来源)`` / ``('unknown', None, 来源)``（是 dpi 写法、但值静态
+    求不出来）/ ``None``（与 figure dpi 无关）。口径 = T1 收窄的那一组：建图白名单
+    （``DPI_FACTORY_NAMES``）的 ``dpi=``、``fig.set_dpi(...)``、``plt.rc('figure',
+    dpi=)`` / ``plt.rc('figure.dpi', N)``；``DPI_OUTPUT_NAMES``（savefig / imsave /
+    imread / print_*）以及其余调用的 ``dpi=`` 一律不收。``来源`` 的理由见下。
+    '''
+    name = _call_leaf(call)
+    if name in DPI_OUTPUT_NAMES:
+        return None
+    if name in DPI_FACTORY_NAMES:
+        # 边界 1 的一半：`fig.subplots(2, 2)` 是"在这张图上建轴"、不是新图（t36/t51 判据）
+        if name == 'subplots' and _is_axes_on_existing_figure(call, fig_names):
+            return None
+        has, v = _dpi_kw_state(call)
+        if not has:
+            # **没写 dpi= 的建图调用也要记一条**：它的画布 dpi 就是默认 100
+            # （`params.py` 的设计口径）。"一张图显式 200、另一张默认 100"正是 HIGH-1
+            # 那个多图现场 —— 少记这条就只剩一个值，判据又退回"最后一个赢"。
+            return ('known', 100.0, 'factory')
+        return ('known', v, 'factory') if v is not None else ('unknown', None, 'factory')
+    if name == 'set_dpi':
+        # `fig.set_dpi(200)` / `fig.set_dpi(dpi=200)`：接收者认不出（`self.set_dpi(...)`)
+        # 时仍旧收 —— set_dpi 这个名字在 matplotlib 里就是 Figure 的 dpi setter，
+        # 比 `.dpi` 的属性访问窄得多（边界 2 只针对 `.dpi =`）。
+        if call.args:
+            v = _num_const(call.args[0])
+        else:
+            _, v = _dpi_kw_state(call)
+        return ('known', v, 'setter') if v is not None else ('unknown', None, 'setter')
+    if name == 'rc':
+        first = call.args[0] if call.args else None
+        if isinstance(first, ast.Constant) and first.value == 'figure':
+            has, v = _dpi_kw_state(call)
+            if not has:
+                return None
+            return ('known', v, 'setter') if v is not None else ('unknown', None, 'setter')
+        # `plt.rc('figure.dpi', 200)`：同一件事的点号写法（值在第二个位置参数上）
+        if isinstance(first, ast.Constant) and first.value == 'figure.dpi':
+            if len(call.args) > 1:
+                v = _num_const(call.args[1])
+                return ('known', v, 'setter') if v is not None else ('unknown', None, 'setter')
+    return None
+
+
+def _dpi_vote_assign(assign, fig_names):
+    '''一个**赋值**给出的 figure dpi 证据（口径同 :func:`_dpi_vote_call`）。
+
+    边界 2：``X.dpi = N`` 只在 ``X`` 是**可证 figure 变量**时才算 figure dpi；
+    其它接收者（``self.dpi`` / ``canvas.dpi`` / 配置对象）→ ``None``（当它不存在，
+    不是"未知"：它本来就不是这张图的 dpi）。
+    '''
+    value = assign.value
+    for t in assign.targets:
+        if isinstance(t, ast.Attribute) and t.attr == 'dpi':
+            if not (isinstance(t.value, ast.Name) and t.value.id in fig_names):
+                continue
+            v = _num_const(value)
+            return (('known', v, 'setter') if v is not None
+                    else ('unknown', None, 'setter'))
+        if isinstance(t, ast.Subscript) and isinstance(t.value, ast.Attribute) \
+                and t.value.attr == 'rcParams':
+            sl = t.slice
+            if isinstance(sl, ast.Constant) and sl.value == 'figure.dpi':
+                v = _num_const(value)
+                return (('known', v, 'setter') if v is not None
+                        else ('unknown', None, 'setter'))
+    return None
+
+
+def _script_dpi_vote(tree):
+    '''静态推断 figure dpi → ``(dpi, why)``；**``why`` 非空 ⇒ 判不出**（``dpi is None``）。
+
+    三条边界（见文件顶部 ``_DPI_CTRL_NODES`` 上面的注释）踩到任何一条都算判不出：
+      * 收到 ≥2 个**不同**的字面值（多图各自不同 dpi）→ ``dpi sites differ: 100, 200``；
+      * 有 dpi 写法但值是表达式（``dpi=DPI`` / ``fig.set_dpi(cfg)``）→ 值不知道；
+      * dpi **赋值**落在 ``if/for/while/with/try`` 的 body 里 → 走没走不知道。
+    ``why`` 是**纯 ASCII 的细节**（中文说明在 :func:`_figsize_skip_note` 的模板里，
+    §98 棘轮要求 writeback.py 的每条中文模板都进 ``messages.WB_ZH_TO_EN``）。
+    '''
+    fig_names = _fig_var_names_for_dpi(tree)
+    parents = _dpi_parents(tree)
+    # 两类证据分开收：`facts` 是**每个建图调用一条**（没写 dpi= 的按默认 100 记 ——
+    # "一张显式 200、另一张默认 100"正是 HIGH-1 的现场）；`setters` 是"给某张图改 dpi"
+    # 的动作（`fig.dpi =` / `set_dpi` / `rc`），带行号，单图时"最后一次设置"说了算。
+    facts, setters, whys = [], [], []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call):
+            vote = _dpi_vote_call(n, fig_names)
+            if vote is None:
+                continue
+            kind, v, src = vote
+            # 边界 3 的调用形态：`set_dpi` / `rc` 是**设置动作**，落在控制流里就走没走
+            # 不知道 ⇒ 判不出。建图调用上的 `dpi=` 不在此列（图就是在那个分支里建的，
+            # 两支给不同 dpi 由下面的 `facts` 多值兜住）。
+            if src == 'setter' and _dpi_in_control_flow(n, parents):
+                whys.append('dpi setter inside control flow (line %d)' % n.lineno)
+                continue
+        elif isinstance(n, ast.Assign):
+            vote = _dpi_vote_assign(n, fig_names)
+            if vote is None:
+                continue
+            kind, v, src = vote
+            # 边界 3：`if cond: fig.dpi = 200 else: fig.dpi = 100`、甚至
+            # `if __name__ == '__main__': fig.dpi = 200` —— 走没走/走哪支只有运行期
+            # 知道。**不采纳**，也不退回设计口径 100（那只是换一个猜法去拒写），
+            # 而是记成"判不出"。
+            if _dpi_in_control_flow(n, parents):
+                whys.append('dpi assignment inside control flow (line %d)' % n.lineno)
+                continue
+        else:
+            continue
+        if kind == 'unknown':
+            whys.append('dpi value is not a literal (line %d)' % n.lineno)
+        elif src == 'factory':
+            facts.append(v)
+        else:
+            setters.append((n.lineno, v))
+    if whys:
+        return None, whys[0]
+    if len(facts) >= 2:
+        # 多图：dpi 全一样才敢用；有任何一个不同（或只有部分写了 dpi=）⇒ 判不出哪个是
+        # "这张图"的 dpi（`fig_index` 只给图号，不给 dpi）。
+        uniq = sorted(set(facts) | set(v for _ln, v in setters))
+        if len(uniq) >= 2:
+            return None, 'dpi sites differ: ' + ', '.join('%g' % v for v in uniq)
+        return uniq[0], ''
+    if setters:
+        # 0/1 张图：设置动作就是"这张图的最终 dpi"，多次设置按**最后一行**说了算
+        # （与旧实现的"walk 顺序里最后一个赢"同一个实测结论，只是补上了边界 2/3）。
+        return max(setters)[1], ''
+    if facts:
+        return facts[0], ''
+    return 100.0, ''
+
+
 def _script_dpi(tree) -> float:
     '''脚本里能**静态**看出的 figure dpi（看不出来按 100 —— 参数规范的设计口径）。
 
     P0-1 止损（t66）用：``figsize_px`` 是"英寸 × fig.dpi"的像素数，所以把 px 折算回英寸
-    需要这个 dpi。覆盖三种写法：建图调用 ``dpi=`` 关键字、``fig.dpi = N``、``rcParams
-    ['figure.dpi'] = N``。看不出来就按 100（``params.py`` 顶部声明的设计口径）。
+    需要这个 dpi。**只认建图位置**（t103 / §25.18 收窄，白名单/黑名单的理由见文件顶部
+    ``DPI_FACTORY_NAMES`` / ``DPI_OUTPUT_NAMES`` 的注释）：
+
+      * 建图调用的 ``dpi=`` 关键字（``plt.figure`` / ``plt.subplots`` /
+        ``plt.subplot_mosaic`` / ``Figure``）；
+      * ``fig.set_dpi(N)``（首参位置参数）与 ``plt.rc('figure', dpi=N)``；
+      * ``fig.dpi = N``、``rcParams['figure.dpi'] = N``（既有两条；t104 起加了
+        "接收者必须可证是 figure"与"不能在控制流里"两道边界）。
+
+    **不收** ``savefig`` / ``imsave`` / ``imread`` 这类出图/读图调用上的 ``dpi=``：
+    那是出图像素，不是画布 dpi —— 旧实现把它们一并收下，正是 1,495 份（9.3%）语料
+    被误判"dpi 换算差成倍"而拒写的根因（§25.18）。
+
+    **判不出**（多图不同 dpi / 值不是字面量 / 赋值在控制流里，t104 三条边界）时**返回
+    100**（本函数的既有契约：看不出来就是设计口径）；要区分"真 100"与"判不出"必须用
+    :func:`_script_dpi_vote` —— `_figsize_inconsistent` 就是这么做的（判不出则放行）。
     '''
-    dpi = 100.0
-    for n in ast.walk(tree):
-        if isinstance(n, ast.Call):
-            for kw in n.keywords:
-                if kw.arg == 'dpi' and isinstance(kw.value, ast.Constant) \
-                        and isinstance(kw.value.value, (int, float)) \
-                        and not isinstance(kw.value.value, bool):
-                    dpi = float(kw.value.value)
-        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant) \
-                and isinstance(n.value.value, (int, float)) \
-                and not isinstance(n.value.value, bool):
-            for t in n.targets:
-                if isinstance(t, ast.Attribute) and t.attr == 'dpi':
-                    dpi = float(n.value.value)
-                elif isinstance(t, ast.Subscript) \
-                        and isinstance(t.value, ast.Attribute) \
-                        and t.value.attr == 'rcParams':
-                    sl = t.slice
-                    if isinstance(sl, ast.Constant) and sl.value == 'figure.dpi':
-                        dpi = float(n.value.value)
-    return dpi
+    dpi, _why = _script_dpi_vote(tree)
+    return 100.0 if dpi is None else dpi
+
+
+def _script_dpi_unknown_why(tree) -> str:
+    '''**判不出**的原因（判得出 → ``''``）。
+
+    单独成函数是为了让两条棘轮各自有**可复跑的反向验证缝**：
+      * 把 ``_script_dpi`` 换回"任意调用取 dpi"的旧实现 → 102⑥⑦（T1 的收窄）必红；
+      * 把本函数换成恒 ``''``（= 去掉"判不出就放行"这道闸）→ 102⑫⑭（T9 的边界）必红。
+    '''
+    dpi, why = _script_dpi_vote(tree)
+    return '' if dpi is not None else why
+
+
+def _figsize_pair(data):
+    '''参数里的 ``(figsize_px, figsize_in)``；形状不对 → ``None``（这条守卫本来就不跑）。'''
+    px, inch = data.get('figsize_px'), data.get('figsize_in')
+    if not (isinstance(px, (list, tuple)) and len(px) == 2
+            and isinstance(inch, (list, tuple)) and len(inch) == 2):
+        return None
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
+               for v in list(px) + list(inch)):
+        return None
+    return list(px), list(inch)
+
+
+def _figsize_skip_note(tree, data) -> str:
+    '''「本次**未做** dpi 换算校验」的双语人话（只在"本来要校验、却判不出"时给）。
+
+    t104 三条边界（多图不同 dpi / 值不是字面量 / 赋值在控制流里）踩到任何一条，
+    ``_figsize_inconsistent`` 都会**主动放行** —— 放行是对的（宁可漏拦不可误伤），
+    但**静默放行**会让用户以为"查过了"。所以把"没查"这件事写进 warnings：
+    判不出 ≠ 没问题（用户还得自己看一眼 figsize_in 与 figsize_px 对不对得上）。
+    '''
+    if _figsize_pair(data) is None:
+        return ''
+    why = _script_dpi_unknown_why(tree)
+    if not why:
+        return ''
+    return _msg.t_wb('本次未做 figsize 的 dpi 换算校验（%s）：静态判不出这张图的画布 '
+                     'dpi —— 多图各自不同 dpi / dpi 值不是字面量 / dpi 写在控制流里，'
+                     '三种都算判不出。参数按原样写回，请自查 figsize_in 与 figsize_px '
+                     '是否自洽。') % why
+
+
+def _with_fs_note(res0, note):
+    '''把「本次未做 dpi 换算校验」并进结果的 ``warnings``（幂等：已在里面就不重复插）。
+
+    t104：原位路径的结论 dict 是 `_writeback_inplace` 自己建的，块路径的 `pre_warnings`
+    管不到它 —— 而**两处** `_writeback_inplace` 调用点（显式 inplace、块里只剩 figsize
+    的回退）都得带上这条说明，所以统一走这个帮手，别各写一遍。
+    '''
+    if not note:
+        return res0
+    _cur = list(res0.get('warnings') or [])
+    if note not in _cur:
+        res0['warnings'] = [note] + _cur
+    return res0
 
 
 def _figsize_inconsistent(tree, data) -> str:
@@ -456,15 +801,18 @@ def _figsize_inconsistent(tree, data) -> str:
     —— "dpi 换算错一倍"，写回会把用户的画布永久减半。判据**只拦成倍数**（1.5 / 2 / 3 倍，
     任一方向）：参数 schema 里没有 dpi 键，只能按脚本里能静态看出的 dpi 折算，收窄到
     "倍数"才不会误拒其它合法的尺寸差异（宁可少拦，不可误拒）。
+
+    **判不出就放行**（t104 / 第二批的三条边界，见文件顶部注释）：dpi 有歧义时这条守卫
+    直接 ``return ''``，由 :func:`_figsize_skip_note` 在 warnings 里说"未做换算校验"。
+    绝不拿"猜出来的 dpi"去拒写。
     '''
-    px, inch = data.get('figsize_px'), data.get('figsize_in')
-    if not (isinstance(px, (list, tuple)) and len(px) == 2
-            and isinstance(inch, (list, tuple)) and len(inch) == 2):
+    pair = _figsize_pair(data)
+    if pair is None:
         return ''
-    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
-               for v in list(px) + list(inch)):
-        return ''
+    if _script_dpi_unknown_why(tree):
+        return ''                       # 判不出 ⇒ 放行（warnings 里如实说，见 skip_note）
     dpi = _script_dpi(tree)
+    px, inch = pair
     for k in range(2):
         exp = float(px[k]) / dpi
         if exp <= 0:
@@ -482,6 +830,8 @@ def _figsize_inconsistent(tree, data) -> str:
                          round(float(px[1]) / dpi, 4)], list(inch))
     return ''
 
+
+# ==== §5 脚本结构：figure / 轴 / 循环与变量映射 ====
 
 def count_figures(tree, figure_only=False):
     """脚本里 figure/subplots 调用次数（判断多图歧义）。
@@ -760,6 +1110,8 @@ def loop_guard(tree, anchor_node, fig_index):
 # --------------------------------------------------------------------------
 # 源码切片（figsize 原位替换）
 # --------------------------------------------------------------------------
+# ==== §6 figsize 原位替换与「已经是对的」静态证明 ====
+
 def _line_starts(src):
     starts = [0]
     for i, ch in enumerate(src):
@@ -1075,6 +1427,8 @@ def edit_figsize(src, tree, figsize_in, fig_index=None):
 # --------------------------------------------------------------------------
 # 原位写回：直接改原代码里的数字（不加调整块）—— 用户主推方式
 # --------------------------------------------------------------------------
+# ==== §7 调用定位（找 set_title / tick_params 等）====
+
 def _find_call(tree, recv_name, attr, after_lineno=0, before_lineno=10 ** 9):
     """找 ``Name(recv_name).attr(...)`` 的调用节点（没有返回 None）。
 
@@ -1191,6 +1545,8 @@ def _find_tick_axis_call(tree, recv_name, axis, after_lineno=0,
 #
 # 为什么把决策收敛到 `_gap_specs` 一个函数：它是这条新形态的**唯一**入口。把它换成
 # 恒 None，新形态立刻回到旧行为（进 skipped → 退块），新用例因此有牙（§109⑦）。
+# ==== §8 缺参补全（A2）：给已有的调用补参数 ====
+
 _GAP_T_KWARGS = ('（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；'
                  '需要的话请手动把 fontsize=… 写进这条调用）')
 _GAP_T_MULTI = ('（这条轴上有 %d 处 %s 调用，无法唯一确定该补哪一处，没有自动补；'
@@ -1414,7 +1770,19 @@ def _gap_specs_tick(tree, nm, field, val, lo, hi):
         if _call_carries(c, ('labelsize', 'fontsize', 'size')):
             return None, None, None, None     # 源码自己定了字号：老路径的事
         _av = next((k for k in c.keywords if k.arg == 'axis'), None)
-        if not (isinstance(_av.value, ast.Constant)
+        # t17：**没有 `axis=`** 时 `_av` 就是 None。旧实现在这里直接取 `_av.value`，
+        # 于是「裸 `ax.tick_params()`」（或只带 `colors=` 这类非尺寸参数）的调用抛
+        # `AttributeError: 'NoneType' object has no attribute 'value'`，一路穿到顶层
+        # 变成 `internal_error` / rc=2（0.1.12 起就有的存量缺陷；t6 差分跑两臂各
+        # 34/38 份现场，两臂同码同炸 ⇒ 与本批 0.1.13 的改动无关）。
+        # 为什么「跳过」就是正确语义、而不是硬补一个 labelsize：本节口径是
+        # **fail-closed** —— 不带 `axis=` 的 `tick_params` 一次改两侧，往里补
+        # labelsize 会**偷偷改另一侧**（详见本函数 docstring）。所以「没写 axis」与
+        # 「写了但不是本侧 / 写了 'both'」是同一件事：这条调用不是本侧的候选。
+        # 没有候选 ⇒ 返回 (None, None, None, None)，调用方按既有语义记 skipped / 退块
+        # （块里能精确写 `axis='x', labelsize=…`）—— **不崩，也不假装原位改得了**。
+        if not (isinstance(_av, ast.keyword)
+                and isinstance(_av.value, ast.Constant)
                 and isinstance(_av.value.value, str)
                 and _av.value.value == axis):
             continue                  # 没写 axis / 另一侧 / 'both'：不当候选
@@ -1473,6 +1841,8 @@ def _gap_append_point(node, src, starts):
         _ind = (_m.group(0) if _m else '') + '    '
     return ((_p + 1) if _p >= 0 else _o), False, _ind
 
+
+# ==== §9 图区间与建轴枚举 ====
 
 def _is_axes_on_existing_figure(node, fig_names):
     """``X.subplots(...)`` 里 ``X`` 可证是 Figure ⇒ 这是"在这张图上建轴"，**不是**新图。
@@ -1558,6 +1928,8 @@ def _figure_axes_for_index(tree, fig_index):
     out.sort(key=lambda x: (x[1].lineno, x[1].col_offset))
     return out
 
+
+# ==== §10 原位写回：apply_inplace ====
 
 def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
     """原位写回：直接改原代码里的数字，不插调整块。
@@ -2142,6 +2514,8 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
 #
 # 允许"等于默认值"的结论，当且仅当源码里**所有相关写法**要么不存在、要么带的字面量
 # 恰好等于目标值；认不出（变量、表达式、**kwargs）一律放弃证明 → 回退保守退块。
+# ==== §11 「已经是这个值」的静态证明 ====
+
 _FONT_KWARGS = ('fontsize', 'size', 'labelsize', 'titlesize', 'fontsize_y')
 # 每个字号字段"可能改到它"的调用（attr 或裸名）
 _FONT_CALLS = {
@@ -2653,6 +3027,8 @@ def _seq4_nums(node):
     return [float(_lit_num(e)) for e in node.elts]
 
 
+# ==== §12 备份（固定名 / pid 副本 / 裁剪）====
+
 def _backup_dir(script, params_path=None):
     """备份目录：**永远**是脚本旁边的 ``.tweak_params``。
 
@@ -2778,6 +3154,8 @@ def _make_backup(script, params_path, keep=5, warnings=None):
     _prune_backups(script, params_path, keep)
     return fixed
 
+
+# ==== §13 并发锁与原子写 ====
 
 def _pid_alive(pid):
     """进程是否还在。
@@ -2968,6 +3346,8 @@ def _rollback_note(backup, script, expect=None):
 # 为什么用指纹而不是 size+mtime：编辑器保存常常只差一个字符，而 mtime 精度、
 # "保存了但内容没变"（编辑器整体重写盘）都会骗过粗判据；sha256 只认内容。
 # ---------------------------------------------------------------------------
+# ==== §14 外部改动检测（落盘前的指纹校验）====
+
 def _sha256_text(text):
     """文本内容的 sha256 指纹（十六进制）。``None`` → ``None``。"""
     if text is None:
@@ -3033,6 +3413,8 @@ def _guard_external_edit(script, src):
     _r = _check_external_edit(script, src)
     return None if _r is None else _r['err']
 
+
+# ==== §15 语义比对：参数值 vs 实测值 ====
 
 def _scale_literal(tree, nm, field):
     """源码里能改这个轴刻度的 ``set_xscale(...)`` / ``set_yscale(...)`` 字面量。
@@ -3322,6 +3704,8 @@ def _pending_vs_live(script, data, pending, python, timeout, params_path,
                 return True
     return False
 
+
+# ==== §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）====
 
 def _figsize_from_source(src, tree):
     """静态读出"这张图实际会用的画布尺寸"（英寸）。
@@ -3732,6 +4116,8 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
 # 落不了地 —— 绝不能报 ok / applied=true / needs_block=false（agent 会以为都改好了）。
 # 这是一张**安全网**：目前块渲染器覆盖了下面这些字段的全部取值，正常路径自检为空；
 # 一旦将来加了新字段/新取值而忘了补块写法，这里会立刻把它抓出来（而不是静默丢）。
+# ==== §17 调整块：字段需求与「块表达不了」清单 ====
+
 _BLOCK_MARKERS = {
     'title_fontsize': r'\.title\.set_fontsize\(',
     'label_fontsize': r'\.xaxis\.label\.set_fontsize\(',
@@ -4013,6 +4399,8 @@ def _block_unexpressed_fields(block, data, fig_var, needed=None, targets=None):
     seen = set()
     return [x for x in out if not (x in seen or seen.add(x))]
 
+
+# ==== §18 调整块：mappable 引用、作用域与锚点下沉 ====
 
 def _mappable_ref(ax_expr, axis_item, is_cb, mappables, cb_args, mappable_map=None,
                   multi_fig=False):
@@ -4638,6 +5026,8 @@ def _prune_refused(data, unexpressed):
     return out
 
 
+# ==== §19 调整块：pyplot 定位可证与目标表达式表 ====
+
 def _gcf_provable(tree, positions, fig_call):
     """T70-B：纯 pyplot 单图是否**可证**（`plt.gcf()` 就是那张图、`.axes[k]` 就是第 k 条）。
 
@@ -4818,6 +5208,8 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None):
     return axes_expr, fig_expr, refused
 
 
+# ==== §20 调整块生成：render_block ====
+
 def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
                  mappable_map=None, tag=None, multi_fig=False, needed=None,
                  targets=None, fig_target=None, figsize_runtime=False):
@@ -4992,6 +5384,8 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
 # --------------------------------------------------------------------------
 # 幂等插入/替换 + 侧边元数据
 # --------------------------------------------------------------------------
+# ==== §21 调整块插入 / 替换（幂等与缩进）====
+
 def _unclosed_block_lines(lines):
     """返回"只有起始哨兵、没有收尾哨兵"的起始行号（1-based）列表。
 
@@ -5134,6 +5528,8 @@ def insert_or_replace(src, block, anchor, meta_path, tag=None):
 # --------------------------------------------------------------------------
 # 验证（Agg 无头重跑）
 # --------------------------------------------------------------------------
+# ==== §22 验证：无头重跑与一遍式验证 ====
+
 def verify_run(script, python=None, timeout=300, script_args=None):
     """Agg 无头重跑脚本：exit 0 = 通过。返回 (ok, err_tail)。
 
@@ -5236,6 +5632,8 @@ def _verify_script(script, data, python, timeout, semantic, fields_by_axis,
 # --------------------------------------------------------------------------
 # 主入口
 # --------------------------------------------------------------------------
+# ==== §23 写回入口：writeback ====
+
 def writeback(script, data, params_path, verify=True, python=None,
               timeout=300, dry_run=False, semantic=True, only_fig=True,
               style='block', fast_check=False, backup=None,
@@ -5306,6 +5704,10 @@ def writeback(script, data, params_path, verify=True, python=None,
         return res
     # P0-1 止损（t66）：figsize 参数自相矛盾（成倍的 dpi 换算错）⇒ 拒写，别把画布
     # 永久改小/改大写进用户源码（报告的现场：px=[1500,950] 配 in=[7.5,4.75]）。
+    # t104：dpi **判不出**时这条守卫主动放行（多图不同 dpi / 值不是字面量 / 赋值在控制流
+    # 里 —— 见 file 顶部 `_DPI_CTRL_NODES` 上面的三条边界）；但"没查"必须写进 warnings，
+    # 否则用户会把"没拦住"读成"查过了没问题"。
+    _fs_note = _figsize_skip_note(tree, data)
     _bad = _figsize_inconsistent(tree, data)
     if _bad:
         res['reason'] = BAD_PARAMS
@@ -5324,15 +5726,17 @@ def writeback(script, data, params_path, verify=True, python=None,
 
     if style == 'inplace':
         # 原位写回：直接改原代码数字，不插调整块（用户主推方式）
-        return _writeback_inplace(script, src, tree, data, params_path,
-                                  verify, python, timeout, dry_run, semantic,
-                                  encoding=_src_enc, fast_check=fast_check,
-                                  backup=backup,
-                                  keep_unverified=keep_unverified,
-                                  script_args=script_args)
+        _r_ip = _writeback_inplace(script, src, tree, data, params_path,
+                                   verify, python, timeout, dry_run, semantic,
+                                   encoding=_src_enc, fast_check=fast_check,
+                                   backup=backup,
+                                   keep_unverified=keep_unverified,
+                                   script_args=script_args)
+        # t104：把"本次未做 dpi 换算校验"这件事实带进结果（两条路径都要带）
+        return _with_fs_note(_r_ip, _fs_note)
 
     fig_var, _ = find_fig_var(tree)
-    pre_warnings: List[str] = []
+    pre_warnings: List[str] = ([_fs_note] if _fs_note else [])   # t104：见上面的 _fs_note
     gcf_fallback = False
     n_fig = count_figures(tree, figure_only=True)        # t51：fig.subplots 不算新图
     has_plt = _has_pyplot_plt(tree)
@@ -5499,6 +5903,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                                      encoding=_src_enc, fast_check=fast_check,
                                      backup=backup,
                                      keep_unverified=keep_unverified)
+            _with_fs_note(_r2, _fs_note)
             if _refused:
                 _r2['warnings'] = (list(_r2.get('warnings') or [])
                                    + pre_warnings[-1:])
@@ -5946,3 +6351,190 @@ def writeback(script, data, params_path, verify=True, python=None,
                 'block_lines': len((chosen_block or '').splitlines()),
                 'anchor_line': anchor[1].lineno if anchor[1] is not None else None})
     return _mark_unexpressed(res)
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头、结果码与常量表（行 94-215，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 参数取值与字面量、脚本基本定位（行 216-378，12 个顶层函数）
+#     _num                                           218
+#     _fmt_pos                                       233
+#     _label_fontsizes                               240
+#     _tick_fontsizes                                254
+#     _axis_items                                    264
+#     _is_num_literal                                276
+#     _lit_num                                       293
+#     _is_registered_cmap                            308
+#     _iter_assign_names                             320
+#     find_fig_var                                   328
+#     find_anchor                                    347
+#     find_savefigs                                  363
+# §3 AST 基础工具与「坏参数」越界判据（行 379-500，5 个顶层函数）
+#     _parent_map                                    381
+#     _stmt_node                                     390
+#     _has_pyplot_plt                                415
+#     _axis_index_beyond                             436
+#     _fig_index_beyond                              470
+# §4 figure dpi 静态推断与 figsize 交叉校验（行 501-833，15 个顶层函数）
+#     _call_leaf                                     503
+#     _num_const                                     514
+#     _dpi_parents                                   527
+#     _dpi_in_control_flow                           536
+#     _fig_var_names_for_dpi                         546
+#     _dpi_kw_state                                  567
+#     _dpi_vote_call                                 577
+#     _dpi_vote_assign                               624
+#     _script_dpi_vote                               649
+#     _script_dpi                                    715
+#     _script_dpi_unknown_why                        740
+#     _figsize_pair                                  751
+#     _figsize_skip_note                             763
+#     _with_fs_note                                  782
+#     _figsize_inconsistent                          797
+# §5 脚本结构：figure / 轴 / 循环与变量映射（行 834-1112，7 个顶层函数）
+#     count_figures                                  836
+#     find_mappable_names                            859
+#     _subplots_single_axes                          879
+#     axis_var_index                                 911
+#     mappable_by_axis                              1020
+#     find_enclosing_loop                           1049
+#     loop_guard                                    1063
+# §6 figsize 原位替换与「已经是对的」静态证明（行 1113-1429，13 个顶层函数）
+#     _line_starts                                  1115
+#     _offset                                       1123
+#     _seq_lit_nums                                 1140
+#     _num_close                                    1156
+#     _fmt_figsize                                  1165
+#     _fig_call_node                                1177
+#     _call_assign_name                             1196
+#     _fig_aliases                                  1214
+#     _later_size_override                          1233
+#     _fig_call_count                               1294
+#     _rebound_between                              1301
+#     figsize_already_ok                            1321
+#     edit_figsize                                  1384
+# §7 调用定位（找 set_title / tick_params 等）（行 1430-1547，3 个顶层函数）
+#     _find_call                                    1432
+#     _find_tick_call_for_axis                      1456
+#     _find_tick_axis_call                          1505
+# §8 缺参补全（A2）：给已有的调用补参数（行 1548-1844，12 个顶层函数）
+#     _find_calls                                   1568
+#     _call_carries                                 1588
+#     _call_has_dstar                               1593
+#     _gap_why                                      1598
+#     _owning_body                                  1604
+#     _gap_pick_last                                1625
+#     _text_fontsize_calls                          1641
+#     _gap_specs                                    1675
+#     _gap_specs_grid                               1695
+#     _gap_specs_text                               1723
+#     _gap_specs_tick                               1759
+#     _gap_append_point                             1809
+# §9 图区间与建轴枚举（行 1845-1931，3 个顶层函数）
+#     _is_axes_on_existing_figure                   1847
+#     _fig_span                                     1860
+#     _figure_axes_for_index                        1893
+# §10 原位写回：apply_inplace（行 1932-2516，1 个顶层函数）
+#     apply_inplace                                 1934
+# §11 「已经是这个值」的静态证明（行 2517-3029，15 个顶层函数）
+#     _is_rcparams_receiver                         2533
+#     _is_style_receiver                            2541
+#     _style_or_rc_write                            2547
+#     _kw_font_conflict                             2581
+#     _font_size_from_dictlike                      2600
+#     _default_proof_blocked                        2611
+#     _bool_literal_eq                              2675
+#     _first_str_literal                            2686
+#     _default_pt                                   2693
+#     _use_matplotlib_default                       2709
+#     _cmap_literal_equal                           2755
+#     _legend_literal_equal                         2782
+#     _proved_equal                                 2807
+#     _pos_literal_equal                            2885
+#     _seq4_nums                                    3021
+# §12 备份（固定名 / pid 副本 / 裁剪）（行 3030-3157，6 个顶层函数）
+#     _backup_dir                                   3032
+#     _backup_path                                  3043
+#     _backup_path_legacy                           3062
+#     _prune_backups                                3072
+#     _long_path                                    3103
+#     _make_backup                                  3126
+# §13 并发锁与原子写（行 3158-3348，5 个顶层函数）
+#     _pid_alive                                    3160
+#     _lock_holder                                  3191
+#     script_lock                                   3200
+#     _atomic_write                                 3247
+#     _rollback_note                                3287
+# §14 外部改动检测（落盘前的指纹校验）（行 3349-3416，5 个顶层函数）
+#     _sha256_text                                  3351
+#     _disk_fingerprint                             3358
+#     _external_result                              3371
+#     _check_external_edit                          3392
+#     _guard_external_edit                          3407
+# §15 语义比对：参数值 vs 实测值（行 3417-3707，7 个顶层函数）
+#     _scale_literal                                3419
+#     _bare_field                                   3440
+#     _pending_fields                               3446
+#     _legend_differs                               3467
+#     _lines_differ                                 3488
+#     _pv_live_field                                3509
+#     _pending_vs_live                              3639
+# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 3708-4118，2 个顶层函数）
+#     _figsize_from_source                          3710
+#     _writeback_inplace                            3765
+# §17 调整块：字段需求与「块表达不了」清单（行 4119-4402，8 个顶层函数）
+#     _dup_names_in_fig_assign                      4139
+#     _dup_name_set                                 4164
+#     _drop_dup_var_names                           4172
+#     _grid_size                                    4199
+#     _runtime_axes_count                           4220
+#     _pos_block_target_ok                          4264
+#     _needed_block_fields                          4286
+#     _block_unexpressed_fields                     4334
+# §18 调整块：mappable 引用、作用域与锚点下沉（行 4403-5028，24 个顶层函数）
+#     _mappable_ref                                 4405
+#     _node_scope                                   4473
+#     _direct_assign_linenos                        4487
+#     _rebound_before                               4499
+#     _name_still_bound                             4538
+#     _func_anchor_text                             4574
+#     _walk_own                                     4592
+#     _own_returns                                  4603
+#     _own_output_calls                             4610
+#     _is_method_scope                              4619
+#     _func_call_sites                              4632
+#     _func_return_anchor                           4645
+#     _figsize_source_dynamic                       4707
+#     _assign_names_of                              4723
+#     _inline_cax_of                                4734
+#     _grid_squeeze                                 4752
+#     _grid_element                                 4762
+#     _fig_receiver_names                           4771
+#     _ravel_receiver                               4796
+#     _unpack_axis_names                            4808
+#     _axes_binding_entries                         4843
+#     _call_sig                                     4965
+#     _anchor_positions                             4970
+#     _prune_refused                                4997
+# §19 调整块：pyplot 定位可证与目标表达式表（行 5029-5210，3 个顶层函数）
+#     _gcf_provable                                 5031
+#     _numbered_fig_expr                            5062
+#     _block_targets                                5141
+# §20 调整块生成：render_block（行 5211-5386，1 个顶层函数）
+#     render_block                                  5213
+# §21 调整块插入 / 替换（幂等与缩进）（行 5387-5530，7 个顶层函数）
+#     _unclosed_block_lines                         5389
+#     _meta_path                                    5409
+#     _block_spans                                  5415
+#     _existing_span                                5427
+#     _reindent                                     5457
+#     _norm_ts                                      5468
+#     insert_or_replace                             5474
+# §22 验证：无头重跑与一遍式验证（行 5531-5634，2 个顶层函数）
+#     verify_run                                    5533
+#     _verify_script                                5565
+# §23 写回入口：writeback（行 5635-6353，1 个顶层函数）
+#     writeback                                     5637
+# --- END AUTO NAV ---

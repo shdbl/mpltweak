@@ -10,7 +10,7 @@
 * 章节**编号 / 改名 / 移动都会改变锚点**（`## 它解决什么问题` → `## 1. 它解决什么问题`
   ⇒ 锚点 `#它解决什么问题` → `#1-它解决什么问题`）。仓库此前对这一层**零守卫**。
 
-本套件检查六类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
+本套件检查七类（纯文本、**零网络**、秒级；**代码围栏内的示例文本不参与校验**，那里是样例）
 ================================================================================
 ① **文件内锚点**：`](#slug)` 必须命中**同文件**某个标题的 slug；
 ② **相对链接**：`docs/x.md` / `../README.md` / `x.md#slug` 的**目标文件必须存在**；带 `#slug`
@@ -21,6 +21,9 @@
    **解析回仓库内相对路径**，再按 ② 同款口径查"文件/目录存在 + 跨文档锚点存在"。
 ⑥ **表格列数自洽（转义感知）**（0.1.11 扩展，见下）：每个表格块里**每个行**（表头、分隔行、
    数据行）的单元格数必须等于**表头**格数；`\|` 是字面竖线、**不**参与切分。
+⑦ **`文件.py:行号` 引用闸门（判据级）**（0.1.13 扩展，见下 + `tools/check_doc_refs.py`）：
+   裸 `:NNN` 继承同段文件名 / 符号锚 `# 符号` 在目标行 ±N 内必须搜得到 / 三张"带理由豁免表"
+   的纪律，各配 teeth 与反向验证。**刻意不含"真仓库必须 0 可疑"的断言**（原因见 ⑦ 段）。
 
 ⑤ 为什么必须有（**真实口径漏洞，不是假想**）
 ==========================================
@@ -42,6 +45,28 @@
    204 行 `| 来源 | … |`，doc-owner 补 `| — |` 修掉）；
 3. 同一张表里 `\\|Δ\\|` / `\\|G2−G0\\|∞` 的**假阳性** —— 朴素 `split('|')` 把它们数成 5 / 7 格。
 ⇒ 这条判据必须**转义感知**，且**宁可少判也不误报**：只认规范写法（行首 `|` + 分隔行），
+
+⑦ 为什么必须有（**"0 处问题"曾经是弱证据**）
+============================================
+`tools/check_doc_refs.py`（发布期人工过目的引用闸门）加严前只能发现"解析不到 / 越界 / 空行"
+三类硬伤，**实测抽样 5 条里 4 条已经指错地方而闸门全绿**；`t72` 又实测到「`t80` 修过的 4 个
+锚点这次**又全漂 +5~+13**」—— 判据只看"存在性"，**指错函数它看不见**。0.1.13 给它加了三条：
+裸 `:NNN`（继承同句/同段上一处文件名，否则 `docs/verify.md:10` 后半那两处永远不查）、
+符号锚 `file.py:2255 # _prune_backups`（目标行 ±N 内搜该符号，搜不到报 `symbol_mismatch`，
+并打印**最近一次出现的行号**）、以及"哪些引用可以不锚"的**带理由豁免口径**（三张表，键都不含
+文档行号，棘轮只准缩小）。本套件只搬**判据级**的东西进 CI：
+
+* `t103` 的四方向（src 副本优先 / 裸引用越界 / 同名多命中 / 只有 `build/` 副本）——
+  **直接跑工具自带的 `--self-test`**（同一套夹具跑两遍没有意义，不重复造第二套）；
+* 三条新判据各一条合成夹具 teeth（裸引用继承 / 误认守卫 / 不跨段落、符号锚对错与窗口、
+  未锚必红 + 登记豁免 + 表优先级 + 失效条目提示）；
+* 每条新判据各一条**反向验证**（把判据弄坏 ⇒ 必须变红），含对**真仓库**的两条：
+  清空豁免表 ⇒ 可疑数必须变多、关掉裸引用支持 ⇒ 引用条数必须变少。
+
+**为什么不把"真仓库 rc=0"写成断言**：那等于把测试与被守卫的代码行号耦死 —— 任何改动
+`writeback.py` 的任务都会把它打红（0.1.13 的 P0-1 改一行就让 3 条引用落空行，正是实例）；
+这个仓库对"会天天红、最后被放宽"的断言有明确结论：**它是发布期人工闸门，不是 CI 断言**。
+CI 只管"判据本身有没有牙"。
 `\\|` 计为字面竖线、不切分。
 
 slug 算法必须**自证**，不许靠约定
@@ -1019,6 +1044,308 @@ def teeth(real_files, real_exists):
           '按标记 %d 处 / 一刀切 %d 处' % (len(_r_real_ok), _wide_hits))
 
 
+# ---------------------------------------------------------------- ⑦ 引用闸门（0.1.13）
+# 被测对象：`tools/check_doc_refs.py`（发布期人工过目的引用闸门，**本身不进 CI**）。
+# 这里只搬"判据级"的牙齿：t103 四方向（直接跑工具自带 `--self-test`，不重复造夹具）+ 三条
+# 新判据的合成夹具 teeth + 每条判据一条反向验证。**不**断言"真仓库 0 可疑"（理由见模块 docstring ⑦）。
+_GATE_PATH = os.path.join(ROOT, 'tools', 'check_doc_refs.py')
+_GATE_INCLUDES = ('docs/**/*.md', 'README*.md', 'skills/**/*.md')
+
+# 夹具（**刻意与工具自测里的 `_WB_FIXTURE` 分开写**：teeth 用独立夹具，
+# 免得工具里那个常量被改坏后"自测和牙齿一起瞎"）。
+# 行号对照：1~9 = row*；**10 = `def prune_backups`**；11~20 = mid*；**21 = `def gate_symbol`**；22~25 = end*。
+_GT_WB = (''.join('row%d\n' % i for i in range(1, 10))
+          + 'def prune_backups(fig):\n'
+          + ''.join('mid%d\n' % i for i in range(1, 11))
+          + 'def gate_symbol(x):\n'
+          + ''.join('end%d\n' % i for i in range(1, 5)))
+
+
+def _load_gate():
+    """按路径加载 `tools/check_doc_refs.py`（不污染 sys.path、不与别的模块重名）。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('_mpltweak_check_doc_refs', _GATE_PATH)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class _TmpTree(object):
+    """系统临时目录里的一棵小树（**一个字节都不往仓库里写**；用完删干净）。"""
+
+    def __init__(self):
+        import tempfile
+        self.root = tempfile.mkdtemp(prefix='mpltweak_docrefs_')
+
+    def write(self, rel, text):
+        path = os.path.join(self.root, rel.replace('/', os.sep))
+        d = os.path.dirname(path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        with io.open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+        return path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        import shutil
+        shutil.rmtree(self.root, ignore_errors=True)
+        return False
+
+
+def _gate_refs(res):
+    return [r['ref'] for r in res['items']]
+
+
+def _pin_child_env(base=None, **overrides):
+    """起子进程前的**最后一道闸**：硬钉 ``MPLBACKEND=Agg``（覆盖宿主投毒）。
+
+    与 `tests/test_hygiene.py` / `tests/test_sandbox.py` 的同名闸门是**同一个口径的不同副本**：
+    宿主把 `MPLBACKEND` 设成 `Qt5Agg` / `TkAgg` 时，`setdefault` 会原样保留 ⇒ 子进程落到交互
+    后端 ⇒ 脚本里任何建图/`plt.show()` 都真开窗、抢焦点与鼠标（2026-10-12 用户当天报过）。
+    `tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered`
+    按 AST 逐个子进程调用点检查"有没有经过闸门" —— 本文件只有下面一处（跑闸门自测），
+    必须走这里，否则那条棘轮会红（t9 实测抓到过一次）。
+
+    **只钉后端**，不替调用方决定输出编码（自测那边要 `PYTHONIOENCODING=utf-8` 才能稳定
+    解码中文输出，由调用方显式给）。
+    """
+    out = dict(os.environ if base is None else base)
+    out['MPLBACKEND'] = 'Agg'
+    out.update(overrides)
+    return out
+
+
+def refs_gate():
+    _p('---- ⑦ 引用闸门：裸 :NNN / 符号锚 ±N / 带理由豁免（判据级 teeth + 反向验证）----')
+    if not os.path.isfile(_GATE_PATH):
+        check('⑦ 引用闸门工具在场（tools/check_doc_refs.py）', False, _GATE_PATH)
+        return
+    g = _load_gate()
+    check('⑦ 引用闸门工具可被测试加载', callable(g.scan) and callable(g._self_test),
+          os.path.basename(_GATE_PATH))
+
+    with _TmpTree() as t:
+        # ---- teeth29/30/31：裸引用（§25.4a）----
+        t.write('src/mpltweak/writeback.py', _GT_WB)
+        t.write('docs/bare.md', '版本 `writeback.py:10`，另见 `:12` 与 `:20`。\n')
+        r = g.scan(t.root, ['docs/bare.md'], require_anchor=False)
+        check('teeth29 裸引用 `:NNN` 继承**同一行**上一处 `.py` 名字（`:12` / `:20` → writeback.py:12 / :20）',
+              _gate_refs(r) == ['writeback.py:10', 'writeback.py:12', 'writeback.py:20']
+              and [x['inherited'] for x in r['items']] == [False, True, True],
+              '实得 %s' % _gate_refs(r))
+
+        t.write('docs/trap.md', '时间 12:30；端口 127.0.0.1:7890；链接 https://x 与 a//b:1。\n')
+        r2 = g.scan(t.root, ['docs/trap.md'], require_anchor=False)
+        check('teeth30 裸引用误认守卫：`12:30` / `127.0.0.1:7890` / `https://` 不许被当成引用',
+              not r2['items'] and not r2['skipped_bare'],
+              '实得 items=%d skipped=%d' % (len(r2['items']), len(r2['skipped_bare'])))
+
+        t.write('docs/para.md',
+                '第一段 `writeback.py:10` 到此为止。\n\n第二段裸引用 `:12` 没有文件名。\n')
+        r3 = g.scan(t.root, ['docs/para.md'], require_anchor=False)
+        check('teeth31 裸引用**不跨行**继承（空行之后 / 只有换行都不算 —— 一律记 skipped_bare，'
+              '只提示不算可疑）',
+              len(r3['items']) == 1 and len(r3['skipped_bare']) == 1 and not r3['suspicious'],
+              'items=%d skipped=%d susp=%d'
+              % (len(r3['items']), len(r3['skipped_bare']), len(r3['suspicious'])))
+
+        # ---- teeth32/33：符号锚与窗口（§25.4b）----
+        t.write('docs/sym.md',
+                '对：`writeback.py:10 # prune_backups`；错：`writeback.py:10 # gate_symbol`。\n')
+        r4 = g.scan(t.root, ['docs/sym.md'])
+        _s4 = r4['suspicious']
+        check('teeth32 符号锚：写对 ⇒ 过；写错 ⇒ `symbol_mismatch` 且报出**最近出现的行号**（第 21 行）',
+              len(r4['items']) == 2 and len(_s4) == 1
+              and _s4[0]['why'] == 'symbol_mismatch' and _s4[0]['anchor_at'] == 21,
+              '实得 %s' % [(x['ref'], x['why'], x.get('anchor_at')) for x in _s4])
+
+        t.write('docs/win.md', '引用 `writeback.py:13 # prune_backups`。\n')
+        w3 = g.scan(t.root, ['docs/win.md'], anchor_window=3)
+        w1 = g.scan(t.root, ['docs/win.md'], anchor_window=1)
+        check('teeth33 符号锚窗口是**承重的**：默认 ±3 通过、±1 必红，且默认值就是 3',
+              not w3['suspicious'] and len(w1['suspicious']) == 1
+              and w1['suspicious'][0]['why'] == 'symbol_mismatch' and g.ANCHOR_WINDOW == 3,
+              '±3=%d 处 / ±1=%d 处 / 默认窗口=%d'
+              % (len(w3['suspicious']), len(w1['suspicious']), g.ANCHOR_WINDOW))
+
+        # ---- teeth34/35/36：带理由豁免口径（§25.4c）----
+        t.write('docs/un.md', '引用 `writeback.py:10`。\n')
+        _k34 = ('docs/un.md', 'writeback.py:10')
+        raw = g.scan(t.root, ['docs/un.md'])
+        ok_un = g.scan(t.root, ['docs/un.md'], unanch={_k34: '理由：存量'})
+        ok_dr = g.scan(t.root, ['docs/un.md'], drift={_k34: '理由：待修'})
+        check('teeth34 未锚必须红（`anchor_missing`）；登记进豁免表后才放行 —— 判据本身没被放宽',
+              [x['why'] for x in raw['suspicious']] == ['anchor_missing']
+              and not ok_un['suspicious'] and not ok_dr['suspicious'],
+              '未登记 %d 处 / 登记未锚 %d 处 / 登记待修 %d 处'
+              % (len(raw['suspicious']), len(ok_un['suspicious']), len(ok_dr['suspicious'])))
+
+        prio = g.scan(t.root, ['docs/un.md'], drift={_k34: '理由：待修'},
+                      unanch={_k34: '理由：存量'})
+        check('teeth35 豁免表有优先级、不吃错表：同键同时在 drift / unanchored ⇒ 记 `drift`（待修优先）',
+              [x['exempt'] for x in prio['items']] == ['drift'],
+              '实得 %s' % [x['exempt'] for x in prio['items']])
+
+        stale = g.scan(t.root, ['docs/un.md'],
+                       unanch={_k34: '理由', ('docs/un.md', 'writeback.py:99'): '理由'})
+        check('teeth36 失效条目必须提示删（登记了但引用不存在 ⇒ 进 stale，且不影响"干净"判定）',
+              stale['stale'] == [('docs/un.md', 'writeback.py:99')] and not stale['suspicious'],
+              'stale=%s / susp=%d' % (stale['stale'], len(stale['suspicious'])))
+
+        # ---- teeth41：整份文档级的"不要求锚"（日志型手册）----
+        t.write('MAINTENANCE.md', '历史现场：`writeback.py:10`（当时行号）。\n')
+        t.write('docs/live.md', '现行说明：`writeback.py:10`。\n')
+        r41 = g.scan(t.root, ['MAINTENANCE.md', 'docs/live.md'])
+        _w41 = [(x['doc'], x['ref'], x['why']) for x in r41['items']]
+        check('teeth41 整份文档级豁免：日志型手册（MAINTENANCE.md）的引用不要求符号锚，'
+              '但**别的**文档照样要求（同一处引用一个不红、一个必红）',
+              _w41 == [('MAINTENANCE.md', 'writeback.py:10', ''),
+                       ('docs/live.md', 'writeback.py:10', 'anchor_missing')]
+              and g.ANCHOR_FREE_DOCS.get('MAINTENANCE.md'),
+              '实得 %s' % _w41)
+
+        # ---- teeth42/43：t14 漏洞 1 —— 裸 `:NNN` 的继承**只认同一行** ----
+        # teeth42 是现场复刻（MAINTENANCE.md:830-832 的形状）：上一行写 `launch.py:760`，
+        # 这一行的 `:12`/`:43`/`:44` 其实指**文档自己**的行号 ⇒ 不许接成 launch.py:
+        # （旧实现会接上去，然后 `launch.py:44` 落在空行/错行上误报）。
+        t.write('src/mpltweak/launch.py', ''.join('l%d\n' % i for i in range(1, 801)))
+        t.write('docs/selfref.md',
+                '7. `docs/exec-boundaries.md:44` 那条不成立：\n'
+                '   开窗是**同进程**（`launch.py:760`），`sys.exit` 被 `:761-762` 接住，但\n'
+                '   同文件 `:12`/`:43` 已注明开窗是本进程 ⇒ `:44` 与之冲突。\n')
+        r42 = g.scan(t.root, ['docs/selfref.md'], require_anchor=False)
+        _refs42 = [x['ref'] for x in r42['items']]
+        check('teeth42 漏洞 1（t14 现场复刻）：跨行的 `:12`/`:43`/`:44` 不许继承上一行的 '
+              '`launch.py:760` ⇒ 记 skipped_bare，且**不得误报**',
+              _refs42 == ['launch.py:760', 'launch.py:761-762']
+              and len(r42['skipped_bare']) == 3 and not r42['suspicious'],
+              'items=%s skipped=%d susp=%s'
+              % (_refs42, len(r42['skipped_bare']),
+                 [(x['ref'], x['why']) for x in r42['suspicious']]))
+
+        # teeth43：该继承的必须继承 —— 同一行里**只提名字、不带行号**也要接得上
+        # （`tests/test_fuzz_events.py` 的（`:1154`）这种写法；旧实现只认完整引用 ⇒ 接不上，
+        #  还会接到上一行那个文件名上，正是 MAINTENANCE.md:1048 误报 journey_wheel 的机制）。
+        t.write('src/mpltweak/gate.py', ''.join('g%d\n' % i for i in range(1, 31)))
+        t.write('docs/bname.md',
+                '见 `tests/test_fuzz_events.py` 的 §t82③（`:1154` 与 `:1160`）。\n')
+        t.write('tests/test_fuzz_events.py', ''.join('t%d\n' % i for i in range(1, 1201)))
+        r43 = g.scan(t.root, ['docs/bname.md'], require_anchor=False)
+        check('teeth43 只提名字（不带行号）也要能继承：同一行的 '
+              '`tests/test_fuzz_events.py` + `:1154` ⇒ test_fuzz_events.py:1154',
+              [x['ref'] for x in r43['items']] == ['tests/test_fuzz_events.py:1154',
+                                                   'tests/test_fuzz_events.py:1160'],
+              '实得 %s' % [x['ref'] for x in r43['items']])
+
+        # ---- teeth44/45：t14 漏洞 2 —— 冻结表**只**豁免"未锚" ----
+        # 夹具：blankw.py 第 5 行是空行、第 11 行非空、总共 10 行（`:99` 越界）。
+        t.write('src/mpltweak/blankw.py',
+                ''.join(('w%d\n' % i) if i != 5 else '\n' for i in range(1, 11)))
+        t.write('docs/frozen.md', '空行：`blankw.py:5`；非空：`blankw.py:7`；越界：`blankw.py:99`。\n')
+        r44 = g.scan(t.root, ['docs/frozen.md'], require_anchor=False,
+                     unanch={('docs/frozen.md', 'blankw.py:5'): '自测：登记为未锚'})
+        _w44 = [(x['ref'], x['why'], x['exempt']) for x in r44['items']]
+        check('teeth44 漏洞 2（t14）：冻结条目指到**空行**必须照样红并点名它；'
+              '越界同理（豁免只豁免 anchor_missing 这一项）',
+              ('blankw.py:5', 'blank_line', '') in _w44
+              and ('blankw.py:99', 'line_out_of_range', '') in _w44
+              and len(r44['suspicious']) == 2,
+              '实得 %s' % _w44)
+
+        _r45 = g.scan(t.root, ['docs/frozen.md'],
+                      unanch={('docs/frozen.md', 'blankw.py:5'): '自测：登记为未锚',
+                              ('docs/frozen.md', 'blankw.py:7'): '自测：登记为未锚',
+                              ('docs/frozen.md', 'blankw.py:99'): '自测：登记为未锚'})
+        check('teeth45 漏洞 2 的反面：同一批条目里只"未锚"的那条（`:7` 非空行）确实被豁免成绿，'
+              '而空行 / 越界两条即使登记了也仍然红 —— 豁免范围是**按 why 收窄**的，不是整条放宽',
+              [x['ref'] for x in _r45['suspicious']] == ['blankw.py:5', 'blankw.py:99']
+              and [(x['ref'], x['exempt']) for x in _r45['items']
+                   if x['ref'] == 'blankw.py:7'] == [('blankw.py:7', 'unanchored')],
+              'susp=%s items=%s' % ([x['ref'] for x in _r45['suspicious']],
+                                    [(x['ref'], x['exempt']) for x in _r45['items']]))
+
+    # ---- teeth46：符号锚的"窗口外"提示要报**离被引行最近**的那一处（t16）----
+    _l46 = ['line%d' % i for i in range(1, 21)]
+    _l46[4] = 'def alpha():'          # 第 5 行
+    _l46[19] = 'alpha()'              # 第 20 行
+    _v46 = g._symbol_where(_l46, 'alpha', 18, 0)
+    check('teeth46 窗口外提示报"**离被引行最近**"那一处（不是文件里第一处）：符号在 5 / 20、'
+          '引用行 18、窗口 0 ⇒ 必须报 20（旧实现报 5，会让人以为差 13 行）',
+          _v46 == ('out_of_window', 20)
+          and g._symbol_where(_l46, 'alpha', 18, 3) == ('', 20),
+          '窗口 0 得 %s / 窗口 3 得 %s' % (_v46, g._symbol_where(_l46, 'alpha', 18, 3)))
+
+    # ---- teeth37/38：三张真表的**静态纪律**（与环境状态无关，永不因代码改动漂移）----
+    def _table_bad(table):
+        bad = []
+        for k, why in table.items():
+            ok_key = (isinstance(k, tuple) and len(k) == 2
+                      and all(isinstance(x, str) for x in k)
+                      and re.search(r'\.py:\d+', k[1]) and not k[0].startswith(('/', '\\')))
+            if not ok_key or not str(why).strip():
+                bad.append(k)
+        return bad
+
+    _tables = (('HISTORICAL_ALLOW', g.HISTORICAL_ALLOW),
+               ('KNOWN_DRIFT', g.KNOWN_DRIFT),
+               ('UNANCHORED_ALLOW', g.UNANCHORED_ALLOW))
+    _bad = {n: _table_bad(tb) for n, tb in _tables}
+    _bad = dict((n, v) for n, v in _bad.items() if v)
+    check('teeth37 三张豁免表都"逐条带理由"，键形如 (文档相对路径, `文件.py:行号`)'
+          '（键**不含文档行号** —— 与 TEST_EVIDENCE_BASELINE / AMBIG_BASELINE 同纪律）',
+          not _bad, '不合格条目：%s' % (_bad or '无'))
+
+    _seen, _dup = {}, []
+    for _n, _tb in _tables:
+        for _k in _tb:
+            if _k in _seen:
+                _dup.append('%s 同时在 %s 与 %s' % (_k, _seen[_k], _n))
+            _seen[_k] = _n
+    check('teeth38 三张豁免表不许重叠（同一个键只许出现在一张表里，否则"为什么放行"说不清）',
+          not _dup, '重叠：%s' % (_dup or '无'))
+
+    # ---- teeth39：§25.5 工具自带自测（t103 四方向 + 三项新判据 + t14 两条收紧）必须全过 ----
+    import subprocess
+    _proc = subprocess.run([sys.executable, _GATE_PATH, '--self-test'],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300,
+                           env=_pin_child_env(PYTHONIOENCODING='utf-8'))
+    _out = (_proc.stdout or b'').decode('utf-8', 'replace')
+    _tail = [l for l in _out.splitlines() if l.strip()][-1:] or ['']
+    check('teeth39 工具自带自测 `--self-test` 全过（§25.5：t103 四方向 + 符号锚/窗口/豁免 '
+          '+ t14 的两条收紧）—— CI 级，不靠人工 --root',
+          _proc.returncode == 0 and '9 / 9' in _out,
+          'rc=%d | %s' % (_proc.returncode, _tail[0]))
+
+    # ---- teeth40：反向 —— 把每条判据**故意弄坏**，自测必须变红（证明自测不是恒绿）----
+    _not_red = []
+    for _mode in ('bare', 'anchor', 'window', 'allow', 'herit', 'exempt', 'resolve'):
+        _buf = io.StringIO()
+        if g._self_test(_mode, out=_buf) != 1:
+            _not_red.append(_mode)
+    check('teeth40 反向验证：`--break bare/anchor/window/allow/herit/exempt/resolve` '
+          '逐条弄坏判据 ⇒ 自测**必须**变红（rc=1）', not _not_red,
+          '没变红的：%s' % (_not_red or '无'))
+
+    # ---- 反向⑤/⑥：对**真仓库**证明这两条新判据确实在干活（不是恒绿）----
+    real = g.scan(ROOT, list(_GATE_INCLUDES))
+    real_nofreeze = g.scan(ROOT, list(_GATE_INCLUDES), unanch={}, drift={})
+    real_nobare = g.scan(ROOT, list(_GATE_INCLUDES), allow_bare=False)
+    check('反向⑤ 对真仓库：把未锚基线 + 待修表清空 ⇒ 可疑引用必须变多'
+          '（%d → %d 处；证明这两张表确实在挡，而不是判据恒绿）'
+          % (len(real['suspicious']), len(real_nofreeze['suspicious'])),
+          len(real_nofreeze['suspicious']) > len(real['suspicious']),
+          '带表 %d 处 / 清空 %d 处 / 冻结 %d 条'
+          % (len(real['suspicious']), len(real_nofreeze['suspicious']), len(g.UNANCHORED_ALLOW)))
+    check('反向⑥ 对真仓库：关掉裸引用支持 ⇒ 引用条数必须变少（%d → %d 条）'
+          '（证明 §25.4a 是承重的，不是锦上添花）'
+          % (len(real['items']), len(real_nobare['items'])),
+          len(real_nobare['items']) < len(real['items']),
+          '带裸引用 %d 条 / 关掉 %d 条' % (len(real['items']), len(real_nobare['items'])))
+
+
 def main():
     _p('文档锚点 / 相对链接回归网（0.1.10）')
     _p('范围：仓库全部 *.md（跳过 .git / 缓存 / 临时目录）；纯文本、零网络、围栏内不校验')
@@ -1026,6 +1353,7 @@ def main():
     slug_selfproof()
     files, exists = run_real()
     teeth(files, exists)
+    refs_gate()          # ⑦ 引用闸门（0.1.13）：判据级 teeth + 反向验证
     _p('')
     if _fails:
         _p('FAILED: %d 项 -> %s' % (len(_fails), _fails))

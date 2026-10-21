@@ -1461,6 +1461,122 @@ def _run_t71_units():
 
 
 # =====================================================================
+# §t84 / MAINTENANCE §25.8：**拾取入口反向探测**（`_pick_at` / `_pick_candidates`）
+#
+# 为什么还要这这一段：§t71②③ 与 §t82③④ 断言的是"点哪中哪 / 每个对象可达"，但
+# **它们自己证明不了自己不是恒绿** —— 若拾取入口整体退化成"永远返回空"，命中类
+# 断言仍可能因为别的原因通过。§t71⑥ 只做了"两个入口一起改坏"，回答不了两件事：
+#   ① 到底是哪个入口在起作用（`_pick_at` 与 `_pick_candidates` 是调用关系，
+#      `_pick_at` 内部就是 `_pick_candidates(...)[skip]`，一起改坏分不清）；
+#   ② 改坏入口后，"哪几条既有断言会红"有没有被点名（§t71⑥ 只点名 §t82③④）。
+# 这里补的正是**逐个入口**的反向探测（实测结论，改判据前请先跑一遍）：
+#   · 只把 `_pick_at -> None` ⇒ §t82③④ 必红（cb_inside_polar 形状上 ax1 中心被
+#     「缩放 ax0 bottom」把手抢走）、§t71③ 必红；而 §t71②（直接问候选表）**仍绿**
+#     ⇒ 两条断言来自不同入口，不是同一个重言式；
+#   · 只把 `_pick_candidates -> []` ⇒ §t82③④ 与 §t71② 都必红（`_pick_at` 也随之
+#     返回 None，端到端同样红）；
+#   · 两个一起改坏 ⇒ 红的一条不少（与 §t71⑥ 同口径，这里补上 §t71②）；
+#   · 还原后同一批断言**全绿** ⇒ 红是变异造成的，不是"这个形状本来就不成立"。
+# 注意：反向探测必须用 **cb_inside_polar** 这个形状 —— 另外两个形状（polar+cb /
+# imshow+cb）上把手不抢，改坏入口**不会**让 §t82③④ 变红，拿它们做反向探测会得到
+# 一条恒绿的假"有牙"。实测覆盖 3 形状 × 3 种变异（只坏 `_pick_at` / 只坏
+# `_pick_candidates` / 两个一起坏）= 9 组：**只有 cb_inside_polar 的 3 组是红的**，
+# polar+cb 与 imshow+cb 那 6 组的 hit_red / reach_red 全为 False。换形状前先想清楚
+# 这个坑，否则"反向探测"会退化成恒绿断言。
+# 纪律：**只改测试**（monkeypatch 模块属性 + try/finally 还原），`toolbox.py` 一行不动。
+# =====================================================================
+def _pick_probe_state(make, tag):
+    '''在被改坏的拾取入口下，跑"§t71② 优先级 + §t71③ 端到端命中"同口径断言。
+
+    返回 (第一候选是否 colorbar, 点中心是否选中 colorbar, 说明)；图用完即关。
+    '''
+    fig, axes = make()
+    env = _Env(fig, axes, tag)
+    cb = axes[1]
+    x, y = env.center(cb)
+    cands = _tb._pick_candidates(fig, x, y)
+    ok_pri = bool(cands) and cands[0] is cb
+    _press_esc(env)
+    _click(env, x, y)
+    sel = _sel_idx(env)
+    plt.close(fig)
+    return ok_pri, sel == [1], '第一候选=colorbar:%s 点中心选中=%s' % (ok_pri, sel)
+
+
+def _run_t84_pick_reverse():
+    '''§25.8 反向探测：逐个把拾取入口改坏，断言既有命中/可达断言**确实变红**。
+
+    断言的是"红"（不是"绿"）：变异生效后既有断言必须失败 ⇒ 证明它们不是恒绿。
+    '''
+    _orig_at = _tb._pick_at
+    _orig_cands = _tb._pick_candidates
+    _shape = _make_cb_inside_polar
+    _det = {}
+
+    def _snapshot(tag):
+        '''在当前（可能被改坏的）实现上取一次快照：§t82③④ + §t71②③。'''
+        bad_hit, unreach = _inv34_hit_reach(_shape, 't84_' + tag)
+        ok_pri, ok_hit, detail = _pick_probe_state(_shape, 't84_%s_clk' % tag)
+        _det[tag] = ('命中红=%s 可达红=%s 优先级绿=%s 端到端绿=%s | %s'
+                     % ('; '.join(bad_hit)[:60], '; '.join(unreach)[:60],
+                        ok_pri, ok_hit, detail))
+        return dict(hit_red=bool(bad_hit), reach_red=bool(unreach),
+                    pri_ok=ok_pri, hit_ok=ok_hit)
+
+    # ① 只改坏 `_pick_at`（"最终选哪个"的入口）
+    try:
+        _tb._pick_at = lambda fig, x, y, skip=0: None
+        _only_at = _snapshot('at')
+    finally:
+        _tb._pick_at = _orig_at
+    check('§t84①【有牙】只把 `_pick_at` 换成 return None ⇒ §t82③ 命中自洽 + '
+          '§t82④ 可达性**必红**（形状 cb_inside_polar）',
+          _only_at['hit_red'] and _only_at['reach_red'], _det['at'])
+    check('§t84①b【有牙】同一变异下 §t71③「点 colorbar 中心 ⇒ 选中 colorbar」也必红',
+          _only_at['hit_ok'] is False, _det['at'])
+    check('§t84①c 但 §t71②（直接问 `_pick_candidates` 的优先级）**仍绿** ⇒ '
+          '两个入口是分开验的，命中类断言不是同一个重言式',
+          _only_at['pri_ok'] is True, _det['at'])
+
+    # ② 只改坏 `_pick_candidates`（候选表本身）
+    try:
+        _tb._pick_candidates = lambda fig, x, y: []
+        _only_c = _snapshot('cands')
+    finally:
+        _tb._pick_candidates = _orig_cands
+    check('§t84②【有牙】只把 `_pick_candidates` 换成 [] ⇒ §t82③④ 与 §t71② '
+          '优先级**都必红**',
+          _only_c['hit_red'] and _only_c['reach_red']
+          and _only_c['pri_ok'] is False, _det['cands'])
+
+    # ③ 两个一起改坏（§t71⑥ 的口径，这里补 §t71②）
+    try:
+        _tb._pick_at = lambda fig, x, y, skip=0: None
+        _tb._pick_candidates = lambda fig, x, y: []
+        _both = _snapshot('both')
+    finally:
+        _tb._pick_at = _orig_at
+        _tb._pick_candidates = _orig_cands
+    check('§t84③【有牙】两个入口一起改坏 ⇒ 红的一条不少（§t82③④ + §t71②③）',
+          _both['hit_red'] and _both['reach_red']
+          and _both['pri_ok'] is False and _both['hit_ok'] is False, _det['both'])
+
+    # ④ 还原后同一批断言**全绿**：证明红是变异造成的，不是形状本身不成立
+    _after = _snapshot('restored')
+    check('§t84④ 还原后同一批断言全绿（§t82③④ + §t71②③）⇒ 红来自变异，'
+          '不是这个形状本来就不成立',
+          not _after['hit_red'] and not _after['reach_red']
+          and _after['pri_ok'] is True and _after['hit_ok'] is True,
+          _det['restored'])
+    check('§t84⑤ 探测结束两个入口都还原（对象同一，没留下变异）',
+          _tb._pick_at is _orig_at and _tb._pick_candidates is _orig_cands)
+
+    # 验收要的"两行原始输出"：同一个形状、同一批断言，修前红 / 修后绿
+    print('§t84 RAW[红] _pick_at->None | %s' % _gbk_safe(_det['at']))
+    print('§t84 RAW[绿] 还原后          | %s' % _gbk_safe(_det['restored']))
+
+
+# =====================================================================
 # §t92 t92：撤销完备性**逐字段**（显式点名 `canvas.figsize_px` 与 `figsize_in`）
 #
 # 来历：`t82` 严格模式发现「裁白边（Ctrl+F）后撤销只还原了 `figsize_in`，跟踪的
@@ -1770,6 +1886,7 @@ def main():
     _teeth_probes()
     _run_invariants()
     _run_t71_units()
+    _run_t84_pick_reverse()
     _run_t92_units()
     _run_t101_units()
 

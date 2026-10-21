@@ -1694,6 +1694,14 @@ WB_ZH_TO_EN = {
         'this run could only pick "end of script" as the anchor (there is no savefig/plt.show to anchor on) - the layout block will be appended at the end of the file',
     '已回滚': 'rolled back',
     '语义验证不一致': 'semantic verification mismatch',
+    '本次未做 figsize 的 dpi 换算校验（%s）：静态判不出这张图的画布 '
+    'dpi —— 多图各自不同 dpi / dpi 值不是字面量 / dpi 写在控制流里，'
+    '三种都算判不出。参数按原样写回，请自查 figsize_in 与 figsize_px '
+    '是否自洽。':
+        'skipped the figsize/dpi cross-check (%s): the figure dpi cannot be inferred '
+        'statically - several different dpi values, a non-literal dpi, or a dpi written '
+        'inside control flow all count as unknown. Params are written as-is, so please '
+        'double-check that figsize_in and figsize_px agree.',
     '语义验证不一致：%s': 'semantic verification mismatch: %s',
     'figsize 参数自相矛盾：figsize_px=%s 按 dpi=%s 折算应是 %s in，'
     '但 figsize_in=%s（差成倍）—— 这通常来自"dpi 换算错一倍"，写回会把'

@@ -496,6 +496,48 @@ def _fill_help_fig(fig, lang):
     _render_help(fig, lang, _pick_ui_font())
 
 
+class _HelpWindowOp(object):
+    '''「碰窗口」的**薄层**（t5 / MAINTENANCE §25.11）。
+
+    来历：帮助覆盖层的窗口调用（`set_window_title` / `show()` / `window.raise_()`
+    / 隐藏工具栏）原先散在 `_toggle_help_lang` 与 `_show_help_fig` 里，且每条都
+    包在 `except Exception: pass` 中 —— 于是**离屏（Agg/无窗口）时它们静默失败，
+    没有任何地方能证明"开窗时这些事真的被做过"**（§25.11 的原话：实际渲染从没
+    被自动验证过）。
+
+    现在所有碰窗口的调用都收敛到这一个对象上：**默认实现逐条转发**给 matplotlib
+    的 manager（与抽层前一一对应、调用顺序与 try/except 边界都不变，开窗路径
+    行为完全不变）；离屏测试把模块级 `_HELP_WIN` 换成一个记录用的假对象，就能
+    把 `_show_help_fig()` 整条跑完，并断言"确实设过标题 / 确实调过 show()"。
+    '''
+
+    def set_title(self, manager, title):
+        '''设置窗口标题（无窗口的后端会静默失败，由调用点兜住）。'''
+        manager.set_window_title(title)
+
+    def show(self, manager):
+        '''把窗口显示出来（离屏后端是空操作）。'''
+        manager.show()
+
+    def window(self, manager):
+        '''取底层 GUI 窗口对象（Qt/Tk 才有；Agg 会 AttributeError）。'''
+        return manager.window
+
+    def raise_window(self, window):
+        '''置顶 + 激活（"再按一次 ?" 走这条）。'''
+        window.raise_()
+        window.activateWindow()
+
+    def hide_toolbar(self, manager):
+        '''隐藏帮助窗口自带工具栏（没有就不动）。'''
+        _tb = getattr(manager, 'toolbar', None)
+        if _tb is not None:
+            _tb.hide()
+
+
+_HELP_WIN = _HelpWindowOp()
+
+
 def _on_help_key(event):
     _k = str(getattr(event, 'key', '') or '')
     if _k == 'escape':
@@ -519,7 +561,8 @@ def _toggle_help_lang():
     _HELP_LANG = 'en' if _HELP_LANG == 'zh' else 'zh'
     if _HELP_FIG is not None:
         try:
-            _HELP_FIG.canvas.manager.set_window_title(
+            _HELP_WIN.set_title(
+                _HELP_FIG.canvas.manager,
                 'mpltweak · 快捷键' if _HELP_LANG == 'zh'
                 else 'mpltweak · Shortcuts')
         except Exception:                    # noqa: BLE001
@@ -538,12 +581,11 @@ def _show_help_fig():
     if _HELP_FIG is not None:
         # 已开着 → 重新置顶（不重复创建）
         try:
-            _w = _HELP_FIG.canvas.manager.window
-            _w.raise_()
-            _w.activateWindow()
+            _w = _HELP_WIN.window(_HELP_FIG.canvas.manager)
+            _HELP_WIN.raise_window(_w)
         except Exception:                    # noqa: BLE001
             try:
-                _HELP_FIG.canvas.manager.show()
+                _HELP_WIN.show(_HELP_FIG.canvas.manager)
             except Exception:
                 pass
         return
@@ -555,7 +597,8 @@ def _show_help_fig():
         pass
     _fill_help_fig(_hf, _HELP_LANG)
     try:
-        _hf.canvas.manager.set_window_title(
+        _HELP_WIN.set_title(
+            _hf.canvas.manager,
             'mpltweak · 快捷键' if _HELP_LANG == 'zh'
             else 'mpltweak · Shortcuts')
     except Exception:                        # noqa: BLE001
@@ -564,13 +607,11 @@ def _show_help_fig():
     _hf.canvas.mpl_connect('key_press_event', _on_help_key)
     _hf.canvas.mpl_connect('button_press_event', _on_help_click)
     try:
-        _tb = getattr(_hf.canvas.manager, 'toolbar', None)
-        if _tb is not None:
-            _tb.hide()
+        _HELP_WIN.hide_toolbar(_hf.canvas.manager)
     except Exception:                        # noqa: BLE001
         pass
     try:
-        _hf.canvas.manager.show()
+        _HELP_WIN.show(_hf.canvas.manager)
     except Exception:                        # noqa: BLE001
         pass
 

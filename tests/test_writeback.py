@@ -6414,6 +6414,432 @@ check('102⑤【有牙】把守卫换成 `return ''`（= 没有这条）→ 坏�
       '（= 102① 在改前代码上必假）',
       _r102e.get('reason') != 'bad_params', _r102e.get('reason'))
 
+# ---------------------------------------------------------------------
+# §102 续（t103 / MAINTENANCE §25.18）：P0-1 止损的**误伤** —— dpi 静态提取
+# 只认「建图位置」，放过 `savefig(dpi=300)`。
+#
+# 现场：`plt.subplots(figsize=(12, 7))` + `fig.savefig('x.png', dpi=300)` 是语料里
+# 最常见的论文写法（16,126 份里 1,629 份带 savefig 的 dpi），而 **savefig 的 dpi 是
+# 出图像素、不是画布 dpi**。旧 `_script_dpi` 不看接收者、把所有 `dpi=` 都当画布 dpi ⇒
+# `_figsize_inconsistent` 判成"12 in 该是 4 in，差成倍"⇒ `apply --write` 报
+# `reason=bad_params` / rc=2 / 一个字节不动；而**预览**（不带 --write）在 apply.py 里
+# 早已 `reason=preview` 早退、根本不走这条守卫 ⇒ 用户看到"预览正常、一写就报错"。
+# 语料影响面 1,495 份（9.3%）落这个陷阱，判据只是"碰巧"（savefig dpi 写 150/200/300）。
+#
+# 收窄口径（`writeback._script_dpi` + `DPI_FACTORY_NAMES` / `DPI_OUTPUT_NAMES`）：
+# 只收 `plt.figure` / `plt.subplots` / `plt.subplot_mosaic` / `Figure(...)` 的 `dpi=`、
+# `fig.set_dpi(N)`、`plt.rc('figure', dpi=N)`，以及原有的 `fig.dpi = N` /
+# `rcParams['figure.dpi'] = N`；出图/读图调用（savefig/imsave/imread/print_*）的
+# `dpi=` 一律不收。
+# ---------------------------------------------------------------------
+_S102_SAVE300 = ('import matplotlib\n'
+                 'matplotlib.use("Agg")\n'
+                 'import matplotlib.pyplot as plt\n\n'
+                 # 建图不带 dpi ⇒ 画布 dpi = 默认 100（= params.py 的设计口径）
+                 'fig, ax = plt.subplots(figsize=(12, 7))\n'
+                 'ax.plot([1, 2], [1, 2])\n'
+                 'fig.savefig("x.png", dpi=300)\n')     # 出图 300dpi ≠ 画布 dpi
+_S102_FIG200_SAVE300 = ('import matplotlib\n'
+                        'matplotlib.use("Agg")\n'
+                        'import matplotlib.pyplot as plt\n\n'
+                        'fig, ax = plt.subplots(figsize=(6, 4), dpi=200)\n'
+                        'ax.plot([1, 2], [1, 2])\n'
+                        'fig.savefig("x.png", dpi=300)\n')
+_S102_FIG300 = ('import matplotlib\n'
+                'matplotlib.use("Agg")\n'
+                'import matplotlib.pyplot as plt\n\n'
+                'fig, ax = plt.subplots(figsize=(12, 7), dpi=300)\n'
+                'ax.plot([1, 2], [1, 2])\n'
+                'fig.savefig("out.png")\n')
+_S102_RC200 = ('import matplotlib\n'
+               'matplotlib.use("Agg")\n'
+               'import matplotlib.pyplot as plt\n\n'
+               'plt.rc("figure", dpi=200)\n'
+               'fig, ax = plt.subplots(figsize=(6, 4))\n'
+               'ax.plot([1, 2], [1, 2])\n'
+               'fig.savefig("x.png", dpi=300)\n')
+_S102_SETDPI200 = ('import matplotlib\n'
+                   'matplotlib.use("Agg")\n'
+                   'import matplotlib.pyplot as plt\n\n'
+                   'fig, ax = plt.subplots(figsize=(6, 4))\n'
+                   'fig.set_dpi(200)\n'
+                   'ax.plot([1, 2], [1, 2])\n'
+                   'fig.savefig("x.png", dpi=300)\n')
+
+_ra103, _ = _s102_run(_S102_SAVE300, 't103_a',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'figsize_px': [1200, 700], 'figsize_in': [12.0, 7.0]})
+check('102⑥【本版唯一新增行为】subplots(figsize=(12,7)) + savefig(dpi=300)，'
+      'px=[1200,700] / in=[12,7]（画布 12in × 100dpi）→ **不再**因 bad_params 被拒'
+      '（= §25.18 那个 9.3% 陷阱）',
+      _ra103.get('reason') != 'bad_params', _ra103.get('reason'))
+_rb103, _ = _s102_run(_S102_FIG200_SAVE300, 't103_b',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'figsize_px': [1200, 800], 'figsize_in': [6.0, 4.0]})
+check('102⑦ 既有 102④ 的加强版（subplots(dpi=200) **且** savefig(dpi=300)，'
+      'px=[1200,800] / in=[6,4]）→ 仍不拒：画布 dpi 取建图那个 200，savefig 的 300 不算',
+      _rb103.get('reason') != 'bad_params', _rb103.get('reason'))
+_rc103, _ = _s102_run(_S102_FIG300, 't103_c',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'figsize_px': [3600, 2100], 'figsize_in': [12.0, 7.0]})
+check('102⑧ MAINTENANCE 验收 b：subplots(figsize=(12,7), dpi=300) + px=[3600,2100] '
+      '/ in=[12,7] → 放行（真 dpi 与 px 自洽，收窄没把"建图 dpi"弄瞎）',
+      _rc103.get('reason') != 'bad_params', _rc103.get('reason'))
+_rd103, _same103d = _s102_run(_S102_SAVE300, 't103_d', _p102_bad)
+check('102⑨ 真矛盾在"带 savefig(dpi=300) 的脚本"上**照样拒**：'
+      'px=[1500,950] / in=[7.5,4.75]（1/2）→ 仍 reason=bad_params 且一个字节不动'
+      '（= 102① 未被放水）',
+      _rd103.get('reason') == 'bad_params' and _same103d
+      and 'figsize' in (_rd103.get('err') or ''),
+      'reason=%r 字节未变=%s err=%r' % (_rd103.get('reason'), _same103d,
+                                       (_rd103.get('err') or '')[:60]))
+_re103, _ = _s102_run(_S102_RC200, 't103_e',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'figsize_px': [1200, 800], 'figsize_in': [6.0, 4.0]})
+_rf103, _ = _s102_run(_S102_SETDPI200, 't103_f',
+                      {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'figsize_px': [1200, 800], 'figsize_in': [6.0, 4.0]})
+check('102⑩ 收窄不能把既有能看的写法弄瞎：`plt.rc("figure", dpi=200)` 与 '
+      '`fig.set_dpi(200)`（都配 savefig(dpi=300)）→ 两种都**不拒**',
+      _re103.get('reason') != 'bad_params' and _rf103.get('reason') != 'bad_params',
+      'rc: reason=%r / set_dpi: reason=%r' % (_re103.get('reason'), _rf103.get('reason')))
+
+
+def _s102_legacy_script_dpi(tree):
+    '''**旧实现原样**（t66 那版 `_script_dpi`：任意调用的 `dpi=` 都收，不看接收者）。
+
+    只给 102⑪ 的 teeth 用：临时装回 `writeback._script_dpi`，"只认建图位置"这个改动
+    必须让 102⑥ / 102⑦ 变红 —— 否则那两条验的是别的东西。
+    '''
+    dpi = 100.0
+    for n in _ast.walk(tree):
+        if isinstance(n, _ast.Call):
+            for kw in n.keywords:
+                if kw.arg == 'dpi' and isinstance(kw.value, _ast.Constant) \
+                        and isinstance(kw.value.value, (int, float)) \
+                        and not isinstance(kw.value.value, bool):
+                    dpi = float(kw.value.value)
+        if isinstance(n, _ast.Assign) and isinstance(n.value, _ast.Constant) \
+                and isinstance(n.value.value, (int, float)) \
+                and not isinstance(n.value.value, bool):
+            for t in n.targets:
+                if isinstance(t, _ast.Attribute) and t.attr == 'dpi':
+                    dpi = float(n.value.value)
+                elif isinstance(t, _ast.Subscript) \
+                        and isinstance(t.value, _ast.Attribute) \
+                        and t.value.attr == 'rcParams':
+                    sl = t.slice
+                    if isinstance(sl, _ast.Constant) and sl.value == 'figure.dpi':
+                        dpi = float(n.value.value)
+    return dpi
+
+
+_orig_sd103 = writeback._script_dpi
+writeback._script_dpi = _s102_legacy_script_dpi
+try:
+    _rt103a, _ = _s102_run(_S102_SAVE300, 't103_teeth_a',
+                           {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                            'figsize_px': [1200, 700], 'figsize_in': [12.0, 7.0]})
+    _rt103b, _ = _s102_run(_S102_FIG200_SAVE300, 't103_teeth_b',
+                           {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                            'figsize_px': [1200, 800], 'figsize_in': [6.0, 4.0]})
+finally:
+    writeback._script_dpi = _orig_sd103
+check('102⑪【有牙】把 `_script_dpi` 换回旧实现（任意调用取 dpi）→ ⑥ 与 ⑦ **都变红**'
+      '（reason=bad_params）⇒ ⑥⑦ 咬的正是"只认建图位置"这个改动本身',
+      _rt103a.get('reason') == 'bad_params' and _rt103b.get('reason') == 'bad_params',
+      '⑥ 旧实现: reason=%r / ⑦ 旧实现: reason=%r'
+      % (_rt103a.get('reason'), _rt103b.get('reason')))
+
+
+# ---------------------------------------------------------------------
+# §102 续（t104 / 第二批）：`_script_dpi` **静态推断的三条边界**
+#
+# 背景：`_script_dpi` 推断的是**运行期**概念（"这张图"实际多少 dpi），手上只有**静态**
+# 信息。三条边界越过去，判据就从"看得见的矛盾"变成"猜出来的矛盾"——一猜错就是**误拒**
+# （预览正常、一写就报 bad_params，与 §25.18 同一类现场）：
+#   ① 多图不同 dpi：`fig1` 默认 100、`fig2` 显式 200 ⇒ 旧实现"最后一个赢"，把 fig2 的
+#      200 套到 fig1 的参数上，2 倍差 ⇒ 误拒；
+#   ② 非 figure 的 `.dpi =`：`class P: self.dpi = 150` 这种接收者不是这张图，旧实现谁写
+#      都收；本版只在接收者**可证是 Figure 变量**时认；
+#   ③ 控制流里的 dpi 写法：`if <条件>: rcParams['figure.dpi'] = 200` 走没走只有运行期
+#      知道，旧实现无条件采纳。
+# 三条一律"判不出 ⇒ 放行 + warnings 里如实说**未做换算校验**"（宁可漏拦，不可误伤）；
+# 真矛盾（102①）不受影响，仍必须拒。
+# ---------------------------------------------------------------------
+_S102_T104_TWODPI = ('import matplotlib\n'
+                     'matplotlib.use("Agg")\n'
+                     'import matplotlib.pyplot as plt\n\n'
+                     'fig1, ax1 = plt.subplots(figsize=(10, 6))\n'
+                     'ax1.plot([1, 2], [1, 2])\n'
+                     'fig1.savefig("f1.png")\n\n'
+                     'fig2, ax2 = plt.subplots(figsize=(5, 3), dpi=200)\n'
+                     'ax2.plot([1, 2], [1, 2])\n'
+                     'fig2.savefig("f2.png")\n')
+_S102_T104_SELFDPI = ('import matplotlib\n'
+                      'matplotlib.use("Agg")\n'
+                      'import matplotlib.pyplot as plt\n\n'
+                      'class P:\n'
+                      '    def __init__(self):\n'
+                      '        self.dpi = 150\n\n\n'
+                      'p = P()\n'
+                      'fig, ax = plt.subplots(figsize=(6, 4))\n'
+                      'ax.plot([1, 2], [1, 2])\n'
+                      'fig.savefig("x.png", dpi=p.dpi)\n')
+_S102_T104_CTRL = ('import matplotlib\n'
+                   'matplotlib.use("Agg")\n'
+                   'import matplotlib.pyplot as plt\n'
+                   'import os\n\n'
+                   'if os.environ.get("MPLTWEAK_T104_BRANCH"):\n'
+                   '    plt.rcParams["figure.dpi"] = 200\n\n'
+                   'fig, ax = plt.subplots(figsize=(3, 2))\n'
+                   'ax.plot([1, 2], [1, 2])\n'
+                   'fig.savefig("x.png")\n')
+_S102_T104_NONLIT = ('import matplotlib\n'
+                     'matplotlib.use("Agg")\n'
+                     'import matplotlib.pyplot as plt\n\n'
+                     'DPI = 200\n'
+                     'fig, ax = plt.subplots(figsize=(6, 4), dpi=DPI)\n'
+                     'ax.plot([1, 2], [1, 2])\n'
+                     'fig.savefig("x.png")\n')
+_S102_T104_SETDPI = ('import matplotlib\n'
+                     'matplotlib.use("Agg")\n'
+                     'import matplotlib.pyplot as plt\n\n'
+                     'fig, ax = plt.subplots(figsize=(6, 4))\n'
+                     'fig.set_dpi(200)\n'
+                     'ax.plot([1, 2], [1, 2])\n'
+                     'fig.savefig("x.png")\n')
+_S102_T104 = '未做'                     # warnings 文案里的锚（"本次未做 figsize 的 dpi 换算校验"）
+
+
+def _s102_104_run(src, tag, params):
+    _r, _ = _s102_run(src, tag, params)
+    return _r, [w for w in (_r.get('warnings') or []) if _S102_T104 in w]
+
+
+_P104_TWODPI = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 2,
+                'figsize_px': [1000, 600], 'figsize_in': [10.0, 6.0]}
+_r104a, _w104a = _s102_104_run(_S102_T104_TWODPI, 't104_a', dict(_P104_TWODPI))
+check('102⑫ 多图不同 dpi（fig1 默认 100 / fig2 显式 200）对 fig1 写回 '
+      'px=[1000,600] / in=[10,6] → **不因 bad_params 被拒**（修前：最后一个赢 = 200，'
+      '2 倍差 ⇒ 拒），且 warnings 如实说"未做 dpi 换算校验"',
+      _r104a.get('reason') != 'bad_params' and bool(_w104a),
+      'reason=%r warn=%r' % (_r104a.get('reason'), _w104a[:1]))
+_r104b, _w104b = _s102_104_run(_S102_T104_SELFDPI, 't104_b',
+                               {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                                'n_figs': 1, 'figsize_px': [600, 400],
+                                'figsize_in': [6.0, 4.0]})
+check('102⑬ 非 figure 的 `.dpi =`：`class P: self.dpi = 150` + subplots 默认 + '
+      '`savefig(dpi=p.dpi)`，px=[600,400] / in=[6,4] → **不拒**（修前：收下 150，1.5 倍 ⇒ 拒）'
+      '；且**没有**"未做校验"的 warnings（dpi 判得出 = 100，说明不是靠"一律放行"糊过去的）',
+      _r104b.get('reason') != 'bad_params' and not _w104b,
+      'reason=%r warn=%r' % (_r104b.get('reason'), _w104b[:1]))
+_r104c, _w104c = _s102_104_run(_S102_T104_CTRL, 't104_c',
+                               {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                                'n_figs': 1, 'figsize_px': [300, 200],
+                                'figsize_in': [3.0, 2.0]})
+_r104d, _w104d = _s102_104_run(_S102_T104_NONLIT, 't104_d',
+                               {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                                'n_figs': 1, 'figsize_px': [1200, 800],
+                                'figsize_in': [6.0, 4.0]})
+check('102⑭ 控制流里的 `rcParams["figure.dpi"] = 200`（运行期没走这一支）与"dpi 值不是'
+      '字面量"（`DPI = 200; subplots(dpi=DPI)`）→ 两种都**不拒**且 warnings 有"未做换算'
+      '校验"（修前：分别收下 200 / 按 100 折算 ⇒ 都判 2 倍差拒写）',
+      _r104c.get('reason') != 'bad_params' and bool(_w104c)
+      and _r104d.get('reason') != 'bad_params' and bool(_w104d),
+      'ctrl: reason=%r warn=%r / nonlit: reason=%r warn=%r'
+      % (_r104c.get('reason'), _w104c[:1], _r104d.get('reason'), _w104d[:1]))
+_r104e, _same104e = _s102_run(_S102, 't104_e', _p102_bad)
+_r104f, _same104f = _s102_run(_S102_T104_SETDPI, 't104_f',
+                              {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                               'n_figs': 1, 'figsize_px': [1200, 800],
+                               'figsize_in': [12.0, 8.0]})
+check('102⑮ 真矛盾**没被放水**：px=[1500,950] / in=[7.5,4.75]（§102① 同款）仍 '
+      'reason=bad_params 且字节不动；且"判得出 dpi"的路径仍在咬 —— '
+      '`fig.set_dpi(200)` + px=[1200,800] / in=[12,8]（200dpi 下应是 6×4 in，正好 2 倍）'
+      '也仍拒',
+      _r104e.get('reason') == 'bad_params' and _same104e
+      and _r104f.get('reason') == 'bad_params',
+      '102①: reason=%r 字节未变=%s / set_dpi(200): reason=%r'
+      % (_r104e.get('reason'), _same104e, _r104f.get('reason')))
+_ra104g, _ = _s102_run(_S102_SAVE300, 't104_g',
+                       {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                        'figsize_px': [1200, 700], 'figsize_in': [12.0, 7.0]})
+_rb104g, _ = _s102_run(_S102_FIG200_SAVE300, 't104_h',
+                       {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                        'figsize_px': [1200, 800], 'figsize_in': [6.0, 4.0]})
+check('102⑯【不回归】T1 的 102⑥（savefig(dpi=300) 放过）与 102⑦（subplots(dpi=200) + '
+      'savefig(dpi=300) 共存）仍绿，且与 102⑫⑬ 的四条边界改动互不干扰',
+      _ra104g.get('reason') != 'bad_params' and _rb104g.get('reason') != 'bad_params'
+      and _r104a.get('reason') != 'bad_params'
+      and _r104b.get('reason') != 'bad_params',
+      '102⑥=%r / 102⑦=%r / 102⑫=%r / 102⑬=%r'
+      % (_ra104g.get('reason'), _rb104g.get('reason'),
+         _r104a.get('reason'), _r104b.get('reason')))
+_orig_vote104 = writeback._script_dpi_vote
+
+
+def _t104_no_multi_skip(tree):
+    """牙 A：去掉"多值 ⇒ 放行"（退回"挑一个值"，= 旧口径的最后一个赢）。"""
+    _dpi, _why = _orig_vote104(tree)
+    if _dpi is None and _why.startswith('dpi sites differ'):
+        return 200.0, ''
+    return _dpi, _why
+
+
+try:
+    writeback._script_dpi_vote = _t104_no_multi_skip
+    _r104i, _ = _s102_run(_S102_T104_TWODPI, 't104_i', dict(_P104_TWODPI))
+finally:
+    writeback._script_dpi_vote = _orig_vote104
+_orig_ctrl104 = writeback._dpi_in_control_flow
+try:
+    writeback._dpi_in_control_flow = lambda node, parents: False
+    _r104j, _ = _s102_run(_S102_T104_CTRL, 't104_j',
+                          {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                           'n_figs': 1, 'figsize_px': [300, 200],
+                           'figsize_in': [3.0, 2.0]})
+finally:
+    writeback._dpi_in_control_flow = _orig_ctrl104
+check('102⑰【两头有牙】把"多值 ⇒ 放行"去掉（`_script_dpi_vote` 改回挑一个值）⇒ 102⑫ '
+      '必变红（bad_params）；把"控制流跳过"去掉（`_dpi_in_control_flow` 恒 False）⇒ '
+      '102⑭ 的控制流那条必变红 —— 两条边界各自有独立的牙',
+      _r104i.get('reason') == 'bad_params' and _r104j.get('reason') == 'bad_params',
+      '去多值放行: 102⑫ reason=%r / 去控制流跳过: 102⑭ reason=%r'
+      % (_r104i.get('reason'), _r104j.get('reason')))
+
+
+# ---------------------------------------------------------------------
+# §102 续（t17 / **存量缺陷**，0.1.12 起就有）：裸 `tick_params()` 不许把写回打崩
+#
+# t6 全池差分跑（1.6 万份真实脚本、两臂）抓到：`_gap_specs_tick` 里
+# `_av = next((k for k in c.keywords if k.arg == 'axis'), None)` 之后**直接**取
+# `_av.value` —— 没写 `axis=` 时 `_av` 是 None ⇒
+# `AttributeError: 'NoneType' object has no attribute 'value'` 穿到顶层，
+# CLI 变成 `internal_error` / rc=2（脚本一个字节都没动，用户看到的却是"工具 bug"）。
+# 两臂同码同炸（inplace 波 A 侧 34 份 / B 侧 38 份，分母 16,126）⇒ 与本批 0.1.13 无关。
+#
+# 修法（不新增任何文案/不改 message 表）：把「没写 axis」与「写了但不是本侧 / 'both'」
+# **同样处理** —— 不做候选。这不是"绕过异常"，而是本节既有口径：不带 `axis=` 的
+# `tick_params` 一次改两侧，往里补 `labelsize` 会**偷偷改另一侧**（fail-closed）；
+# 没有候选 ⇒ 调用方按既有语义退块，块里精确写 `axis='x', labelsize=…`（两侧不串）。
+# ---------------------------------------------------------------------
+_T17_HEAD = ('import matplotlib\nmatplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n'
+             'fig, ax = plt.subplots(figsize=(6, 4))\n'
+             'ax.plot([1, 2], [1, 2])\n')
+_T17_TAIL = 'fig.savefig("x.png")\n'
+_T17_BARE = _T17_HEAD + 'ax.tick_params()\n' + _T17_TAIL
+_T17_COLORS = _T17_HEAD + 'ax.tick_params(colors="red")\n' + _T17_TAIL
+_T17_AXISX_ONLY = _T17_HEAD + "ax.tick_params(axis='x')\n" + _T17_TAIL
+_T17_AXISX_8 = _T17_HEAD + "ax.tick_params(axis='x', labelsize=8)\n" + _T17_TAIL
+_T17_PARAMS = {'version': 4, 'script': 'fig.py',
+               'axes': [{'index': 0, 'tick_fontsize': 14.0}]}
+# 14 而不是 10：matplotlib 默认刻度字号就是 10，参数等于默认值时引擎判"已经是这个值"、
+# 根本走不到补参数那条路（t17 复现时踩过：改 10 就"不炸"，改 14 才炸）。
+
+
+def _t17_run(src, tag, params=None, style='inplace'):
+    """跑一次真写回，返回 ``(res, 写出后的源码)``；异常**不吞**（要测的就是"不许抛"）。"""
+    _d = os.path.join(_TMPROOT, 'case_t17_' + tag)
+    shutil.rmtree(_d, ignore_errors=True)
+    os.makedirs(os.path.join(_d, '.tweak_params'), exist_ok=True)
+    _s = os.path.join(_d, 'fig.py')
+    with open(_s, 'w', encoding='utf-8', newline='\n') as _f:
+        _f.write(src)
+    _p = os.path.join(_d, '.tweak_params', 'fig.json')
+    with open(_p, 'w', encoding='utf-8') as _f:
+        json.dump(dict(params or _T17_PARAMS), _f, ensure_ascii=False)
+    _r = writeback.writeback(_s, dict(params or _T17_PARAMS), _p,
+                             verify=False, style=style)
+    return _r, read(_s)
+
+
+_r17a, _t17a = _t17_run(_T17_BARE, 'bare')
+check('102⑱【t17】裸 `ax.tick_params()`（不带 axis、不带尺寸参数）→ **不抛异常**；'
+      '原位路径 fail-closed：**不动源码**、如实 needs_block（不往"两侧通吃"的调用上补参数）',
+      isinstance(_r17a, dict) and _r17a.get('reason') != 'fail'
+      and _r17a.get('needs_block') is True
+      and 'labelsize' not in _t17a,
+      'reason=%r needs_block=%r 源码含 labelsize=%s'
+      % (_r17a.get('reason'), _r17a.get('needs_block'), 'labelsize' in _t17a))
+_r17b, _t17b = _t17_run(_T17_COLORS, 'colors')
+check('102⑲【t17】只带非尺寸参数（`tick_params(colors="red")`）→ 同样**不抛异常**且'
+      'fail-closed（判据是"有没有 axis="，不是"有没有任何参数"）',
+      _r17b.get('reason') != 'fail' and _r17b.get('needs_block') is True
+      and 'labelsize' not in _t17b,
+      'reason=%r needs_block=%r' % (_r17b.get('reason'), _r17b.get('needs_block')))
+_r17c, _t17c = _t17_run(_T17_AXISX_ONLY, 'axisx_only')
+check('102⑳【t17】`tick_params(axis=\'x\')`（有 axis、无尺寸参数）→ 不抛异常，'
+      '原位补 `labelsize=14` 到**那条**调用里（不新增块）',
+      _r17c.get('reason') == 'ok'
+      and "tick_params(axis='x', labelsize=14)" in _t17c
+      and 'auto layout' not in _t17c
+      and _t17c.count('tick_params') == 1,
+      'reason=%r 行=%r' % (_r17c.get('reason'),
+                          [ln.strip() for ln in _t17c.splitlines()
+                           if 'tick_params' in ln]))
+_r17d, _t17d = _t17_run(_T17_AXISX_8, 'axisx_8')
+check('102㉑【不回归】`tick_params(axis=\'x\', labelsize=8)` + 参数 14 → 原位把 8 改成 14'
+      '（既有「改字面量」能力没被这次修复影响）',
+      _r17d.get('reason') == 'ok'
+      and "tick_params(axis='x', labelsize=14)" in _t17d
+      and 'labelsize=8' not in _t17d,
+      'reason=%r 行=%r' % (_r17d.get('reason'),
+                          [ln.strip() for ln in _t17d.splitlines()
+                           if 'tick_params' in ln]))
+_r17e, _t17e = _t17_run(_T17_BARE, 'bare_block', style='block')
+check('102㉓【t17·用户可见结果】同一份裸 `tick_params()` 走块路径（CLI 默认 auto 的退路）'
+      '→ 不炸，块里精确写 `axis=\'x\', labelsize=14`（两侧不串：y 侧不被顺带改）',
+      _r17e.get('reason') in ('ok', 'no_change')
+      and "tick_params(axis='x', labelsize=14)" in _t17e
+      and "axis='y'" not in _t17e,
+      'reason=%r 块行=%r'
+      % (_r17e.get('reason'),
+         [ln.strip() for ln in _t17e.splitlines() if 'labelsize' in ln]))
+
+
+def _t17_legacy_gap_specs_tick(tree, nm, field, val, lo, hi):
+    """**旧实现原样**（t17 修之前）：`_av = next(...)` 之后直接 `_av.value`。只给牙齿用。"""
+    _axis, _labels_attr = writeback._GAP_TICK[field]
+    if isinstance(val, bool):
+        return None, None, None, None
+    _cands = []
+    for _c in writeback._find_calls(tree, nm, 'tick_params', lo, hi):
+        if writeback._call_carries(_c, ('labelsize', 'fontsize', 'size')):
+            return None, None, None, None
+        _av = next((k for k in _c.keywords if k.arg == 'axis'), None)
+        if not (isinstance(_av.value, _ast.Constant)          # ← 旧实现：这里对 None 取属性
+                and isinstance(_av.value.value, str)
+                and _av.value.value == _axis):
+            continue
+        _cands.append((_c, 'labelsize'))
+    for _c in writeback._find_calls(tree, nm, _labels_attr, lo, hi):
+        if writeback._call_carries(_c, ('fontsize', 'size', 'labelsize')):
+            return None, None, None, None
+        _cands.append((_c, 'fontsize'))
+    if not _cands:
+        return None, None, None, None
+    return ('append', _cands[-1][0], 'labelsize=%s' % writeback._num(val), None)
+
+
+_orig_gap_tick17 = writeback._gap_specs_tick
+writeback._gap_specs_tick = _t17_legacy_gap_specs_tick
+try:
+    _t17_teeth_err = ''
+    try:
+        _t17_run(_T17_BARE, 'teeth')
+    except AttributeError as _e:                  # 旧实现的原样失败形态
+        _t17_teeth_err = '%s: %s' % (type(_e).__name__, _e)
+finally:
+    writeback._gap_specs_tick = _orig_gap_tick17
+check('102㉒【有牙】把 `_gap_specs_tick` 换回旧实现（直接 `_av.value`）⇒ 102⑱ 那个脚本'
+      '在**原位路径**上必抛 `AttributeError: NoneType has no attribute \'value\'`'
+      '（= 修前 CLI 的 internal_error 现场）',
+      'AttributeError' in _t17_teeth_err and "'NoneType'" in _t17_teeth_err,
+      'teeth: %r' % (_t17_teeth_err[:110],))
+
+
 # =====================================================================
 # §103 t70 / 报告附录 B #1（离屏版）：`dpi × DPR` **参数化矩阵**
 #

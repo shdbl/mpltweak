@@ -1496,3 +1496,177 @@ def test_assert_shape_guard_and_mutation_selfchecks():
     else:
         raise AssertionError(
             '坏锚点没有被自证拦住 ⇒ 会跑出"变异没生效"的假绿')
+
+
+# ==========================================================================
+# 第 6 条棘轮（MAINTENANCE §25.9）：CI 每条腿的名单必须覆盖 tests/ 下每个套件
+# ==========================================================================
+# 判据本体在 `tools/ci_suite_coverage.py`（零依赖、纯静态、毫秒级）：把工作流**用 yaml
+# 解析**成结构，按矩阵展开成"腿"（ubuntu/windows × 3.9/3.10/3.11/3.12 = 8 条），再把每条腿
+# 的 step 的 `run:` 里的套件声明收进来（bash 循环名单 / 字面 tests/x.py / pytest 的 -k 与
+# 裸 pytest / 调到"自己起 pytest"的 tools 脚本），最后要求每个 `tests/test_*.py` 至少被
+# 一条腿点到。**为什么不 grep 工作流文本**：名字只出现在注释里会假绿、名单被 `\` 拆行会
+# 假红 —— 判据必须读结构。
+#
+# **为什么接在这里、不新加一个 workflow step**：3.12 腿本来就有 `pytest -q`，搭班车 ⇒
+# CI 时长零增长（3.9 腿装 pytest 只是为了那条秒级冒烟，不值得为这条检查再装一次）；而且
+# 它同时成了本地 `pytest -q -k hygiene` 的一道闸，贡献者不必等 CI 才知道自己漏了分配。
+def _run_ci_coverage(root, extra=(), stdin_text=None):
+    """跑 ``tools/ci_suite_coverage.py`` → ``(rc, 输出文本)``。
+
+    子进程一律过级联闸门（钉 ``MPLBACKEND=Agg``，见本文件顶部的发火事故说明）；
+    ``stdin_text`` 用于把"改坏的工作流"从 stdin 喂进去 —— 牙齿不用往真仓库写文件。
+    """
+    env = _pin_child_env(PYTHONIOENCODING='utf-8')
+    proc = subprocess.run(
+        [sys.executable, os.path.join(root, 'tools', 'ci_suite_coverage.py')]
+        + list(extra),
+        cwd=root,
+        input=(stdin_text.encode('utf-8') if stdin_text is not None else None),
+        capture_output=True, env=env, timeout=120)
+    return proc.returncode, (proc.stdout + proc.stderr).decode('utf-8', 'replace')
+
+
+def test_every_suite_is_assigned_to_a_ci_leg():
+    """§25.9：`tests/` 下每个套件都必须落在 CI 某一条腿的名单里（rc=0），否则红。
+
+    背景（本项要挡的事）：工作流的覆盖是**按分配**的 —— 老七套在 8 条腿的 shell 循环里
+    都跑，其余套件只靠 3.12 腿的 `pytest -q` 捎带。于是"新加一个套件、忘了分配"能一路绿
+    到发布：`test_launch` 就曾在 3.9/3.10/3.11 上从没跑过。
+
+    除了 rc=0，还钉了三件事：
+      ① **覆盖钉**：矩阵必须还是 8 条腿（矩阵被重排就要来改这个数）—— 防"一条腿都没解析
+         出来、判据空转却绿着"；
+      ② **牙齿 A**：`--extra-suite` 假装 tests/ 多了一个没人分配的套件 ⇒ 必须 rc=1 并点名它；
+      ③ **牙齿 B**：把工作流里 3.12 腿的 pytest 步骤整段拿掉（从 **stdin** 喂进去，不落盘）
+         ⇒ 必须 rc=1 并点名 `test_launch`（只在 3.12 腿跑过的那个）。
+    豁免口径（`SUITES_EXCLUDED` / 工具的 `EXTRA_EXEMPT`）都带理由，且每次运行都打印出来。
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    rc, out = _run_ci_coverage(root)
+    assert rc == 0, (
+        'CI 覆盖检查红了（rc=%d）：有套件没落在任何一条腿的名单里\n%s'
+        % (rc, out[-4000:]))
+    assert 'OK: 每个套件至少落在一条腿的名单里' in out, (
+        '覆盖检查 rc=0 但没打出 OK 结论（判据可能空转了）\n' + out[-3000:])
+    assert '腿（矩阵单元）: 8 条' in out, (
+        '矩阵腿数不是 8 了（矩阵被重排？还是解析器漏读？）：\n' + out[-3000:])
+
+    # 牙齿 A：新增一个没人分配的套件 ⇒ 必红并点名
+    rc_a, out_a = _run_ci_coverage(root, extra=['--extra-suite', 'test_zz_unassigned'])
+    assert rc_a == 1, (
+        '多了一个没人分配的套件，覆盖检查却给了 rc=%d（判据夹不住新增套件）\n%s'
+        % (rc_a, out_a[-3000:]))
+    assert 'test_zz_unassigned' in out_a, (
+        '红了但没点名是哪个套件没分配：\n' + out_a[-3000:])
+
+    # 牙齿 B：把 3.12 腿的 pytest 步骤整段拿掉 ⇒ 必红并点名 test_launch
+    wf_path = os.path.join(root, '.github', 'workflows', 'tests.yml')
+    wf_text = _read_test_file(wf_path)
+    narrowed = wf_text.replace("matrix.python-version == '3.12'",
+                               "matrix.python-version == '3.99'")
+    assert narrowed != wf_text, (
+        "工作流里没有 `matrix.python-version == '3.12'` 这条守卫了 —— 牙齿 B 要跟着重写"
+        '（否则它会恒真地测不到东西）')
+    rc_b, out_b = _run_ci_coverage(root, extra=['--ci', '-'], stdin_text=narrowed)
+    assert rc_b == 1, (
+        '把 3.12 腿的 pytest 名单整段拿掉后，覆盖检查仍是 rc=%d'
+        '（说明"只在一条腿跑"的套件没被照到）\n%s' % (rc_b, out_b[-3000:]))
+    assert 'test_launch' in out_b, (
+        '红了但没点名 test_launch（§25.9 点名的那个只在 3.12 腿跑过的套件）：\n'
+        + out_b[-3000:])
+
+
+# =====================================================================
+# 自动导航索引（t12 / 0.1.13）：`writeback.py` 的分区横幅 + 文件尾索引块必须与现场一致
+#
+# 为什么做成断言：索引块是**生成**的（`tools/gen_nav.py`），手写必然过期 —— 本仓库已经
+# 踩过同款坑（`writeback.py:NNN` 的文档引用一夜漂两次）。这条断言让"漂了就红"，而不是
+# 让索引块变成指着错地方的假导航。
+# 判据与 `python tools/gen_nav.py --check`（rc=0/1）**同一份实现**，不各写一套；
+# 修法：`python tools/gen_nav.py --write`（分区横幅是人写的，工具只填行号）。
+# =====================================================================
+def _gen_nav_module():
+    _p = os.path.join(ROOT, 'tools')
+    sys.path.insert(0, _p)
+    try:
+        import gen_nav
+    finally:
+        sys.path.remove(_p)
+    return gen_nav
+
+
+def test_auto_nav_index_is_fresh():
+    """清单内每个模块的索引块都必须与现场一致（= `gen_nav.py --check` 的 rc=0）。
+
+    红在这里**不是漏测**，是提醒你重生成：索引块由 `tools/gen_nav.py` 算出来，手写必然
+    过期（本仓库已经踩过同款坑：`writeback.py:NNN` 的文档引用一夜漂两次）。
+    修法（可直接复制执行）：`python tools/gen_nav.py --write`，改完再重跑本用例。
+    """
+    gen_nav = _gen_nav_module()
+    stale = []
+    for rel in gen_nav.DEFAULT_MODULES:
+        path = os.path.join(ROOT, rel)
+        assert os.path.isfile(path), '默认清单里的模块不存在：%s' % rel
+        ok, msg = gen_nav.check_module(path)
+        if not ok:
+            stale.append(msg)
+    assert not stale, (
+        '自动导航索引块与现场不一致（%d 个模块）：\n%s\n'
+        '修法（可直接复制执行）：python tools/gen_nav.py --write\n'
+        '（索引块由工具算，不是手写的；改完再重跑 '
+        'pytest -q tests/test_hygiene.py -k auto_nav）'
+        % (len(stale), '\n'.join(stale)))
+
+
+def test_auto_nav_check_rejects_stale_index(tmp_path):
+    """【有牙】在副本上改一个函数名（不动索引块）⇒ 同一条判据必须变红。
+
+    在 tmp 里复制一份真模块再动它，**不碰仓库里的文件**：这条用例证明
+    `check_module` 真的在看现场（而不是恒真地放行）。
+    """
+    gen_nav = _gen_nav_module()
+    src = open(os.path.join(ROOT, gen_nav.DEFAULT_MODULES[0]), encoding='utf-8').read()
+    copy = tmp_path / 'wb_copy.py'
+    copy.write_text(src, encoding='utf-8')
+    # 先在副本上重算一次：让这条用例**不依赖**仓库里那份是否刚好是最新的
+    # （否则 102 号牙齿坏在源文件上时，本用例会跟着一起红，红的原因却不是它要测的）
+    gen_nav.write_module(str(copy))
+    ok, msg = gen_nav.check_module(str(copy))
+    assert ok, '刚复制过来的模块就被判过期，判据自身有问题：%s' % msg
+    # 真改一处 `def` 名字（行号不变、名字变了 ⇒ 索引块里的名字对不上）。
+    # 取副本里**第一个顶层 def**、不写死函数名：否则源文件本身处于牙齿状态时
+    # 这条用例会跟着假红（红的原因还不是它要测的那条）。
+    _m = re.search(r'^def (\w+)\(', src, re.M)
+    assert _m, '牙齿夹具前提变了：副本里一个顶层 def 都没找到'
+    _old = _m.group(1)
+    copy.write_text(src.replace('def %s(' % _old, 'def %s_teeth(' % _old, 1),
+                    encoding='utf-8')
+    ok2, msg2 = gen_nav.check_module(str(copy))
+    assert not ok2, '改了函数名但索引块仍被判最新 —— 这条断言是空转的'
+    assert '过期' in msg2 or '没有' in msg2, msg2
+
+
+def test_auto_nav_banners_exist_and_cover_the_file():
+    """横幅存在且**覆盖到文件尾**（分区导航最容易的敷衍就是"只给前几段加横幅"）。"""
+    gen_nav = _gen_nav_module()
+    path = os.path.join(ROOT, gen_nav.DEFAULT_MODULES[0])
+    lines = gen_nav._read_lines(path)
+    banners = gen_nav._banners(lines)
+    assert len(banners) >= 5, '分区横幅太少（%d 条）：导航等于没做' % len(banners)
+    try:
+        span = gen_nav.find_block(lines)
+    except ValueError as e:                                   # 块被写坏
+        raise AssertionError(str(e))
+    assert span is not None, '缺少自动索引块（跑 python tools/gen_nav.py --write）'
+    defs = gen_nav._top_defs('\n'.join(lines) + '\n')
+    assert defs, '一个顶层函数都没扫到 —— 扫描器坏了（不是好事）'
+    first_banner = banners[0][0]
+    head_fn = [n for ln, n in defs if ln < first_banner]
+    assert not head_fn, ('第一条横幅（行 %d）之前还有 %d 个顶层函数没进任何分区：%s'
+                         % (first_banner, len(head_fn), head_fn[:5]))
+    last_banner = banners[-1][0]
+    tail_fn = [n for ln, n in defs if ln > last_banner]
+    assert tail_fn, ('最后一条横幅（行 %d）之后一个顶层函数都没有 —— 那条横幅大概率'
+                     '是空的/位置放错了（分区必须真装有东西）' % last_banner)

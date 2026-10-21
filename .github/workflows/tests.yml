@@ -90,6 +90,13 @@ jobs:
           # 用 Python 包装：把失败摘要写进 job summary（API 拿不到 job 日志时这是唯一可读通道），
           # 并原样回传 pytest 的退出码。shell 无关（windows 是 pwsh、ubuntu 是 bash）。
           python tools/ci_pytest_summary.py
+          # test_cli_output：pytest 函数式套件，但 pyproject 的 `python_files` 只收
+          # test_suites.py / test_hygiene.py ⇒ 上面那次裸 `pytest -q` **收不到它**
+          # （t3 的覆盖检查照出来的真缺口：它从未在 CI 跑过）。这里显式给路径，
+          # 并入**同一个 step**（不新开 step、不装新解释器），实测 14 passed / 13.1s。
+          # 放在最后一行：两个 shell（bash / pwsh）都以"最后一条命令的退出码"判 step
+          # 成败 ⇒ 它红了这条腿就红，不会被前面的 summary 掩盖。
+          python -m pytest -q tests/test_cli_output.py
 
       # 0.1.9 新增：**CI 过去从不构建发行物** —— 打包缺件 / sdist 混进构建元数据
       # 这类问题只有到发版那一刻才会暴露（CH-11 的 `src/mpltweak.egg-info` 就是这么

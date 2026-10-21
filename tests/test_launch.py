@@ -992,6 +992,224 @@ def run_doctor_names():
             if _lang == 'en':
                 check('§15 en 下输出纯 ASCII', _o.isascii(), _o[:90])
 
+# =====================================================================
+# §10 / t5（MAINTENANCE §25.11）：帮助覆盖层**离屏可测**
+#
+# 缺口：帮助窗口（`?` 覆盖层）的真实内容从没被自动验证过。渲染那一步
+# （`_fill_help_fig`）只需要一个 figure，但**窗口调用**原先散在 `_show_help_fig` /
+# `_toggle_help_lang` 里，且每条都包着 `except Exception: pass` ⇒ 离屏（Agg /
+# 无窗口）时它们**静默失败**，于是"开窗时到底设没设标题、有没有真的 show()"
+# 没人证明得了（§25.11 的原话：实际渲染从没被自动验证过）。
+#
+# 本节的解法（配合 toolbox 新抽的薄层 `_HelpWindowOp` / `_HELP_WIN`）：
+# ① 把 `_HELP_WIN` 换成**记录用的假窗口层** ⇒ `_show_help_fig()` /
+#    `_toggle_help_lang()` 在离屏 Agg 下能整条跑完，并能断言窗口调用**真的发生**
+#    （含"取不到 window ⇒ 退回 show()"这条回退链）；
+# ② 把渲染结果钉成基线：分组数、每组行数、元素个数、两列布局边界（左列最低点
+#    不越界、同列不重叠、不超出画布）—— 数字就是 0.1.12 的实测值，改布局会红；
+# ③ **有牙**：把某一组行数改错（少一行）⇒ 行数基线与元素数基线**双双必红**，
+#    还原即绿。
+#
+# 边界（别误读）：本节证明的是「**离屏可测 + 内容与几何符合基线 + 窗口调用真的
+# 发生**」；**真机观感**（字体、清晰度、2x 缩放、按钮手感）仍需用户开窗看。
+# **不声称"真机已看"**。
+# =====================================================================
+_T5_GROUP_ROWS = [4, 3, 2, 2, 6, 2, 4, 1, 6, 4, 3]      # 0.1.12 实测（zh/en 同构）
+_T5_ROWS_TOTAL = 37
+_T5_TEXTS = 89        # 1 标题 + 11 组标题 + 37×2（键帽+说明）+ 2 语言按钮 + 1 底部提示
+_T5_CARDS = 11        # 每组一张卡片
+_T5_BARS = 12         # 顶部强调条 1 + 每组左侧彩条 11
+_T5_W, _T5_H = 792.0, 968.0        # figsize=(7.2, 8.8) × 基准 dpi 110（逻辑像素）
+_T5_MARGIN = 26.0
+_T5_LEFT_BOTTOM = 39.0            # 左列最低卡片 y0（实测）
+_T5_RIGHT_BOTTOM = 130.0          # 右列最低卡片 y0（实测）
+
+
+class _FakeWinLayer(object):
+    '''假窗口层：记录调用，并**故意**让 `window()` 抛错 —— 好覆盖"置顶取不到窗口
+    就退回 show()"那条回退链（离屏真跑时走的也正是这条）。'''
+
+    def __init__(self):
+        self.calls = []
+
+    def set_title(self, manager, title):
+        self.calls.append(('set_title', title))
+
+    def show(self, manager):
+        self.calls.append(('show',))
+
+    def window(self, manager):
+        self.calls.append(('window',))
+        raise AttributeError('no window (offscreen)')
+
+    def raise_window(self, window):
+        self.calls.append(('raise',))
+
+    def hide_toolbar(self, manager):
+        self.calls.append(('hide_toolbar',))
+
+
+def _t5_inline_metrics(tb, plt, lang):
+    '''强制**内联渲染**路径（不看预渲染 PNG），把元素数与两列布局边界量出来。'''
+    from matplotlib.patches import FancyBboxPatch, Rectangle
+    fig = plt.figure(figsize=(7.2, 8.8), dpi=110)
+    try:
+        tb._render_help(fig, lang, tb._pick_ui_font())
+        r = fig.canvas.get_renderer()
+        cards = [a for a in fig.artists
+                 if isinstance(a, FancyBboxPatch)
+                 and a.get_facecolor()[:3] == (1.0, 1.0, 1.0)]
+        bars = [a for a in fig.artists if isinstance(a, Rectangle)]
+        boxes = []
+        for c in cards:
+            bb = c.get_window_extent(r)
+            boxes.append((bb.x0, bb.y0, bb.x1, bb.y1))
+        mid = _T5_W / 2.0
+        left = sorted([b for b in boxes if b[2] <= mid], key=lambda b: -b[3])
+        right = sorted([b for b in boxes if b[0] >= mid], key=lambda b: -b[3])
+        overlap = 0
+        for col in (left, right):
+            for i in range(len(col) - 1):
+                if col[i][1] < col[i + 1][3]:      # 上一张的底 < 下一张的顶 ⇒ 重叠
+                    overlap += 1
+        return dict(texts=len(fig.texts), cards=len(cards), bars=len(bars),
+                    left=len(left), right=len(right),
+                    left_bottom=(min(b[1] for b in left) if left else -1.0),
+                    right_bottom=(min(b[1] for b in right) if right else -1.0),
+                    x_min=(min(b[0] for b in boxes) if boxes else -1.0),
+                    x_max=(max(b[2] for b in boxes) if boxes else -1.0),
+                    overlap=overlap, lang_btns=len(tb._HELP_LANG_BTNS))
+    finally:
+        plt.close(fig)
+
+
+def run_t5_help_overlay():
+    import matplotlib
+    try:
+        matplotlib.use('Agg', force=True)      # 离屏：任何后端都拉到 Agg
+    except TypeError:                          # matplotlib < 3.6 没有 force
+        matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from mpltweak import toolbox as tb
+
+    orig_win = tb._HELP_WIN
+    orig_keymap = tb._KEYMAP
+    orig_lang, orig_fig = tb._HELP_LANG, tb._HELP_FIG
+    fake = _FakeWinLayer()
+    try:
+        # ---- ① 键位表结构基线（zh/en 同构）----
+        zh_rows = [len(rows) for _, rows in tb._KEYMAP['zh']]
+        en_rows = [len(rows) for _, rows in tb._KEYMAP['en']]
+        check('§10① 键位表分组基线：%d 组 / 每组行数 %s / 共 %d 行'
+              % (len(_T5_GROUP_ROWS), _T5_GROUP_ROWS, _T5_ROWS_TOTAL),
+              zh_rows == _T5_GROUP_ROWS and sum(zh_rows) == _T5_ROWS_TOTAL,
+              zh_rows)
+        check('§10①b zh/en 分组同构（组数、每组行数一一对应）',
+              en_rows == zh_rows
+              and len(tb._KEYMAP['zh']) == len(tb._KEYMAP['en']), en_rows)
+
+        # ---- ② 内联渲染（降级路径）的元素数 + 布局边界 ----
+        for _lg in ('zh', 'en'):
+            m = _t5_inline_metrics(tb, plt, _lg)
+            check('§10② 内联渲染元素基线[%s]：texts=%d cards=%d bars=%d lang_btns=2'
+                  % (_lg, _T5_TEXTS, _T5_CARDS, _T5_BARS),
+                  m['texts'] == _T5_TEXTS and m['cards'] == _T5_CARDS
+                  and m['bars'] == _T5_BARS and m['lang_btns'] == 2, m)
+            check('§10②b 布局边界[%s]：左列 6 张最低 y0≈%.0f / 右列 5 张最低 y0≈%.0f'
+                  '（均 > 页边 %.0f）、同列零重叠、x∈[%.0f,%.0f] 不出画布'
+                  % (_lg, _T5_LEFT_BOTTOM, _T5_RIGHT_BOTTOM, _T5_MARGIN,
+                     _T5_MARGIN, _T5_W - _T5_MARGIN),
+                  m['left'] == 6 and m['right'] == 5
+                  and abs(m['left_bottom'] - _T5_LEFT_BOTTOM) < 0.6
+                  and abs(m['right_bottom'] - _T5_RIGHT_BOTTOM) < 0.6
+                  and m['left_bottom'] > _T5_MARGIN
+                  and m['right_bottom'] > _T5_MARGIN
+                  and m['overlap'] == 0
+                  and m['x_min'] >= _T5_MARGIN - 0.6
+                  and m['x_max'] <= _T5_W - _T5_MARGIN + 0.6, m)
+
+        # ---- ③ 生产路径：预渲染 PNG（用户环境零字体依赖那一条）----
+        png = tb._load_help_png('zh')
+        fig = plt.figure(figsize=(7.2, 8.8), dpi=110)
+        try:
+            tb._fill_help_fig(fig, 'zh')
+            n_axes, n_texts = len(fig.axes), len(fig.texts)
+        finally:
+            plt.close(fig)
+        if png is not None:
+            check('§10③ 生产路径（预渲染 PNG %s）离屏可填充：1 个铺满 axes + 0 文字'
+                  % (png.shape,), n_axes == 1 and n_texts == 0,
+                  'axes=%d texts=%d' % (n_axes, n_texts))
+        else:
+            check('§10③ 包内没有预渲染 PNG ⇒ 降级内联渲染必须画出内容（不空图）',
+                  n_texts > 0, 'axes=%d texts=%d' % (n_axes, n_texts))
+
+        # ---- ④ 假窗口层：`_show_help_fig()` 整条跑通 ----
+        tb._HELP_WIN = fake
+        tb._HELP_FIG = None
+        tb._HELP_LANG = 'zh'
+        fake.calls[:] = []
+        tb._show_help_fig()
+        titles = [c[1] for c in fake.calls if c[0] == 'set_title']
+        fig_now = tb._HELP_FIG
+        check('§10④ `_show_help_fig()` 离屏整条跑通（假窗口层）：建图 + 设中文标题'
+              ' + 隐藏工具栏 + show()',
+              fig_now is not None and titles == ['mpltweak · 快捷键']
+              and ('hide_toolbar',) in fake.calls and ('show',) in fake.calls
+              and (len(fig_now.axes) >= 1 or len(fig_now.texts) >= 1),
+              fake.calls)
+
+        # 已开着再按一次 `?`：置顶分支取不到 window（离屏）⇒ 退回 show()，不重建
+        fake.calls[:] = []
+        tb._show_help_fig()
+        check('§10④b 已开着再按 `?`：取不到 window ⇒ 退回 show()，且不重复建图/改标题',
+              ('window',) in fake.calls and ('show',) in fake.calls
+              and tb._HELP_FIG is fig_now
+              and not [c for c in fake.calls if c[0] == 'set_title'],
+              fake.calls)
+
+        # ---- ⑤ 按 `L` 切语言：标题跟着换 + 重绘 ----
+        fake.calls[:] = []
+        tb._toggle_help_lang()
+        en_titles = [c[1] for c in fake.calls if c[0] == 'set_title']
+        check('§10⑤ 按 `L` 切语言：标题切英文 + 重绘后内容仍在（离屏可验证）',
+              tb._HELP_LANG == 'en' and en_titles == ['mpltweak · Shortcuts']
+              and tb._HELP_FIG is not None
+              and (len(tb._HELP_FIG.axes) >= 1 or len(tb._HELP_FIG.texts) >= 1),
+              en_titles)
+        tb._toggle_help_lang()                 # 切回中文，保持全局状态干净
+
+        # ---- ⑥ 有牙：把「样式」组（6 行）少一行 ⇒ 两条基线都得红 ----
+        bad = list(tb._KEYMAP['zh'])
+        gi = _T5_GROUP_ROWS.index(6) + 1       # 第二个 6 行组 = '样式'
+        bad[gi] = (bad[gi][0], bad[gi][1][:-1])
+        tb._KEYMAP = {'zh': bad, 'en': tb._KEYMAP['en']}
+        rows_bad = [len(rows) for _, rows in tb._KEYMAP['zh']]
+        m_bad = _t5_inline_metrics(tb, plt, 'zh')
+        tb._KEYMAP = orig_keymap
+        m_ok = _t5_inline_metrics(tb, plt, 'zh')
+        red = (rows_bad != _T5_GROUP_ROWS) and (m_bad['texts'] != _T5_TEXTS)
+        check('§10⑥【有牙】把「样式」组少一行 ⇒ 行数基线 %s 与元素数基线 %d 双双必红'
+              '（少一行 = 少 2 个文字），还原即绿'
+              % (_T5_GROUP_ROWS, _T5_TEXTS),
+              red and rows_bad == _T5_GROUP_ROWS[:gi] + [_T5_GROUP_ROWS[gi] - 1]
+              + _T5_GROUP_ROWS[gi + 1:]
+              and m_bad['texts'] == _T5_TEXTS - 2 and m_bad['cards'] == _T5_CARDS
+              and m_ok['texts'] == _T5_TEXTS
+              and [len(rows) for _, rows in tb._KEYMAP['zh']] == _T5_GROUP_ROWS,
+              'bad_texts=%d bad_rows=%s / ok_texts=%d'
+              % (m_bad['texts'], rows_bad, m_ok['texts']))
+    finally:
+        tb._HELP_WIN = orig_win
+        tb._KEYMAP = orig_keymap
+        try:
+            tb._close_help_fig()
+        except Exception:                      # noqa: BLE001
+            pass
+        tb._HELP_LANG = orig_lang
+        tb._HELP_FIG = orig_fig
+
+
 def main():
     os.makedirs(_TMPROOT, exist_ok=True)
     # t31：先给**真实**家目录拍快照（任何子进程起来之前），跑完再对比零新增。
@@ -1025,6 +1243,9 @@ def main():
     print()
     print('t93 doctor 拒绝未知参数时点名')
     run_doctor_names()
+    print()
+    print('t5 帮助覆盖层离屏可测（薄层注入 + 元素/分组/布局基线，§25.11）')
+    run_t5_help_overlay()
     shutil.rmtree(_TMPROOT, ignore_errors=True)
     print()
     if _fails:

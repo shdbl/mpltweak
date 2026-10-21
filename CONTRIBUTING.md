@@ -49,14 +49,16 @@ python tests/test_check.py        # layout health check
 python tests/test_mcp.py          # MCP server (skips itself if `mcp` isn't installed)
 ```
 
-**The authoritative list of suites is `SUITES` in `tests/test_suites.py`** (17 entries as of
-2026-10-13; two more are deliberately excluded — see its `SUITES_EXCLUDED` and header docstring).
+**The authoritative list of suites is `SUITES` in `tests/test_suites.py`** (21 entries today; two
+more are deliberately excluded — see its `SUITES_EXCLUDED` and header docstring). That list is also
+what the 3.12 legs' `pytest -q` collects, and **every** `tests/test_*.py` must appear on at least one
+matrix leg's list — that is machine-checked, see *CI coverage* below.
 The bar for a PR is a green **`pytest -q`** (all registered suites + the hygiene ratchets), not
 "these seven".
 
 ### The pytest route (optional locally, but this is what CI trusts)
 
-`tests/test_suites.py` wraps **every suite in `SUITES`** — 17 today, not just the seven above — one
+`tests/test_suites.py` wraps **every suite in `SUITES`** — 21 today, not just the seven above — one
 test case per suite, so CI reports, single-suite selection and IDE integration all work.
 `pyproject.toml` pins `python_files = ["test_suites.py", "test_hygiene.py"]`, so plain `pytest -q`
 collects exactly those two wrappers and the suites themselves run as subprocesses:
@@ -68,10 +70,10 @@ pytest -q -k test_writeback     # just the write-back engine
 pytest -q -k notation_discipline  # or any suite registered later
 ```
 
-`tests/test_hygiene.py` holds the engineering-hygiene ratchets that used to live only in prose (21
+`tests/test_hygiene.py` holds the engineering-hygiene ratchets that used to live only in prose (25
 test functions today: module registration, GBK encodability, the broad-`except Exception` count, the
-child-process env-pinning ledger, the "no real GUI objects in tests" guard, …). The two original
-ones:
+child-process env-pinning ledger, the "no real GUI objects in tests" guard, the CI per-leg coverage
+check, …). The two original ones:
 
 - **`except Exception` may not grow unregistered.** Broad catches are correct in GUI
   callbacks and runtime probes, but at ~150 of them you can no longer tell "expected
@@ -88,8 +90,10 @@ ones:
   tables in `src/mpltweak/messages.py` (zh **and** en; `MPLTWEAK_LANG=en` is a supported path) and run
 
   ```bash
-  python tests/test_hygiene.py        # GBK-encodable + the ratchets
-  pytest -q -k hygiene
+  pytest -q -k hygiene                # the ratchets (test_hygiene.py is pytest-only:
+                                      #  it has no __main__, so `python tests/test_hygiene.py`
+                                      #  runs nothing)
+  pytest -q -k every_suite_is_assigned   # just the CI per-leg coverage check
   ```
 
   The usual offenders are characters outside cp936: box drawing, emoji, `→` / `✓`, en/em dashes and
@@ -136,7 +140,9 @@ tuple to `SUITES`; neither touched the workflow.
 3. if the suite must **not** run under pytest, put it in `SUITES_EXCLUDED` instead, with a one-line
    reason — `test_real_window` (opens a real window) and `test_corpus_invariants` (needs the
    out-of-repo corpus + minutes of runtime) are there today;
-4. keep this file in sync: the suite list above and this section are the human-facing registry.
+4. keep this file in sync: the suite list above and this section are the human-facing registry (the
+   machine side is `python tools/ci_suite_coverage.py`: a `tests/test_*.py` that no leg's list names
+   turns it **red** — see *CI coverage* below);
 5. **name it so the checkers actually see it** (t98): do *not* give a real suite a temp/probe name —
    starting with `.tmp`, `tmp_` or `_jsonenc`, or ending with `_probe.py`.
    `tools/notation_discipline.py`'s `iter_py()` deliberately **skips** those names, because other
@@ -150,13 +156,85 @@ If what you added is a *source* module rather than a suite, the registries are t
 pinned by `tests/test_hygiene.py` (`test_all_modules_registered`) and, if it becomes an extra,
 `pyproject.toml`.
 
-**CI coverage — known gap, stated plainly (as of 2026-10-13).** The plain-script loop
-(`.github/workflows/tests.yml:53-58`) runs **only the seven legacy suites**, on all 8 matrix legs.
-Everything in `SUITES` *does* run through `pytest -q` in the `pytest report + hygiene ratchet` step
-(`:63-72`), but that step is guarded by `if: matrix.python-version == '3.12'` ⇒ **the 10 suites added
-after 0.1.9 are never exercised on Python 3.9 / 3.10 / 3.11**. Closing it means either adding them to
-the loop or dropping the 3.12-only guard; that is a release-pipeline change, so it is recorded here as
-a TODO rather than changed silently.
+### After changing `src/mpltweak/writeback.py`: regenerate its section index
+
+`writeback.py` ends with a **generated** block — its `§N` section banners plus every top-level
+function mapped to a line number. It is neither decoration nor hand-maintained: `tools/gen_nav.py`
+computes it, so a hand edit is silently overwritten the next time the tool runs.
+
+Any structural edit (adding, renaming or moving a function, adding a section) makes the block stale:
+
+```bash
+python tools/gen_nav.py --write     # regenerate after the edit
+python tools/gen_nav.py --check     # rc 0 = fresh / 1 = stale / 2 = usage or format problem
+```
+
+Forget it and `pytest -q tests/test_hygiene.py -k auto_nav` turns red, naming the first entry that no
+longer matches (`# _name 218` where it should be `# _name 219`); rerun it after `--write` and it goes
+green again. Keep new functions under the right `# ==== §N … ====` banner: the banners are
+hand-written, only the line numbers come from the tool.
+
+### CI coverage: one list per leg, and a check that no suite falls through
+
+A **leg** is one cell of the workflow matrix (`ubuntu-latest` / `windows-latest` × Python
+3.9 / 3.10 / 3.11 / 3.12 = 8 legs), and the legs do **not** all run the same list of suites:
+
+- the plain-script loop runs the **seven legacy suites** on all 8 legs;
+- the 3.12 legs additionally run `pytest -q`, i.e. **every suite in `SUITES`** plus the hygiene
+  ratchets (that step is guarded by `if: matrix.python-version == '3.12'`), and — in that same step,
+  with the same interpreter — one explicit `python -m pytest -q tests/test_cli_output.py`:
+  `test_cli_output` is pytest-function-style, so the bare `pytest -q` route above does not collect it
+  (`python_files` pins only the two wrappers). Cost: +13–14 s, on the two 3.12 legs only;
+- the 3.9 legs additionally run the fast smoke (`-k "docs or notation_discipline or
+  tmpdir_discipline"`).
+
+So of the 26 `tests/test_*.py` files, **24 are named by at least one leg**; the other two are
+`SUITES_EXCLUDED` (`test_real_window`, `test_corpus_invariants`).
+
+Coverage is therefore *assigned*, not automatic — a new suite can be silently on no leg at all
+(that is exactly how `test_launch` used to sit at "3.12 only" without anyone noticing). So
+"every `tests/test_*.py` is on at least one leg's list" is now machine-checked:
+
+```bash
+python tools/ci_suite_coverage.py        # rc 0 = every suite assigned / 1 = one is missing / 2 = usage or config
+python tools/ci_suite_coverage.py -v     # per-leg suite names + the "covered on N legs" histogram
+```
+
+The checker is **zero-dependency, offline and millisecond-fast**, and it **parses the workflow as
+YAML** instead of grepping it: a suite name that only lives in a comment, or a list split across a
+`\` continuation, would fool a text search in both directions. What counts as a leg's list: the
+bash `for … in` list of a loop that runs `tests/$t.py`, literal `tests/<name>.py` paths, `pytest`
+selectors (`-k`, explicit paths, or a bare `pytest` — which pulls in everything registered through
+`python_files` / `SUITES`), and a `python tools/<x>.py` step whose script runs pytest itself
+(detected from its AST, not its comments).
+
+**It is wired into `tests/test_hygiene.py`, not into a new workflow step** — deliberate: the 3.12
+legs already run `pytest -q`, so it rides along at **zero CI cost** (a new step would need another
+interpreter setup or an extra install on another leg), and you get the same verdict locally with
+`pytest -q -k every_suite_is_assigned`. The test also pins the leg count (8) and carries two teeth:
+an extra unassigned suite must turn it red, and a workflow with the 3.12 step removed must turn it
+red *and* name `test_launch`.
+
+Two rules come with it:
+
+1. **A new suite needs a leg.** The single registration point is still one tuple in `SUITES`
+   (`tests/test_suites.py`) — that is the 3.12 legs' list. A suite that only makes sense on one
+   version goes into that leg's step in the workflow instead.
+2. **Exemptions carry a reason and are printed on every run.** A suite that must not run in CI is
+   registered either in `SUITES_EXCLUDED` (suite side: "not in the pytest path" — `test_real_window`,
+   `test_corpus_invariants`) or in `EXTRA_EXEMPT` inside `tools/ci_suite_coverage.py` (CI side).
+   `EXTRA_EXEMPT` is **empty today**: the one suite that used to need it, `test_cli_output` (a
+   pytest-function-style suite whose self-check entry is `python -m pytest -q tests/test_cli_output.py`),
+   now runs on the 3.12 legs — so removing it from the workflow turns the checker red instead of
+   passing silently. Both tables demand a one-line *why*; never register an exemption just to make
+   the checker green.
+
+**Still a known gap (kept as a TODO, not hidden): the check is "at least one leg", not "every leg".**
+The plain-script loop still runs only the seven legacy suites, so everything added after 0.1.9 is
+exercised on 3.12 only. Closing that means adding those suites to the loop or dropping the 3.12-only
+guard — a release-pipeline change that multiplies CI time, so it is recorded here rather than changed
+silently. `python tools/ci_suite_coverage.py -v` prints the histogram; today it reads
+"8 legs: 7 / 4 legs: 3 / 2 legs: 14" (the 3.9 legs carry 10 suites, the 3.12 legs carry all 24).
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose
@@ -177,6 +255,47 @@ zh **and** en branches explicitly.
 `test_writeback.py` deserves special care: the write-back engine edits a user's
 real source file, so any change there needs a green run of that suite plus, ideally,
 a try on a real script of your own.
+
+### Document references (`file.py:NNN`): a release-time gate, not a CI assertion
+
+Docs and the manual quote code by line number, and **every change to a source file moves them**.
+`tools/check_doc_refs.py` checks them, but it is deliberately **not** wired into CI as
+"the repo must be clean": any task that edits `writeback.py` would turn that red, and a check
+that goes red for a legitimate change gets relaxed sooner or later. Run it **before a release**
+(and after finishing a batch that touched source):
+
+```
+python tools/check_doc_refs.py                  # docs/** + README*.md + skills/**: rc=0 required
+python tools/check_doc_refs.py --with-maintenance   # + the (untracked) maintenance manual
+python tools/check_doc_refs.py --json            # machine-readable
+```
+
+Three things to know before you write a reference:
+
+1. **Bare `:NNN` works.** `` `writeback.py:4513` … `:4527` `` inherits `writeback.py` from the
+   previous reference **in the same paragraph** (a blank line ends the paragraph; a bare reference
+   with nothing to inherit is reported as a hint, never as suspicious).
+2. **Anchor new references**: `` `writeback.py:2255 # _prune_backups` `` — the gate searches that
+   symbol within **±3 lines** (`--anchor-window`) of the quoted line and reports `symbol_mismatch`
+   (with the nearest line the symbol does appear on). Existence alone was never enough: `t72`
+   measured four anchors that had drifted by +5…+13 while still pointing at *a* non-blank line.
+3. **Exemptions carry a written reason, and they only shrink.** Three tables in the tool, all keyed
+   by `(doc path, reference)` — **never by doc line number** (that is what drifts):
+   `HISTORICAL_ALLOW` (the maintenance log quotes the *then-current* line: correct history, keep it),
+   `KNOWN_DRIFT` (a reference that really is stale today, with an owner; delete the entry once fixed)
+   and `UNANCHORED_ALLOW` (pre-anchor references, frozen). New references do **not** get added to
+   the freeze — anchor them instead. A stale entry is printed with "please delete".
+   One document-level rule sits above them: `ANCHOR_FREE_DOCS` (today only `MAINTENANCE.md`, the
+   unversioned log manual) — its references are **not required** to carry an anchor, because
+   anchoring a historical line only tempts someone into editing history. They are still checked for
+   resolution / range / blank line / a wrongly written anchor.
+
+Never relax a criterion to make the gate green — register an exemption with its reason instead.
+The gate ships its own self-test (`--self-test`, 9 directions: the four `t103` resolution cases plus
+anchors / window / exemptions / inheritance / exemption-scope) and can be made deliberately red with
+`--self-test --break MODE` (`bare`, `anchor`, `window`, `allow`, `resolve`, `herit`, `exempt`) —
+that is how you prove the self-test is not permanently green.
+`tests/test_docs.py` runs the self-test and the criterion-level teeth in CI.
 
 ## What to change where
 

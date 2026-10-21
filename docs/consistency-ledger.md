@@ -33,7 +33,7 @@
 ## 3. 已知的"模拟 ≠ 真机"边界
 
 - **Qt HiDPI 把 `fig.dpi` 乘 DPR**：离屏没有真 Qt canvas，DPR 只能**注入**。注入依据是仓库自己的注释
-  `toolbox.py:1697-1753`（物理请求尺寸 = 英寸 × `fig.dpi`；逻辑画布 px = 物理 ÷ DPR；HiDPI 下 matplotlib 把
+  `toolbox.py:1847-1858 # _fit_size_for`（物理请求尺寸 = 英寸 × `fig.dpi`；逻辑画布 px = 物理 ÷ DPR；HiDPI 下 matplotlib 把
   `fig.dpi` 乘过 DPR ⇒ `fig.dpi = rcParams['figure.dpi'] × DPR`，而逻辑 px = 英寸 × `rcParams['figure.dpi']`）。
   ⇒ 旧的 `px / fig.dpi` 少算一个 DPR 因子：**DPR=2 时画布正好缩到 1/2**（用户现场 7.5×4.75）。
   矩阵（`tests/test_writeback.py` §103）证的是"**换算公式在 DPR≠1 时必然错**"，**不是**"Qt 真的这么做"；

@@ -118,6 +118,30 @@ def _write(path, text):
         f.write(text)
 
 
+_SCRATCH_SEQ = [0]
+
+
+def _scratch_dir():
+    """在临时根下建一个**进程内唯一、且可写**的目录。
+
+    ⚠ 不用 ``tempfile.mkdtemp``：它建出来的目录带自己的 DACL，在 DSH 的 Windows
+    沙箱（workspace-write）里**建得成、里面写不进** —— 实测 ``open(d/fig.py,'w')``
+    → ``PermissionError: [Errno 13]``，整个文件 14 条全 ERROR（t3 的覆盖检查把本
+    文件照出来之后才发现的）。改用 ``os.makedirs``：新目录继承父目录的 DACL，
+    沙箱里与 CI 上都可写。唯一性靠 pid + 序号 + ``exist_ok=False`` 撞了就重试。
+    """
+    base = tempfile.gettempdir()
+    while True:
+        _SCRATCH_SEQ[0] += 1
+        d = os.path.join(base, 'mpltweak_cliout_%d_%d'
+                         % (os.getpid(), _SCRATCH_SEQ[0]))
+        try:
+            os.makedirs(d)
+            return d
+        except FileExistsError:
+            continue
+
+
 @pytest.fixture()
 def work():
     """一份可写回的脚本 + 一份正常参数 + 两份坏参数 + 一份布局冲突脚本。
@@ -125,10 +149,10 @@ def work():
     ⚠ 故意**不用** pytest 的 ``tmp_path``：它走 ``tmp_path_factory``（basetemp +
     每例子目录），在受限令牌 / Windows 沙箱这类环境里连 ``os.scandir(basetemp)``
     都会被拒（实测 WinError 5），整个文件会变成 14 条 ERROR —— 而本文件的被测对象
-    是 CLI 的输出流，不是临时目录取法。``tempfile.mkdtemp`` 在这类环境里可用，
-    ``finally`` 里清干净。
+    是 CLI 的输出流，不是临时目录取法。取目录走 ``_scratch_dir()``（见它的注释：
+    也不用 ``mkdtemp``，理由写在里面），``finally`` 里清干净。
     """
-    d = tempfile.mkdtemp(prefix='mpltweak_cliout_')
+    d = _scratch_dir()
     try:
         _write(os.path.join(d, 'fig.py'), _SCRIPT)
         _write(os.path.join(d, 'p.json'), json.dumps(
