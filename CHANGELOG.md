@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 0.1.12
+
+### 这一版用户能感知到的变化
+
+- **图在函数里建、`return` 出来再保存的脚本，现在能写回了（新能力）**：`def make_plot(): fig, ax = plt.subplots(); ...; return fig` + 模块层 `fig = make_plot()` 这类写法，此前一律被拒（静态证不出 `fig`/`ax` 属于哪张图）。现在把调整块写在**函数内那条 `return` 之前**、缩进按函数体对齐，写完仍走重跑 + 语义验证。三种证不出的形态照旧拒写并给出下一步：函数里有不止一条 `return`、该函数被调用不止一次、目标是方法（`self.ax`）。
+- **"函数已经调了、只是没带目标参数"的写法，可以原位补参数（行为变更）**：`ax.set_title('A')` → `ax.set_title('A', fontsize=15)`、`ax.grid()` → `ax.grid(True)`、`ax.tick_params(axis='x', colors='k')` → 末尾补 `labelsize=9`；跨行参数表自动换行对齐缩进、尾随逗号原样保留。静态语料口径：2,334 份可写回脚本的 9,336 个「脚本 × 字段」组合里，**1,541 个（16.5%）**属于这种形态。带 `**kwargs` 的调用、多处调用证不出唯一落点的、`set_fontsize(变量)` 一律不改并如实说明。
+- **拖动被外部程序抢走鼠标后不再"粘住"（修缺陷）**：按住面板拖动 → 按 QQ 截图快捷键 → 框选截完 → 松开，此前蓝框会继续跟着鼠标走；现在只要鼠标移动时发现没有任何按键按着，就立即收尾（并保留原有拾取/优先级行为不变）。
+- **人读错误输出改走 stderr（行为变更）**：`mpltweak apply foo.py > out.txt` 时 `out.txt` 只装正常报告；脚本找不到、参数文件坏、拒写/未写回、写回与验证失败（含归因）走 stderr，管道里可以直接 `if !` 判失败。成功摘要、逐处清单、预览的"会改"、降级提示仍走 stdout；`--json` 载荷与退出码不变。
+- **双 Y 轴（`twinx` / `twiny`）的行为与边界写清楚了**：两块轴共享同一个位置矩形（matplotlib 语义，拖动不会把它们撕开）；写回按各自轴名逐条落位（`ax2.set_position(...)` 这类可证）。已知不支持项：位置只能两条一起改（只改其中一条，会被另一条覆盖 ⇒ 语义核验失败 ⇒ 回滚，脚本字节不变）；两块重合的轴叠在一起时，Ctrl 加选 / 多选拖拽 / 贴邻吸附无法区分归属，图形矩阵里对此显式打印"不适用"。
+- **帮助与文档补齐**：`?` 键位表新增「逃生」组（`Alt+点击` 穿透到下一层 / `Tab` 循环同级元素），并写进 `docs/interaction.md` 与中英 README 速查；`--force` / `--lang` / `--no-tight` 按各自所属子命令显式列出；`--json` 错误码表补上 `internal_error`（工具自身异常、已回滚、不改源码）。
+
+### 数字
+
+- 写回套件 **573** 条断言（含本版新增的函数封装锚点 15 条、原位补参数 14 条）全部通过；
+- 图形矩阵：**406 条通过 / 0 失败 / 47 条显式"不适用"**（13 种图形 × 逐种操作），双 Y 轴家族位置一致性由"打印观察"升级为**带容差的硬断言**；
+- 交互离屏事件：**67** 条通过（含拖动自愈的 16 条，其中两条反向验证：把判据改坏必须变红）。
+
 ## 0.1.11
 
 ### 这一版用户能感知到的变化
@@ -40,6 +57,8 @@
 
 
 
+## 0.1.10
+
 ### 这一版用户能感知到的变化
 
 - **写回验证默认只跑一遍脚本，等待时间约减半（行为变更）**：`apply --write` 的 happy path 由"跑 2 遍"（1 遍原样重跑 + 1 遍套壳取状态）改为 **1 遍**。这一遍同时回答两件事：脚本还跑得通吗、你要调的字段真落到目标图上了吗。**取不到目标图状态时**（脚本没画这张图 / 从没 `savefig` / 子进程没留下状态）才**回退 2 遍**，并把回退原因打印出来；需要归因"是不是脚本本来就跑不通"时**最多 3 遍**。`--timeout` 语义不变（每一次重跑各自受约束）。
@@ -55,7 +74,7 @@
 
 每条格式：现象 → 根因 → 修法 → 证据。
 
-**写回验证会静默改坏用户图片（本轮最该记住的一条）**
+**写回验证会静默改坏用户图片**
 - 现象：脚本里"`savefig` → `plt.close(fig)` → 再裸 `plot()`"这种写法下，`apply --write` 会把你目录里的图片覆盖成错的 —— 追因样本的目标图由 185,701 B / `6a7acb15d52f` 变成 140,667 B / `252597fc6170`（内容不同像素 15.2%），而工具这一路仍报成功，旧口径下 `verified=True`。
 - 根因：验证的语义层用「把 `plt.close` 拦成空操作」来保证"脚本跑完还能读到图"。图因此不销毁、仍是 current，**后续绘制画回上一张图**；而真实链路里原样跑那一遍先写出正确的图、套壳这一遍后写盘 ⇒ 覆盖。
 - 修法：不再拦 `close`；取数改成两件只读的东西 —— `Figure.savefig` 钩子在**写盘那一刻**抓快照 + 按**创建顺序**持强引用的 figure 注册表（脚本自己 `close` 过也读得到）。判据**只严不松**：主口径仍是"脚本跑完时图对象的状态"（与旧 `verify_semantic` 逐项一致），快照是**追加**判据——磁盘上那张图也必须体现这次改动。注册表只认 pyplot 托管的图（用 `Figure() + FigureCanvasAgg` 的 OO 风格脚本结论仍是"取不到状态"）。
@@ -103,57 +122,57 @@
 
 ### 这一版用户能感知到的变化
 
-- **坏参数不再被写进你的源码，也不再"假装成功"（T61，行为变更）**：本版校验器覆盖的非法参数（尺寸 / 字号 / 轴序号 / NaN / inf 等）在**任何写盘或插块之前**被拒绝（`reason=bad_params`、`rc=2`、`ok=false`、字节不变、不插块）。**只读预览（不加 `--write`）同样会拒绝** —— 参数文件本身非法与走不走写分支无关。
-- **拒绝或未写盘时，终端如实输出"未写回 + 原因"（T68）**：此前人读那一行仍打印 `[OK] 已写回:`；`--json` 的字段与取值未变。
-- **参数里没写 y 侧字号时，一个字节都不动 y（T73，行为变更）**：申请改 x 就只改 x，y 保持源码原值。
-- **追加的调整块只用能静态证明的定位（T70，行为变更）**：证不出"作用在哪张图 / 哪条轴"时**拒绝写盘**，并打印一段可直接粘贴的手改片段。
-- **`describe` 补上 y 侧字号字段，`verify` 真的判 y（T75）**：`label_fontsize_y` / `tick_fontsize_y` 现在会导出；y 写错会判失败；**已请求却判不了的字段**会出现在 `--json` 的 `detail` 里（判不了 ≠ 判失败，但会说出来）。
-- **连改两次后 `revert` 回到原件（T71）**：备份改为**首份优先**（在本版实测的调用序列下成立），`revert` 不再只回到中间态。
+- **坏参数不再被写进你的源码，也不再"假装成功"（行为变更）**：本版校验器覆盖的非法参数（尺寸 / 字号 / 轴序号 / NaN / inf 等）在**任何写盘或插块之前**被拒绝（`reason=bad_params`、`rc=2`、`ok=false`、字节不变、不插块）。**只读预览（不加 `--write`）同样会拒绝** —— 参数文件本身非法与走不走写分支无关。
+- **拒绝或未写盘时，终端如实输出"未写回 + 原因"**：此前人读那一行仍打印 `[OK] 已写回:`；`--json` 的字段与取值未变。
+- **参数里没写 y 侧字号时，一个字节都不动 y（行为变更）**：申请改 x 就只改 x，y 保持源码原值。
+- **追加的调整块只用能静态证明的定位（行为变更）**：证不出"作用在哪张图 / 哪条轴"时**拒绝写盘**，并打印一段可直接粘贴的手改片段。
+- **`describe` 补上 y 侧字号字段，`verify` 真的判 y**：`label_fontsize_y` / `tick_fontsize_y` 现在会导出；y 写错会判失败；**已请求却判不了的字段**会出现在 `--json` 的 `detail` 里（判不了 ≠ 判失败，但会说出来）。
+- **连改两次后 `revert` 回到原件**：备份改为**首份优先**（在本版实测的调用序列下成立），`revert` 不再只回到中间态。
   （作用域限定：这里的"首份优先"说的是**固定名备份** `<脚本>.tweak.bak` 的**创建规则** —— 已存在就不覆盖，
   跨独立 `apply` 调用同样成立，所以默认 `revert` 回到的是"该备份建立那一刻"的原文，而不是上一步的中间态；
   要拿"跨很多次写回 / 跨进程"的**最早一份**快照用 `revert --first`（读带 pid 的专属副本里最早的一份；
   `keep=5` 只裁中间的，最早那份永久保留）。0.1.10 复核：独立进程连续 3 次写回后默认 `revert` 仍回到最初原件。
   完整作用域与边界见 [docs/verify.md](docs/verify.md)。）
-- **源码末尾没有换行符时，调整块不再被重复插入（T46）**。
-- **同一张图里重名轴、且参数只覆盖其中一条时，不再把改动写到另一条轴那一行（T57）**。
-- **图级尺寸的两处"静默丢改动"已修（Bug 6 / T64）**：改 `set_size_inches` 之后的覆盖，以及把 matplotlib 默认值当作真实尺寸的判据。
+- **源码末尾没有换行符时，调整块不再被重复插入**。
+- **同一张图里重名轴、且参数只覆盖其中一条时，不再把改动写到另一条轴那一行**。
+- **图级尺寸的两处"静默丢改动"**：改 `set_size_inches` 之后的覆盖，以及把 matplotlib 默认值当作真实尺寸的判据。
 
 ### 修复
 
 每条格式：现象 → 根因 → 修法 → 证据。
 
-**参数校验（T61）**
+**参数校验**
 - 现象：7 类非法参数会被真的写进源码（`pos` 宽或高 ≤ 0、整块在画布外、`figsize` 任一维 ≤ 0、`fontsize < 0`、轴序号越界或为负）；另有 3 类静默假装成功（`fig_index` 越界 / `version` 缺失 / `version ≠ 4` 报 `no_change` + `rc=0`）。
 - 根因：这些字段在写盘路径上没有统一的前置校验，越界轴序号还会被 Python 解释成"最后一张轴"。
 - 修法：在写盘与插块之前统一校验，失败即 `bad_params`。**明确不拒**：仍有可见部分的负 `left`/`bottom`、倒置的 `xlim`/`ylim`、`fontsize == 0`（合法，只在 warnings 里提示）。
 - 证据：并集语料 D 场景 482 行中 280 行产出用例 × 27 类 = **7,560 次**；修复后在合法用法之外 **0 不安全**，3 类静默假成功的 `not_rejected` **21 → 0**。反向：逐条关掉新增校验 ⇒ 对应用例变红（FAIL=3/3/1/3/1/2/1）。
 
-**写回定位（T67 / T70 / T57 / T46）**
+**写回定位**
 - 现象：`pos` 值相等却仍被写盘；追加块用运行期下标定位时，可能"目标轴零改动，却把主图改成了色条那么大"（实测：运行期 12 条轴、`cax is fig.axes[0] = False`；块后 `fig.axes[0]` 变成 `(0.78, 0.18, 0.2, 0.03)` 而 cax 未变）。
 - 根因：内联在实参里的 `add_axes` 认不出（回退追加块）；块用 `fig.axes[i]` / `plt.gca()` / `plt.gcf().axes[i]` / `zip(fig.axes, [...])` 这类**运行期下标**指对象，而运行期 `fig.axes` 还混着色条轴、嵌入轴与双轴。
-- 修法：给 `pos` 加内联 `cax=fig.add_axes([...])` 的等值证明；块只允许静态可证的定位（目标对象的变量名、可证的 figure 名；纯 pyplot 且全文件只建一张图时 `plt.gcf()` 等价可用）；**证不出 ⇒ 拒绝写**（`applied=false`、字节不变、人读输出"未写回 + 原因"）并打印可粘贴骨架。同源修掉"同图重名轴写错行"（T57）与"尾部无换行导致块重复插入"（T46）。
-- 证据：全库静态 **允许 441 / 拒绝 882，A 类归零**；S2 判据4 由改前 **A 674 / B 403 / C 81**（分母 1,158 块）到本版 **A 0 / B 0 / C 427**（分母 427 块）——**A+B 占比 93.0% → 0.0%**（只比占比，绝对数不并排）。T46：`replay_f_scene.py --all-diff` 由 **12/12 复现**降到 **0/12**。T57 配 §68 九格钉子用例（撤掉判据 ⇒ 3 条用例变红）。
+- 修法：给 `pos` 加内联 `cax=fig.add_axes([...])` 的等值证明；块只允许静态可证的定位（目标对象的变量名、可证的 figure 名；纯 pyplot 且全文件只建一张图时 `plt.gcf()` 等价可用）；**证不出 ⇒ 拒绝写**（`applied=false`、字节不变、人读输出"未写回 + 原因"）并打印可粘贴骨架。同源修掉"同图重名轴写错行"与"尾部无换行导致块重复插入"。
+- 证据：全库静态 **允许 441 / 拒绝 882，A 类归零**；S2 判据4 由改前 **A 674 / B 403 / C 81**（分母 1,158 块）到本版 **A 0 / B 0 / C 427**（分母 427 块）——**A+B 占比 93.0% → 0.0%**（只比占比，绝对数不并排）。`replay_f_scene.py --all-diff` 由 **12/12 复现**降到 **0/12**。§68 九格钉子用例（撤掉判据 ⇒ 3 条用例变红）。
 - 附带说明（措辞纪律）：追加块路径**每次多出一个空行**（抽样 150/150，分布 `{1: 150}`；严格"逐字节 == pristine" = **0 / 1,286**）⇒ 对外只能说「除块本身与一个空行外，原文逐字节不变」。
 
-**图级尺寸与幂等（Bug 6 / T64 / T71）**
-- 现象：`figsize_already_ok()` 只看 `plt.subplots(figsize=…)` / `plt.figure(figsize=…)` 那一处，忽略其后的 `fig.set_size_inches(w, h)` ⇒ 判"尺寸已对" ⇒ 改动被静默丢弃；源码里读不出尺寸时会落回 matplotlib 默认值 6.4×4.8 ⇒ 目标恰好等于默认值时同样静默不改。T71：同一份参数连着 `apply --write` 两次，第二次又改字节；随后 `revert` 返回码 0 却没回到原件。
-- 根因：T64 是判据只看一处、且拿默认值冒充真实尺寸；T71 是两条叠加 ——（1）带点号的接收者（`tree_disp.figure_.set_size_inches(10, 6)`）被误判成"本图被后续覆盖"，第二次 apply 认不出"尺寸已到位"而退回插块；（2）块通道的 `_make_backup` 重写固定名备份，备份变成"改过一次的中间态"。
+**图级尺寸与幂等**
+- 现象：`figsize_already_ok()` 只看 `plt.subplots(figsize=…)` / `plt.figure(figsize=…)` 那一处，忽略其后的 `fig.set_size_inches(w, h)` ⇒ 判"尺寸已对" ⇒ 改动被静默丢弃；源码里读不出尺寸时会落回 matplotlib 默认值 6.4×4.8 ⇒ 目标恰好等于默认值时同样静默不改。同一份参数连着 `apply --write` 两次，第二次又改字节；随后 `revert` 返回码 0 却没回到原件。
+- 根因：判据只看一处、且拿默认值冒充真实尺寸；幂等失败是两条叠加 ——（1）带点号的接收者（`tree_disp.figure_.set_size_inches(10, 6)`）被误判成"本图被后续覆盖"，第二次 apply 认不出"尺寸已到位"而退回插块；（2）块通道的 `_make_backup` 重写固定名备份，备份变成"改过一次的中间态"。
 - 修法：按**最后一条生效的 `set_size_inches`** 比对（`_later_size_override()` 改看接收者**根名字**，新增 `_rebound_between`，非变量名接收者不可证）；读不出字面量就**弃权退块**，不拿默认值冒充；备份**首份优先**（在本版实测的调用序列下成立）。
-- 证据：`_probe_t64_e2e.py`（真实 CLI `apply --write --style auto --json` + 独立生效尺寸读取器，读不出记"未知"）修复前 **6/8** → 修复后 **8/8**。T71 用同一把尺子、同一输入：**`revert` 失败 2 → 0**；幂等失败 2 → 1（剩的那 1 例见"已知边界"，无数据损失）。语料 C 连跑三次：修复前 #2 插 5 行块（136651 → 136918 字节），修复后 #1 `ok`（原位）→ #2/#3 `no_change`、字节不变。
+- 证据：`_probe_t64_e2e.py`（真实 CLI `apply --write --style auto --json` + 独立生效尺寸读取器，读不出记"未知"）修复前 **6/8** → 修复后 **8/8**。同一把尺子、同一输入：**`revert` 失败 2 → 0**；幂等失败 2 → 1（剩的那 1 例见"已知边界"，无数据损失）。语料 C 连跑三次：修复前 #2 插 5 行块（136651 → 136918 字节），修复后 #1 `ok`（原位）→ #2/#3 `no_change`、字节不变。
 
-**y 侧字号（T73 / T75）**
+**y 侧字号**
 - 现象：参数只有 `label_fontsize` 时，工具会把 y 也按 x 的值改掉（静态体检 **130 / 131 例**"只要求改 x、y 侧也被改了且未申报"：`scatter_demo2.py` → `changes=['ax0.label_fontsize']`、`warnings=[]`，而 `set_ylabel` 的 fontsize 15 → 21）。另一层：`describe` 从不导出 `label_fontsize_y` / `tick_fontsize_y`（后者连采集都没有），而 `verify` 不判 y ⇒ 存在"没比却说通过"的空间。
 - 根因：写回层与判据层各有一处"y 未设置时沿用 x"的兼容回退（共 14 处）；采集侧未采 y 刻度字号；比对侧只认 x 侧字段。
 - 修法：删掉该回退（`你说改 x 就只改 x`）；`describe` 纯增量补上两个 y 字段（既有键名 / 顺序 / 语义不变）；`verify` 增加 y 侧独立比对；**已请求却判不了的字段写进 `detail` 的"未判定字段"清单**。
 - 证据：`describe` 对 x=11 / y=17、tick x=9 / y=13 的脚本导出 `label_fontsize 11.0 / tick_fontsize 9.0 / label_fontsize_y 17.0 / tick_fontsize_y 13.0`（真值，不是复制 x）；y 标签字号写错 ⇒ `ok=False detail='ax0 label_fontsize_y 23≠17.0'`；只给 x 且 x 的期望恰好等于源码 y 的值 ⇒ 判失败（旧行为会假通过）。反向：把回退加回去 ⇒ 5 条用例变红；关掉新增的 y 比较 ⇒ 3 条断言变红（含"没比却说通过"原样复现）。
 
-**人读输出（T68）**
+**人读输出**
 - 现象：工具没有写盘时（`bad_params` / 块目标证不出 / `no_fig`），终端人读行仍打印 `[OK] 已写回:`。
 - 根因：人读层与 JSON 层取值来源不同，人读层没有接入"是否真的写盘"。
 - 修法：人读行改为"**未写回：<原因>**"；`--json` 的字段与取值一个都不变。
 - 证据：5 个场景与打补丁前逐字对比，JSON 相同。
 
-### 追加修复：同图重名轴不再改错对象（T84）
+### 追加修复：同图重名轴不再改错对象
 
 - **现象**：`fig, (ax, ax) = plt.subplots(1, 2)` 这种"一条语句里同名解包"，参数只给 `index=0` 时，
   工具会改到**运行期属于第二条轴**的那行，并报 `applied=true` —— **改错对象 + 谎报成功**。
@@ -176,13 +195,13 @@
 - **`clim` 在语料上未覆盖**（寻址模型全判够不到）；扫描器**只覆盖原位那 10 个族**，`spines` / `xscale` / `yscale` / `clim` 本次**无站点**（块路径的独立测量是另一次、口径不同，不与本表拼接）。
 - **尾行换行与块**：追加块路径每次多出一个空行（抽样 150/150）；严格"逐字节 == pristine" = 0 / 1,286（详见"修复 · 写回定位"末条）。
 - **本版对外只报静态层结论**：以上主表与块判据都来自不执行语料脚本的静态判定；运行时行为验证推迟到下一版。
-- **0.1.10 候选（本轮实测发现，未修）**：① 消息层在非 UTF-8 控制台上可能吞行 —— 父进程不设 `PYTHONIOENCODING` 时，"未写回"这类中文提示在子进程里没有输出（用例捕获到空列表）；候选修法是输出带 `errors='replace'` 或 ASCII 回退。② 块渲染器里 T67 的 `_pos_block_target_ok` / `_runtime_axes_count` 已成死代码，本轮不删（删了会让 §71 / §69e 的反向配方失效），记入清理项。
+- **0.1.10 候选（实测发现，未修）**：① 消息层在非 UTF-8 控制台上可能吞行 —— 父进程不设 `PYTHONIOENCODING` 时，"未写回"这类中文提示在子进程里没有输出（用例捕获到空列表）；候选修法是输出带 `errors='replace'` 或 ASCII 回退。② 块渲染器里的 `_pos_block_target_ok` / `_runtime_axes_count` 已成死代码，本版不删（删了会让 §71 / §69e 的反向配方失效），记入清理项。
 
 ### 测试与验收
 
 **套件面**
 - 两种编码环境下 `tests/test_writeback.py` 均 **ALL PASS / 0 FAIL**；`pytest -q` = **rc=0**（**34 passed / 5 skipped**，含 hygiene 棘轮，基线未涨）。
-- 反向验证：本条修复的判据逐项"关掉"后，对应用例变红（T61 七条 FAIL=3/3/1/3/1/2/1；T57 三条；T73 五条；T75 三条）。
+- 反向验证：本条修复的判据逐项"关掉"后，对应用例变红（参数校验七条 FAIL=3/3/1/3/1/2/1；写回定位三条；y 侧字号五条；y 侧字段三条）。
 
 **静态实测面**（语料并集 = **4,427 / 4,427** 行覆盖；1 个脚本隔离重扫仍 >300s，**单列、不进分母**）
 - 脚本级：`error=None` **2,396** / `no_figure` **1,940** / `syntax` **90** / `timeout` **1**。
@@ -218,15 +237,15 @@
 
 ## 0.1.9 · 详细修复台账（技术细节）
 
-> 四条修复线：写回引擎（T7/T11/T12/T15）、CLI-MCP-执行边界（T8/T13）、GUI（T9）。
+> 修复线三类：写回引擎、CLI-MCP-执行边界、GUI。
 > 版本号 0.1.9、日期 2026-10-12；CI 四版本全绿。
 >
-> 依据：三条审计线（写回引擎 E1–E15 / CLI-MCP CH-1–CH-12 / GUI F1–F5）+ 推广实测（P0/P1）
+> 依据：三条审计线（写回引擎 / CLI-MCP / GUI）+ 推广实测
 > + L0 语料压测（合并后复测 812 个真实脚本；0.1.8 基线那次 751 个脚本）。
 >
 > **这一版的主题是"该收手的时候要收手"**：0.1.8 在语料上「干净往返 / 幂等 / 可逆」三项**全灭
-> （各 0/27）**，根因是同一条 —— 参数与源码完全一致时它仍然插块改源码（E1；第二波的 L0-1..L0-4
-> 与第三波 T15 的逐字段三态判据把这条收尾）；同时把「执行边界」讲清楚并收窄。
+> （各 0/27）**，根因是同一条 —— 参数与源码完全一致时它仍然插块改源码（第二波的等值不插块四条
+> 与第三波的逐字段三态判据把这条收尾）；同时把「执行边界」讲清楚并收窄。
 
 ### 这一版用户能感知到的变化（可直接用进 release notes）
 
@@ -246,65 +265,65 @@
 3. **MCP `apply_layout` 的 `wrote` 如实报。**
    0.1.9 实测：`write=false` → `wrote=false`、脚本 `sha256` 不变；`write=true` → `wrote=true`、
    `sha256` 变（退块写入 `[0.2000, 0.2000, 0.6000, 0.6000]`）；`requested_write` 单列一个字段表示
-   "你请求写了吗"（已实测）。这条修的是 CH-7 报的"`wrote: true` 与实际不符"。
+   "你请求写了吗"（已实测）。这条修的是复核提到的"`wrote: true` 与实际不符"。
 
 ### 修复 · 写回引擎
 
-- **E1（高，主干缺陷）** `--style auto` 在"参数与源码完全一致"时也往用户脚本里插调整块 →
+- **高（主干缺陷）**：`--style auto` 在"参数与源码完全一致"时也往用户脚本里插调整块 →
   现在"没有真改动"一律不动（`no_change`），只在**确实有改动且原位够不到**时才退块。
   *为什么*：L0 语料 27/27 命中，并连带让"干净往返 / 幂等 / 可逆"三项全灭 ——
   写回的门槛不该是"参数文件存在"，而是"参数与源码真的不同"。
   修后全量复测（812 脚本）：M3 251/0、M5 27/0、M6 27/0。
-  这条的最后一段尾巴（源码里没有写法的字段"等值也退块"）在**第三波 T15** 里收尾：判据改成逐字段
+  这条的最后一段尾巴（源码里没有写法的字段"等值也退块"）在**第三波（退块判据改逐字段三态）**里收尾：判据改成逐字段
   三态以后，`pos` 等值 + `title_fontsize` / `spines` / `grid` / `xscale` / `figsize` 等值全部
-  `no_change`、不插块、字节不变（已实测；反向对照见 T15 条目）。
-- **E2（高）** 参数缺 `grid` 键被按默认 `false` 补齐 → 把用户脚本里的 `ax.grid(True)` 改成
+  `no_change`、不插块、字节不变（已实测；反向对照见本节「退块判据改逐字段三态」）。
+- **高**：参数缺 `grid` 键被按默认 `false` 补齐 → 把用户脚本里的 `ax.grid(True)` 改成
   `False`（会改变出图结果）→ 现在只有参数里**显式**出现 `grid` 才写回。
   *为什么*：静默改变用户的图，比报错严重得多。
-- **E3（高）** `--style block` 写盘后验证抛异常**不回滚**：脚本被留在半成品状态、命令却报失败 →
+- **高**：`--style block` 写盘后验证抛异常**不回滚**：脚本被留在半成品状态、命令却报失败 →
   现在任何验证异常都触发备份恢复。*为什么*："永不留下坏脚本"是核心承诺，这里曾有破口
   （已有真实用例）。
-- **E4（高）** 带 colorbar 的脚本 `fraction` 伪字段永远算"真改动" → `auto` 永不退块、用户要的
+- **高**：带 colorbar 的脚本 `fraction` 伪字段永远算"真改动" → `auto` 永不退块、用户要的
   位置改动被**静默丢弃**且 `rc=0`。*为什么*：静默丢改动 = 用户以为调好了，回头图没变。
-- **E5（中）** 干净往返把 `fraction=0.15` 写成 `0.0410769`（永不 `no_change`）→
+- **中**：干净往返把 `fraction=0.15` 写成 `0.0410769`（永不 `no_change`）→
   只有用户真的动过才写。
-- **E6（中）** 脏参数（6 类输入）→ `internal_error`，连**只读预览**也崩；`params.validate`
+- **中**：脏参数（6 类输入）→ `internal_error`，连**只读预览**也崩；`params.validate`
   检测到却只 `print` → 统一结构化错误 + 退出码，先校验再动手。
-- **E7（中）** 原位"一处都没写"仍打印 `[OK] 已原位写回` 并附假解释 → 如实报"没有可写回的改动"。
-- **E8（中）** 值没变的 `grid` 永不判空改（重复 apply 谎报改动、白写备份、白跑验证）→
+- **中**：原位"一处都没写"仍打印 `[OK] 已原位写回` 并附假解释 → 如实报"没有可写回的改动"。
+- **中**：值没变的 `grid` 永不判空改（重复 apply 谎报改动、白写备份、白跑验证）→
   按"新旧值相同"判空改。
-- **E9（低）** `--dry-run` 也打印 `[OK] 已原位写回`，JSON 里没有 `dry_run` 标记 → 文案与字段如实标注。
-- **E10（低）** UTF-8 BOM 被静默删除 → 写回 / 恢复按原编码原样保留。
-- **E11（低）** 块模式往 CRLF 文件里插 5 行裸 LF（混行）→ 跟随文件原有换行。
-- **E12（低）** 调整块标记残缺时静默插第二份块，且报 `ok/verified/semantic` 全绿 →
+- **低**：`--dry-run` 也打印 `[OK] 已原位写回`，JSON 里没有 `dry_run` 标记 → 文案与字段如实标注。
+- **低**：UTF-8 BOM 被静默删除 → 写回 / 恢复按原编码原样保留。
+- **低**：块模式往 CRLF 文件里插 5 行裸 LF（混行）→ 跟随文件原有换行。
+- **低**：调整块标记残缺时静默插第二份块，且报 `ok/verified/semantic` 全绿 →
   识别残缺标记（修复或明确拒绝）。
-- **E13（低）** `fig, ax = plt.subplots()`（最常见单轴写法）没有轴变量映射，警告却甩锅给源码 →
+- **低**：`fig, ax = plt.subplots()`（最常见单轴写法）没有轴变量映射，警告却甩锅给源码 →
   警告改成说清"这是工具的映射缺口"。
-- **E14（低）** `insert_or_replace` 的 docstring 与实现不符 → 改正文档串。
-- **E15（低）** `layoutwarn` 不认裸名 `subplots(layout='constrained')` → 补识别。
+- **低**：`insert_or_replace` 的 docstring 与实现不符 → 改正文档串。
+- **低**：`layoutwarn` 不认裸名 `subplots(layout='constrained')` → 补识别。
 
 ### 修复 · CLI / API / MCP
 
-- **CH-1（高）** `collect_all` 缺 `SystemExit` handler → CLI `describe --all-figs` 静默空输出
+- **高**：`collect_all` 缺 `SystemExit` handler → CLI `describe --all-figs` 静默空输出
   （0.1.8：脚本里 `sys.exit()` 或 `os._exit()` 都是 `rc=3` + **stdout 0 字节**），MCP server 则会被
   **`os._exit()`** 的脚本带走（0.1.8 实测：`describe_layout` 无响应、server 进程以脚本的退出码 3 结束）。
   **两者要区分开**：同一实测里 `sys.exit(3)` 的脚本在 0.1.8 的 **MCP 路径下仍存活**（只有 CLI 路径被带走）
   —— 因为 `sys.exit()` 抛的是可被捕获的 `SystemExit`，`os._exit()` 直接结束进程。
   → 捕获后返回结构化失败（与 `collect` 共用 helper）。0.1.9 实测：两种脚本都返回结构化结果
   （`n_figs=1`）、server 存活（已实测）。
-- **CH-2（高）** MCP 长驻进程的跨调用状态污染：`sys.path` 泄漏能让**同一个脚本的判定翻转**、
+- **高**：MCP 长驻进程的跨调用状态污染：`sys.path` 泄漏能让**同一个脚本的判定翻转**、
   `sys.modules` 缓存不失效、matplotlib `rcParams` 串味后**可能被写进用户源码** →
   **check / describe / MCP 改为子进程执行**（复用 `verify.py` 的 main driver，扩 `--all-figs`）；
   库嵌入场景再补 `sys.path` 回收 + `rcParams` 快照/恢复。
   *为什么*：一次进程级隔离，比在长驻进程里逐项打补丁可靠。
-- **CH-3（中）** `check --json --tol inf` 输出**非法 JSON**（`"tol": Infinity`）并静默关掉几何检查 →
+- **中**：`check --json --tol inf` 输出**非法 JSON**（`"tol": Infinity`）并静默关掉几何检查 →
   拒绝非法值。
-- **CH-4（中）** `bbox_inches='tight'` 的贴边图被误报 `text_out_of_canvas`（error 级 → 恒
+- **中**：`bbox_inches='tight'` 的贴边图被误报 `text_out_of_canvas`（error 级 → 恒
   `rc=1`）→ 识别 `savefig(bbox_inches=...)` 后降级为 warning（`--json` 里 `tight_bbox: true`、
   该条 `downgraded: "tight_bbox"`），另加 `--no-tight` 按旧口径严判。
   *为什么*：README 推荐的 CI 配方在存量正常项目上会永远红，用户最后只能把这条检查关掉。
   实测：同一段越界文字，无 tight → `rc=1` / `error`，有 tight → `rc=0` / `warn`（已实测）。
-- **CH-5（中）** `schema` 校验不了本工具自己的产物：`xscale` enum 缺 `symlog/logit` 等取值；
+- **中**：`schema` 校验不了本工具自己的产物：`xscale` enum 缺 `symlog/logit` 等取值；
   顶层放开 `additionalProperties` 时，`--all-figs` 的嵌套形态
   （`{version, script, n_figs, figures:[…]}`）不在规范里 → **嵌套静默假通过** → 补齐 `SCALE_ENUM`、
   顶层收紧为 `additionalProperties=false`，并把 `figures` 直接列进顶层 `properties`
@@ -314,32 +333,32 @@
   改成 `bogus_scale` → 报 `'bogus_scale' is not one of ['linear', 'log', 'symlog', 'logit',
   'asinh', 'function', 'functionlog', None]`；塞一个顶层未知键 → 报
   `Additional properties are not allowed ('hello' was unexpected)`（已实测）。
-- **CH-6（中）** 退出码矩阵不一致（`describe`=1 / `check`,`apply`=2 / internal=1 / 未知=3）→
+- **中**：退出码矩阵不一致（`describe`=1 / `check`,`apply`=2 / internal=1 / 未知=3）→
   `describe` 已并入 `rc=2`（脚本不存在 / 采集失败），并把**实测矩阵**写进 README（中英各一节）。
   **残差（未统一，待定契约，属 B 堆）**：同一个"脚本找不到"，**顶层路径**（`mpltweak <脚本>`，含
   `launch`，消息都是 `[launch] 找不到脚本: …`）返回 **`rc=3`**，而子命令 `describe`/`check`/`apply`/
   `revert`（`[xxx] 找不到脚本: …`）返回 **`rc=2`**；顶层的未知 flag 也是 `rc=3`
-  （`[launch] 需要脚本路径，或用 --doctor 做环境自检`）而不是 argparse 惯用的 2 —— 本轮**只改文档、
+  （`[launch] 需要脚本路径，或用 --doctor 做环境自检`）而不是 argparse 惯用的 2 —— **只改文档、
   不改代码**（统一会动到顶层入口的兼容性，需先定契约）。实测矩阵见 README。
   → **0.1.11 已统一（用户 2026-10-13 拍板方案 A）**：脚本找不到 / 脚本自己报错 / 顶层未知参数
   **一律 2**，**3 退役**（常量保留、无路径产生），口径收敛为 `0 / 1 / 2 / 4`；同时把
   `apply <不存在的脚本>` 的首行从 `no params:` 改为"找不到脚本"（rc 仍 2）。见 0.1.11 段。
-- **CH-7（中）** MCP `apply_layout` 的 `wrote: true` 与实际不符 → 如实报。
-- **CH-8（低-中）** MCP 错误语义两套（业务错误 `isError=false`；异常错误 `isError=true` 却
+- **中**：MCP `apply_layout` 的 `wrote: true` 与实际不符 → 如实报。
+- **低-中**：MCP 错误语义两套（业务错误 `isError=false`；异常错误 `isError=true` 却
   **丢失原因**）→ **统一为 payload 内的 `error_code` / `error`**：实测两类都是 `isError=false`，
   业务错误 `apply_layout(<不存在的脚本>)` → `{"ok": false, "error_code": "file_not_found",
   "error": "script not found: …"}`；异常错误 `describe_layout(<抛异常的脚本>)` →
   `{"ok": false, "error_code": "collect_failed", "error": "collect failed: RuntimeError: …"}`
   —— 机器可判（`error_code` 稳定）+ 人可读（`error` 带原始原因）都在 payload 里（已实测）。
-- **CH-9（低）** `schema` 忽略所有参数（`--help` / 未知 flag 都原样输出 JSON 且 `rc=0`）→
+- **低**：`schema` 忽略所有参数（`--help` / 未知 flag 都原样输出 JSON 且 `rc=0`）→
   正常参数解析。
-- **CH-10（低）** MCP `serverInfo.version` 是空串 → 填真实版本。
-- **CH-11（低）** sdist 混入 `src/mpltweak.egg-info/*` → `MANIFEST.in` 里
+- **低**：MCP `serverInfo.version` 是空串 → 填真实版本。
+- **低**：sdist 混入 `src/mpltweak.egg-info/*` → `MANIFEST.in` 里
   `prune src/mpltweak.egg-info`，把 **egg-info 相关 8 项压到 3 项**（A/B 构建实测：0.1.8 基线 43 条目
   → 合并树 39 条目）。**仍会进 sdist 的三项**：`setup.cfg`、`src/mpltweak.egg-info/`、
   `src/mpltweak.egg-info/SOURCES.txt` —— 这三项由 setuptools 在构建期自己生成，MANIFEST 的 `prune`
   排不掉（`MANIFEST.in` 自己的注释也承认这一点）。已实测。
-- **CH-12（低）** `check` 的人读文案曾硬编码中文 → 0.1.9 起 `--lang {auto,zh,en}`
+- **低**：`check` 的人读文案曾硬编码中文 → 0.1.9 起 `--lang {auto,zh,en}`
   （`apply` / `describe` / `check` 与顶层入口都有；`revert` / `schema` / `doctor` 没有这个开关）以及
   环境变量 `MPLTWEAK_LANG=en` 都能切英文（实测 `check <脚本> --lang en` →
   `checked 1 axes, tolerance 0.010`，`MPLTWEAK_LANG=en` 同效）。
@@ -351,58 +370,58 @@
 
 ### 修复 · GUI
 
-- **F1（中）** 裸点击压幽灵撤销步：第一次 `Ctrl+Z` 谎报"撤销：移动 axN"但画面没动 →
+- **中**：裸点击压幽灵撤销步：第一次 `Ctrl+Z` 谎报"撤销：移动 axN"但画面没动 →
   只在**真改动**时入栈。
-- **F2（低）** colorbar 端点悬停仍提示"Alt+拖端=改 clim"（该功能已删）→ 删掉说谎提示与死代码。
-- **F3（中）** `export()` 只采 `xlabel` 字号 → 悬停 y 轴标签调字号被静默丢弃（apply 后写成
+- **低**：colorbar 端点悬停仍提示"Alt+拖端=改 clim"（该功能已删）→ 删掉说谎提示与死代码。
+- **中**：`export()` 只采 `xlabel` 字号 → 悬停 y 轴标签调字号被静默丢弃（apply 后写成
   xlabel 的字号）→ 按悬停对象取。
-- **F4（中）** 续调 `_apply_saved` 只恢复"中间标题"（`loc='left'/'right'` 标题字号丢），
+- **中**：续调 `_apply_saved` 只恢复"中间标题"（`loc='left'/'right'` 标题字号丢），
   且字号 / label / tick / spines / lines / legend 的恢复全不计入 `n` → 全部恢复并计数。
-- **F5（中）** 干净环境（无 CJK 字体）下画布内中文提示变**豆腐块**、`Glyph missing` 刷屏 →
+- **中**：干净环境（无 CJK 字体）下画布内中文提示变**豆腐块**、`Glyph missing` 刷屏 →
   per-artist `fontproperties` + 英文回退，**不得改全局 `rcParams`**。
 
 ### 新增契约（L0 语料发现）
 
-- **RC-3** `params.normalize` 注入默认 `grid=False`（与 E2 同根）：每次 apply 都打印
+- `params.normalize` 注入默认 `grid=False`（与默认补齐缺陷同根）：每次 apply 都打印
   "axN 未原位应用：grid"，并把 `no_change` 顶成 `best_effort`。
-- **RC-5** `apply --json` 的 `files[]` 没有 `auto_fallback` 字段（只能靠 `style=="block"` 反推），
+- `apply --json` 的 `files[]` 没有 `auto_fallback` 字段（只能靠 `style=="block"` 反推），
   且回退后 inplace 那次的 `reason` / `warnings` 被整份覆盖 → agent 看不出"原位为什么没落地"。
-- **RC-6** 参数索引陷阱：`params.axes[i]` 必须按 `fig.axes` 顺序编号（**含** `add_subplot` 的轴、
+- 参数索引陷阱：`params.axes[i]` 必须按 `fig.axes` 顺序编号（**含** `add_subplot` 的轴、
   **剔除** colorbar 槽轴 `cax`）→ 已写进 README（中/英）与 schema 说明。
-- **RC-7**（按复测更正）"revert 字节级可逆"的限定是**单次**写回可逆：0.1.8 在 26/27 个可测脚本上
-  本来是好的，唯一真失败是 **L0-4**（一次 apply 内先原位、再退块 → 固定备份名被第二次写盘覆盖 →
+- （按复测更正）"revert 字节级可逆"的限定是**单次**写回可逆：0.1.8 在 26/27 个可测脚本上
+  本来是好的，唯一真失败是（一次 apply 内先原位、再退块 → 固定备份名被第二次写盘覆盖 →
   revert 拿不回原件）；此前"Cascade 全灭"的判断是脚手架口径缺陷（旧闸门用旧备份路径恒假），
-  不是 revert 缺陷。L0-4 已修（见下）。
-- **RC-8** **只改画布尺寸不可表达（0.1.8 的行为，已修）**：参数里没有 `axes` 就 `NO_AXES` 早退
+  不是 revert 缺陷；该例的修正见本节下文。
+- **只改画布尺寸不可表达（0.1.8 的行为）**：参数里没有 `axes` 就 `NO_AXES` 早退
   （0.1.8 实测 `{"figsize_in":[8,6]}` → `rc=1 / reason=no_axes` / 脚本未改）→ 改成
   `if not axes and not figsize_in:` 才早退，并让 `figsize` 走原位改写。修后实测：`rc=0`、
   `style=inplace`、`changes=["figsize"]`，`plt.subplots(figsize=(6, 4))` → `(10, 6)`（已实测）。
   *为什么*：论文型绘图脚本里 **89.5%** 只有"画布尺寸"这一个可静态构造的目标。
-- **RC-9** `changes=[]` 但脚本确实被改（`rc=0 / reason=ok / style=block / changes=[]`，sha 已变）→
+- `changes=[]` 但脚本确实被改（`rc=0 / reason=ok / style=block / changes=[]`，sha 已变）→
   补块摘要字段，agent 才能看出"写了什么"。
 
 ### 修复 · 第二波（L0 复测暴露）
 
-- **L0-1 等值 figsize 被整段重写**：`figsize=[6, 3]` → `(6, 3)`、`(4., 4.)` → `(4, 4)`、
-  `(16,10)` → `(16, 10)`（值不变、字节变），是 M3 残余的主因（RC-8 打开这条路径后暴露）→
+- **等值 figsize 被整段重写**：`figsize=[6, 3]` → `(6, 3)`、`(4., 4.)` → `(4, 4)`、
+  `(16,10)` → `(16, 10)`（值不变、字节变），是 M3 残余的主因（打开这条路径后暴露）→
   命中 `figsize=` 后**先比原值**，相等就不编辑、不写盘、不进 `changes`；真改时才生成新文本，
   并保留原容器形态（原来写列表就还是列表）。
   *为什么*：写回的语义是"值变了才写"，格式化差异不该算改动。顺带修掉一个幂等陷阱：等值时原位路径
   会发假警告、块路径会多补一行 `set_size_inches`，第二次 `apply` 因此块内容不等而破功。
-- **L0-1b `subplot_mosaic` 漏算建图调用 → 改到另一张图**（**数据损坏**级）：`FIG_FACTORIES`
+- **`subplot_mosaic` 漏算建图调用 → 改到另一张图**（**数据损坏**级）：`FIG_FACTORIES`
   只有 `('figure','subplots')`，"第 N 张图"的节点表因此错位 —— 实测
   `gallery/images_contours_and_fields/image_demo.py` 把第 3 张图的 `figsize=(10, 3)` 改成了
   第 2 张图的 `(7, 3.5)`。→ 把 `subplot_mosaic` 计入建图调用，并让 `edit_figsize` / `_fig_span` /
   `_figure_axes_for_index` / `count_figures` / `axis_var_index` 全部对齐。复测：`fig_index=1`
   只动 mosaic 那张，另一张 `(10, 3)` 原样不动。
   *为什么*：改错图是这类工具最不可接受的失败模式（比报错严重得多）。
-- **L0-2 目标值等于源码现值、但"无法原位核对"（区间外 / cax）时仍退块插块** → 本该 `no_change`
+- **目标值等于源码现值、但"无法原位核对"（区间外 / cax）时仍退块插块** → 本该 `no_change`
   的 apply 改写了源码。修法：在 `apply_inplace` 末尾把"**能静态证明与源码现值相等**"的字段剔除
   （新增 `_proved_equal` / `_pos_literal_equal` / `_seq4_nums`）；证明是**单向**的，证不出就保守
   退块。修后这 3 条均为 `reason=no_change / applied=false / block_lines=0`，而"位置确实不同"的
   对照仍正常退块落地（不静默丢改动）。
-- **L0-3 等值写回谎报 `changes=["figsize"]` + `reason=ok`** → 与 L0-1 同根：等值不再进 `changes`。
-- **L0-4 一次 apply 内先原位、再退块时备份被第二次写盘覆盖** → `revert` 拿不回原件（0.1.8 物证：
+- **等值写回谎报 `changes=["figsize"]` + `reason=ok`** → 与「等值 figsize 被整段重写」同根：等值不再进 `changes`。
+- **一次 apply 内先原位、再退块时备份被第二次写盘覆盖** → `revert` 拿不回原件（0.1.8 物证：
   `zenodo/20154193__RealSpace.py` 写回 20567 B → revert 后 20568 B，差的就是那句等值重写的
   `figsize=(16,10)` → `(16, 10)`）。修法：`writeback(..., backup=<path>)` 支持**复用调用方的备份**，
   auto 回退时把第一次的备份传进去。
@@ -411,24 +430,24 @@
   （写回时被写成 xlabel 的字号）→ `params.py` + `writeback._label_fontsizes()` 支持 y 单独设，
   y 未设置时沿用 x（老参数文件行为不变），`changes` 只报真正变了的那个，并补进 `fields_by_axis`
   使"只改 y"也被语义验证覆盖；`mpltweak schema` 同步。**未改 `verify.py`**（跨文件零侵入）。
-- **E15 裸名 `subplots(layout='constrained')` + i18n 接线**：`layoutwarn` 新增裸名白名单
+- **裸名 `subplots(layout='constrained')` + i18n 接线**：`layoutwarn` 新增裸名白名单
   （`subplots` / `figure` / `Figure` / `subplot_mosaic`），`layout='tight'` / `set_layout_engine('tight')`
   归 autolayout（5 条负例钉住"裸名 helper 不误报"）；`apply.py` 三条文案走 `_t_new(...)`
-  （键在 `MESSAGES` 里就翻译，否则用模板，**绝不打印裸 key**），T8 合入后自动切换。
-- **Tk 后端告知（P0-1 的代码落地）**：`_detect_backend()` 按 QtAgg → Qt5Agg → Qt6Agg → TkAgg
+  （键在 `MESSAGES` 里就翻译，否则用模板，**绝不打印裸 key**），消息表合入后自动切换。
+- **Tk 后端告知**：`_detect_backend()` 按 QtAgg → Qt5Agg → Qt6Agg → TkAgg
   **真建一次 canvas** 探测；回退 Tk 时往 **stderr** 打一句人话提示（中英走 `messages` 表，
   `MPLTWEAK_NO_HINT=1` 静默、`--dry-run` 不提示），`doctor` 多报一行
   `开窗后端 : Tk（未装 Qt；想要 Qt 界面：pip install "mpltweak[qt]"）`。实测
   `_emit_backend_hint("TkAgg") → True`、`"QtAgg" → False`、`dry_run=True → False`、
   `MPLTWEAK_NO_HINT=1 → False`。
-- **执行边界子进程化（P0-5 的代码落地）**：`check` / `describe` / MCP 每次调用都起**独立子进程**
+- **执行边界子进程化**：`check` / `describe` / MCP 每次调用都起**独立子进程**
   （复用 `verify.py` 的 driver，扩 `--envelope` / `--all-figs` / `--text`，状态 JSON 写系统临时目录，
   **不在用户脚本目录留文件**），用户脚本的 `print` 照旧出现在终端；`--static` 是唯一不执行脚本的
   通道。实测：`check --static` 不写探针标记文件、`check --no-text` 会写；`collect_isolated` 前后
   父进程 `font.size` 10.0 → 10.0、`sys.path` / `sys.modules` 无残留；MCP 跑完会 `sys.exit(3)` 的
   脚本后仍能应答 `tools/list`（0.1.8 上 server 会被脚本带走）。
 
-### 修复 · 第三波（T15：退块判据改逐字段三态）
+### 修复 · 第三波：退块判据改逐字段三态
 
 - **该退块时不退块 → 字段被静默丢掉**：`figsize` 能原位改、`pos` 写不了时，旧判据是"原位一个字段
   都没落地才退块"，于是"有落地"就判 `needs_block=False` → `pos` **静默丢**、命令还 `rc=0` 报成功。
@@ -440,7 +459,7 @@
   实测 B 情形（figsize 可原位 + pos 写不了）：`rc=0 / style=block / applied=true / auto_fallback=true
   / inplace_changes=["figsize"] / inplace_pending=["ax0.pos"]`，块落地后回读 `pos` 与目标一致；
   同一份参数加 `--style inplace`：`rc=1 / applied=false / needs_block=true / pending=["ax0.pos"]`（已实测）。
-- **不该退块时退块 → 等值也插块（E1 的最后一段尾巴）**：源码里没有任何能决定该字段的写法时
+- **等值也插块的最后一段尾巴**：源码里没有任何能决定该字段的写法时
   （`title_fontsize` / `label_fontsize`（含 `_y`）/ `tick_fontsize` / `spines` / `grid` /
   `xscale`、`yscale`），参数值等于实际值也曾经一律退块插 12 行 → 新增**默认值等价证明**
   （`_use_matplotlib_default` / `_default_pt`：源码里没有对应写法 ⇒ 实际渲染值就是 matplotlib
@@ -466,10 +485,10 @@
   `fig.colorbar(..., cax=X)` 反查 cax 名字再比字面量（触发条件：参数标了 `is_colorbar`，或本图区间
   内没有可比字面量）。修后 M3 的 fail 清单清空。
 
-### 修复 · 第四波（T23：多图 stale + 验证链诚实 + 块锚点硬约束 + 刻度字号分列 + 新开关 --keep-unverified）
+### 修复 · 第四波：多图 stale + 验证链诚实 + 块锚点硬约束 + 刻度字号分列 + 新开关 --keep-unverified
 
 - **脚本本来就跑不通时不再留下没验证的写回**：写盘后**无条件** `ast.parse`（原位与块两条路径都做），
-  语法被写坏**当场回滚**；重跑失败时先判别"我们写坏了"还是"脚本本来就跑不通"（缺数据 / 依赖 /
+  语法被写坏**当场回滚**；重跑失败时先判别"工具写坏了"还是"脚本本来就跑不通"（缺数据 / 依赖 /
   需要 GUI）——**后者默认回滚 + 明确失败**，错误信息写明"默认**不保留**，要保留请显式
   `--keep-unverified`"；新增开关 `--keep-unverified` 才保留（`verified=null` + warning）。
   *为什么*：那时验证什么都证明不了，留下坏写回比失败更糟。
@@ -495,7 +514,7 @@
   `apply` 两份参数**都** `reason=ok` / `applied=true` / `layers` 三层全绿；把第 2 份参数打桩成比脚本
   旧 10s → 仍然 `reason=stale` / `applied=false`（拦得住）。
 
-### 修复 · 第五波（T35 / T36）
+### 修复 · 第五波
 
 - **默认不再给每个轴注入刻度设置（以前会把源码明写的对数轴改成线性轴）**：工具过去给每个轴注入默认
   `xscale` / `yscale = 'linear'` —— 当源码里明写 `ax.set_xscale("log")` 时，这个"没人要求过的目标值"
@@ -519,37 +538,37 @@
 
 ### 文档 · 推广
 
-- **P0-1** 窗口后端告知（**方案 B，用户已拍板**）：PyQt5 在 → Qt；不在 → Tk 开窗，并在
+- 窗口后端告知（**方案 B，用户已拍板**）：PyQt5 在 → Qt；不在 → Tk 开窗，并在
   **stderr** 打一句"想要 Qt 界面请 `pip install "mpltweak[qt]"`"；文案进 `messages.py` 中英表
   并过 GBK 棘轮；`doctor` 报当前后端；配测试。
-- **P0-2 / P0-3 / P0-4** README（中/英）与实现对齐三处：插入块标记串（实际写入的是
+- README（中/英）与实现对齐三处：插入块标记串（实际写入的是
   `# ===== auto layout (generated) - do not edit inside =====`，旧中文串仍可识别）、
   CI 配方（`check` 一次只收一个脚本，给出可用的循环写法）、`launch` 用法。
-  本轮按合并后的代码复核并更新：**`launch` 已实现为显式子命令**（`mpltweak launch fig1.py` ≡
+  按合并后的代码复核并更新：**`launch` 已实现为显式子命令**（`mpltweak launch fig1.py` ≡
   `mpltweak fig1.py`，实测 `--dry-run` `rc=0`）；0.1.8 上它不存在（会被当成"打开名为 `launch`
   的脚本"，`rc=3`）——README 两种写法的行为都写清楚了。块标记串 / `--static` / `--tol` /
   子进程隔离也都在合并代码上逐条复跑（已实测）。
-- **P0-5** README（中/英）新增「执行边界」一节：哪些命令会执行你的脚本、副作用清单
+- README（中/英）新增「执行边界」一节：哪些命令会执行你的脚本、副作用清单
   （文件 / 网络 / 缓存 / cwd / 导入路径 / `rcParams`）、同一脚本会被重复执行、**不是沙箱**、
   以及 `check --static` 这条不执行的通道。
-- **P0-6** 「零侵入」表述校准：`describe → apply` 直通写回会把**当时整张图的状态**钉进源码
-  （实测 8 行脚本变 30+ 行），并给出"只传 index+pos"的最小用法；0.1.8 缺 `grid` 键的坑已修
-  （不显式给就不写）。第三波 T15 之后这条边界改了：只含代码里**确有写法**的等值字段 → `no_change`
+- 「零侵入」表述校准：`describe → apply` 直通写回会把**当时整张图的状态**钉进源码
+  （实测 8 行脚本变 30+ 行），并给出"只传 index+pos"的最小用法；0.1.8 缺 `grid` 键的坑一并解决
+  （不显式给就不写）。第三波之后这条边界改了：只含代码里**确有写法**的等值字段 → `no_change`
   且字节不变；参数里带了源码里没有写法的字号 / `spines` 这类字段、而值又与原图一致 → 也 `no_change`
-  （逐字段三态判据，见 T15 条目）；**值确实不同**的仍然退块落地。
-- **P0-7** 发布流程补一条硬检查：**打 Release 前必须看 CI 结论**（0.1.8 是在 CI 红的提交
+  （逐字段三态判据，见本节「退块判据改逐字段三态」）；**值确实不同**的仍然退块落地。
+- 发布流程补一条硬检查：**打 Release 前必须看 CI 结论**（0.1.8 是在 CI 红的提交
   `1248109` 上发布的，而徽章因为跟 `main` HEAD 显示 passing）。
-- **P1**（不在本版范围内，发布时注意）：PyPI 项目页仍 pin 着旧演示 GIF（`a4e55c0`，下次发版时
+- **发布前注意（不在本版范围内）**：PyPI 项目页仍 pin 着旧演示 GIF（`a4e55c0`，下次发版时
   换成当前 HEAD 的图片）；wheel 里 77.3% 的体积是两张内置帮助 PNG（可瘦身）。
 - README（中/英）新增：实测适配面（覆盖率按受众分开报）、参数索引约定与 `figsize`-only 用法、
   窗口后端一节。
 - **文档事实源纠错（外部评审条目 9）**：`skills/mpltweak/SKILL.md`（专门喂给 AI 的操作手册）
   的参数格式版本号写成 `version 3`（实际 `SCHEMA_VERSION = 4`）、并称“开窗需要 Qt，已含在默认依赖”
-  （`pyproject.toml` 里 Qt 是可选 extra `[qt]`）→ 本轮按代码纠错，并把 0.1.9 的运行时告知
+  （`pyproject.toml` 里 Qt 是可选 extra `[qt]`）→ 按代码纠错，并把 0.1.9 的运行时告知
   （Qt 优先 / 无 PyQt5 → Tk 开窗 + stderr 提示 + `MPLTWEAK_NO_HINT`）、`--style inplace`
   写不了会 `rc=1`、`check --static` 不执行脚本、`--verify-fast` 的诚实边界一并写进手册。
   中英 README 安装段补齐：英文版原先缺 `python -m mpltweak` 兜底（`mpltweak` 不在 PATH 时用）。
-  另按 T19 复核者的观察补一条契约：`describe --all-figs` 的嵌套 `{"figures":[...]}`
+  另按外部复核的观察补一条契约：`describe --all-figs` 的嵌套 `{"figures":[...]}`
   **不能**直接喂回 `apply --params`（`rc=1 / reason=no_axes`，明确失败、不静默），中英各一节。
 
 ### 测试与验收
@@ -566,10 +585,10 @@
   裸名负例）。
 - 反向验证（把修复改回旧写法 → 对应用例必须失败）：引擎线用 0.1.8 原版引擎跑新用例 **27 FAILED**、
   修复后 **0 FAILED**；第二波 R-D / R-E / R-F / R-G 四组全部命中（R-F 复现的正是"改错图"）；
-  T8 的 R5 命中 `test_agent_api` 失败项。
-- 第三波（T15）自测：`tests/test_writeback.py` **225 PASS / 0 FAIL**（新增 §53a–§53j 共 17 条，
+  R5 命中 `test_agent_api` 失败项。
+- 第三波自测：`tests/test_writeback.py` **225 PASS / 0 FAIL**（新增 §53a–§53j 共 17 条，
   含"等值不插块"的六种字段与 `--style inplace` 明确失败）；反向验证 R-A / R-B / R-C 全 PASS
-  （把判据改回旧写法，对应用例必须失败）。本轮文档改动在合并后的代码上逐条复跑，
+  （把判据改回旧写法，对应用例必须失败）。文档改动在合并后的代码上逐条复跑，
 - 宽兜底棘轮（`tests/test_hygiene.py`）只许降不许升；新模块必须登记。
 
 ### 发布提醒（照旧，重要）

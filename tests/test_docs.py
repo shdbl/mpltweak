@@ -447,6 +447,90 @@ def collect_table_count(files, root=ROOT, extra=TABLE_EXTRA_FILES):
     return n, seen
 
 
+# ---------------------------------------------------------------- ⑦ 测试表必须带证据链接
+# 25.10（对外材料铁律：只展示"能证明什么"）：一张"跑过什么 → 得出什么"的表，行内不挂
+# 指向原始证据的链接，读者就只能**选择相信**；挂了链接，那些数字才是**可复算的**。
+# ⇒ 判据：**测试表的每一行都必须含一处 `evidence-*` 链接**。
+#
+# "测试行"怎么认（写清，不藏）：
+#   * 行必须是**规范表格行**（与 ⑥ 同一判据：行首 `|`、上一行是分隔行；复用 `_lines` 跳围栏）；
+#   * 且该行带**测试标记** `**测的是**`（中文表）或 `**What it tests**`（英文表）——
+#     这就是仓库真实在用的列名（docs/reliability.md:8-13、README.md:123-127、README.en.md:125-129）。
+#     靠列名认、而不是靠"第几张表"认：出处表 / 分母表 / 移交表（表头本身就是"证据 / 来源"）
+#     是**另一类表**，不该被这条判据套上"每行都必须有链接"。
+#   * 链接判据：同一行里出现 `evidence-...` 的字样（`evidence-0.1.10/...`、`evidence-0.1.11/...`
+#     这类证据分支 / 目录）。**只查字样、不查可达性**（零网络，与 ④ 外链格式同款）。
+#   * 围栏内不校验（与 ①~⑥ 同一个开关）。
+#
+# 不纳入的东西（写清）：
+#   * 目录索引式表格（表头是"文件 / 说明"）不判 —— 它们不是测试结果行，没有"证据"可言。
+#   * MAINTENANCE.md 用 `TABLE_EXTRA_FILES` 在**本机存在时**补扫（与 ⑥ 同款；CI 上不存在就跳过）。
+TEST_EVIDENCE_MARKERS = ('**测的是**', '**What it tests**')
+TEST_EVIDENCE_RE = re.compile(r'evidence-[0-9A-Za-z._-]+')
+
+# 显式白名单（**当前为空** = 全仓测试行 0 处缺链接）：确有"该行本就不该带证据链接"时登记。
+# 键 = (仓库相对路径, 该行文本去空白)；值 = 理由字符串。**刻意不含行号**（与
+# TABLE_COLS_BASELINE 同款纪律：行号会漂）。棘轮纪律：宁可登记例外，**不许**放宽整条判据。
+TEST_EVIDENCE_BASELINE = {}
+
+
+def test_table_evidence_issues(text, rel, baseline=None):
+    """⑦ 的核心：测试行里没有 `evidence-*` 链接 → ['文件:行号  测试行缺证据链接…']。"""
+    base = TEST_EVIDENCE_BASELINE if baseline is None else baseline
+    out, lines, i = [], _lines(text), 0
+    while i < len(lines):
+        hln, hline = lines[i]
+        if _is_table_row(hline) and i + 1 < len(lines) and _is_table_sep(lines[i + 1][1]):
+            j = i + 2                                    # i+1 是分隔行，从第一个数据行起
+            while j < len(lines) and _is_table_row(lines[j][1]):
+                rln, rline = lines[j]
+                if (any(m in rline for m in TEST_EVIDENCE_MARKERS)
+                        and not TEST_EVIDENCE_RE.search(rline)
+                        and (rel, ' '.join(rline.split())) not in base):
+                    out.append('%s:%d  测试行缺 `evidence-*` 证据链接（表头第 %d 行）%s'
+                               % (rel, rln, hln, rline.strip()[:70]))
+                j += 1
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def collect_test_evidence_issues(files, root=ROOT, extra=TABLE_EXTRA_FILES, baseline=None):
+    """扫描面 `files` + `extra`（在则扫、不在则跳过）上的 ⑦ 全部问题。"""
+    out = []
+    for rel in sorted(files):
+        out += test_table_evidence_issues(files[rel], rel, baseline=baseline)
+    for rel in extra:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            out += test_table_evidence_issues(
+                io.open(p, encoding='utf-8', newline='').read(), rel, baseline=baseline)
+    return out
+
+
+def count_test_rows(files, root=ROOT, extra=TABLE_EXTRA_FILES):
+    """→ 识别到的测试行总数（覆盖钉：防"一行都没认出来"导致的恒绿）。"""
+    n, texts = 0, dict(files)
+    for rel in extra:
+        p = os.path.join(root, rel)
+        if os.path.exists(p):
+            texts[rel] = io.open(p, encoding='utf-8', newline='').read()
+    for rel in sorted(texts):
+        lines, i = _lines(texts[rel]), 0
+        while i < len(lines):
+            if _is_table_row(lines[i][1]) and i + 1 < len(lines) and _is_table_sep(lines[i + 1][1]):
+                j = i + 2
+                while j < len(lines) and _is_table_row(lines[j][1]):
+                    if any(m in lines[j][1] for m in TEST_EVIDENCE_MARKERS):
+                        n += 1
+                    j += 1
+                i = j
+            else:
+                i += 1
+    return n
+
+
 # ---------------------------------------------------------------- 核心分析器
 def analyze(files, exists, slug_fn=slug, skip_fences=True, baseline=None,
             self_repo=None, isdir=None):
@@ -578,10 +662,10 @@ AMBIG_BASELINE = {
     ('CHANGELOG.md', '修复 · CLI / API / MCP'),
     ('CHANGELOG.md', '修复 · GUI'),
     ('CHANGELOG.md', '修复 · 写回引擎'),
-    ('CHANGELOG.md', '修复 · 第三波（T15：退块判据改逐字段三态）'),
+    ('CHANGELOG.md', '修复 · 第三波：退块判据改逐字段三态'),
     ('CHANGELOG.md', '修复 · 第二波（L0 复测暴露）'),
-    ('CHANGELOG.md', '修复 · 第五波（T35 / T36）'),
-    ('CHANGELOG.md', '修复 · 第四波（T23：多图 stale + 验证链诚实 + 块锚点硬约束 + 刻度字号分列 + 新开关 --keep-unverified）'),
+    ('CHANGELOG.md', '修复 · 第五波'),
+    ('CHANGELOG.md', '修复 · 第四波：多图 stale + 验证链诚实 + 块锚点硬约束 + 刻度字号分列 + 新开关 --keep-unverified'),
     ('CHANGELOG.md', '文档 · 推广'),
     # 注意：**不要**把不入库的 `MAINTENANCE.md` 的标题写进基线 —— 它在 CI / 干净检出里
     # 不存在，会让这些条目"已不复存在"并使 R2 误报红（2026-10-13 实际踩到，见 md_files 注释）。
@@ -651,6 +735,18 @@ def run_real():
           _n_tab > 0 and len(_tab_files) == len(files) + len(_t_extra),
           '表块 %d / 文件 %d（期望 %d）' % (_n_tab, len(_tab_files),
                                         len(files) + len(_t_extra)))
+
+    # —— ⑦ 测试表每行必须带 `evidence-*` 证据链接 ——
+    e_items = collect_test_evidence_issues(files)
+    n_trows = count_test_rows(files)
+    check('⑦ 测试表每行都必须含 `evidence-*` 链接（识别到的测试行 %d 行；扫描 %d 份 *.md%s）'
+          '—— 实得 %d 处'
+          % (n_trows, len(files), (' + ' + '、'.join(_t_extra)) if _t_extra else '', len(e_items)),
+          not e_items, (e_items[0][:160] if e_items else ''))
+    _print_issues(e_items)
+    # 覆盖钉：⑦ 必须**真的认出测试行**，否则判据会因"一行都没认出来"而恒绿（与 ⑥ 同款纪律）。
+    check('⑦ 覆盖钉：确实识别到测试行（%d 行 > 0）' % n_trows, n_trows > 0,
+          '测试行 %d（期望 > 0）' % n_trows)
 
     # —— README 覆盖钉：两份 README 必须在扫描面内，且它们的链接**真的**被解析成仓库路径 ——
     # 不钉的话，将来把 README 移出扫描面（或链接风格一换）本套件会**静默**失去对第一入口的覆盖。
@@ -839,6 +935,43 @@ def teeth(real_files, real_exists):
           table_count(_t_bad) == 1 and table_count('# T\n\n没有表格\n') == 0,
           '有表=%d / 无表=%d' % (table_count(_t_bad), table_count('# T\n\n没有表格\n')))
 
+    # ---- ⑦ 测试表每行必须带 evidence-* 证据链接 ----
+    # 编号用 24..28 续 ⑥ 的 17..23（同一条纪律：不引入 ⑪~⑳ 这批 GBK 编不出来的字符）。
+    _t_noev = ('# T\n\n| 层 | 说明 |\n|---|---|\n'
+               '| ① | **测的是**：能不能原位落进源码；427 / 427 |\n')
+    _r_noev = test_table_evidence_issues(_t_noev, 'a.md')
+    check('teeth24 ⑦ 测试行没有 `evidence-*` 链接必须报出，且点名 文件:行号',
+          len(_r_noev) == 1 and 'a.md:5' in _r_noev[0] and 'evidence-' in _r_noev[0],
+          '实得 %s' % _r_noev)
+
+    _t_ev = ('# T\n\n| 层 | 说明 |\n|---|---|\n'
+             '| ① | **测的是**：能不能原位落进源码；427 / 427 '
+             '[`scan_full.jsonl`](https://github.com/o/r/blob/evidence-0.1.10/bench/v.jsonl) |\n')
+    _r_ev = test_table_evidence_issues(_t_ev, 'a.md')
+    check('teeth25 ⑦ 误报守卫：带 `evidence-*` 链接的同一行必须**不报**（防"恒红"）',
+          not _r_ev, '实得 %s' % _r_ev)
+
+    _t_other = '# T\n\n| 数字 | 来源 |\n|---|---|\n| 427 | corpus/SUMMARY.md |\n'
+    check('teeth26 ⑦ 误报守卫：**非测试行**（无 `**测的是**` 标记，如出处表 / 分母表）'
+          '即使没有链接也不报',
+          not test_table_evidence_issues(_t_other, 'a.md'),
+          '实得 %s' % test_table_evidence_issues(_t_other, 'a.md'))
+
+    _t_ev_fence = ('# T\n\n```\n| 层 | 说明 |\n|---|---|\n| ① | **测的是**：x |\n```\n')
+    check('teeth27 ⑦ 围栏内的"表样"文本不校验（与 ①~⑥ 同一个开关）',
+          not test_table_evidence_issues(_t_ev_fence, 'a.md'),
+          '实得 %s' % test_table_evidence_issues(_t_ev_fence, 'a.md'))
+
+    _t_ev_base = ('# T\n\n| 层 | 说明 |\n|---|---|\n'
+                  '| ① | **测的是**：纯索引行、没有证据可取 |\n')
+    _k = ('a.md', '| ① | **测的是**：纯索引行、没有证据可取 |')
+    check('teeth28 ⑦ 白名单通道真的生效：登记进基线的行被豁免（判据本身不放宽）',
+          len(test_table_evidence_issues(_t_ev_base, 'a.md')) == 1
+          and not test_table_evidence_issues(_t_ev_base, 'a.md', baseline={_k}),
+          '无基线 %d 处 / 带基线 %d 处'
+          % (len(test_table_evidence_issues(_t_ev_base, 'a.md')),
+             len(test_table_evidence_issues(_t_ev_base, 'a.md', baseline={_k}))))
+
     # ---- 反向验证：把判据弄坏 ⇒ 必须变红（不许"恰好全绿"）----
     _p('---- 反向验证（把判据弄坏就必须变红）----')
     bad_slug = lambda t: t.strip().lower()                                        # noqa: E731
@@ -866,6 +999,24 @@ def teeth(real_files, real_exists):
     # 刻意**不**写成 `== len(AMBIG_BASELINE)`：那会把自检与"仓库此刻恰好没有基线外的歧义标题"
     # 耦死 —— 一旦有人新增一个（正是棘轮要拦的），自检会跟着红、掩盖真信号。用
     # `>= 基线数` + `严格多于带基线时` 既证明"基线确实在豁免"，又不与仓库状态耦合。
+
+    # 反向④：⑦ 不是恒绿 —— 把判据换成"整张表每个数据行都要链接"（即无视测试标记）⇒
+    # 真仓库里的出处表 / 分母表会立刻被误报。证明"只认测试行标记"这条收窄是承重的。
+    _r_real_ok = collect_test_evidence_issues(real_files)
+    _wide_hits = 0
+    for _rel in sorted(real_files):
+        _ls = _lines(real_files[_rel])
+        for _i in range(len(_ls) - 1):
+            if _is_table_row(_ls[_i][1]) and _is_table_sep(_ls[_i + 1][1]):
+                _j = _i + 2
+                while _j < len(_ls) and _is_table_row(_ls[_j][1]):
+                    if not TEST_EVIDENCE_RE.search(_ls[_j][1]):
+                        _wide_hits += 1
+                    _j += 1
+    check('反向④ ⑦ 对真仓库：按标记认测试行 = 0 处；放宽成"所有数据行都要链接"必须'
+          '误报 > 0 处（证明"只认测试行"确实在挡假阳性、且这条判据不是恒绿）',
+          not _r_real_ok and _wide_hits > 0,
+          '按标记 %d 处 / 一刀切 %d 处' % (len(_r_real_ok), _wide_hits))
 
 
 def main():

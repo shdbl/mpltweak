@@ -45,7 +45,7 @@
 </tr>
 </table>
 
-> 完整手势与键位速查（拖动 / 多选、对齐 / 均分、吸附、`Ctrl+F` 裁白边、空格线框、悬停改字号、图例 8 个标准位、colorbar 调长 / 调厚）见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
+> 完整手势与键位速查（拖动 / 多选、对齐 / 均分、吸附、`Ctrl+F` 裁白边、空格线框、悬停改字号、图例 8 个标准位、colorbar 调长 / 调厚、**叠在一起时 `Alt+点击` 穿透**、**`Tab` 循环同级元素**）见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
 
 ## 安装
 
@@ -116,7 +116,7 @@ fig.savefig('fig1.png', dpi=150)
 
 ## 它可靠吗
 
-我们做过三类测试：**静态判定** —— 拿 **10,158 份公开绘图脚本**（真实科研绘图代码，按 sha256 唯一）逐份判定这次改动能不能**原位落进源码**，全程不执行；**真跑验证** —— 把 **1,780 份**脚本真的跑起来，核对写回后仍能出图、且图上位置字号与拖出来的参数一致；**随机操作压窗口交互** —— 离屏矩阵实跑 **13,000 次**（每次操作后都校验），真窗口 **6,000 次手势 + 27 条硬断言**。下面是实测结果（完整版见 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)）：
+已做过三类测试：**静态判定** —— 拿 **10,158 份公开绘图脚本**（真实科研绘图代码，按 sha256 唯一）逐份判定这次改动能不能**原位落进源码**，全程不执行；**真跑验证** —— 把 **1,780 份**脚本真的跑起来，核对写回后仍能出图、且图上位置字号与拖出来的参数一致；**随机操作压窗口交互** —— 离屏矩阵实跑 **13,000 次**（每次操作后都校验），真窗口 **6,000 次手势 + 27 条硬断言**。下面是实测结果（完整版见 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)）：
 
 | 层 | 测试内容 | 测试结果 |
 |---|---|---|

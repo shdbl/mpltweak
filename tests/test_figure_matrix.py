@@ -696,6 +696,25 @@ def _twins_of(fig, ax):
     return out
 
 
+def _twin_drift(fam, ref_box, tx, ty):
+    """家族成员相对基准 bbox 的偏离清单（空 = 全部重合）。
+
+    fam[0] 是基准那块（拖拽实际接住按下的成员），从 fam[1] 开始比。位置四个分量分两个
+    方向判：x0/w 用 tx（figure 比例的横向 2px），y0/h 用 ty（纵向）。
+
+    为什么单独抽出来：teeth 要能**直接喂一个伪造基准**来验"这个检测器真的会咬"
+    （见 `_teeth_probes` 的 ⑦b）—— 检测器和断言共用同一段逻辑，测的才不是影子。
+    """
+    out = []
+    for o in fam[1:]:
+        b = _bbox(o)
+        dx = max(abs(b[0] - ref_box[0]), abs(b[2] - ref_box[2]))
+        dy = max(abs(b[1] - ref_box[1]), abs(b[3] - ref_box[3]))
+        if dx > tx or dy > ty:
+            out.append((type(o).__name__, round(float(dx), 5), round(float(dy), 5)))
+    return out
+
+
 def _isolate(env, panels):
     """把**所有**面板摆到互不重叠的网格槽里（含 twin 家族整体摆放）。
 
@@ -774,12 +793,16 @@ def _t_drag(env, meta, fid):
               kind='meta', fig=fid, cls='C1')
     env.tw.snap = False                     # 关吸附：位移可精确验（另有吸附专项）
     b0 = env.pos(ax)
+    tx, ty = _pxtol(env)
+    # twin 家族在**拖动之前**的偏离：必须在拖之前抓，拖之后全家都跟到新位置了，
+    # 那时再拿 b0 当基准只能量出"位移"（第一版就是这么翻车的）。
+    fam = _twins_of(env.fig, ax)
+    pre = _twin_drift([ax] + fam, b0, tx, ty) if fam else []
     # —— 多步（含中途越界），松手位置 ≠ 最后 motion ——
     c, d = env.drag(ax, (int(0.06 * env.W), int(0.03 * env.H)),
                     steps=(0.3, 0.5, -0.9, 0.8),   # 中途往回/越界
                     release=(3, -4))              # 松手 ≠ 最后 motion
     b1 = env.pos(ax)
-    tx, ty = _pxtol(env)
     check('C1 拖拽多步：落位 == 最后 motion（松手位置不参与）',
           abs(b1[0] - b0[0] - d[0] / env.W) <= tx
           and abs(b1[1] - b0[1] - d[1] / env.H) <= ty,
@@ -790,13 +813,24 @@ def _t_drag(env, meta, fid):
           abs((b1[0] - b0[0]) - 3 / env.W) > tx,
           '若落位跟着松手 (3,-4) 走，差值应约 %.4f' % (3 / env.W),
           kind='target', fig=fid, cls='C1')
-    # —— twinx 观察：拖一块，twin 家族其他成员有没有跟着走 ——
-    fam = _twins_of(env.fig, ax)
+    # —— twinx/twiny 家族**位置共享**：拖家族里任一块，所有成员必须仍完全重合 ——
+    # 事实（2026-10-15 实测 mpl 3.10.8）：twinx/twiny 造出的轴**共享同一个位置矩形** ——
+    # 给任一块 set_position，另一块立刻跟着变（微测 mpltweak_probe_012/micro_twin.py，
+    # 拖动打点 probe_twinx_drag3.py：只调了一次 ax2 的 _set_bbox，ax1 位置自动同步）。
+    # 所以这条断言**不是**在要求引擎"去同步"（引擎根本没有同步逻辑），而是在守
+    # **家族没有被撕开**：拖拽收尾 / 撤销 / 写回都是**按轴逐条**走的，最可能在这里把
+    # 家族里某一块写歪。以前这里只 print 一行 NOTE 观察"几个成员跟着动"——没有牙齿，
+    # 写歪了也没人管；现在升级成硬断言（容差同 _pxtol），拖动起点与收尾各一条。
     if fam:
-        moved = [o for o in fam
-                 if abs(_bbox(o)[0] - (b0[0] + d[0] / env.W)) <= tx]
-        print('NOTE | %s 观测：拖 %s 后，twin 家族成员 %d 个中 %d 个同步移动'
-              % (fid, type(ax).__name__, len(fam), len(moved)))
+        check('C1 twin 家族（meta）：twinx/twiny 共享位置矩形 —— 拖动**起点**家族 %d 个'
+              '成员本就重合（matplotlib 语义，不是本工具的同步逻辑）'
+              % (len(fam) + 1), not pre, '起点偏离=%s' % (pre or '无'),
+              kind='meta', fig=fid, cls='C1')
+        post = _twin_drift([ax] + fam, b1, tx, ty)
+        check('C1 twin 家族位置共享：拖 %s 之后 %d 个成员仍完全重合（容差 2px）'
+              % (type(ax).__name__, len(fam) + 1), not post,
+              '基准 %s；偏离=%s' % ([round(v, 4) for v in b1], post or '无'),
+              kind='target', fig=fid, cls='C1')
     # —— 越界：中途 motion 远超画布，最终回到画布内 → 落位仍正确 ——
     b2 = env.pos(ax)
     c = env.center(ax)
@@ -1717,6 +1751,31 @@ def _teeth_probes():
           not mods or all(m == 'tkinter' for m in mods),
           '已加载: %s（tkinter 只在 matplotlib 探测后端时可能出现，不会建窗）'
           % (','.join(mods) or '无'), kind='reverse', fig='R', cls='-')
+
+    # ⑦ twin 家族位置共享断言：检测器必须"该绿就绿、该红就红"
+    # 为什么要这条：matplotlib 里 twinx/twiny **共享位置矩形**，正常路径上"家族被撕开"
+    # 造不出来（set_position 会自动同步），所以 C1 那条断言想做成真牙齿，只能验**检测器
+    # 本身**：真实共享位置时零偏离（不会永远报红）；喂一个伪造的、偏了 40px 的基准
+    # （等价于"某一块真被写歪了"）时必须报偏离（不会永远报绿）。
+    fig, axa = plt.subplots(figsize=(6, 4))
+    _deco(axa, 'teeth7')
+    axb = axa.twinx()                        # 真 twinx：axa 与 axb 共享位置
+    _set_bbox(axa, [0.10, 0.14, 0.42, 0.46])
+    fig.canvas.draw()
+    env = _Env(fig, 'teeth7')
+    tx, ty = _pxtol(env)
+    fam = [axa] + _twins_of(fig, axa)
+    ref = _bbox(axa)
+    check('teeth⑦ twin 家族检测器基线：真实共享位置 ⇒ 零偏离（不是永远报红）',
+          _twin_drift(fam, ref, tx, ty) == [] and len(fam) >= 2,
+          '家族 %d 个成员；偏离=%s' % (len(fam), _twin_drift(fam, ref, tx, ty) or '无'),
+          kind='reverse', fig='R', cls='C1')
+    fake = [ref[0] + 40.0 / env.W, ref[1], ref[2], ref[3]]
+    drift = _twin_drift(fam, fake, tx, ty)
+    check('teeth⑦b【有牙】伪造 40px 偏离的基准（模拟家族被撕开）⇒ 同一检测器必报偏离',
+          len(drift) >= 1, '报出的偏离=%s' % (drift or '无'),
+          kind='reverse', fig='R', cls='C1')
+    plt.close(fig)
     return True
 
 

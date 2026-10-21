@@ -47,7 +47,7 @@ Demo:
 </tr>
 </table>
 
-> The full gesture set and key map (drag / multi-select, align / distribute, snapping, `Ctrl+F` margin trim, space-bar wireframe, font size on hover, legend snapping to 8 standard positions, colorbar length / thickness) are in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
+> The full gesture set and key map (drag / multi-select, align / distribute, snapping, `Ctrl+F` margin trim, space-bar wireframe, font size on hover, legend snapping to 8 standard positions, colorbar length / thickness, **`Alt+click` to pick through stacked panels**, **`Tab` to cycle sibling elements**) are in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
 
 ## Install
 

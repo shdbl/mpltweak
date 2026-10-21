@@ -39,6 +39,7 @@ def _fmt(v):
         return str(v)
 
 
+
 def _num(v):
     '''数值字面量：整数不带小数点，浮点保留 6 位有效数字。'''
     try:
@@ -57,6 +58,32 @@ def _axlabel(i):
     if isinstance(i, int) and not isinstance(i, bool):
         return 'ax%d' % i
     return 'ax%s' % (i,)
+
+
+def _emit_err(*lines):
+    """人读**错误**行的统一出口：逐行写 stderr 并 flush（A3 / MAINTENANCE §25.15）。
+
+    为什么要一个统一出口：`apply` 不带 ``--json`` 时，人读错误行原先和正常报告一样
+    走 stdout，于是 ``mpltweak apply foo.py > out.txt`` 会把错误也写进 out.txt ——
+    管道/重定向无法干净区分"数据 / 错误"（2026-10-15 用户拍的板）。
+
+    输出契约（0.1.12 起，见 docs/exec-boundaries.md 的表）：
+      * **stdout** = 数据/报告：成功摘要、逐处清单、``--write`` 的落地行、预览的
+        「会改：…」与骨架、进度行、``--json`` 的载荷；
+      * **stderr** = 人读错误：失败、回滚、拒写（bad_params / 未写回 / 需要退块却
+        没能落地）、参数文件坏、外部改动被跳过、验证失败及其归因、用法/输入错误。
+    判据是"**这次请求有没有兑现**"，不是"消息长得凶不凶"：含糊的那几类
+    （``--verify-fast`` 降级提醒、某字段没动、布局引擎提示）属于**过程披露**，
+    仍走 stdout —— 它们既不宣告成功也不宣告失败，成功与否由 rc + stderr 是否为空
+    共同决定，读者不会被误导；把它们也塞进 stderr 会让"stderr 非空 ⇒ 有错"这条
+    管道规则失效。
+
+    ``--json`` 下 stdout 已被换成 stderr（见 ``main`` 里那一步），因此这里继续写
+    真正的 stderr：JSON 载荷不会被这些行污染。
+    """
+    for _l in lines:
+        sys.stderr.write('%s\n' % (_l,))
+    sys.stderr.flush()
 
 
 def _print_changes(script, data, p):
@@ -226,13 +253,16 @@ def _snip_val(val):
     return str(val)
 
 
-def _print_snippet_fields(data, fields=None, res=None):
+def _print_snippet_fields(data, fields=None, res=None, err=False):
     """打印 T70-A 的可复制骨架（拒绝路径自动调用；``--snippet`` 也走它）。
 
     * ① 已由调用方的 `not_written` 行 + warnings 说明原因，这里只出片段；
     * ② 片段 = 每个目标字段一行 + 一行可证形态的写法（占位符提醒换名字）；
     * ③ 中英双语走 `messages.t()`；
-    * 内容**一个字节都不写进用户源码**。
+    * 内容**一个字节都不写进用户源码**；
+    * ``err=True``：这段骨架是**拒写报告的一部分**（紧跟 ``not_written`` 那行），
+      因此与错误行一起走 stderr —— 否则 `> out.txt` 会把"为什么没写回"留在终端、
+      把骨架写进文件，报告被劈成两半。``--snippet`` 预览（不是错误）仍走 stdout。
     """
     axes = {a.get('index'): a for a in (data.get('axes') or []) if isinstance(a, dict)}
     rows = []
@@ -252,17 +282,18 @@ def _print_snippet_fields(data, fields=None, res=None):
         rows.append('#     -> %s' % sug)
     if not rows:
         return
-    print(_msg.t('snippet_head'))
+    _p_out = _emit_err if err else print
+    _p_out(_msg.t('snippet_head'))
     for _l in rows:
-        print('  ' + _l)
+        _p_out('  ' + _l)
     have_cb = any(a.get('is_colorbar') and (axes.get(a.get('index')) is not None)
                   for a in (data.get('axes') or []) if isinstance(a, dict))
-    print(_msg.t('snippet_provable_head'))
-    print(_msg.t('snippet_provable_subplots'))
+    _p_out(_msg.t('snippet_provable_head'))
+    _p_out(_msg.t('snippet_provable_subplots'))
     if res is not None and res.get('fig_var') == 'plt.gcf()':
-        print(_msg.t('snippet_provable_figure'))
+        _p_out(_msg.t('snippet_provable_figure'))
     if have_cb:
-        print(_msg.t('snippet_provable_colorbar'))
+        _p_out(_msg.t('snippet_provable_colorbar'))
 
 
 def _print_snippet(data):
@@ -635,15 +666,18 @@ def _is_rerun_failure(res):
 
 
 def _print_attribution(kind, detail, script):
-    """人读输出：归因行 + 一句可照抄的下一步。kind 为 None（分类未启用）→ 静默。"""
+    """人读输出：归因行 + 一句可照抄的下一步。kind 为 None（分类未启用）→ 静默。
+
+    A3：归因是**失败报告**的一部分 ⇒ 走 stderr（stdout 只留数据/报告）。
+    """
     if kind not in _VERIFY_FAIL_KIND_KEY:
         return
-    print(_msg.t('fail_attribution_head',
-                 kind=_msg.t(_VERIFY_FAIL_KIND_KEY[kind]),
-                 unknown=_msg.t('fail_unknown_reason') if detail == 'unknown'
-                 else ''))
-    print(_msg.t(_VERIFY_FAIL_MSG_KEY[kind],
-                 script=os.path.basename(script)))
+    _emit_err(_msg.t('fail_attribution_head',
+                     kind=_msg.t(_VERIFY_FAIL_KIND_KEY[kind]),
+                     unknown=_msg.t('fail_unknown_reason')
+                     if detail == 'unknown' else ''),
+              _msg.t(_VERIFY_FAIL_MSG_KEY[kind],
+                     script=os.path.basename(script)))
 
 
 def _next_step_cmd(kind, script):
@@ -741,7 +775,7 @@ def main(argv=None):
         if args.json:
             _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
                        error=_err, error_code='mutually_exclusive_flags')
-        sys.stderr.write(_msg.t('apply_mutex_verify'))
+        _emit_err(_msg.t('apply_mutex_verify'))
         return 2
 
     script = os.path.abspath(args.script)
@@ -754,7 +788,7 @@ def main(argv=None):
                        error=_msg.t_en('file_not_found', path=script),
                        error_code='file_not_found')
         else:
-            sys.stderr.write('[apply] %s\n' % _msg.t('file_not_found', path=script))
+            _emit_err('[apply] %s' % _msg.t('file_not_found', path=script))
         return 2
     # 布局引擎冲突（constrained_layout / figure.autolayout）：位置写回会被引擎在每次
     # 绘制时覆盖。只扫一次，逐份参数文件复用到 res['layout_conflicts']。
@@ -767,14 +801,13 @@ def main(argv=None):
                        error='layout conflict (use --allow-layout-conflict to '
                              'override)',
                        error_code='layout_conflict')
-        for _line in _conflicts:
-            sys.stderr.write('[apply] %s\n' % _line)
-        sys.stderr.write(_msg.t('apply_strict_layout_refused') + '\n')
+        _emit_err(*['[apply] %s' % _l for _l in _conflicts],
+                  _msg.t('apply_strict_layout_refused'))
         return 2
     files = _all_params_files(script, args.params)
     if not files:
         _hint = 'no params: %s' % params.params_path(script, args.params)
-        print(_hint)
+        _emit_err(_hint)
         if args.json:
             _emit_json(script, [], _stdout, ok=False, error=_hint,
                        error_code='no_params')
@@ -826,12 +859,12 @@ def main(argv=None):
             # 参数文件（对外披露必须准确）。载荷键名/形状、stdout-stderr 分流都不变。
             _e = _msg.t('apply_params_unreadable', name=os.path.basename(p),
                         err=str(e)[:160])
-            print(_msg.t('apply_params_errors', msg=_e))
-            print(_msg.t('not_written', reason='bad_params', script=script))
+            _emit_err(_msg.t('apply_params_errors', msg=_e),
+                      _msg.t('not_written', reason='bad_params', script=script))
             results.append((p, {'reason': 'bad_params', 'err': _e, 'changes': []}))
             continue
         except OSError as e:
-            print(_msg.t('skipped_file', name=os.path.basename(p), err=e))
+            _emit_err(_msg.t('skipped_file', name=os.path.basename(p), err=e))
             continue
         k = data.get('fig_index')
         # 参数比脚本旧 → 脚本在保存参数之后被手动改过，套用旧参数会**静默覆盖**
@@ -844,7 +877,8 @@ def main(argv=None):
             except OSError:
                 _stale = False
             if _stale:
-                print(_msg.t('apply_stale_params', name=os.path.basename(p)))
+                _emit_err(_msg.t('apply_stale_params',
+                                 name=os.path.basename(p)))
                 results.append((p, {'reason': 'stale', 'changes': [],
                                     'block': None, 'backup': None,
                                     'warnings': []}))
@@ -874,10 +908,10 @@ def main(argv=None):
         if _errs:
             if isinstance(_errs, str):          # 同上：顶层非对象分支返回 str
                 _errs = [_errs]
-            for _e in _errs:
-                print(_msg.t('apply_params_errors', msg=_e))
-            # T68：拒写就是拒写 —— 人读那行也必须是"未写回"+ 原因码，不许出现"已写回"。
-            print(_msg.t('not_written', reason='bad_params', script=script))
+            _emit_err(*[_msg.t('apply_params_errors', msg=_e) for _e in _errs],
+                      # T68：拒写就是拒写 —— 人读那行也必须是"未写回"+ 原因码，
+                      # 不许出现"已写回"。
+                      _msg.t('not_written', reason='bad_params', script=script))
             results.append((p, {'reason': 'bad_params',
                                 'err': '; '.join(_errs), 'changes': []}))
             continue
@@ -917,7 +951,7 @@ def main(argv=None):
                 _lk = writeback.script_lock(script)
                 _lk.__enter__()
             except RuntimeError as _e:
-                print('!! %s' % _e)
+                _emit_err('!! %s' % _e)
                 _lk = None
                 res = {'reason': 'fail', 'err': str(_e), 'changes': [],
                        'block': None, 'backup': None, 'warnings': []}
@@ -1017,18 +1051,19 @@ def main(argv=None):
                 else:
                     # T68：一个字节都没写（applied=false）⇒ 绝不许说"已写回"。
                     # 如实报"未写回"+ 原因码；没能落地的字段由下面的 needs_block 提示列出。
-                    print(_msg.t('not_written', reason=res['reason'],
-                                 script=script))
+                    _emit_err(_msg.t('not_written', reason=res['reason'],
+                                     script=script))
                     # T70 第 4 条：拒绝时**直接**给可复制的骨架（不要求 --snippet）
                     if res.get('pending') or res.get('warnings'):
-                        _print_snippet_fields(data, res.get('pending'), res)
+                        _print_snippet_fields(data, res.get('pending'), res,
+                                              err=True)
                 # T15（INT-2 的 B 情形）：显式 --style inplace 时，**原位写不了**的字段
                 # 这次没能落地 —— 必须说出来（rc 也会变 1），不能只埋在 warnings 里。
                 if res.get('needs_block') and not args.dry_run:
-                    print(_t_new('needs_block_hint', _FALLBACK_NEEDS_BLOCK,
-                                 items=_msg.t('items_sep').join(
-                                     res.get('pending') or [])
-                                 or _msg.t('apply_pending_see_warnings')))
+                    _emit_err(_t_new('needs_block_hint', _FALLBACK_NEEDS_BLOCK,
+                                     items=_msg.t('items_sep').join(
+                                         res.get('pending') or [])
+                                     or _msg.t('apply_pending_see_warnings')))
             else:
                 if args.dry_run:
                     print(_t_new('dryrun_block', _FALLBACK_DRYRUN_BLOCK,
@@ -1045,11 +1080,12 @@ def main(argv=None):
                 else:
                     # T68：块没写（例如"运行时轴数证不出 ⇒ 拒绝写位置块"的 fail-closed
                     # 路径）⇒ 如实报"未写回"+ 原因码。
-                    print(_msg.t('not_written', reason=res['reason'],
-                                 script=script))
+                    _emit_err(_msg.t('not_written', reason=res['reason'],
+                                     script=script))
                     # T70 第 4 条：拒绝时**直接**给可复制的骨架
                     if res.get('pending'):
-                        _print_snippet_fields(data, res.get('pending'), res)
+                        _print_snippet_fields(data, res.get('pending'), res,
+                                              err=True)
                 if res.get('auto_fallback'):
                     # 降级披露（原位改不了 → 退块）：**不收敛**，两种模式都照打。
                     print(_msg.t('fallback_to_block'))
@@ -1096,7 +1132,8 @@ def main(argv=None):
                 if _verbose:
                     print(_msg.t('verify_run_ok'))      # 成功确认 → 收敛行已含结论
             elif res.get('verified') is False:
-                print(_msg.t('verify_run_fail'))        # 失败必须仍"响"
+                # 失败必须仍"响" —— 且这是**错误**（验证没通过）⇒ stderr
+                _emit_err(_msg.t('verify_run_fail'))
             if res.get('semantic') is True:
                 if _verbose:
                     print(_msg.t('semantic_ok'))        # 成功确认 → 收敛行已含结论
@@ -1136,15 +1173,17 @@ def main(argv=None):
             for w in res.get('warnings', []):
                 print(_msg.t('kept_as_is', msg=w))
         elif res['reason'] == 'no_fig':
-            print(_msg.t('no_fig', err=res['err']))
-            print(_msg.t('no_fig_hint'))
+            _emit_err(_msg.t('no_fig', err=res['err']),
+                      _msg.t('no_fig_hint'))
         elif res['reason'] == 'bad_params':
             # T61：引擎侧的越界判据（轴序号/图号）也归 bad_params 一档 ——
             # 拒绝发生在写盘之前（脚本一个字节没动），人读输出要说清是"参数不对"，
             # 而不是含糊的"写回失败"。
-            print(_msg.t('apply_params_errors_nowrite', msg=res.get('err') or ''))
+            _emit_err(_msg.t('apply_params_errors_nowrite',
+                             msg=res.get('err') or ''))
         else:
-            print(_msg.t('write_failed', reason=res['reason'], err=res['err']))
+            _emit_err(_msg.t('write_failed', reason=res['reason'],
+                             err=res['err']))
             # 0.1.10：验证重跑失败 → 归因到脚本侧（跑不起来 / 需要参数 / 无头需
             # GUI）并各给一句可照抄的下一步；internal_error 是另一条路径（顶层
             # guard，归 tool_bug）。语义不达标 / 语法错误 / 无锚点不在此列
@@ -1195,11 +1234,17 @@ def main(argv=None):
         _emit_json(script, results, _stdout, extra={'dry_run': bool(args.dry_run)},
                    preflight_res=_pf_res, error_code=_failure_code(results))
     if len(results) > 1:
-        # 这段在 _emit_json 之后打 —— 必须显式走 stderr，否则会拼在 JSON 尾巴
-        # 上，让 json.loads 报 "Extra data"（t3-H1 / t6-H3）。
-        print('=' * 62, file=sys.stderr)
-        print(_msg.t('summary_multi', total=len(results),
-                     ok=len(results) - len(bad), bad=len(bad)), file=sys.stderr)
+        # 多份参数文件的收尾总结。**--json** 时必须走 stderr（否则会拼在 JSON 尾巴上，
+        # 让 json.loads 报 "Extra data"，t3-H1 / t6-H3）；**非 --json** 时它是报告的
+        # 一部分 ⇒ 走 stdout —— A3 起 stderr 只留人读错误，成功场景 stderr 必须是空的
+        # （否则 `2>/dev/null` 的用户会平白丢掉这行总结）。
+        _multi = ['=' * 62,
+                  _msg.t('summary_multi', total=len(results),
+                         ok=len(results) - len(bad), bad=len(bad))]
+        _stream = sys.stderr if args.json else sys.stdout
+        for _l in _multi:
+            _stream.write('%s\n' % (_l,))
+        _stream.flush()
     return _rc
 
 

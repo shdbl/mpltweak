@@ -77,7 +77,7 @@ import time
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.backend_bases import MouseEvent, KeyEvent
+from matplotlib.backend_bases import MouseEvent, KeyEvent, LocationEvent
 
 from mpltweak.toolbox import (Tweak, _bbox, _set_bbox, _snap_box,
                               MIN_SIZE, MIN_SIZE_CB, LEGEND_LOCS,
@@ -160,24 +160,33 @@ _ensure_tmp_writable()
 _case_no = [0]
 
 
-def send(canvas, name, x=None, y=None, button=None, key=None):
+def send(canvas, name, x=None, y=None, button=None, key=None, buttons=None):
     '''构造事件对象并走回调管线。KeyEvent 必须显式传 x/y。坐标一律整数像素。
 
     关键坑（实测 mpl 3.10）：canvas.callbacks.process 会把 ``canvas._key``（最近
     按下的键）**注入**鼠标事件 —— 合成事件必须先重置 ``canvas._key``，否则上次按
     的 ctrl+f / ctrl+z / shift+up 会把下一次按下误判成 Ctrl/Shift+点击（选择切换
     而不是拖拽），真实 GUI 里修饰键状态本来就该这样，但合成事件必须显式表达。
+
+    ``buttons``（t101）：matplotlib 3.10 里**只有** ``motion_notify_event`` 认这个
+    字段（``MouseEvent.buttons``：``None`` 或 ``frozenset``；press/release 传非空会
+    直接抛 ValueError）。不传 = 历史套件的"老形态"（离屏事件不表达按键状态）；
+    传 ``frozenset({1})`` = 真机拖拽形态（"左键还按着"）。``figure_leave_event`` /
+    ``figure_enter_event`` 走 ``LocationEvent``（真机就是它，没有 buttons 字段）。
     '''
     x = int(x) if x is not None else None
     y = int(y) if y is not None else None
     if name == 'key_press_event':
         ev = KeyEvent('key_press_event', canvas, key, x, y)
+    elif name in ('figure_leave_event', 'figure_enter_event'):
+        ev = LocationEvent(name, canvas, x, y)
     else:
         try:
             canvas._key = key or None
         except AttributeError:
             pass
-        ev = MouseEvent(name, canvas, x, y, button=button, key=(key or None))
+        ev = MouseEvent(name, canvas, x, y, button=button, key=(key or None),
+                        buttons=buttons)
     canvas.callbacks.process(name, ev)
     return ev
 
@@ -1517,6 +1526,230 @@ def _run_t92_units():
           '§t92① 逐字段断言必红', _okb is False, _detb[:150])
 
 
+# =====================================================================
+# §t101 t101（0.1.12 · MAINTENANCE §25.3）：**sticky drag 自愈**
+#
+# 真机现场（用户 2026-10-14）：按住子图拖动 → 按 QQ 截图快捷键 → 框选截完 → 松开键，
+# 蓝框**仍跟着鼠标走**。根因是外部程序**接管了鼠标**，`button_release` 没送到画布
+# （同类触发：窗口失焦 / 模态对话框 / 全局热键）⇒ 工具一直以为"还在拖"。
+#
+# 修法（照 §25.3 判据，不自创）：motion 报「没有任何键按着」**且**「本次手势确实见过
+# 按键」⇒ **当次 motion 内**收尾，收尾走既有 `_on_release`（不复制逻辑）；外加
+# `figure_leave_event` 兜底（离开画布且**确证**没键按着才收尾）。
+#
+# 产品侧还有一道**能力闸门** `_btn_capable`：只有后端真的报过"有键按着"（真机 Qt/Tk
+# 每个 motion 都带 `buttons`）才允许用这条判据 —— 否则**离屏合成事件**（不传 `buttons`
+# ⇒ 恒为空 frozenset）与历史套件里那些"按下 → motion → 松开"的序列会被误判成"拖完了"，
+# 全仓落位断言整片假红。本节 ② 就是钉这条（它守的是**整个仓库的历史形态**）。
+#
+# 离屏可证 / 待真机：
+#   · 离屏可证：判据本身（合成事件能精确摆出"有键 / 无键 / 从没报过键"三种形态）、
+#     收尾动作（面板落位 + 蓝框不再跟随）、两类负例、leave 兜底三态、zh/en 两臂。
+#   · **待真机**（本套件造不出）：事件真被别的程序吃掉这件事本身，以及 Qt
+#     `mouseButtons()` 的实机读数（`_mouse_buttons_down` 在离屏这里恒返回 None）。
+# =====================================================================
+_LBTN = frozenset({1})      # 真机 motion 形态：左键按着（MouseEvent.buttons 是 frozenset）
+
+
+def _t101_env(tag):
+    fig, axes = _make_fig()
+    return fig, axes, _Env(fig, axes, tag)
+
+
+def _t101_press(env, x, y):
+    send(env.fig.canvas, 'button_press_event', int(x), int(y), button=1)
+
+
+def _t101_motion(env, x, y, buttons=None):
+    '''合成 motion。不传 `buttons` = 历史套件的"老形态"（离屏事件不表达按键状态）。'''
+    send(env.fig.canvas, 'motion_notify_event', int(x), int(y), buttons=buttons)
+
+
+def _t101_frame(env, ax):
+    '''蓝框（选中外框 Rectangle）的 bounds；没挂框返回 None。
+
+    读的是 Rectangle 自己的几何（`get_x/get_y/get_width/get_height`），那是 fig 比例
+    坐标下的**真值** —— 蓝框有没有跟着鼠标跑，就看它。
+    '''
+    r = getattr(env.tw, '_sel_map', {}).get(id(ax))
+    if r is None:
+        return None
+    return [float(r.get_x()), float(r.get_y()),
+            float(r.get_width()), float(r.get_height())]
+
+
+def _run_t101_units():
+    # ---- ① 正例：真机形态（motion 报"左键按着"）→ 键被抢走后 motion 报空 ----
+    fig, axes, env = _t101_env('t101_heal')
+    tw, ax0 = env.tw, axes[0]
+    x0, y0 = env.center(ax0)
+    p0 = env.pos(ax0)
+    _t101_press(env, x0, y0)
+    check('§t101①a 按下 ⇒ 进入拖动（蓝框挂上，位置未变）',
+          bool(tw._drag) and tw._ax is ax0 and tw._drag_active()
+          and _t101_frame(env, ax0) == p0,
+          'drag=%s frame=%s pos=%s' % (tw._drag, _t101_frame(env, ax0), p0))
+    _t101_motion(env, x0 + 40, y0 + 20, buttons=_LBTN)      # 真机：键还按着
+    p1 = env.pos(ax0)
+    check('§t101①b 带按键的 motion 照常跟手（判据不许提前收尾）',
+          bool(tw._drag) and p1 != p0 and _t101_frame(env, ax0) == p1,
+          'drag=%s 位移 ok=%s 蓝框=%s' % (tw._drag, p1 != p0, _t101_frame(env, ax0)))
+    # 外部程序（QQ 截图）抢走鼠标：键在**画布外**松开 ⇒ 下一个 motion 的 buttons 为空
+    _t101_motion(env, x0 + 80, y0 + 40)                     # 就是这一下必须收尾
+    p2 = env.pos(ax0)
+    check('§t101①c **当次 motion 内**拖动已结束（不等 button_release）',
+          not tw._drag and tw._ax is None and tw._target is None
+          and not tw._drag_active(), 'drag=%s ax=%s' % (tw._drag, tw._ax))
+    check('§t101①d 面板落在"键丢失那一下"之前的位置（无按键的 motion 不再跟手）',
+          p2 == p1 and _t101_frame(env, ax0) == p1,
+          'p1=%s p2=%s 蓝框=%s' % (p1, p2, _t101_frame(env, ax0)))
+    _t101_motion(env, x0 + 160, y0 + 100, buttons=_LBTN)
+    _t101_motion(env, x0 + 240, y0 + 140)
+    check('§t101①e 收尾后再怎么动，蓝框/面板一个像素都不动',
+          env.pos(ax0) == p2 and _t101_frame(env, ax0) == p2,
+          'now=%s 蓝框=%s' % (env.pos(ax0), _t101_frame(env, ax0)))
+    plt.close(fig)
+
+    # ---- ② 负例 A：**老形态**合成拖拽（按下 + motion 不带 buttons）不许自愈 ----
+    # 这条守的是"整个仓库的历史形态"：test_events / test_fuzz_events 的所有落位断言
+    # 都是"按下 → 若干 motion → 松开"，一旦误触发自愈，它们会整片假红。
+    fig, axes, env = _t101_env('t101_legacy')
+    tw, ax0 = env.tw, axes[0]
+    x0, y0 = env.center(ax0)
+    p0 = env.pos(ax0)
+    _t101_press(env, x0, y0)
+    _t101_motion(env, x0 + 40, y0 + 20)                     # 不带 buttons（老形态）
+    check('§t101② 老形态 motion（不表达按键）⇒ 拖动照旧，不许自愈',
+          bool(tw._drag) and env.pos(ax0) != p0 and not tw._btn_capable,
+          'drag=%s capable=%s' % (tw._drag, tw._btn_capable))
+    send(fig.canvas, 'button_release_event', x0 + 40, y0 + 20, button=1)
+    check('§t101②b 真松手照旧收尾（自愈没抢掉正常路径）',
+          not tw._drag and not tw._btn_seen, 'drag=%s' % tw._drag)
+    plt.close(fig)
+
+    # ---- ③ 负例 B：没有按键史的纯 hover 不许自愈 ----
+    fig, axes, env = _t101_env('t101_hover')
+    tw, ax0 = env.tw, axes[0]
+    x0, y0 = env.center(ax0)
+    p0 = env.pos(ax0)
+    for _d in (12, 24, 36):
+        _t101_motion(env, x0 + _d, y0 + _d)                 # 从没按下过
+    check('§t101③ 无按键史的 hover 序列不误触发（状态与布局都不动）',
+          not tw._drag and not tw._btn_seen and not tw._btn_capable
+          and env.pos(ax0) == p0, 'pos=%s' % (p0,))
+    plt.close(fig)
+
+    # ---- ④ leave 兜底三态（figure_leave_event 本身**不带**按键状态）----
+    _orig_mbd = _tb._mouse_buttons_down
+    try:
+        for _tag, _val, _want_heal in (('确证没键按着', False, True),
+                                       ('确证还按着', True, False),
+                                       ('问不出来（Tk/Agg/无 Qt）', None, False)):
+            fig, axes, env = _t101_env('t101_leave_%s' % _tag[:4])
+            tw, ax0 = env.tw, axes[0]
+            x0, y0 = env.center(ax0)
+            _t101_press(env, x0, y0)
+            _t101_motion(env, x0 + 30, y0 + 15, buttons=_LBTN)
+            _tb._mouse_buttons_down = (lambda canvas, _v=_val: _v)
+            send(fig.canvas, 'figure_leave_event', x0 + 30, y0 + 15)
+            check('§t101④ 离画布兜底（%s）⇒ %s' % (_tag, '收尾' if _want_heal else '不打断'),
+                  (not tw._drag) if _want_heal else bool(tw._drag),
+                  'drag=%s' % tw._drag)
+            plt.close(fig)
+    finally:
+        _tb._mouse_buttons_down = _orig_mbd
+    # 离画布时**没有拖动** ⇒ 什么都不做（别在空状态下乱跑收尾逻辑）
+    fig, axes, env = _t101_env('t101_leave_idle')
+    send(fig.canvas, 'figure_leave_event', *env.center(axes[0]))
+    check('§t101④d 没在拖动时离开画布 ⇒ 无事发生（不抛异常、不改布局）',
+          not env.tw._drag_active() and env.pos(axes[0]) is not None)
+    plt.close(fig)
+
+    # ---- ⑤ 能力探针：Agg 画布问不出全局按键状态 ⇒ 必须是 None（不瞎猜）----
+    fig, axes, env = _t101_env('t101_probe')
+    check('§t101⑤ 离屏 Agg 画布 `_mouse_buttons_down` 返回 None（判不了就不动）',
+          _tb._mouse_buttons_down(fig.canvas) is None,
+          repr(_tb._mouse_buttons_down(fig.canvas)))
+    plt.close(fig)
+
+    # ---- ⑥ zh / en 两臂跑自愈路径：**零新增文案** ----
+    _t101_lang_arms()
+
+    # ---- ⑦ teeth：把自愈分支关掉 ⇒ ①c 必红；把"确证没键"的判据改坏 ⇒ ④ 必红 ----
+    _t101_teeth()
+
+
+def _t101_lang_arms():
+    '''⑥ zh/en 两臂：**自愈路径本身不产生任何新文案**。
+
+    为什么口径是"零新增文案"而不是"文案对不对"：这一项没有（也不该有）新的用户可见
+    文本 —— 自愈是**静默**的后台收尾，走的是既有 `_on_release`。所以判据取"跑一遍
+    自愈，stdout / stderr 一个字都不多"：两臂都如此 ⇒ 不存在"zh 有、en 漏翻译"或
+    "en 混进中文（非纯 ASCII）"的可能。真正会加文案的那类改动由
+    `test_msg_key_audit.py` / `test_launch.py §9` 盯（本项与它们互不影响）。
+    '''
+    from mpltweak import messages as _msg
+    bad = []
+    for _lang in ('zh', 'en'):
+        _prev = _msg.set_lang(_lang)
+        try:
+            fig, axes, env = _t101_env('t101_lang_' + _lang)
+            x0, y0 = env.center(axes[0])
+            _out, _err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_err):
+                _t101_press(env, x0, y0)
+                _t101_motion(env, x0 + 40, y0 + 20, buttons=_LBTN)
+                _t101_motion(env, x0 + 80, y0 + 40)          # 自愈在这里发生
+            healed = not env.tw._drag_active()
+            if not healed or _out.getvalue() or _err.getvalue():
+                bad.append((_lang, healed, _out.getvalue()[:60],
+                            _err.getvalue()[:60]))
+            plt.close(fig)
+        finally:
+            _msg.set_lang(_prev)
+    check('§t101⑥ zh / en 两臂都自愈成功，且 stdout/stderr 零输出（无新增文案）',
+          not bad, bad[:2])
+
+
+def _t101_teeth():
+    '''⑦ teeth：两条断言各自"拆掉实现就必红"。'''
+    _orig_heal = Tweak._self_heal_drag
+
+    def _no_heal(self, event):
+        return False
+
+    Tweak._self_heal_drag = _no_heal
+    try:
+        fig, axes, env = _t101_env('t101_teeth_heal')
+        tw, ax0 = env.tw, axes[0]
+        x0, y0 = env.center(ax0)
+        _t101_press(env, x0, y0)
+        _t101_motion(env, x0 + 40, y0 + 20, buttons=_LBTN)
+        _t101_motion(env, x0 + 80, y0 + 40)                 # 该收尾的那一下
+        _still_dragging = bool(tw._drag)
+        plt.close(fig)
+    finally:
+        Tweak._self_heal_drag = _orig_heal
+    check('§t101⑦【有牙】把自愈分支关掉 ⇒ "当次 motion 内结束"必红（这里仍挂着拖动）',
+          _still_dragging is True, '_drag=%s' % _still_dragging)
+
+    _orig_mbd = _tb._mouse_buttons_down
+    try:
+        _tb._mouse_buttons_down = (lambda canvas: True)     # 判据被改坏：永远"还按着"
+        fig, axes, env = _t101_env('t101_teeth_leave')
+        tw, ax0 = env.tw, axes[0]
+        x0, y0 = env.center(ax0)
+        _t101_press(env, x0, y0)
+        _t101_motion(env, x0 + 30, y0 + 15, buttons=_LBTN)
+        send(fig.canvas, 'figure_leave_event', x0 + 30, y0 + 15)
+        _no_heal_on_leave = bool(tw._drag)
+        plt.close(fig)
+    finally:
+        _tb._mouse_buttons_down = _orig_mbd
+    check('§t101⑦b【有牙】把"确证没键按着"改坏（永远 True）⇒ ④ 的收尾断言必红',
+          _no_heal_on_leave is True, '_drag=%s' % _no_heal_on_leave)
+
+
 def main():
     # 「hypothesis 装没装」是**环境事实**，不是被测行为：装了照旧断言它可用；
     # 没装则**明确打印跳过原因**（而不是把一个"环境缺可选依赖"记成测试失败 ——
@@ -1535,6 +1768,7 @@ def main():
     _run_invariants()
     _run_t71_units()
     _run_t92_units()
+    _run_t101_units()
 
     if _HAS_HYPOTHESIS:
         _run_hyp('hypothesis 任意乱序手势：不崩/往返/几何（不验落位）',
@@ -1547,4 +1781,21 @@ def main():
     return 1 if fail else 0
 
 
-sys.exit(main())
+def test_fuzz_events_suite():
+    """pytest 入口：本文件是脚本式套件（§t101 / §32 全在 ``main()`` 里）。
+
+    为什么需要这一段（0.1.12 / t10）：收尾原先写成**模块级**的
+    ``sys.exit(main())`` —— ``python -m pytest -q tests/test_fuzz_events.py`` 在 import
+    期就被 SystemExit 带走（INTERNALERROR，rc=3），于是
+    ``tools/ci_pytest_summary.py`` 那条「全量 pytest」CI 腿只要收集到本文件就整体崩。
+    现在把 ``sys.exit`` 收进 ``if __name__ == '__main__':``，并补这个入口断言结论。
+
+    两种调用方式结论一致：
+      * ``python tests/test_fuzz_events.py`` → 逐条 PASS + ``ALL PASS`` + rc=0；
+      * ``python -m pytest -q tests/test_fuzz_events.py`` → 1 passed。
+    """
+    assert main() == 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

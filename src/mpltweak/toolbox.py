@@ -124,6 +124,15 @@ _ZH = [
         ('Shift+点击', '加选'),
         ('拖空白', '框选'),
     ]),
+    # 逃生两招（0.1.12）：面板叠在一起时鼠标点不到下面那个 —— 这两条就是"点不到怎么办"。
+    # 位置放在「多选」之后：它和"点选/加选"是同一类问题（按下到底选中谁）。
+    # `_EN` 必须**同结构**（组数 + 每组行数）、en 侧**纯 ASCII**（`tests/test_launch.py`
+    # §9 ①c 的棘轮）。文案与代码里的实际手势一一对应：Alt+点击 = 穿透（`_pick_at` 的
+    # skip 优先链）、Tab = 循环同级元素（`_on_key` 的 Tab 分支）。
+    ('逃生', [
+        ('Alt+点击', '穿透到下一层（叠在一起时）'),
+        ('Tab', '循环同级元素'),
+    ]),
     ('移动', [
         ('方向键', '移动选中'),
         ('Shift+方向键', '微调尺寸'),
@@ -180,6 +189,10 @@ _EN = [
         ('Ctrl+click', 'add to selection'),
         ('Shift+click', 'add to selection'),
         ('Drag empty', 'marquee select'),
+    ]),
+    ('Escape hatch', [
+        ('Alt+click', 'pick through the top layer'),
+        ('Tab', 'cycle sibling elements'),
     ]),
     ('Move', [
         ('Arrow keys', 'move selection'),
@@ -277,6 +290,28 @@ def _ui_fontprops():
 def _u(zh, en):
     '''叠加层文案双语：无 CJK 字体时回退英文。'''
     return en if not _ui_cjk_ok() else zh
+
+
+def _mouse_buttons_down(canvas):
+    '''当前**全局**鼠标按键状态：True = 至少一个键按着 / False = 一个都没按 / None = 问不出来。
+
+    为什么要这个函数（★25.3 / t101）：拖动的自愈判据只看 `motion_notify_event.buttons`，
+    而 `figure_leave_event`（鼠标离开画布）**不带按键状态** —— matplotlib 的
+    `LocationEvent` 根本没有 `buttons` 字段。若"一离开画布就收尾"，正常的
+    "拖到画布外再拖回来"会被提前落位；所以离开这条路必须**先确证没键按着**才动手。
+
+    只给 **Qt 后端**问：`QGuiApplication.mouseButtons()` 是跨窗口的全局查询（Qt5 / Qt6
+    都从 matplotlib 的 `qt_compat` 取到同一个类）。Tk / Agg / 没装 Qt 时没有等价的可靠
+    接口 ⇒ 返回 None，调用方按"判不了"处理，**绝不瞎猜**（宁可晚一点收尾，也不许把
+    正常拖拽打断）。
+    '''
+    if 'qt' not in (type(canvas).__module__ or '').lower():
+        return None
+    try:
+        from matplotlib.backends.qt_compat import QtWidgets
+        return bool(QtWidgets.QApplication.mouseButtons())
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return None
 
 
 def _text_w(r, s, fs, font, dpi=110.0):
@@ -1424,6 +1459,18 @@ class Tweak:
         # 增量 —— 不依赖可能变化的 fig.bbox.size（窗口被系统钳制/拖动时旧像素锚点
         # 会错位 → ghost 蓝框与面板对不上）。
         self._press_norm = (0.0, 0.0)
+        # ★25.3（t101）：**sticky drag 自愈**的两个标记 —— 外部程序（QQ 截图 / 模态
+        # 对话框 / 全局热键）会**接管鼠标**，`button_release` 根本送不到画布 ⇒ 工具一直
+        # 以为"还在拖"，蓝框跟着鼠标走（用户 2026-10-14 真机报的现场）。
+        #   `_btn_seen`   ：**本次手势**里见过按键（一次真的按下、或某个 motion 报"有键
+        #                   按着"）；松开 / 自愈收尾时清零。
+        #   `_btn_capable`：**这个画布的后端确实会报按键状态**（一旦见过就记一辈子）。
+        # 为什么要这道能力闸门：判据是"motion 报 `buttons` 为空 ⇒ 键已经丢了"，可
+        # **离屏合成事件**（`MouseEvent` 不传 `buttons` ⇒ 恒为空 frozenset）并不表达
+        # "键没按着"，它只是"没报" —— 不设闸门就会把历史套件里那些
+        # "按下 → motion → 松开"的序列误判成"拖完了"，落位断言整片假红。
+        self._btn_seen = False
+        self._btn_capable = False
         self._warned_offscreen = False   # 0.1.10#1-③：画布超出屏幕的钳制提示只打一次
         self._origin = None
         self._ghost = None
@@ -1584,6 +1631,15 @@ class Tweak:
             self._heavy_ms = None
             return False
 
+    def _drag_active(self):
+        '''是否有**任何**一种拖动正在进行（面板 / 图例 / 缩放 / 多选 / 橡皮筋框选）。
+
+        单一出处：背景抓取判"现在能不能抓"、sticky drag 自愈判"要不要收尾"，都用它 ——
+        两处各写一遍五连 or 迟早会漏掉新加的那一种。
+        '''
+        return bool(self._drag or self._drag_leg or self._drag_resize
+                    or self._multi_drag or self._band_active)
+
     def _capture_bg(self, draw=True):
         '''抓一张「干净背景」供 blit 用。
 
@@ -1591,8 +1647,7 @@ class Tweak:
         一次全量重绘（这张真实图 810ms）才画得出 ghost —— 用户感受就是
         "每次第一下拖拽都卡半秒"。拖拽/缩放/框选期间不抓（否则会把覆盖层抓进背景）。
         '''
-        if (self._drag or self._drag_leg or self._drag_resize
-                or self._multi_drag or self._band_active):
+        if self._drag_active():
             return
         try:
             if draw:
@@ -1624,6 +1679,10 @@ class Tweak:
         c.mpl_connect('button_press_event', self._on_press)
         c.mpl_connect('button_release_event', self._on_release)
         c.mpl_connect('motion_notify_event', self._on_motion)
+        # ★25.3（t101）：鼠标**离开画布**是 sticky drag 的第二个抓手 —— 真有 motion
+        # 喂回来时 `_on_motion` 的判据就够用，但用户可能一直在别的窗口上（QQ 截图的
+        # 框选层），画布再也收不到 motion ⇒ 只靠那条判据就得等鼠标挪回来才收尾。
+        c.mpl_connect('figure_leave_event', self._on_figure_leave)
         c.mpl_connect('key_press_event', self._on_key)
         c.mpl_connect('close_event', self._on_close)
         c.mpl_connect('resize_event', self._on_resize)
@@ -2938,6 +2997,9 @@ class Tweak:
             return
         # F1：每次按下先复位"本次是否压了 undo 栈"标记，供释放时判零位移回滚。
         self._press_pushed = False
+        # ★25.3（t101）：一次真的左键按下 ⇒ "本次手势里确实见过按键"。之后若收到
+        # `buttons` 为空的 motion，就说明键已经在**别的窗口**松开了（release 丢了）。
+        self._btn_seen = True
         # 左键
         # 1) 图例拖拽
         ax_leg, leg = self._legend_at(event.x, event.y)
@@ -3094,11 +3156,44 @@ class Tweak:
         except Exception:
             return [0.5, 0.5]
 
+    def _self_heal_drag(self, event):
+        '''★25.3 / t101：**鼠标在动、按键却已经不在** ⇒ 立刻结束当前拖动（自愈收尾）。
+
+        为什么要有（用户 2026-10-14 真机）：按住子图拖动 → 按 QQ 截图快捷键 → 框选截完
+        → 松开键，蓝框**仍跟着鼠标走**。根因是 QQ 截图**接管了鼠标**，`button_release`
+        根本没送到画布（同类触发：窗口失焦 / 模态对话框 / 全局热键）⇒ 工具一直以为
+        "还在拖"。自愈式修法不假设那个事件一定会来。
+
+        判据（照 MAINTENANCE §25.3，两个条件缺一不可）：
+          ① 本次手势**见过按键**（一次真的按下，或某个 motion 报 `buttons` 非空）；
+          ② 当前 motion 的 `buttons` **为空**（matplotlib 3.10：`MouseEvent.buttons` 是
+             `None` 或 `frozenset`，只有 `motion_notify_event` 才有值）。
+        外加一道**能力闸门** `_btn_capable`：只有后端真的报过"有键按着"才允许用这条
+        判据 —— 否则**离屏合成事件**（不带 `buttons` ⇒ 恒为空）与历史套件里的
+        "按下 → motion → 松开"序列会被误判成"拖完了"（那会让全仓落位断言整片假红）。
+        纯 hover 更不会触发：它连 ①都不满足。
+
+        收尾**走既有 `_on_release`**（落位 / 清状态 / 重建蓝框 / 刷新一处不改），不在
+        两条路上各算一遍 —— 自愈与真松手必须**逐字节同一条路径**。
+        返回 True 表示"这次 motion 已经把拖动收尾了"（调用方别再当 hover 处理）。
+        '''
+        if getattr(event, 'buttons', None):
+            # 后端报了"有键按着"：记下能力 + 本次手势确实见过按键，照常往下拖。
+            self._btn_capable = True
+            self._btn_seen = True
+            return False
+        if not (self._btn_capable and self._btn_seen and self._drag_active()):
+            return False
+        self._on_release(event)
+        return True
+
     def _on_motion(self, event):
         if event.inaxes is not None:
             self._last_ax = event.inaxes
         X, Y = self.fig.bbox.size
         if X == 0 or Y == 0:
+            return
+        if self._self_heal_drag(event):
             return
         if self._drag_leg and self._leg is not None:
             # 拖图例：锚点随鼠标移动（轴坐标比例增量）
@@ -3330,6 +3425,8 @@ class Tweak:
                 pass
 
     def _on_release(self, event):
+        # ★25.3（t101）：这次手势的"见过按键"到此为止（真松手与自愈收尾都从这里过）。
+        self._btn_seen = False
         if self._drag_leg:
             self._drag_leg = False
             self._legend_preview_hide()
@@ -3401,6 +3498,26 @@ class Tweak:
         self._refresh(moved=True)
         if not _moved:                         # F1：裸点击不留幽灵撤销步
             self._pop_ghost_undo()
+
+    def _on_figure_leave(self, event):
+        '''★25.3 / t101 兜底：鼠标**离开画布**时，若拖动还挂着且**确证没键按着** ⇒ 收尾。
+
+        为什么需要这条（与 `_self_heal_drag` 分工）：sticky drag 的现场是"用户在**画布
+        外**（QQ 截图的框选层）松的键" —— 鼠标一直在别的窗口上，`motion_notify_event`
+        可能压根不再送到画布，只靠 motion 判据就得等用户把鼠标挪回来才收尾。离开事件
+        是更早的抓手，把"必须再动一下"这条前提去掉。
+
+        代价必须控住：`figure_leave_event` **不带按键状态**（matplotlib 的
+        `LocationEvent` 没有 `buttons` 字段）⇒ "离开就收尾"会打断**正常的**"按住面板拖到
+        画布外再拖回来"（Qt 在按下时会隐式抓鼠标，那时 motion 一直在送，`buttons` 也
+        一直非空）。所以这里只在**确证当前没键按着**时动手：Qt 后端能查全局按键状态，
+        查不到（Tk / Agg / 无 Qt）就**什么都不做**，留给 motion 自愈 —— 宁可晚一点收尾，
+        也不许把正常拖拽打断。
+        '''
+        if not self._drag_active():
+            return
+        if _mouse_buttons_down(self.fig.canvas) is False:
+            self._on_release(event)          # 与真松手同一条路径（落位/清状态/重建蓝框）
 
     def _as_colorbar(self, ax):
         '''判断轴是不是 colorbar 轴，是则返回自身（多信号判定，见 _is_colorbar_ax）。'''

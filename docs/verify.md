@@ -10,7 +10,7 @@
    脚本**（`writeback.py:4513` 的 `verify_run`：`:4527` 设这个环境变量、`:4531` 直接起 `[python, script]`），
    所以脚本里自己写 `matplotlib.use('TkAgg')` 是**能把它顶回去**的 —— 无头机器上会跑不通，有桌面的
    机器上可能真的弹窗。退出码非 0 时会进一步判别两件事：
-   **"我们写坏了"** → 回滚；**"脚本本来就跑不通"**（缺数据 / 缺依赖 / 需要 GUI）→ **默认也回滚 +
+   **"工具写坏了"** → 回滚；**"脚本本来就跑不通"**（缺数据 / 缺依赖 / 需要 GUI）→ **默认也回滚 +
    明确失败**（错误里写明"默认**不保留**，要保留请显式 `--keep-unverified`"）；
 3. **语义层**（`layers.semantic`）—— 重跑后 dump 目标图状态，与参数里的位置 / 字号 / grid / spines /
    clim 逐项比对；"跑通了但布局没落到目标图"会被判失败。**取不到图状态时这一层是 `null`、`verified`
@@ -43,17 +43,17 @@ mpltweak apply fig1.py --write -- --data x.npz --level 3
 warning，**请自己跑一遍确认**。
 
 **这是确定性写回的保障机制。** 备份写在**脚本旁边**（`<脚本目录>/.tweak_params/<脚本>.tweak.bak`，
-不散落到代码目录）。定位锚点是**脚本**，不是参数文件（RC-10）：用 `--params other/x.json` 写回时，
+不散落到代码目录）。定位锚点是**脚本**，不是参数文件：用 `--params other/x.json` 写回时，
 备份**仍然**落在脚本旁、**不会**跟着参数文件跑到 `other/`；`revert` 也因此**不用**再传同一个
 `--params`（0.1.8 放在参数文件旁边的旧位置只会作为"主位置找不到时"的兼容兜底读一次）。
 每次 `apply --write` 会留**两份**备份，作用域不同：
 
 | 备份 | 内容 | 谁在用 |
 |---|---|---|
-| `<脚本>.tweak.bak`（固定名） | **首份优先**（T71）：只在**不存在**时创建 ⇒ 保存它**建立那一刻**的脚本内容，之后的写回**不覆盖**它 | 默认 `revert` |
+| `<脚本>.tweak.bak`（固定名） | **首份优先**：只在**不存在**时创建 ⇒ 保存它**建立那一刻**的脚本内容，之后的写回**不覆盖**它 | 默认 `revert` |
 | `<脚本>.tweak.<pid>.bak`（专属副本） | **该次写回之前**的内容（按进程各留一份） | `revert --first` |
 
-`_prune_backups(keep=5)` 会裁掉多余的专属副本，但**永久保留最早那一份**（`writeback.py:2255`：
+`_prune_backups(keep=5)` 会裁掉多余的专属副本，但**永久保留最早那一份**（`writeback.py:2266`：
 保留"最近 5 份 + 最早 1 份"，裁掉的是**中间**的）—— 这正是 `revert --first` 还能回到最初的前提。
 同一个脚本的写回用 `<脚本>.apply.lock` 串行化，所以两处改动不会"凭空消失"。
 慢脚本超时的口径（不算"工具写坏了"、保留写回 + 提示手动确认）集中在下面「写回会跑几遍脚本」一节。
@@ -270,7 +270,8 @@ sys.exit(1 if bad else 0)
 **贴边文字与 `bbox_inches='tight'`**：check 只比较文字外框是否落在 figure 框内，
 **不读** `savefig(bbox_inches=...)`；识别到
 `bbox_inches='tight'` 就**降级为提示**（`rc=0`；`--json` 里 `tight_bbox: true`、该条
-`downgraded: "tight_bbox"`），要按旧口径严判加 `--no-tight`。实测
+`downgraded: "tight_bbox"`），要按旧口径严判加 **`check --no-tight`**（这个选项**只有 `check` 认** ——
+`apply` / `describe` / `revert` 给了是 `rc=2`）。实测
 （`audit_018/promo/t14_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_check.py`）：同一段越界文字，无 tight 时 `rc=1` / `error`，
 有 tight 时 `rc=0` / `warn`。
 

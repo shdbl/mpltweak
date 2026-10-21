@@ -43,6 +43,16 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突单独一栏（`--strict` 可升级为问题） |
 
+**三个选项各自只属于一个子命令**（`--help` 里都列着，这里再点名一次：它们**不是**全局开关，给错了子命令是 `rc=2`）
+
+| 选项 | 谁认 | 作用 | 给别的子命令会怎样 |
+|---|---|---|---|
+| **`apply --force`** | **只有 `apply`** | 参数比脚本旧（存完参数之后你手改过脚本）时也照样套用；默认**跳过**并给 `reason: stale` | `describe` / `check` / `revert` ⇒ `rc=2`（`unrecognized arguments`） |
+| **`--lang auto\|zh\|en`** | **只有 `apply` / `describe` / `check`** | 界面语言：`auto` = 跟随 `MPLTWEAK_LANG` → locale（默认） | `revert` / `schema` / `doctor` ⇒ `rc=2`；**顶层 `mpltweak <脚本>` 与 `launch` 则是静默忽略**（它们用 `parse_known_args`，多出来的参数**原样进你脚本的 `sys.argv`**）⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`，别在命令行上加 `--lang` |
+| **`check --no-tight`** | **只有 `check`** | 忽略脚本里的 `bbox_inches='tight'`，文字越界仍按 `error` 判（0.1.8 的旧口径） | `apply` / `describe` / `revert` ⇒ `rc=2` |
+
+> 实测口径（可重跑）：`mpltweak fig1.py --dry-run --lang en` **打印仍是中文**、`rc=0`；同一个脚本改用 `MPLTWEAK_LANG=en` 再跑则是英文。`mpltweak revert fig1.py --lang en` / `--force`、`mpltweak apply fig1.py --no-tight` 都是 `rc=2`（`unrecognized arguments`），三段都能用 `python -m mpltweak …` 原样复现。
+
 ```bash
 mpltweak describe fig1.py --output layout.json    # 读：拿到现在的排版（-o / --output 同一个选项）
 # ...agent 改 layout.json 里的几个数字...
@@ -67,9 +77,26 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 
 * `files[].verify_passes`（**恒存在**，int）：**1** = 默认单遍；**2** = 单遍取不到目标图状态、已回退两遍；**0** = 这次**没有**为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 / 没有可写字段）—— **`0` 不是失败**，它只表示"这一档没为验证重跑脚本"。它**只数主验证的遍数**：参数里有"原位写不了"的字段时先额外跑的那一遍**不计入**（所以 `verify_passes=1` ≠ 整条命令只跑了 1 遍脚本）。要判断"这次为什么回退"，看 `verify_passes=2` 再读同一条目的 `warnings`。
 * `files[].semantic_basis`（**恒存在**，str）：`live+savefig` = 图对象状态 + 磁盘那张图的追加判据；`live` = 只有图对象状态；**空串** = 这次没有语义判定依据（没跑 / 回退后如实记"没验到"）。
-* 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
+* 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
 
 （这三个键的口径全文在 `docs/verify.md` 的「机器可读通道」一节。）
+
+**解析契约：错误只出现在 stderr（0.1.12 起）**。不带 `--json` 时，`apply` 的人读输出分两条流 ——
+**stdout 只有数据/报告**（成功摘要、逐处清单、「会改：…」预览、可粘贴骨架），**人读错误全在
+stderr**（失败与回滚、拒写与「未写回」、参数文件坏、外部改动被跳过、验证失败 + 归因、用法/输入
+错误）。所以：
+
+* `mpltweak apply foo.py > out.txt` 时，`out.txt` **不会**混进错误行；`2>` 里才是"为什么没成"。
+* 管道消费者可以只看一件事：**stderr 空 = 这次没有任何错误**（成功/预览都保证 stderr 一字不发）。
+  判"改没改"仍以**退出码**为准（`0/1/2/4`，见 [exec-boundaries.md 的退出码表](exec-boundaries.md#退出码实测)），
+  别用"stderr 有字"当失败判据的替代品 —— `--verify-fast` 那类**降级提醒**仍留在 stdout。
+* `--json` 不变：载荷仍只走 stdout（`json.loads(stdout)` 必须成功），错因在载荷的 `error_code` /
+  `files[].reason` / `attribution` / `next_step` 里；人读行照旧全部让到 stderr。唯一例外是
+  `--json` + 脚本不存在：那条出口**只给 JSON**，不打人读行（此时 stderr 为空，别据此认为"成功了"）。
+
+逐类归属表 + 为什么这么划：见 [exec-boundaries.md 的「输出归属」](exec-boundaries.md#输出归属stdout-与-stderr0112)。
+自证入口：`python -m pytest -q tests/test_cli_output.py`（本仓库的同类断言也在
+`python tests/test_agent_api.py` 的 §24）。
 
 **mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
 

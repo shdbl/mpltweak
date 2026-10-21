@@ -42,7 +42,7 @@
 | 脚本跑不起来（缺依赖 / 缺数据） | 你的脚本 | `mpltweak check <脚本> --static`（不执行脚本，只做静态检查）——源码没被动过（已回滚） |
 | 脚本需要命令行参数 | 你的调用方式 | `mpltweak apply <脚本> --write -- <你的参数...>`（`--` 后的参数原样透传给重跑验证） |
 | 无头环境跑不通（脚本要开窗口 / 交互） | 环境限制 | `mpltweak check <脚本> --static`；确要写回用 `--verify-fast` 或 `--keep-unverified` |
-| 工具自身异常（internal_error） | **工具的 bug** | 源码一个字节都未修改（已回滚）——请把那段输出报告给我们 |
+| 工具自身异常（internal_error） | **工具的 bug** | 源码一个字节都未修改（已回滚）——请把那段输出报告给作者 |
 
 `--json` 同时给机器可读的 `attribution` / `attribution_detail` / `next_step`（agent 据此自动分支，不必读中文猜）。**退出码数值语义没变**（0.1.9 已文档化，CI 依赖）；判不出原因时保守归"脚本跑不起来"并注明"无法确定原因"，不会甩锅给工具。
 
@@ -67,7 +67,7 @@
 
 三条都不中，先跑 `mpltweak doctor`；完全没弹窗的逐条对照见 [interaction.md](interaction.md) 的「如果没反应」。
 
-### `doctor` 的选项口径（t91）
+### `doctor` 的选项口径
 
 - `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
 - **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。

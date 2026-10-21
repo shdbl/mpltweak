@@ -1106,9 +1106,13 @@ shutil.rmtree(d27, ignore_errors=True)
 
 # ---- 28. 写回不得给脚本加 BOM（C2 编码兜底的回归）----
 #   坑：params.read_text 探测到 'utf-8-sig' 后把这个编码直接交给写回，而 Python
-#   用 'utf-8-sig' **写入时会自动加 BOM** → 用户的脚本被改脏，compile() 立刻报
-#   invalid non-printable character U+FEFF。七套件全都查不出来（它们不查 BOM），
-#   是被 t1 的验收脚本"落盘语法非法=True"照出来的。
+#   用 'utf-8-sig' **写入时会自动加 BOM** → 用户的脚本被改脏。
+#   实测到的**真实后果**（CPython 3.10.19，三行微测可复现）：脚本本身
+#   **还能跑**（`python x.py` 容忍 UTF-8 BOM，rc=0、正常出结果），坏的是**把文件按
+#   `utf-8` 读成字符串再 compile()/ast.parse()** 这条路径 —— 报
+#   invalid non-printable character U+FEFF（compile(str) 与 ast.parse(str) 同报），
+#   也就是一个**假的"语法坏"**：工具自己的语法校验、以及任何按 utf-8 读它的脚本都会误判。
+#   当时的套件不查 BOM，全靠 t1 的验收脚本"落盘语法非法=True"照出来。
 d28, _s28, _p28 = setup()
 with open(_s28, 'w', encoding='utf-8', newline='') as f:
     f.write('import matplotlib\n'
@@ -2201,10 +2205,13 @@ for _f, _v in _D1:
           and writeback.BLOCK_START not in read(_s), _oo[-260:])
     shutil.rmtree(_d, ignore_errors=True)
 
-# 53h 反向：值**确实不同**的同类字段必须退块落地（默认值证明不许把真差异也吞掉）
-for _f, _v, _mark in (('title_fontsize', 20.0, 'set_fontsize(20)'),
-                      ('spines', {'top': False}, "'top'"),
-                      ('tick_fontsize', 7.0, 'labelsize=7')):
+# 53h 反向：值**确实不同**的同类字段必须落地（默认值证明不许把真差异也吞掉）。
+# A2（0.1.12 / §25.1）起 title_fontsize 有了**原位**落地形态：`_ADD_SRC` 里已经有
+# `ax.set_title("t")`，于是现在补 `fontsize=20` 而不再退块插 `set_fontsize(20)` ——
+# 落点变了，"绝不静默吞掉真差异"这条不变（所以下面按"任一通道落地"判）。
+for _f, _v, _marks in (('title_fontsize', 20.0, ('fontsize=20', 'set_fontsize(20)')),
+                       ('spines', {'top': False}, ("'top'",)),
+                       ('tick_fontsize', 7.0, ('labelsize=7',))):
     _ax = {'index': 0, 'pos': [0.1, 0.1, 0.8, 0.8], _f: _v}
     _d, _s, _p = _mk15('t15d1n', _ADD_SRC,
                        {'version': 4, 'script': 'fig.py', 'axes': [_ax]})
@@ -2212,12 +2219,30 @@ for _f, _v, _mark in (('title_fontsize', 20.0, 'set_fontsize(20)'),
                           '--write', '--verify-fast', '--json'],
                          capture_output=True, cwd=_d, env=_env15)
     _oo = _decode_out(_rr.stdout + _rr.stderr)
-    check('53h 反向：%s=%r 与现值不同 → 退块落地（含 %s）' % (_f, _v, _mark),
-          _rr.returncode == 0 and writeback.BLOCK_START in read(_s)
-          and _mark in read(_s), _oo[-260:])
+    check('53h 反向：%s=%r 与现值不同 → 必须落地（含 %s），绝不静默吞'
+          % (_f, _v, ' 或 '.join(_marks)),
+          _rr.returncode == 0
+          and any(_m in read(_s) for _m in _marks), _oo[-260:])
     shutil.rmtree(_d, ignore_errors=True)
 
-# 53i 默认值证明的**门**：源码里出现能改该字段的写法（rcParams）→ 不许证明，保守退块
+# 53h-A2：同一条反例的**落点**钉死 —— 有 `set_title("t")` 就该原位补参数、不透块
+_ax = {'index': 0, 'pos': [0.1, 0.1, 0.8, 0.8], 'title_fontsize': 20.0}
+_d, _s, _p = _mk15('t15d1n2', _ADD_SRC,
+                   {'version': 4, 'script': 'fig.py', 'axes': [_ax]})
+_r53h = writeback.writeback(_s, _params.load(_p), _p, verify=False,
+                            fast_check=True, style='inplace')
+_a53h = read(_s)
+check('53h-A2：源码有 `ax.set_title("t")` ⇒ title_fontsize=20 就地补进去'
+      '（applied=true / 不插块 / 不再报"没有对应写法"）',
+      _r53h.get('applied') is True and 'ax.set_title("t", fontsize=20)' in _a53h
+      and writeback.BLOCK_START not in _a53h
+      and not (_r53h.get('pending') or []),
+      '%s | %s' % (_r53h.get('changes'), _a53h.splitlines()[-4:]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 53i 默认值证明的**门**：源码里出现能改该字段的写法（rcParams）→ 不许证明"现值=默认值"。
+# A2 起这条门的意义更清楚了：既然证不出，就在已有的 `set_title("t")` 上**显式**补
+# fontsize=12（把 rcParams 的影响钉死在这条轴上），而不是谎称相等、也不再退块。
 _GATE_SRC = _ADD_SRC.replace('ax.plot([1, 2, 3])',
                              "plt.rcParams['axes.titlesize'] = 12\nax.plot([1, 2, 3])")
 _d, _s, _p = _mk15('t15gate', _GATE_SRC,
@@ -2226,8 +2251,13 @@ _d, _s, _p = _mk15('t15gate', _GATE_SRC,
                               'title_fontsize': 12.0}]})
 _r53i = writeback.writeback(_s, _params.load(_p), _p, verify=False,
                             fast_check=True, style='inplace')
-check('53i 源码里有 rcParams 改字号 → 放弃默认值证明（保守退块，不静默吞）',
-      _r53i.get('needs_block') is True, 'nb=%r' % _r53i.get('needs_block'))
+_a53i = read(_s)
+check('53i 源码里有 rcParams 改字号 → 放弃默认值证明（不许谎称"现值=默认值"），'
+      '并显式补 fontsize=12 落地（不静默吞）',
+      'ax.set_title("t", fontsize=12)' in _a53i
+      and _a53i.count('fontsize=12') == 1,
+      'nb=%r | %s' % (_r53i.get('needs_block'),
+                      [ln for ln in _a53i.splitlines() if 'title' in ln]))
 shutil.rmtree(_d, ignore_errors=True)
 
 # 53j cax 在**函数里**创建（`cbar_ax = fig.add_axes([...])` 用的是传进来的 fig）：
@@ -3993,14 +4023,21 @@ check('73① 成功路径没退步：真写盘（applied=True 且块进文件）
       'applied=%r' % (_r73a.get('applied'),))
 shutil.rmtree(_d73a, ignore_errors=True)
 
-# ② 目标不可证：图与轴建在函数里，块的锚点在模块层 → 名字在块位置**没有绑定**
+# ② 目标不可证：图与轴建在函数里，而那个函数**有多条 return / 提前 return**
+#    （0.1.12 / A1 的拒绝规则 a）→ 块插到哪条 return 之前都证不出"存图前那份 fig 就是
+#    目标图" ⇒ 仍然 fail-closed 拒写。
+#    ⚠ 0.1.12 口径变更：本用例原来的形状（函数里建图 + 末尾**恰好一条** `return fig`
+#    + 模块层 `fig.savefig`）**已经能证明**了 —— 锚点下沉到那条 return 之前（见 §108）。
+#    这里换成**仍然不可证**的多 return 形状，继续钉 T70 的 fail-closed 结论。
 _SRC73B = ('import matplotlib\nmatplotlib.use("Agg")\n'
            'import matplotlib.pyplot as plt\n\n\n'
-           'def draw():\n'
+           'def draw(flag):\n'
            '    fig, ax = plt.subplots(figsize=(6, 3))\n'
            '    ax.plot([1, 2, 3])\n'
+           '    if flag:\n'
+           '        return fig\n'
            '    return fig\n\n\n'
-           'fig = draw()\n'
+           'fig = draw(True)\n'
            'fig.savefig("o.png")\n')
 _d73b, _s73b, _p73b = _mk15('t73b', _SRC73B, _PAR73A)
 _r73b = writeback.writeback(_s73b, _params.load(_p73b), _p73b, verify=False,
@@ -7021,6 +7058,513 @@ check('§107④ 基线自证：同一形状连跑两次，判据结论稳定（�
       _ok87c1 is True and _ok87c2 is True, '%s ｜ %s' % (_det87c1[:70],
                                                          _det87c2[:70]))
 
+# =====================================================================
+# §108（0.1.12 / MAINTENANCE §25 A1）：fig 在**函数里**建、`return fig` 出函数、
+# savefig 在模块层 —— 锚点**下沉**到那条 return 之前（0.1.11 必拒的形态）。
+#
+# 修前为什么拒：`_name_still_bound`（writeback.py:3706-3717）要求**每个候选锚点与
+# 名字绑定同作用域**，而候选锚点全在模块层（`find_anchor` / `_anchor_positions` 会把
+# savefig 与"脚本尾"都算上），`ax` 却绑在函数里 ⇒ 证不出 ⇒ 全线 fail-closed。
+# 修后：新候选 = 那条 `return <fig>` **之前**（位置 = return 的语句节点），并且
+# **不掺**模块层候选（互斥 —— 混进一个位置，"同作用域"立刻不成立）。
+# 三条**不可证**形态一律拒写，且 pending 与文案都点名原因（各给可照做的下一步）：
+#   a) 函数里 ≥2 条 return / 提前 return     → fig.func_multi_return
+#   b) 该函数不是恰好一次模块层调用           → fig.func_called_many
+#   c) 目标是类方法（self.ax 这类接收者）      → fig.func_method
+# 另含 MAINTENANCE §25.2：源码 figsize 非字面量时，块里仍补 set_size_inches，
+# 但**块注释**点名"运行时覆盖你的动态配置"，且不许新增第二处 figsize 计算路径。
+# =====================================================================
+from mpltweak import messages as _m108                          # noqa: E402
+
+_S108_HEAD = ('import matplotlib\n'
+              'matplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              '\n'
+              '\n')
+_S108_PROBE = _S108_HEAD + (
+    'def make_plot():\n'
+    '    fig, ax = plt.subplots(figsize=(8, 5))\n'
+    '    ax.plot([1, 2, 3], [2, 1, 3])\n'
+    "    ax.set_title('A')\n"
+    '    return fig\n'
+    '\n'
+    '\n'
+    'fig = make_plot()\n'
+    "fig.savefig('o.png')\n"
+    "print('done')\n")
+_S108_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'axes': [{'index': 0, 'pos': [0.12, 0.12, 0.78, 0.78],
+                       'title_fontsize': 15.0, 'grid': True}]}
+
+_d108, _s108, _p108 = _mk15('t108a1', _S108_PROBE, _S108_PAR)
+_r108 = writeback.writeback(_s108, _params.load(_p108), _p108, verify=True)
+_a108 = read(_s108)
+check('§108① 探针形态（函数里建图 + return fig + 模块层 savefig）：写回成功'
+      '（reason=ok / applied=true / Agg 重跑 + 语义验证都通过）',
+      _r108.get('reason') == 'ok' and _r108.get('applied') is True
+      and _r108.get('verified') is True and _r108.get('semantic') is True,
+      'reason=%s applied=%s verified=%s semantic=%s err=%s'
+      % (_r108.get('reason'), _r108.get('applied'), _r108.get('verified'),
+         _r108.get('semantic'), (_r108.get('err') or '')[:120]))
+check('§108② 块落在**函数内**、且在 `return fig` **之前**（锚点下沉到了函数作用域）',
+      writeback.BLOCK_START in _a108
+      and _a108.index('def make_plot') < _a108.index(writeback.BLOCK_START)
+      < _a108.index('    return fig'),
+      [ln.strip() for ln in _a108.splitlines()
+       if 'auto layout' in ln or 'return' in ln][:6])
+_108_blk = _a108[_a108.rindex('\n', 0, _a108.index(writeback.BLOCK_START)) + 1:
+                 _a108.index(writeback.BLOCK_END)].splitlines()
+check('§108③ 块内缩进与函数体一致（每行 4 格；没有多缩/顶格 => 不会 IndentationError）',
+      bool(_108_blk) and all(ln.startswith('    ')
+                             and not ln.startswith('     ') for ln in _108_blk),
+      _108_blk[:3])
+check('§108④ 块用**可证的名字**寻址（ax / fig）：无运行期下标、无 gcf 兜底、不补'
+      ' set_size_inches（源码 figsize 是字面量且已等值）',
+      '    ax.set_position([0.1200, 0.1200, 0.7800, 0.7800])' in _a108
+      and '    ax.title.set_fontsize(15)' in _a108
+      and '    ax.grid(True)' in _a108
+      and 'fig.axes[' not in _a108 and 'plt.gcf()' not in _a108
+      and 'set_size_inches' not in _a108,
+      [ln.strip() for ln in _a108.splitlines()
+       if 'set_' in ln or 'grid(' in ln][:5])
+
+_r108b = writeback.writeback(_s108, _params.load(_p108), _p108, verify=True)
+_a108b = read(_s108)
+check('§108⑤ 同一脚本连跑两次 apply：第二次 no_change 且脚本 **0 字节**变化',
+      _r108b.get('reason') == 'no_change' and _a108b == _a108,
+      'reason=%r bytes_same=%s' % (_r108b.get('reason'), _a108b == _a108))
+revert.main([_s108, '--write'])
+check('§108⑥ `revert --write` 字节级回到原文',
+      read(_s108) == _S108_PROBE,
+      [ln.strip() for ln in read(_s108).splitlines()
+       if 'layout' in ln or 'return' in ln][:4])
+shutil.rmtree(_d108, ignore_errors=True)
+
+# ---- §108⑦ 三条不可证形态：一律拒写，且 pending + 文案都点名原因 ----
+_S108_BAD = {
+    'a 多 return': (_S108_HEAD + (
+        'def make_plot(flag):\n'
+        '    fig, ax = plt.subplots()\n'
+        '    ax.plot([1, 2, 3])\n'
+        '    if flag:\n'
+        '        return fig\n'
+        "    ax.set_title('B')\n"
+        '    return fig\n'
+        '\n'
+        '\n'
+        'fig = make_plot(True)\n'
+        "fig.savefig('o.png')\n"), 'fig.func_multi_return', '末尾恰好一条'),
+    'b 被调用两次': (_S108_HEAD + (
+        'def make_plot():\n'
+        '    fig, ax = plt.subplots()\n'
+        '    ax.plot([1, 2, 3])\n'
+        '    return fig\n'
+        '\n'
+        '\n'
+        'fig = make_plot()\n'
+        "fig.savefig('a.png')\n"
+        'fig2 = make_plot()\n'
+        "fig2.savefig('b.png')\n"), 'fig.func_called_many', '恰好一次模块层调用'),
+    'c 方法是 self.ax': (_S108_HEAD + (
+        'class Plotter:\n'
+        '    def make_plot(self):\n'
+        '        fig, ax = plt.subplots()\n'
+        '        ax.plot([1, 2, 3])\n'
+        '        return fig\n'
+        '\n'
+        '\n'
+        'p = Plotter()\n'
+        'fig = p.make_plot()\n'
+        "fig.savefig('o.png')\n"), 'fig.func_method', '类方法'),
+}
+for _tag108, (_src108, _tok108, _needle108) in _S108_BAD.items():
+    _d, _s, _p = _mk15('t108bad', _src108, _S108_PAR)
+    _r108c = writeback.writeback(_s, _params.load(_p), _p, verify=False)
+    _txt108 = read(_s)
+    _warn108 = ' '.join(str(w) for w in (_r108c.get('warnings') or []))
+    check('§108⑦ %s：拒写（applied=false / reason=best_effort）+ pending 与文案'
+          '都点名原因 `%s`，脚本一个字节都没动' % (_tag108, _tok108),
+          _r108c.get('applied') is False
+          and _r108c.get('reason') == 'best_effort'
+          and _tok108 in (_r108c.get('pending') or [])
+          and _needle108 in _warn108
+          and writeback.BLOCK_START not in _txt108
+          and _txt108 == _src108,
+          'reason=%s applied=%s pending=%s warn=%s'
+          % (_r108c.get('reason'), _r108c.get('applied'),
+             _r108c.get('pending'), _warn108[:110]))
+    shutil.rmtree(_d, ignore_errors=True)
+
+# ---- §108⑧⑨ MAINTENANCE §25.2：源码 figsize 非字面量（动态配置）----
+_S108_DYN = _S108_HEAD + (
+    'W, H = 8.0, 5.0\n'
+    '\n'
+    '\n'
+    'def make_plot():\n'
+    '    fig, ax = plt.subplots(figsize=(W, H))\n'
+    '    ax.plot([1, 2, 3])\n'
+    '    return fig\n'
+    '\n'
+    '\n'
+    'fig = make_plot()\n'
+    "fig.savefig('o.png')\n")
+_d108d, _s108d, _p108d = _mk15('t108dyn', _S108_DYN,
+                               dict(_S108_PAR, figsize_px=[600, 400],
+                                    figsize_in=[6.0, 4.0]))
+_r108d = writeback.writeback(_s108d, _params.load(_p108d), _p108d, verify=True)
+_t108d = read(_s108d)
+_hint108 = _m108.t('wb_block_figsize_runtime')
+check('§108⑧ §25.2 源码 figsize 非字面量：块里仍补 set_size_inches(6, 4)，'
+      '但**块注释**点名"运行时覆盖你的动态配置"；源码的 figsize=(W, H) 一个字节没动',
+      _r108d.get('applied') is True and 'fig.set_size_inches(6, 4)' in _t108d
+      and _hint108 in _t108d and 'figsize=(W, H)' in _t108d
+      and _t108d.count('set_size_inches(') == 1,
+      'edited=%r hint_in=%s n_setsize=%d'
+      % (_r108d.get('figsize_edited'), _hint108 in _t108d,
+         _t108d.count('set_size_inches(')))
+shutil.rmtree(_d108d, ignore_errors=True)
+
+# §108⑨ 结构判据：整份 writeback.py 里只有**一处**生成 `.set_size_inches(` 的地方
+# （docstring 里的示例不算）—— 即"没有新增第二处 figsize 计算路径"。
+_108_wb_src = io.open(os.path.join(
+    os.path.dirname(os.path.abspath(writeback.__file__)), 'writeback.py'),
+    encoding='utf-8').read()
+_108_tree = _ast.parse(_108_wb_src)
+_108_doc = set()
+for _n108 in _ast.walk(_108_tree):
+    if isinstance(_n108, (_ast.Module, _ast.ClassDef, _ast.FunctionDef,
+                          _ast.AsyncFunctionDef)):
+        _b108 = getattr(_n108, 'body', None) or []
+        if _b108 and isinstance(_b108[0], _ast.Expr) \
+                and isinstance(_b108[0].value, _ast.Constant) \
+                and isinstance(_b108[0].value.value, str):
+            _108_doc.add(id(_b108[0].value))
+_108_emit = [(_n108.lineno, _n108.value) for _n108 in _ast.walk(_108_tree)
+             if isinstance(_n108, _ast.Constant)
+             and isinstance(_n108.value, str)
+             and '.set_size_inches(' in _n108.value
+             and id(_n108) not in _108_doc]
+check('§108⑨ §25.2 没有第二处 figsize 计算路径：writeback.py 里生成 '
+      '`.set_size_inches(` 的常量只有 1 处（render_block 的块体那一行）',
+      len(_108_emit) == 1, _108_emit)
+
+# ---- §108⑩ 真 CLI 端到端：apply --write 成功 / 第二次 no_change / revert --write ----
+_108_src_dir = os.path.dirname(os.path.dirname(os.path.abspath(writeback.__file__)))
+_env108 = dict(os.environ, PYTHONPATH=_108_src_dir, MPLBACKEND='Agg',
+               MPLTWEAK_LANG='zh', PYTHONIOENCODING='utf-8')
+_d108c, _s108c, _p108c = _mk15('t108cli', _S108_PROBE, _S108_PAR)
+_rr108 = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', _s108c,
+                         '--params', _p108c, '--write', '--json'],
+                        capture_output=True, cwd=_d108c, env=_env108)
+_o108 = _decode_out(_rr108.stdout + _rr108.stderr)
+_after108_1 = read(_s108c)
+check('§108⑩ 真 CLI `apply --write`：rc=0 + applied=true，块落在函数内 return 之前',
+      _rr108.returncode == 0 and '"applied": true' in _o108
+      and writeback.BLOCK_START in _after108_1
+      and _after108_1.index('def make_plot')
+      < _after108_1.index(writeback.BLOCK_START)
+      < _after108_1.index('    return fig'),
+      'rc=%s | %s' % (_rr108.returncode, _o108[-200:]))
+_rr108b = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', _s108c,
+                          '--params', _p108c, '--write', '--json'],
+                         capture_output=True, cwd=_d108c, env=_env108)
+_o108b = _decode_out(_rr108b.stdout + _rr108b.stderr)
+check('§108⑪ 连跑两次 apply：第二次 reason=no_change 且脚本 **0 字节**变化',
+      '"reason": "no_change"' in _o108b and read(_s108c) == _after108_1,
+      'rc=%s | %s' % (_rr108b.returncode, _o108b[-200:]))
+_rr108c = subprocess.run([sys.executable, '-m', 'mpltweak', 'revert', _s108c,
+                          '--params', _p108c, '--write', '--json'],
+                         capture_output=True, cwd=_d108c, env=_env108)
+check('§108⑫ `revert --write` 字节级回到原文（与探针源逐字节相同）',
+      read(_s108c) == _S108_PROBE,
+      'rc=%s | %s' % (_rr108c.returncode,
+                      _decode_out(_rr108c.stdout + _rr108c.stderr)[-160:]))
+shutil.rmtree(_d108c, ignore_errors=True)
+
+# ---- §108⑬【有牙】把新候选换成"恒 None"（= 改前行为）⇒ 本文的用例必须红 ----
+_orig_fa108 = writeback._func_return_anchor
+writeback._func_return_anchor = lambda *a, **k: None
+try:
+    _d, _s, _p = _mk15('t108teeth', _S108_PROBE, _S108_PAR)
+    _r108t = writeback.writeback(_s, _params.load(_p), _p, verify=False)
+    _txt108t = read(_s)
+finally:
+    writeback._func_return_anchor = _orig_fa108
+check('§108⑬【有牙】新候选 `_func_return_anchor` 换成恒 None（改前行为）⇒ '
+      '探针形态回到拒写（本条即证 §108①②④ 真的在咬，不是空转）',
+      _r108t.get('applied') is not True and writeback.BLOCK_START not in _txt108t,
+      'reason=%s applied=%s pending=%s block_in_src=%s'
+      % (_r108t.get('reason'), _r108t.get('applied'), _r108t.get('pending'),
+         writeback.BLOCK_START in _txt108t))
+shutil.rmtree(_d, ignore_errors=True)
+
+# =====================================================================
+# §109（0.1.12 / MAINTENANCE §25.1 A2）：**原位补一个参数**
+#
+# 语料（D:\Agent\deepseek\gapprobe）：2,334 份 deps_ok 的 9,336 个"脚本×字段"里，
+# 1,541（16.5%）属于「函数**已经调用了**、只是没带目标参数」：
+#     ax.set_title('A')            ← 要 title_fontsize
+#     ax.tick_params(axis='x')     ← 要 tick_fontsize
+#     ax.grid()                    ← 要 grid
+# 0.1.11 一律进 skipped → auto 退块（往脚本里插一段调整块）。A2 给每字段加一条**原位
+# 备选形态**：在参数表末尾补 `, fontsize=<值>`（grid 补 True/False 或 visible=）。
+#
+# 前置（识别表）：`ax.title.set_fontsize(N)` / `ax.xaxis.label.set_fontsize(N)`
+# （语料 53 / 8 处）、`ax.set_position([4 字面量])`（8 处）—— 不认它们，轴级归属与
+# 现值判不出来：等值时会被默认值证明**谎称**"源码没写法、现值=默认值"。
+#
+# 四条纪律（本节的用例逐条咬住）：
+#   ① 跨多行参数表补完必须能 ast.parse；② 尾随逗号不许变成 `,)` 之类坏语法；
+#   ③ 带 `**kwargs` 的调用**一律不改**并如实说明；④ 多处调用只补可唯一确定的一处，
+#      其余如实报告（不唯一确定时整条拒改 → pending，由 auto 决定是否退块）；
+#   ⑤ 连跑两次 = no_change + 0 字节；⑥ revert 字节级；⑦ 有牙；⑧ 三个负例不误改。
+# =====================================================================
+_S109_HEAD = ('import matplotlib\n'
+              'matplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              '\n'
+              '\n')
+# 探针 A：四条「已调用、没带参数」的调用，全部**跨多行**；
+#   set_title 还留着**尾随逗号**（`'A',` 换行 `)`）—— 这是最容易写坏的形态。
+_S109_PROBE = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    'ax.set_title(\n'
+    "    'A',\n"
+    ')\n'
+    'ax.set_xlabel(\n'
+    "    'X',\n"
+    "    color='k',\n"
+    ')\n'
+    'ax.tick_params(\n'
+    "    axis='x',\n"
+    "    colors='k',\n"
+    ')\n'
+    'ax.grid(\n'
+    ')\n'
+    "fig.savefig('o.png')\n"
+    "print('done')\n")
+_S109_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'axes': [{'index': 0, 'title_fontsize': 15.0,
+                       'label_fontsize': 13.0, 'tick_fontsize': 9.0,
+                       'grid': True}]}
+_d109, _s109, _p109 = _mk15('t109a2', _S109_PROBE, _S109_PAR)
+_r109 = writeback.writeback(_s109, _params.load(_p109), _p109, verify=True,
+                            style='inplace')
+_a109 = read(_s109)
+_109_want = ["    'A',\n    fontsize=15,\n)",
+             "    'X',\n    fontsize=13,\n    color='k',\n)",
+             "    axis='x',\n    colors='k',\n    labelsize=9,\n)",
+             'ax.grid(\n    True\n)']
+check('§109① 四个字段全部**原位**补上（不插块）：跨多行参数表、写盘后 ast.parse 通过，'
+      'Agg 重跑 + 语义验证都过（reason=ok / applied=true / verified+semantic）',
+      _r109.get('reason') == 'ok' and _r109.get('applied') is True
+      and _r109.get('verified') is True and _r109.get('semantic') is True
+      and writeback.BLOCK_START not in _a109
+      and all(_w in _a109 for _w in _109_want),
+      'reason=%s applied=%s verified=%s semantic=%s | %s'
+      % (_r109.get('reason'), _r109.get('applied'), _r109.get('verified'),
+         _r109.get('semantic'),
+         [ln for ln in _a109.splitlines() if 'font' in ln or 'label' in ln][:6]))
+check('§109② 尾随逗号形态不被破坏：补完是 `\'A\', / fontsize=15, / )`（新参数自己带逗号），'
+      '全文件没有 `,)` / `(,` / `,,`，且真能 ast.parse',
+      _ast.parse(_a109) is not None
+      and ',)' not in _a109.replace(' ', '') and '(,' not in _a109.replace(' ', '')
+      and ',,' not in _a109.replace(' ', ''),
+      [ln for ln in _a109.splitlines() if 'font' in ln or "'A'" in ln][:4])
+
+_r109b = writeback.writeback(_s109, _params.load(_p109), _p109, verify=True,
+                             style='inplace')
+_a109b = read(_s109)
+check('§109③ 同一脚本连跑两次：第二次 no_change 且脚本 **0 字节**变化（idempotent）',
+      _r109b.get('reason') == 'no_change' and _a109b == _a109,
+      'reason=%r bytes_same=%s' % (_r109b.get('reason'), _a109b == _a109))
+revert.main([_s109, '--write'])
+check('§109④ `revert --write` 字节级回到原文', read(_s109) == _S109_PROBE,
+      [ln for ln in read(_s109).splitlines() if 'font' in ln][:3])
+shutil.rmtree(_d109, ignore_errors=True)
+
+# ---- §109⑤ 带 **kwargs 的调用一律不改，且 pending / 文案都如实说明 ----
+_S109_KW = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    'kw = dict(alpha=1)\n'
+    'ax.set_ylabel(\n'
+    "    'Y',\n"
+    '    **kw,\n'
+    ')\n'
+    "fig.savefig('o.png')\n")
+_d, _s, _p = _mk15('t109kw', _S109_KW,
+                   {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'axes': [{'index': 0, 'label_fontsize_y': 12.0}]})
+_r = writeback.writeback(_s, _params.load(_p), _p, verify=False, style='inplace')
+_a = read(_s)
+_109_w = ' '.join(_r.get('warnings') or [])
+check('§109⑤ 带 `**kwargs` 的调用**一个字都不改**（认不出实际生效的参数），'
+      'pending 点名该字段、文案说明原因并给下一步',
+      _a == _S109_KW and _r.get('applied') is not True
+      and any('label_fontsize_y' in str(x) for x in (_r.get('pending') or []))
+      and '**kwargs' in _109_w and 'fontsize=' in _109_w,
+      'applied=%r pending=%r | %s' % (_r.get('applied'), _r.get('pending'),
+                                      _109_w[:160]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# ---- §109⑥ 多处调用：只补"决定最终值"的那一处（同 body 顺序执行 ⇒ 后写的赢），
+#      其余如实报告；两条不在同一个顺序 body 里（if/else 两支）⇒ 整条拒改 ----
+_S109_TWO = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    "ax.set_title('A')\n"
+    "ax.set_title('B')\n"
+    "fig.savefig('o.png')\n")
+_d, _s, _p = _mk15('t109two', _S109_TWO,
+                   {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'axes': [{'index': 0, 'title_fontsize': 15.0}]})
+_r = writeback.writeback(_s, _params.load(_p), _p, verify=False, style='inplace')
+_a = read(_s)
+_109_w = ' '.join(_r.get('warnings') or [])
+check('§109⑥ 同一 body 里两处 set_title：只补**后写的那一处**（`B`，语义上它决定最终值），'
+      '前一处原样、并在 warnings 里如实报告"另有 1 处没改"',
+      _r.get('applied') is True
+      and "ax.set_title('A')\n" in _a
+      and "ax.set_title('B', fontsize=15)\n" in _a
+      and '另有 1 处 set_title' in _109_w,
+      'applied=%r | %s' % (_r.get('applied'), _109_w[:160]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_S109_BR = _S109_HEAD + (
+    'import sys\n'
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    'if len(sys.argv) > 1:\n'
+    "    ax.set_title('A')\n"
+    'else:\n'
+    "    ax.set_title('B')\n"
+    "fig.savefig('o.png')\n")
+_d, _s, _p = _mk15('t109br', _S109_BR,
+                   {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'axes': [{'index': 0, 'title_fontsize': 15.0}]})
+_r = writeback.writeback(_s, _params.load(_p), _p, verify=False, style='inplace')
+_a = read(_s)
+_109_w = ' '.join(_r.get('warnings') or [])
+check('§109⑦ if/else 两支各一条 set_title：谁是最后生效的**证不出** ⇒ 整条不改'
+      '（applied=false + pending 点名 + 文案给下一步"手动改或 --style block"）',
+      _a == _S109_BR and _r.get('applied') is not True
+      and any('title_fontsize' in str(x) for x in (_r.get('pending') or []))
+      and '无法唯一确定' in _109_w and '--style block' in _109_w,
+      'applied=%r pending=%r | %s' % (_r.get('applied'), _r.get('pending'),
+                                      _109_w[:160]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# ---- §109⑧ 识别表前置：`ax.title.set_fontsize(N)` 链式写法 ----
+# 旧实现只认 `set_title(..., fontsize=)`：这类脚本等值时会被默认值证明**谎称**
+# "源码没写法、现值=默认值"。现在：字面量不等 ⇒ 改那个字面量；是变量 ⇒ 拒改并说明。
+_S109_CHAIN = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    "ax.set_title('A')\n"
+    'ax.title.set_fontsize(9)\n'
+    "fig.savefig('o.png')\n")
+_d, _s, _p = _mk15('t109chain', _S109_CHAIN,
+                   {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'axes': [{'index': 0, 'title_fontsize': 15.0}]})
+_r = writeback.writeback(_s, _params.load(_p), _p, verify=False, style='inplace')
+_a = read(_s)
+check('§109⑧ `ax.title.set_fontsize(9)` 被认出来：按"后写的赢"改**这一条**的字面量'
+      '（9 → 15），不往 set_title 里再塞一个 fontsize',
+      _r.get('applied') is True and 'ax.title.set_fontsize(15)' in _a
+      and "ax.set_title('A')" in _a,
+      [ln for ln in _a.splitlines() if 'title' in ln])
+shutil.rmtree(_d, ignore_errors=True)
+
+_S109_VAR = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'ax.plot([1, 2, 3], [2, 1, 3])\n'
+    "ax.set_title('A')\n"
+    'fs = 9\n'
+    'ax.title.set_fontsize(fs)\n'
+    "fig.savefig('o.png')\n")
+_d, _s, _p = _mk15('t109var', _S109_VAR,
+                   {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                    'axes': [{'index': 0, 'title_fontsize': 15.0}]})
+_r = writeback.writeback(_s, _params.load(_p), _p, verify=False, style='inplace')
+_a = read(_s)
+_109_w = ' '.join(_r.get('warnings') or [])
+check('§109⑨ set_fontsize(变量)：值不在字面量里 ⇒ 不改、不猜，文案点名原因',
+      _a == _S109_VAR and _r.get('applied') is not True
+      and 'set_fontsize' in _109_w,
+      'applied=%r | %s' % (_r.get('applied'), _109_w[:160]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# ---- §109⑩ 三个负例：不许误改 ----
+# 018 型：`plt.title/plt.xlabel` 全局写法（轴级归属判不出）
+_S109_N018 = _S109_HEAD + (
+    'plt.figure(figsize=(6, 4))\n'
+    'plt.plot([1, 2, 3])\n'
+    "plt.title('A')\n"
+    "plt.xlabel('X')\n"
+    "plt.savefig('o.png')\n")
+# gallery 型：`axs[i]` 循环里建轴（接收者是 Subscript / 循环变量，不是可证的轴名）
+_S109_NGAL = _S109_HEAD + (
+    'fig, axs = plt.subplots(2, 2)\n'
+    'for i, ax in enumerate(axs.ravel()):\n'
+    '    ax.plot([1, 2, 3])\n'
+    "    ax.set_title('p%d' % i)\n"
+    "fig.savefig('o.png')\n")
+# colorbar 型：`cb.ax` 是 colorbar 自己的轴 —— 不许把字号写进 host 轴的调用
+_S109_NCB = _S109_HEAD + (
+    'fig, ax = plt.subplots()\n'
+    'sc = ax.scatter([1, 2, 3], [3, 2, 1], c=[1, 2, 3])\n'
+    'cb = fig.colorbar(sc, ax=ax)\n'
+    "ax.set_title('A')\n"
+    "cb.ax.set_ylabel('Z')\n"
+    "fig.savefig('o.png')\n")
+for _tag, _src, _par in (
+        ('018 型 plt.title/plt.xlabel', _S109_N018,
+         {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'title_fontsize': 15.0,
+                    'label_fontsize': 13.0}]}),
+        ('gallery 型 axs[i] 循环', _S109_NGAL,
+         {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'title_fontsize': 15.0}]}),
+        ('colorbar 型 cb.ax', _S109_NCB,
+         {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+          'axes': [{'index': 0, 'title_fontsize': 15.0},
+                   {'index': 1, 'is_colorbar': True, 'label_fontsize': 13.0}]})):
+    _d, _s, _p = _mk15('t109neg', _src, _par)
+    _r = writeback.writeback(_s, _params.load(_p), _p, verify=False,
+                             style='inplace')
+    _a = read(_s)
+    # 负例只许出现"该补的那一处"：plt./循环/cb.ax 那几行一个字节都不许动
+    _ok = (_a == _src) if _tag.startswith('018') or _tag.startswith('gallery') \
+        else ("cb.ax.set_ylabel('Z')" in _a and 'cb.ax.set_ylabel(\'Z\', ' not in _a)
+    check('§109⑩ 负例不误改（%s）：不可证的轴一个字节都不动，'
+          '该拒的拒（applied=false + pending 点名）' % _tag,
+          _ok and (_r.get('applied') is not True or _tag.startswith('colorbar'))
+          and bool(_r.get('pending')),
+          'applied=%r pending=%r changed=%s'
+          % (_r.get('applied'), _r.get('pending'), _a != _src))
+    shutil.rmtree(_d, ignore_errors=True)
+
+# ---- §109⑪【有牙】把新形态的**唯一入口**换成"恒不可用"（= 改前行为）⇒ 本节必须红 ----
+# `_gap_specs` 是 A2 补参数形态的唯一决策点：换成恒 (None, None, None, None)，
+# 这些调用立刻回到 0.1.11 的"进 skipped → 退块"，§109①⑥⑧ 会全部不成立。
+_orig_gap109 = writeback._gap_specs
+writeback._gap_specs = lambda *a, **k: (None, None, None, None)
+try:
+    _d, _s, _p = _mk15('t109teeth', _S109_PROBE, _S109_PAR)
+    _r109t = writeback.writeback(_s, _params.load(_p), _p, verify=False,
+                                 style='inplace')
+    _a109t = read(_s)
+finally:
+    writeback._gap_specs = _orig_gap109
+check('§109⑪【有牙】`_gap_specs` 换成恒 None（= 0.1.11 行为）⇒ 探针 A 一个参数都补不上、'
+      '四个字段全进 pending（本条即证 §109①真的在咬）',
+      _r109t.get('applied') is not True and _a109t == _S109_PROBE
+      and len(_r109t.get('pending') or []) >= 3,
+      'applied=%r pending=%r same=%s'
+      % (_r109t.get('applied'), _r109t.get('pending'), _a109t == _S109_PROBE))
+shutil.rmtree(_d, ignore_errors=True)
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)
-

@@ -1079,6 +1079,60 @@ MESSAGES = {
               'plt.gcf() would write to another axes or another figure) -> '
               'fail-closed, not written this time: %(fields)s',
     },
+    # --- A1（0.1.12）：`fig` 在函数里建、`return fig` 出函数、savefig 在模块层 ---
+    # 一条能落的（锚点下沉到那条 return 之前）＋三条**不可证**形态的拒绝文案。
+    # 纪律：每条都要给出**可照做的下一步**（不是"不支持"了事），且 pending 里带
+    # 机器可读令牌 `fig.<reason>`（writeback.FA_*），人读这一行点名**具体原因**。
+    'wb_func_anchor_multi_return': {
+        'zh': '函数 %(func)s 里的 `return` 不是"函数末尾恰好一条"（有多条 return，'
+              '或有提前 return）：figure 是在这个函数里建的，只有"末尾一条 `return fig`"'
+              '才能证明存图前那份 fig 就是你要调的图 —— 本次**没有写回**（脚本一个字节'
+              '都没动）。下一步：把多余的 return 合并成末尾一条 `return fig`'
+              '（提前返回的分支改成 `fig = ...` 后继续往下走），再跑一次 apply。',
+        'en': 'the `return` statements in %(func)s are not "exactly one, at the end '
+              'of the function" (there are several, or an early return): the figure '
+              'is created inside this function and only a single trailing '
+              '`return fig` proves that the saved figure is the one you tweaked - '
+              'nothing was written this time (the script is byte-for-byte '
+              'unchanged). Next step: collapse the extra returns into one trailing '
+              '`return fig` (make the early-return branches assign `fig = ...` and '
+              'fall through), then run apply again.',
+    },
+    'wb_func_anchor_called_many': {
+        'zh': '函数 %(func)s 在脚本里不是"恰好一次模块层调用"（当前能数到的调用点 '
+              '%(n)d 个）：静态说不清哪一次调用出来的那张图才是目标图 —— 本次**没有'
+              '写回**（脚本一个字节都没动）。下一步：只在模块层调用一次'
+              '（只保留 `fig = %(func)s()` 这一处，别处改成复用同一个 fig），'
+              '再跑一次 apply。',
+        'en': 'the script does not call %(func)s exactly once at module level '
+              '(call sites counted: %(n)d): statically there is no way to tell which '
+              'call produced the target figure - nothing was written this time (the '
+              'script is byte-for-byte unchanged). Next step: call it once at module '
+              'level (keep a single `fig = %(func)s()` and reuse that figure '
+              'elsewhere), then run apply again.',
+    },
+    'wb_func_anchor_method': {
+        'zh': '%(func)s 是**类方法**（接收者写着 `self.ax` 这类）：方法里的轴变量身份'
+              '静态证不出（同一个方法可能在别的实例/别处被调用，说不清哪一次的轴是目标）'
+              '—— 本次**没有写回**（脚本一个字节都没动）。下一步：把建图那几行挪到'
+              '模块层的普通函数里（`def make_plot(): ...`，不带 self），或直接在模块层'
+              '建图，再跑一次 apply。',
+        'en': '%(func)s is a **class method** (its receivers look like `self.ax`): the '
+              'axis variables inside a method cannot be proven statically (the same '
+              'method may be called on other instances or elsewhere, so which call '
+              'produced the target axes is undecidable) - nothing was written this '
+              'time (the script is byte-for-byte unchanged). Next step: move those '
+              'figure-creating lines into a plain module-level function '
+              '(`def make_plot(): ...`, without self), or create the figure at module '
+              'level, then run apply again.',
+    },
+    'wb_block_figsize_runtime': {
+        'zh': '# 提示：源码的 figsize 是变量/表达式，上面这行 set_size_inches 会在'
+              '**运行时**把它覆盖成这里的值；要保留你的动态配置，删掉那一行',
+        'en': '# note: the source figsize is a variable/expression, so the '
+              'set_size_inches line above overrides it at runtime; delete that line '
+              'to keep your dynamic setting',
+    },
     # --- 写进用户源码的块注释（原 t9；哨兵行除外）---
     'wb_block_cells': {
         'zh': '# 轴身份（调图时）：%(cells)s',
@@ -1510,6 +1564,24 @@ WB_ZH_TO_EN = {
         'tick_fontsize_y (the replacement range overlaps another edit; skipped)',
     'grid（替换位置重叠，已跳过）':
         'grid (the replacement range overlaps another edit; skipped)',
+    # --- A2（MAINTENANCE §25.1）原位「补一个参数」的三条拒改说明 ---
+    # 进 skipped 的字段名尾巴（与上面 `（替换位置重叠，已跳过）` 同一套写法；
+    # 这就是 MAINTENANCE §25 登记过的"原因塞进字段名"老味道，留给 0.1.13 结构化）。
+    '（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；需要的话请手动把 fontsize=… 写进这条调用）':
+        '(this call takes **kwargs, so which parameters actually take effect cannot '
+        'be read; nothing was added - please write fontsize=... into this call by '
+        'hand)',
+    '（这条轴上有 %d 处 %s 调用，无法唯一确定该补哪一处，没有自动补；请手动改，或用 --style block）':
+        '(%d calls to %s on this axis, so which one to extend cannot be determined; '
+        'nothing was added - please edit by hand, or use --style block)',
+    '（这份源码里该字号由 set_fontsize(变量) 决定，值不在字面量里，没有自动改写；请手动改）':
+        '(in this source the size is decided by set_fontsize(<variable>), so the '
+        'value is not a literal; nothing was rewritten - please edit by hand)',
+    '另有 %d 处 %s 调用按"后写的生效"没改；要一并调整请手动改，或用 --style block':
+        '%d other %s calls were left as-is because the later call wins; adjust '
+        'them by hand, or use --style block',
+    '已原位补上 %s：%s':
+        'patched in place: %s - %s',
     'pid 专属备份写不出来（%s，errno=%s：%s）；`revert --first` 将没有可用副本，请用默认 revert':
         'could not write the pid-specific backup (%s, errno=%s: %s); `revert --first` will have no copy to use - please use the default revert',
     '另一个 mpltweak 写回正在进行（pid=%s）。若确认它已不在运行，请手动删除 %s':

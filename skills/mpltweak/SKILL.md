@@ -108,7 +108,8 @@ mpltweak doctor
 - **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
-- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `launch` / `doctor` **不接受**（实测源码里只有三处注册：`apply.py:720`、`describe.py:110`、`check.py:570`）。
+- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `doctor` **不接受**（`rc=2`：`unrecognized arguments`；实测源码里只有三处注册：`apply.py:754`、`describe.py:110`、`check.py:570`）。**`launch`（含顶层 `mpltweak <脚本>`）是最坑的一条：它用 `parse_known_args`，`--lang en` 不会报错、也不会切语言，而是被当成"你脚本自己的参数"原样塞进脚本的 `sys.argv`** ⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`。
+- **`--force` 只有 `apply` 认**（参数比脚本旧时照样套用；`describe` / `check` / `revert` 给了是 `rc=2`）；**`--no-tight` 只有 `check` 认**（按 0.1.8 旧口径严判 `bbox_inches='tight'`；`apply` / `describe` / `revert` 给了是 `rc=2`）。
 
 **`--timeout` 只有 `apply` 认** —— `check` / `describe` / `launch` **都不认**（实测：`mpltweak check <脚本> --timeout 900` ⇒ `unrecognized arguments`、`rc=2`）。**`check` 也不需要它**：实测一份要读 NSIDC + 128 个 MME 文件的重脚本，`check` 只用 **50 秒**左右（远低于 300 秒）⇒ "默认 300 秒不够"这个担心对 `check` 不成立。选项清单以 `mpltweak <子命令> --help` 为准。
 

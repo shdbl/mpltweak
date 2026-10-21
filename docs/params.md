@@ -17,7 +17,7 @@
       "title_fontsize": 9.0,
       "label_fontsize": 8.0,
       "tick_fontsize": 8.0,
-      "tick_fontsize_y": 8.0,            // y 刻度字号（**没写这个键 ⇒ y 一个字节都不动**，T73 零兼容）
+      "tick_fontsize_y": 8.0,            // y 刻度字号（**没写这个键 ⇒ y 一个字节都不动**，零兼容）
       "grid": false,
       "spines": { "top": false, "right": false },
       "xscale": "linear",
@@ -107,8 +107,8 @@ axes[1, 1].title.set_fontsize(11)
 > （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
 > `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
 > （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
-> （`writeback.py:4206`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:4136`，
-> T70 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:3840`）；
+> （`writeback.py:4376`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:4306`，
+> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:4010`）；
 > "轴身份"注释里恒为中文。
 > 你实际拿到的数字与轴数会跟着你的布局变。
 
@@ -150,7 +150,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 `anchor="before"`、`attempts=[{"anchor": "before", "line": 9, "ok": true, "semantic": true}]`。
 
 **写回还可能被整体拒绝**：写盘后工具会**无条件**做一次 `ast.parse`（原位与块两条路径都做），语法只要
-被写坏就**当场回滚**；重跑失败时会进一步判别"我们写坏了"还是"脚本本来就跑不通"（缺数据 / 依赖 /
+被写坏就**当场回滚**；重跑失败时会进一步判别"工具写坏了"还是"脚本本来就跑不通"（缺数据 / 依赖 /
 需要 GUI）——**后者默认也回滚 + 明确失败**。详见「三层验证」。
 
 **跨轮可能混用**：先原位改过数字，后来某轮因为"一个字段都没落地"退成了块，文件里就会同时
@@ -186,7 +186,7 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 
 **3. `label_fontsize_y`：y 轴标签字号可以单独给。**
 
-参数里带 `label_fontsize_y` 时只改 y 轴标签字号（x 由 `label_fontsize` 决定）；**没写 `label_fontsize_y` 时 y 一个字节都不动**（T73 零兼容，见 CHANGELOG「修复 · y 侧字号」），`changes` 只报真正变了的那个。字段已进 `mpltweak schema`。
+参数里带 `label_fontsize_y` 时只改 y 轴标签字号（x 由 `label_fontsize` 决定）；**没写 `label_fontsize_y` 时 y 一个字节都不动**（零兼容，见 CHANGELOG「修复 · y 侧字号」），`changes` 只报真正变了的那个。字段已进 `mpltweak schema`。
 （`describe` 导出时若 y 与 x 同值就不单列这个键 —— 想单独改 y，自己加上即可。）
 
 **4. `describe --all-figs` 的产物是“一套图”，不能直接喂回 `apply --params`。**
@@ -204,7 +204,7 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 
 与 `label_fontsize_y` 同款：`tick_fontsize` 管 x 刻度、`tick_fontsize_y` 管 y 刻度。源码里本来就有
 `tick_params(axis='y', labelsize=…)` 时**各改各的**（原位）；只有一个 `labelsize=`（一次管两边）时两个
-字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。**没写 `tick_fontsize_y` 时 y 一个字节都不动**（T73 零兼容）。字段已进 `mpltweak schema`。
+字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。**没写 `tick_fontsize_y` 时 y 一个字节都不动**（零兼容）。字段已进 `mpltweak schema`。
 实测（`audit_018/promo/t32_probe.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
 把 `tick_fontsize_y` 改成 14 → `inplace_changes=["ax0.tick_fontsize_y"]`，源码
 `ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。

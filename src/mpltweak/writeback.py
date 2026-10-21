@@ -108,6 +108,17 @@ VF_HEADLESS = 'headless_impossible'
 VF_AFTER_WRITE = 'after_write_broken'
 VF_ANCHORS = 'anchors_all_failed'
 VF_SEMANTIC = 'semantic_mismatch'
+# A1（0.1.12）：「fig 在函数里创建、`return fig` 出函数、savefig 在模块层」这条新锚点
+# 路线**自己的**三种不可证形态（机器可读，前缀 'fig.' 进 pending，--json 里能点名）：
+#   FA_MULTI_RETURN  函数里有 ≥2 条 return，或那条 return 不在函数末尾（提前返回）
+#   FA_CALLED_MANY   该函数在脚本里不是**恰好一次**模块层调用（说不清哪一次的图是目标）
+#   FA_METHOD        目标是**方法**（`self.ax` 这类接收者：轴变量的身份静态证不出）
+# 为什么不并进 FAIL/NO_FIG：这三条都**不是**"引擎认不出脚本形态"（那是 no_fig），
+# 也不是"写回失败"（那是 fail），而是"这个形态可写、只是这个脚本离可证还差一步" ——
+# 与 T68 的"拒绝写回"同一档（reason=best_effort + applied=false + pending 点名）。
+FA_MULTI_RETURN = 'func_multi_return'
+FA_CALLED_MANY = 'func_called_many'
+FA_METHOD = 'func_method'
 
 
 
@@ -1164,6 +1175,305 @@ def _find_tick_axis_call(tree, recv_name, axis, after_lineno=0,
     return found
 
 
+# --------------------------------------------------------------------------
+# A2（MAINTENANCE §25.1）：原位「补一个参数」—— 调用已在，只是没带目标参数
+# --------------------------------------------------------------------------
+# 语料口径（gapprobe：2,334 份 deps_ok / 9,336 个「脚本×字段」）：其中 **1,541
+# （16.5%）** 的「写不进去」不是写法不认识，而是**调用已经在了、只是没带我们要改
+# 的那个参数**：
+#     ax.set_title('A')            ← 要改 title_fontsize，源码没有 fontsize=
+#     ax.tick_params(axis='x')     ← 要改 tick_fontsize，源码没有 labelsize=
+#     ax.grid()                    ← 要改 grid
+# 过去这类字段一律进 skipped → auto 退块（往脚本里插调整块）。这里给它们加一条
+# **原位备选形态**：在参数表末尾补 `, fontsize=<值>`（grid 补 True/False 或
+# visible=）。落地与其它原位替换走**同一套**保护：同一个 `edits` 队列（重叠检测）、
+# `_add`/`_ins` 的空改判定、备份 / 回滚、写盘后语法检查与语义验证。
+#
+# 为什么把决策收敛到 `_gap_specs` 一个函数：它是这条新形态的**唯一**入口。把它换成
+# 恒 None，新形态立刻回到旧行为（进 skipped → 退块），新用例因此有牙（§109⑦）。
+_GAP_T_KWARGS = ('（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；'
+                 '需要的话请手动把 fontsize=… 写进这条调用）')
+_GAP_T_MULTI = ('（这条轴上有 %d 处 %s 调用，无法唯一确定该补哪一处，没有自动补；'
+                '请手动改，或用 --style block）')
+_GAP_T_VARDYN = ('（这份源码里该字号由 set_fontsize(变量) 决定，值不在字面量里，'
+                 '没有自动改写；请手动改）')
+_GAP_T_OTHERS = ('另有 %d 处 %s 调用按"后写的生效"没改；要一并调整请手动改，'
+                 '或用 --style block')
+
+# 字段 → (承载它的调用名, 要补的关键字, 链式写法的属性链)
+_GAP_TEXT = {'title_fontsize': ('set_title', 'fontsize', ('title',)),
+             'label_fontsize': ('set_xlabel', 'fontsize', ('xaxis', 'label')),
+             'label_fontsize_y': ('set_ylabel', 'fontsize', ('yaxis', 'label'))}
+# 刻度字号 → (哪一侧, 只影响这一侧的 labels 调用)
+_GAP_TICK = {'tick_fontsize': ('x', 'set_xticklabels'),
+             'tick_fontsize_y': ('y', 'set_yticklabels')}
+
+
+def _find_calls(tree, recv_name, attr, after_lineno=0, before_lineno=10 ** 9):
+    """``Name(recv).attr(...)`` 的**全部**调用，按源码序（`_find_call` 的复数版）。
+
+    补参数必须先知道"这条轴上到底有几处这种调用"：≥2 处就无法唯一确定该补哪一处
+    （`if/else` 两支各写一次 `set_title` 就是典型）→ 宁可不改、如实进 pending。
+    """
+    out = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == attr
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == recv_name):
+            _ln = getattr(node, 'lineno', 0)
+            if _ln < after_lineno or _ln >= before_lineno:
+                continue
+            out.append(node)
+    out.sort(key=lambda _n: (_n.lineno, _n.col_offset))
+    return out
+
+
+def _call_carries(node, kws):
+    """这条调用里是否已经带了 ``kws`` 之一的关键字（带了就轮不到「补」）。"""
+    return any(k.arg in kws for k in node.keywords)
+
+
+def _call_has_dstar(node):
+    """``f(**kw)``：实际生效的参数认不出 ⇒ 绝不往里补（会与 **kw 打架）。"""
+    return any(k.arg is None for k in node.keywords)
+
+
+def _gap_why(tpl, *args):
+    """把 zh 模板翻成当前语言并插值（与 writeback 其它文案同一张 t_wb 表）。"""
+    _txt = _msg.t_wb(tpl)
+    return _txt % args if args else _txt
+
+
+def _owning_body(node, pm):
+    """节点所属的**语句序列**标识：``(id(父复合语句), 'body'/'orelse'/…)``。
+
+    "后写的赢"只有在两条调用**真的顺序执行**时才成立。同一个 body 里的两条是顺序
+    执行（确定的）；一条在 `if/else` 分支里、另一条在模块层则**不一定**（分支没走到时
+    是另一条生效）⇒ 那种形态必须放弃改（fail-closed）。没有父节点（模块层顶层）时
+    返回 (None, None)，同样可比。
+    """
+    cur = node
+    for _ in range(64):
+        par = pm.get(id(cur))
+        if par is None:
+            return None, None
+        for _attr in ('body', 'orelse', 'finalbody', 'handlers'):
+            _seq = getattr(par, _attr, None)
+            if isinstance(_seq, list) and cur in _seq:
+                return id(par), _attr
+        cur = par
+    return None, None
+
+
+def _gap_pick_last(calls, tree, what):
+    """在一组同类调用里挑"决定最终值"的那一条：源码序最后一条。
+
+    返回 ``(node, why)``：``why`` 非空表示**不能改**（多条调用不在同一个顺序执行的
+    body 里 ⇒ 谁是最后生效的证不出来）；``why`` 为空表示可以改（``node`` 就是要补参数
+    的那条）。调用方还要自己把"其余 N 处没改"如实写进 pending。
+    """
+    if not calls:
+        return None, None
+    pm = _parent_map(tree)
+    bodies = {_owning_body(c, pm) for c in calls}
+    if len(calls) > 1 and len(bodies) > 1:
+        return None, _gap_why(_GAP_T_MULTI, len(calls), what)
+    return calls[-1], None
+
+
+def _text_fontsize_calls(tree, nm, field, lo=0, hi=10 ** 9):
+    """``ax.title.set_fontsize(N)`` / ``ax.xaxis.label.set_fontsize(N)`` 形态（§25.1 前置）。
+
+    语料 53 处 ``title.set_fontsize/set_size``、8 处 ``xaxis.label.set_fontsize``。
+    认不出它们 ⇒ 轴级归属判不出来：等值时被当成"源码没写法"（默认值证明会**谎称**
+    现值就是 matplotlib 默认值），不等时也写不进去。返回按源码序的调用节点。
+    """
+    _t = _GAP_TEXT.get(field)
+    chain = _t[2] if _t else None
+    if not isinstance(nm, str) or not chain:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ('set_fontsize', 'set_size')):
+            continue
+        _v = node.func.value
+        _ok = True
+        for _attr in reversed(chain):
+            if not (isinstance(_v, ast.Attribute) and _v.attr == _attr):
+                _ok = False
+                break
+            _v = _v.value
+        if not _ok or not (isinstance(_v, ast.Name) and _v.id == nm):
+            continue
+        _ln = getattr(node, 'lineno', 0)
+        if _ln < lo or _ln >= hi:
+            continue
+        out.append(node)
+    out.sort(key=lambda _n: (_n.lineno, _n.col_offset))
+    return out
+
+
+def _gap_specs(tree, nm, field, val, lo=0, hi=10 ** 9):
+    """A2：源码里**已有**该字段的调用、只是没带目标参数 ⇒ 给出「补参数」方案。
+
+    返回 ``(kind, node, txt, why)``：
+      * ``kind='arg'``    → node 是要被改写的**字面量**节点，txt 是新文本；
+      * ``kind='append'`` → node 是那条**调用**，txt 是补进参数表末尾的文本；
+      * ``kind=None``     → 这条路走不了：``why`` 为 None 表示"没有可补的调用"
+        （与旧行为一致，回落到 skipped），否则 ``why`` 是给用户看的原因（进 pending）。
+    """
+    if not isinstance(nm, str) or val is None:
+        return None, None, None, None
+    if field == 'grid':
+        return _gap_specs_grid(tree, nm, val, lo, hi)
+    if field in _GAP_TEXT:
+        return _gap_specs_text(tree, nm, field, val, lo, hi)
+    if field in _GAP_TICK:
+        return _gap_specs_tick(tree, nm, field, val, lo, hi)
+    return None, None, None, None
+
+
+def _gap_specs_grid(tree, nm, val, lo, hi):
+    """``ax.grid()`` 没带布尔值 ⇒ 补 True/False（有关键字时补 ``visible=``）。"""
+    plain = []
+    for c in _find_calls(tree, nm, 'grid', lo, hi):
+        if c.args:
+            return None, None, None, None     # 已带位置参数：老路径负责改那个字面量
+        _kv = next((k for k in c.keywords if k.arg in ('visible', 'b')), None)
+        if _kv is not None:
+            # 已经用 `visible=`/`b=` 定过：改那个字面量（不许再加一个，
+            # 否则同一调用里两个值互相打架）
+            if isinstance(_kv.value, ast.Constant) \
+                    and isinstance(_kv.value.value, bool):
+                return 'arg', _kv.value, ('True' if bool(val) else 'False'), None
+            return None, None, None, _gap_why(_GAP_T_KWARGS)
+        plain.append(c)
+    if not plain:
+        return None, None, None, None
+    node, why = _gap_pick_last(plain, tree, 'grid')
+    if node is None:
+        return None, None, None, why
+    if _call_has_dstar(node):
+        return None, None, None, _gap_why(_GAP_T_KWARGS)
+    _b = 'True' if bool(val) else 'False'
+    # 有关键字（`axis=`）时**不能**补位置参数：`f(axis='x', True)` 是语法错
+    return ('append', node, ('visible=%s' % _b) if node.keywords else _b,
+            _gap_why(_GAP_T_OTHERS, len(plain) - 1, 'grid') if len(plain) > 1 else None)
+
+
+def _gap_specs_text(tree, nm, field, val, lo, hi):
+    """``set_title/set_xlabel/set_ylabel`` 没带字号 ⇒ 补 ``, fontsize=<值>``。
+
+    同一条轴上还有 ``ax.title.set_fontsize(N)`` 时按**源码序取最后一条**：Python 的
+    语义就是"后写的赢"（`set_title` 会新建 Text 对象、把先前设的字号丢掉），所以
+    "最后一条决定最终值"不是猜，是确定性的。
+    """
+    attr, kw, _chain = _GAP_TEXT[field]
+    plain = []
+    for c in _find_calls(tree, nm, attr, lo, hi):
+        if _call_carries(c, ('fontsize', 'size')):
+            # 源码自己带了字号（含 `size=` 别名）：那是老路径 / 等值证明的事 ——
+            # 这里绝不补第二个参数（同一调用里两个字号会互相打架）
+            return None, None, None, None
+        plain.append(c)
+    chain_calls = _text_fontsize_calls(tree, nm, field, lo, hi)
+    _all = [(c, False) for c in plain] + [(c, True) for c in chain_calls]
+    _all.sort(key=lambda _p: (_p[0].lineno, _p[0].col_offset))
+    if not _all:
+        return None, None, None, None
+    node, _is_chain = _all[-1]
+    _others = len(_all) - 1
+    _why_others = _gap_why(_GAP_T_OTHERS, _others, attr) if _others else None
+    # 先把"有多条调用、只在最后一条上补"这条事实算出来，再逐个判这条能不能改
+    pm = _parent_map(tree)
+    if len({_owning_body(c, pm) for c, _b in _all}) > 1:
+        return None, None, None, _gap_why(_GAP_T_MULTI, len(_all), attr)
+    if _call_has_dstar(node):
+        return None, None, None, _gap_why(_GAP_T_KWARGS)
+    if _is_chain:
+        if not node.args or not _is_num_literal(node.args[0]):
+            return None, None, None, _gap_why(_GAP_T_VARDYN)
+        return 'arg', node.args[0], _num(val), _why_others
+    return 'append', node, '%s=%s' % (kw, _num(val)), _why_others
+
+
+def _gap_specs_tick(tree, nm, field, val, lo, hi):
+    """刻度字号：``tick_params(axis='x')`` 补 ``labelsize=`` / ``set_xticklabels`` 补 ``fontsize=``。
+
+    ``tick_params`` **只认显式 axis='<本侧>'``**：不带 `axis=`（或 `axis='both'`）的
+    调用一次改两侧，往里补 labelsize 等于**偷偷改另一侧**（fail-closed，宁可退块）。
+    """
+    axis, labels_attr = _GAP_TICK[field]
+    if isinstance(val, bool):
+        return None, None, None, None
+    cands = []
+    for c in _find_calls(tree, nm, 'tick_params', lo, hi):
+        if _call_carries(c, ('labelsize', 'fontsize', 'size')):
+            return None, None, None, None     # 源码自己定了字号：老路径的事
+        _av = next((k for k in c.keywords if k.arg == 'axis'), None)
+        if not (isinstance(_av.value, ast.Constant)
+                and isinstance(_av.value.value, str)
+                and _av.value.value == axis):
+            continue                  # 没写 axis / 另一侧 / 'both'：不当候选
+        cands.append((c, 'labelsize'))
+    for c in _find_calls(tree, nm, labels_attr, lo, hi):
+        if _call_carries(c, ('fontsize', 'size', 'labelsize')):
+            return None, None, None, None
+        cands.append((c, 'fontsize'))
+    if not cands:
+        return None, None, None, None
+    cands.sort(key=lambda _p: (_p[0].lineno, _p[0].col_offset))
+    node, _kw = cands[-1]
+    pm = _parent_map(tree)
+    if len({_owning_body(c, pm) for c, _k in cands}) > 1:
+        return None, None, None, _gap_why(_GAP_T_MULTI, len(cands),
+                                          'tick_params/' + labels_attr)
+    if _call_has_dstar(node):
+        return None, None, None, _gap_why(_GAP_T_KWARGS)
+    return ('append', node, '%s=%s' % (_kw, _num(val)),
+            _gap_why(_GAP_T_OTHERS, len(cands) - 1, 'tick_params/' + labels_attr)
+            if len(cands) > 1 else None)
+
+
+def _gap_append_point(node, src, starts):
+    """调用参数表末尾的字符位置 + 怎么接上去（A2 补参数专用）。
+
+    为什么插在**最后一个参数之后**、而不是 ``)`` 之前：``)`` 前可能有注释
+    （``set_title('x',  # note`` 换行 ``)``），往那里插会插进注释、把新参数吃掉；
+    而"最后一个参数之后"永远是参数分隔处，逗号只影响写法、不影响语法
+    （``('x',)`` 后面补会得到 ``('x', fontsize=12,)``，**尾随逗号原样保留**）。
+
+    返回 ``(offset, need_comma, newline_indent)``；``newline_indent`` 非 None 表示
+    "这条调用本来就跨行" ⇒ 新参数换行、按最后一个参数的缩进对齐（不会挤在一行尾巴上，
+    读起来与 black 的结果一致）。认不出的形态返回 ``(None, False, None)``。
+    """
+    last = node.keywords[-1].value if node.keywords else None
+    if node.args:
+        last = node.args[-1]
+    if last is not None:
+        if isinstance(last, (ast.GeneratorExp, ast.Lambda, ast.Yield,
+                             ast.YieldFrom)):
+            return None, False, None    # `f(x for x in y, fontsize=1)` 是语法错
+        _ind = None
+        if getattr(node, 'end_lineno', node.lineno) > node.lineno:
+            _ls = _offset(starts, last.lineno, 0, src)
+            _m = re.match(r'[ \t]*', src[_ls:])
+            _ind = (_m.group(0) if _m else '    ') or '    '
+        return _offset(starts, last.end_lineno, last.end_col_offset, src), True, _ind
+    _o = _offset(starts, node.func.end_lineno, node.func.end_col_offset, src)
+    _p = src.find('(', _o)        # 无参数：插到 '(' 之后
+    _ind = None
+    if getattr(node, 'end_lineno', node.lineno) > node.lineno:
+        # `ax.grid(\n)` 这种空参多行：新参数换行并按调用那一行缩进 4 格
+        _ls = _offset(starts, node.lineno, 0, src)
+        _m = re.match(r'[ \t]*', src[_ls:])
+        _ind = (_m.group(0) if _m else '') + '    '
+    return ((_p + 1) if _p >= 0 else _o), False, _ind
+
+
 def _is_axes_on_existing_figure(node, fig_names):
     """``X.subplots(...)`` 里 ``X`` 可证是 Figure ⇒ 这是"在这张图上建轴"，**不是**新图。
 
@@ -1249,7 +1559,7 @@ def _figure_axes_for_index(tree, fig_index):
     return out
 
 
-def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
+def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
     """原位写回：直接改原代码里的数字，不插调整块。
 
     覆盖（按"轴变量名 → 轴序号"精确映射，只动非 colorbar 轴）：
@@ -1262,6 +1572,10 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
 
     返回 (new_src, covered, skipped)：
       covered = {轴序号: {字段, ...}}；skipped = [(轴序号, 字段, 目标值)]。
+
+    ``notes``（A2 起）：可选列表。往里追加**已经改好了、但值得说明**的话（例如"同一轴
+    另有 1 处 set_title 调用按后写的生效没改"）。这些不是 skipped —— 字段本身落地了，
+    不该进 pending（否则同一字段会同时出现在 changes 和 pending 里）。
 
     注意：所有替换先按**原始** src 坐标登记，最后统一按位置从右往左落——
     否则先改的位置会改变后续行的长度，导致后面的坐标错位（实测 fontsize=14 → 116）。
@@ -1327,6 +1641,66 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                 return False
         edits.append((_s, _e, txt))
         return True
+
+    def _ins(pos, txt, key=None):
+        """登记一处**插入**（零宽区间）；与 `_add` 共用同一个 `edits` 队列和冲突检测。
+
+        A2 的「补一个参数」不是"换掉一段源码"，而是"在某个字符位置插进去"——
+        必须走同一个队列，否则它和别的替换的重叠就检查不到（会切坏源码）。
+        插入永远算真改动（参数本来不存在），所以没有 `_add` 那套空改判定。
+        """
+        for _s0, _e0, _t0 in edits:
+            if (_s0 == _e0 == pos) or (_s0 <= pos <= _e0 and _s0 < _e0):
+                _conflicts.append((pos, pos, txt))
+                return False
+        edits.append((pos, pos, txt))
+        return True
+
+    # 每条轴是不是 colorbar（`_proved_equal` 的 pos 证明需要它；下面收尾那段用的是
+    # 自己那份 `_cb_by_i`，这里是同一口径的提前副本，供 `_gap_apply` 的等值证明用）。
+    _cb_by_i = {}
+    for _a0 in (data.get('axes') or []):
+        if isinstance(_a0.get('index'), int):
+            _cb_by_i[_a0['index']] = bool(_a0.get('is_colorbar'))
+
+    def _gap_apply(i, field, val, nm, lo, hi):
+        """A2（§25.1）：源码里**已有**该字段的调用、只是没带目标参数 ⇒ 原样补上。
+
+        返回 ``'ok'``（已登记一次**原位**改动）/ ``'why'``（改不了，且原因已记进
+        skipped）/ ``'no'``（这条路不适用，调用方按老规矩记一条 skipped）/
+        ``'equal'``（现值已等于目标值：一个字节都不动，也**不进 covered** —— 进了
+        covered 就会被算成"改了一处"，把干净的 no_change 谎报成 ok）。
+        """
+        if _proved_equal(tree, i, field, val, var_for, idx_map,
+                         _fi if isinstance(_fi, int) else 0, src=src,
+                         is_cb=bool(_cb_by_i.get(i))):
+            return 'equal'
+        kind, node, txt, why = _gap_specs(tree, nm, field, val, lo, hi)
+        _ok = False
+        if kind == 'arg':
+            _isb = isinstance(val, bool)
+            _ok = _add(node, txt, (i, field), None if _isb else val,
+                       bool_value=bool(val) if _isb else None)
+        elif kind == 'append':
+            _pos, _comma, _ind = _gap_append_point(node, src, starts)
+            if _pos is not None:
+                if _comma:
+                    _txt2 = (',\n' + _ind if _ind is not None else ', ') + txt
+                else:
+                    _txt2 = ('\n' + _ind if _ind is not None else '') + txt
+                _ok = _ins(_pos, _txt2, (i, field))
+        if _ok:
+            # "改好了、但另有 N 处同样的调用没改" —— 字段落地了，不该进 pending
+            if why and notes is not None:
+                notes.append(_msg.t_wb('已原位补上 %s：%s') % (field, why))
+            return 'ok'
+        if kind is None:
+            if why:
+                skipped.append((i, field + why, val))
+                return 'why'
+            return 'no'
+        skipped.append((i, field + _msg.t_wb('（替换位置重叠，已跳过）'), val))
+        return 'why'
 
     # ① 目标图（第 fig_index 个 figure 调用）所辖的 add_axes/add_subplot 创建调用。
     #    非 colorbar 轴按 index 序一一对应 —— 限定在当前图内，避免跨图误匹配。
@@ -1552,8 +1926,14 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                     covered.setdefault(i, set()).add(field)
                 else:
                     skipped.append((i, field + _msg.t_wb('（替换位置重叠，已跳过）'), val))
+            # A2（§25.1）：源码里**有** set_title/set_xlabel/set_ylabel、只是没带
+            # fontsize ⇒ 在参数表末尾补 `, fontsize=<值>`（不插块）。
             elif field not in covered.get(i, ()):
-                skipped.append((i, field, val))
+                _gr = _gap_apply(i, field, val, nm, _w_lo, _w_hi)
+                if _gr == 'ok':
+                    covered.setdefault(i, set()).add(field)
+                elif _gr == 'no':
+                    skipped.append((i, field, val))
         # ④ tick_params(labelsize=)：x/y 刻度字号分开写（T23，与 label 同构）。
         #   T73（零兼容）：没有 `tick_fontsize_y` 时**不写 y 侧那一行** —— 只处理
         #   `tick_fontsize`（源码里那个单一 labelsize 字面量），y 侧不填也不报。
@@ -1585,9 +1965,19 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                     skipped.append((i, _msg.t_wb('tick_fontsize_y（替换位置重叠，已跳过）'),
                                     _ty))
             else:
+                # A2（§25.1）：源码里有显式 axis='x'/'y' 的 tick_params（或
+                # set_x/yticklabels）却没带字号 ⇒ 补 labelsize=/fontsize=。
                 if _tx is not None:
-                    skipped.append((i, 'tick_fontsize', _tx))
-                skipped.append((i, 'tick_fontsize_y', _ty))
+                    _gr = _gap_apply(i, 'tick_fontsize', _tx, nm, _w_lo, _w_hi)
+                    if _gr == 'ok':
+                        covered.setdefault(i, set()).add('tick_fontsize')
+                    elif _gr == 'no':
+                        skipped.append((i, 'tick_fontsize', _tx))
+                _gr = _gap_apply(i, 'tick_fontsize_y', _ty, nm, _w_lo, _w_hi)
+                if _gr == 'ok':
+                    covered.setdefault(i, set()).add('tick_fontsize_y')
+                elif _gr == 'no':
+                    skipped.append((i, 'tick_fontsize_y', _ty))
         else:
             tf = a.get('tick_fontsize')
             if tf is not None:
@@ -1605,8 +1995,14 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                         covered.setdefault(i, set()).add('tick_fontsize')
                     else:
                         skipped.append((i, _msg.t_wb('tick_fontsize（替换位置重叠，已跳过）'), tf))
+                # A2（§25.1）：`tick_params(axis='x')` / `set_xticklabels([...])`
+                # 已经在、只是没带字号 ⇒ 补 labelsize= / fontsize=。
                 else:
-                    skipped.append((i, 'tick_fontsize', tf))
+                    _gr = _gap_apply(i, 'tick_fontsize', tf, nm, _w_lo, _w_hi)
+                    if _gr == 'ok':
+                        covered.setdefault(i, set()).add('tick_fontsize')
+                    elif _gr == 'no':
+                        skipped.append((i, 'tick_fontsize', tf))
         # ⑤ grid：ax.grid(True/False)
         g = a.get('grid')
         if g is not None:
@@ -1620,8 +2016,14 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None):
                     covered.setdefault(i, set()).add('grid')
                 else:
                     skipped.append((i, _msg.t_wb('grid（替换位置重叠，已跳过）'), g))
+            # A2（§25.1）：`ax.grid()` / `ax.grid(axis='x')` / `ax.grid(visible=?)`
+            # 已在、只是没带布尔值 ⇒ 补 True/False（有关键字时补 visible=）。
             else:
-                skipped.append((i, 'grid', g))
+                _gr = _gap_apply(i, 'grid', g, nm, _w_lo, _w_hi)
+                if _gr == 'ok':
+                    covered.setdefault(i, set()).add('grid')
+                elif _gr == 'no':
+                    skipped.append((i, 'grid', g))
         # ⑤b 轴范围 set_xlim / set_ylim（外部审阅第 2 条：这类常见写法原先完全不在
         #     覆盖里）。三种写法都认：
         #       ax.set_xlim(a, b)          → 改两个位置参数
@@ -1839,6 +2241,19 @@ def _default_proof_blocked(tree, field, val):
     """
     if _style_or_rc_write(tree):
         return True
+    # A2 前置（MAINTENANCE §25.1）：`ax.title.set_fontsize(N)` / `ax.xaxis.label
+    # .set_fontsize(N)` 把字号定在**位置参数**上，下面的 `_kw_font_conflict`（只看
+    # 关键字）看不见它们 ⇒ 默认值证明会**谎称**"源码压根没有写法、现值=默认值"。
+    # 认不出一律算冲突（fail-closed；与 `_kw_font_conflict` 同一口径：不看接收者）。
+    if field in ('title_fontsize', 'label_fontsize', 'label_fontsize_y'):
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ('set_fontsize', 'set_size')):
+                continue
+            if (val is None or not node.args or not _is_num_literal(node.args[0])
+                    or not _num_close(_lit_num(node.args[0]), val)):
+                return True
     calls = _FONT_CALLS.get(field)
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -2080,12 +2495,22 @@ def _proved_equal(tree, axis_i, field, val, var_for, idx_map, fig_index, src=Non
                     and isinstance(node.args[0].value, bool)
                     and node.args[0].value is bool(val)):
                 return True
+    # A2 前置（MAINTENANCE §25.1）：`ax.title.set_fontsize(N)` /
+    # `ax.xaxis.label.set_fontsize(N)` 这类**链式**写法同样决定该字段的现值
+    # （语料 53 处 title / 8 处 xaxis.label）。认不出它们 ⇒ 轴级归属判不出来：
+    # 等值时会被当成"源码没写法"，而下面的默认值证明还会**谎称**现值就是默认值。
+    if f in ('title_fontsize', 'label_fontsize', 'label_fontsize_y'):
+        for node in _text_fontsize_calls(tree, nm, f, 0, 10 ** 9):
+            if node.args and _is_num_literal(node.args[0]) \
+                    and _num_close(_lit_num(node.args[0]), val):
+                return True
     # ② 路径没有命中 → 试默认值证明（源码里没有相关写法时才算数）
     return _use_matplotlib_default(f, val, src, tree=tree)
 
 
 def _pos_literal_equal(tree, pos, nm, idx_map, axis_i, fig_index, is_cb=False):
-    """``pos`` 的静态等价证明（L0-2 三种形态）。返回 True = 源码现值已等于目标值。
+    """``pos`` 的静态等价证明（L0-2 三种形态 + A2 的 ``set_position``）。返回 True =
+    源码现值已等于目标值。
 
     三条取证路径（任一成立即可）：
       (a) 轴变量名已知 → 找**全文**里该变量的 ``add_axes/add_subplot`` 字面量
@@ -2200,6 +2625,22 @@ def _pos_literal_equal(tree, pos, nm, idx_map, axis_i, fig_index, is_cb=False):
     if (isinstance(axis_i, int) and 0 <= axis_i < len(_inline_nums)
             and _hit(_inline_nums[axis_i])):
         return True
+    # (f) A2 前置（MAINTENANCE §25.1）：``ax.set_position([x0, y0, w, h])`` 四字面量
+    #     （语料 8 处）。它也是"决定这条轴位置"的写法 —— 不认它，等值时会被当成
+    #     "源码里没有 pos 写法"而保守退块（白往文件里插一段 set_position）。
+    #     只在接收者可证是本轴变量（names）时采信，免得拿别的轴的字面量当本轴的现值。
+    if names:
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == 'set_position'
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in names
+                    and node.args):
+                continue
+            _nums = _seq4_nums(node.args[0])
+            if _nums is not None and _hit(_nums):
+                return True
     return False
 
 
@@ -2990,8 +3431,11 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     if figsize_in and not _fs_handled:
         warnings.append(_msg.t_wb('画布尺寸保持原样（代码里 figsize 是位置参数或没有 figsize=）；用 --style block 或手动改') )
     _overlaps: List[tuple] = []
+    _notes: List[str] = []
     in_src, covered, skipped = apply_inplace(new_src, tree, data,
-                                             overlaps=_overlaps)
+                                             overlaps=_overlaps, notes=_notes)
+    if _notes:
+        warnings.extend(_notes)
     if _overlaps:
         warnings.append(_msg.t_wb('有 %d 处替换位置重叠，已跳过以免写坏源码（同一个 figure 里同名轴变量被 add_axes 赋值多次时会出现）；涉及的位置保持原样，可用 --style block 或手动改') % len(_overlaps))
     changes = ['ax%d.%s' % (i, f) for i in sorted(covered)
@@ -3717,6 +4161,177 @@ def _name_still_bound(scope0, bind_lineno, name, positions):
     return True
 
 
+# --------------------------------------------------------------------------
+# A1（0.1.12）：fig 在**函数里**创建、`return fig` 出函数、savefig 在模块层
+#
+# 今天必拒的形态（探针）：
+#     def make_plot():
+#         fig, ax = plt.subplots()
+#         ...
+#         return fig
+#     fig = make_plot()
+#     fig.savefig('x.png')
+# 为什么拒：`_name_still_bound`（:3706）要求**每个候选锚点与名字绑定同作用域**，而旧候选
+# 锚点全在模块层（`find_anchor` / `_anchor_positions` 会把 savefig 与脚本尾都算上）⇒
+# `ax` 绑在函数里 ⇒ 证不出 ⇒ 全线拒写。
+# 这条路补的正是**锚点下沉**：候选 = 那条 `return <fig>` 之前（位置 = return 的语句节点，
+# 缩进/块替换复用 `_reindent` / `insert_or_replace`），并且**不掺**模块层候选（互斥）——
+# 互斥是这条路的**不变量**（不是优化）：只要混进一个模块层位置，"每个候选锚点同作用域"
+# 立刻不成立 ⇒ 又回到全线拒写。所以宁可不写，也不放松证明。
+# --------------------------------------------------------------------------
+# 作用域边界：这几种节点的 body 属于**别的作用域**，找"本函数的 return"时不下潜。
+_NESTED_SCOPE = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+
+def _func_anchor_text(reason, info):
+    """A1 拒绝的人读文案（zh/en 都在 messages.MESSAGES 里）。
+
+    三种形态各一条：``func_multi_return`` / ``func_called_many`` / ``func_method``。
+    ⚠ 每个 key 都**字面量**写在 ``_msg.t()`` 里 —— 不要改成查表 `t(_MAP[reason])`：
+    动态键在 t95 的消息键扫描里算"未解析调用点"，那条棘轮只减不增
+    （实测：改成查表当场多出 1 处盲点，`test_msg_key_audit` 判红）。
+    """
+    _info = info or {}
+    _func = _info.get('func') or '?'
+    _n = _info.get('n') or 0
+    if reason == FA_CALLED_MANY:
+        return _msg.t('wb_func_anchor_called_many', func=_func, n=_n)
+    if reason == FA_METHOD:
+        return _msg.t('wb_func_anchor_method', func=_func, n=_n)
+    return _msg.t('wb_func_anchor_multi_return', func=_func, n=_n)
+
+
+def _walk_own(node):
+    """遍历 node 的子树，但**不下潜**进内嵌函数/类/lambda（作用域边界）。"""
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        cur = stack.pop()
+        yield cur
+        if isinstance(cur, _NESTED_SCOPE):
+            continue
+        stack.extend(ast.iter_child_nodes(cur))
+
+
+def _own_returns(fn):
+    """函数**自己**的 return 语句（按源码序；不含内嵌函数里的 return）。"""
+    out = [n for n in _walk_own(fn) if isinstance(n, ast.Return)]
+    out.sort(key=lambda n: (n.lineno, n.col_offset))
+    return out
+
+
+def _own_output_calls(fn):
+    """函数**自己**里的 savefig/show 调用（按源码序；不含内嵌函数里的）。"""
+    out = [n for n in _walk_own(fn)
+           if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+           and n.func.attr in SAVE_ANCHORS]
+    out.sort(key=lambda n: (n.lineno, n.col_offset))
+    return out
+
+
+def _is_method_scope(fn, parents):
+    """函数是不是**类方法**（父节点是 class，或第一个位置参数写着 self/cls）。
+
+    A1 拒绝规则 c：方法里的目标写着 `self.ax`（MAINTENANCE §25.1 实测占"引擎不认识的
+    写法"≈9%）。方法可能在别的实例/别处被调用，静态证不出"这一次调用的轴就是目标轴"。
+    """
+    if isinstance(parents.get(id(fn)), ast.ClassDef):
+        return True
+    a = getattr(fn, 'args', None)
+    pos = list(getattr(a, 'posonlyargs', []) or []) + list(getattr(a, 'args', []) or [])
+    return bool(pos) and pos[0].arg in ('self', 'cls')
+
+
+def _func_call_sites(tree, name):
+    """脚本里对纯名字 `name(...)` 的调用点（按源码序）。
+
+    只认 ``ast.Name`` 调用：``p.make_plot()`` 是**方法**调用，另有拒绝规则管（FA_METHOD），
+    这里不重复统计（把两种形态混在一个计数里会让拒绝文案指错方向）。
+    """
+    out = [n for n in ast.walk(tree)
+           if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+           and n.func.id == name]
+    out.sort(key=lambda n: (n.lineno, n.col_offset))
+    return out
+
+
+def _func_return_anchor(tree, fig_var, fig_index=None):
+    """A1：把锚点**下沉**到"函数里那条 `return fig`"之前。
+
+    返回三元组 ``(anchor, reason, info)``：
+
+      * ``((kind, node), None, {...})`` —— 有候选（kind 恒为 ``'before'``，位置是那条
+        return 语句的**语句节点**，缩进由 `insert_or_replace` 按它的 col_offset 给）；
+      * ``(None, None, {})`` —— 不是这个形态（建图在模块层 / return 的不是 fig 变量 /
+        调用点不在模块层 / 函数自己就存图）⇒ **旧候选集合照旧**，行为一字不变；
+      * ``(None, reason, {'func': 名字, 'n': 调用次数})`` —— 是这个形态但**不可证**，
+        reason ∈ {FA_MULTI_RETURN, FA_CALLED_MANY, FA_METHOD}；调用方**拒写**并用
+        messages 里对应的 zh/en 文案点名原因 + 给可照做的下一步。
+
+    为什么这个锚点可证（`_name_still_bound` 的不变量一个字没放松）：`fig` / `ax` 都绑在
+    **这个函数**的作用域里，块也只落在**这个函数**里（调用方用互斥把模块层 savefig/tail
+    候选全部排掉）⇒ "每个候选锚点与名字绑定同作用域"成立，`_direct_assign_linenos` /
+    `_rebound_before` 照旧逐条验。
+    """
+    info: Dict[str, Any] = {}
+    if not fig_var or not str(fig_var).isidentifier():
+        return None, None, info          # `plt.gcf()` / `self.ax` 之类不是纯名字
+    call = _fig_call_node(tree, fig_index)
+    if call is None:
+        return None, None, info
+    scope = _node_scope(tree, getattr(call, 'lineno', 0))
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None, None, info          # 模块层建图：旧候选集合就是对的
+    if find_enclosing_loop(tree, call) is not None:
+        # 循环里建图（一次迭代一张）：交给旧的 loop_guard 口径，这条新路不掺和。
+        return None, None, info
+    parents = _parent_map(tree)
+    info = {'func': scope.name, 'n': 0}
+    if _is_method_scope(scope, parents):
+        return None, FA_METHOD, info     # c) 目标是方法（self.ax）
+    rets = _own_returns(scope)
+    body = getattr(scope, 'body', []) or []
+    # a) ≥2 条 return / 提前 return（那条唯一的 return 必须是函数体最后一条语句）
+    if len(rets) != 1 or not body or body[-1] is not rets[0]:
+        return None, FA_MULTI_RETURN, info
+    ret = rets[0]
+    val = ret.value
+    if not (isinstance(val, ast.Name) and val.id == fig_var):
+        return None, None, info          # return 的不是 fig 变量：不是本形态
+    if ret.lineno <= getattr(scope, 'lineno', 0):
+        return None, None, info          # `def f(): a = 1; return fig` 这种行内函数体
+    if any(n.lineno < ret.lineno for n in _own_output_calls(scope)):
+        # 函数自己就存图（savefig 在 return 之前）⇒ 块落到 return 之前就**晚于**那次存图，
+        # 改了也不进图（与"块必须在最后一个 savefig 之前"同一条纪律）⇒ 本形态不认。
+        return None, None, info
+    sites = _func_call_sites(tree, scope.name)
+    info['n'] = len(sites)
+    # b) 该函数被调用 ≥2 次（要求**恰好一次**模块层调用）
+    if len(sites) != 1:
+        return None, FA_CALLED_MANY, info
+    site = sites[0]
+    if find_enclosing_loop(tree, site) is not None \
+            or _node_scope(tree, site.lineno) is not tree:
+        # 调用点在循环/别的函数里：运行期到底出几张图说不清 ⇒ 不认（旧路 fail-closed）
+        return None, None, info
+    return ('before', _stmt_node(ret, parents)), None, info
+
+
+def _figsize_source_dynamic(tree, fig_index=None):
+    """源码里目标图的 ``figsize=`` 是不是**非字面量**（变量/表达式/取不到）？
+
+    只回答"是不是字面量"这一个结构问题，**不**另算一遍尺寸（§25.2 明令：不许造第二处
+    "两条路各算一遍"）。块里的 ``set_size_inches`` 会用运行期值把这种动态配置**覆盖**掉，
+    所以这时块注释里要加一句提示（见 render_block 的 ``figsize_runtime``）。
+    """
+    node = _fig_call_node(tree, fig_index)
+    if node is None:
+        return False
+    for kw in node.keywords:
+        if kw.arg == 'figsize' and kw.value is not None:
+            return _seq_lit_nums(kw.value) is None
+    return False
+
+
 def _assign_names_of(tree, call):
     """call 作为某条 Assign 右值时被赋的名字（按顺序；没有 → []）。"""
     for n in ast.walk(tree):
@@ -4205,7 +4820,7 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None):
 
 def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
                  mappable_map=None, tag=None, multi_fig=False, needed=None,
-                 targets=None, fig_target=None):
+                 targets=None, fig_target=None, figsize_runtime=False):
     """从参数数据生成纯 matplotlib 调整块文本。返回 (text, warnings)。
 
     ``needed``（T35）：``{轴序号: {字段}}`` —— **只有这些字段才写进块**。
@@ -4214,6 +4829,11 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
     旧默认是 'linear'），旧渲染器**无条件**给每个轴写 `set_xscale/set_yscale` ⇒
     源码明写 log 的轴被改成 linear（语义被改，L0 复测 E5）；反过来，当参数里
     所有字段都与源码一致时，块也不该凭空写 9-10 行（M4 的次级现象）。
+
+    ``figsize_runtime``（0.1.12 / MAINTENANCE §25.2）：源码的 `figsize=` 是**变量/表达式**
+    时为 True —— 块里的 `set_size_inches(<运行期值>)` 会在运行时把那份**动态配置覆盖掉**。
+    这里**只加一句块注释**说清这件事（提示由调用方 `_figsize_source_dynamic` 判，不另算
+    第二遍尺寸；也不新增第二条 figsize 计算路径）。
     """
     axes = _axis_items(data)
     warnings: List[str] = []
@@ -4249,6 +4869,10 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
         # 指的是"此刻的当前图"，可能根本不是目标图（T67 的 C 缺陷就是这么来的）。
         out.append('%s.set_size_inches(%s, %s)'
                    % (fig_target, _num(figsize_in[0]), _num(figsize_in[1])))
+        if figsize_runtime:
+            # §25.2：源码的 figsize 是变量/表达式 ⇒ 这一行会在**运行时**把它覆盖成
+            # 参数里的值。只说这一句（块注释），不另算尺寸、不另开一条 figsize 路径。
+            out.append(_msg.t('wb_block_figsize_runtime'))
     # 1) 位置：**逐轴按证明过的表达式**写（T70：不再用 `zip(fig.axes, ...)` 运行期下标）
     poss = [(a.get('index'), a.get('pos')) for a in axes
             if a.get('pos') is not None and _want(a.get('index'), 'pos')]
@@ -4746,6 +5370,20 @@ def writeback(script, data, params_path, verify=True, python=None,
     tag = (_msg.t('wb_block_tag', n=_fi + 1)
            if isinstance(_fi, int) and isinstance(_nf, int) and _nf > 1 else None)
     anchor = find_anchor(tree, last=(n_fig > 1 or gcf_fallback))
+    # ---- A1（0.1.12）：fig 在函数里建、`return fig` 出函数、savefig 在模块层 ----
+    # 锚点**下沉**到那条 return 之前；并且这条路**不掺**模块层 savefig/tail 候选。
+    # 互斥不是优化而是**不变量**：fig/ax 绑在函数作用域里，只要候选表里混进一个模块层
+    # 位置，`_name_still_bound` 的"每个候选锚点与名字绑定同作用域"立刻不成立 ⇒ 又回到
+    # 今天这种全线拒写。所以要么只走这条新路，要么完全走旧路（见下面的 cands/_positions）。
+    _fa_scope, _fa_reason, _fa_info = None, None, {}
+    if not gcf_fallback and n_fig == 1:
+        _fa_res = _func_return_anchor(tree, fig_var)
+        if _fa_res:                        # 被测代码/测试可能把它换成恒 None（牙齿用）
+            _fa_anchor, _fa_reason = _fa_res[0], _fa_res[1]
+            _fa_info = (_fa_res[2] if len(_fa_res) > 2 else None) or {}
+            if _fa_anchor is not None:
+                anchor = _fa_anchor
+                _fa_scope = _node_scope(tree, _fa_anchor[1].lineno)
     if anchor[0] == 'tail':
         pre_warnings.append(_msg.t('wb_no_anchor_tail'))
 
@@ -4800,12 +5438,17 @@ def writeback(script, data, params_path, verify=True, python=None,
     _needed_b = _needed_block_fields(_tree_nb, data, _src_nb,
                                      data.get('fig_index')
                                      if isinstance(data.get('fig_index'), int) else 0)
+    # A1：记下"**本来**要写哪些字段"（下面 `_refused` 清理会动 `_needed_b`）——
+    # 拒绝判据要问的是"这次到底有没有东西要落地"，不是清理后的残留。
+    _needed_b0 = {k: set(v) for k, v in _needed_b.items()}
     # ---- T70：块内只许用**静态可证的对象名**定位（T67 的 pos 防线推广到所有族）----
     # 过去块的每一行都是 `fig.axes[i].xxx()`（或 `zip(fig.axes, ...)`）—— 那是
     # **运行期列表下标**：运行期 fig.axes 还包含 cax/inset/twin/parasite 轴，静态轴数
     # 一漂，改动就落到别的轴（甚至别的图）。现在先算"目标对象有没有可证的变量名"：
     # 证得出 ⇒ 块里用那个名字；证不出 ⇒ 该字段**不写**（fail-closed），如实报 pending。
-    _positions = _anchor_positions(tree, src, data, anchor)
+    # A1：函数封装路由只认**一个**位置（那条 return 的语句节点）—— 见上面的互斥说明。
+    _positions = ([(_fa_scope, anchor[1].lineno)] if _fa_scope is not None
+                  else _anchor_positions(tree, src, data, anchor))
     _targets, _fig_target, _refused = _block_targets(
         tree, data, _fig_idx_b if isinstance(_fig_idx_b, int) else 0, _positions,
         _needed_b, fig_var)
@@ -4829,6 +5472,23 @@ def writeback(script, data, params_path, verify=True, python=None,
         pre_warnings.append(_msg.t(
             'wb_block_refused_fields',
             fields=_msg.t('items_sep').join(_refused)))
+    # ---- A1（0.1.12）：函数封装 `return fig` 的三种**不可证**形态 → 拒写块 ----------
+    # 放在 `_block_targets` 之后：pending 里既要**点名原因**（`fig.<reason>` 令牌），
+    # 也要照旧列出真正没落地的字段（apply 的"手动落实片段"按字段渲染，少了它人就没有
+    # 可复制的东西）。只在这条新路确实有东西要落地时才拒 —— "块里一个字段都不剩"时仍让
+    # 下面的 no_change / 原位 figsize 照常走（RC-8b：只有画布尺寸要改也必须能落地）。
+    if _fa_reason and (_needed_b0 or figsize_in_block):
+        _fa_txt = _func_anchor_text(_fa_reason, _fa_info)
+        _fa_pending = list(_refused) + ['fig.' + _fa_reason]
+        res.update({'reason': BEST_EFFORT, 'changes': [], 'block': None,
+                    'backup': None, 'warnings': pre_warnings + [_fa_txt],
+                    'verified': None, 'semantic': 'skipped',
+                    'applied': False, 'needs_block': True,
+                    'pending': _fa_pending,
+                    'fig_anchor': _fa_reason,
+                    'block_lines': 0, 'style': 'block', 'anchor': None,
+                    'fig_var': fig_var, 'figsize_edited': figsize_edited})
+        return res
     if not _needed_b and not figsize_in_block:
         if data.get('figsize_in'):
             # 只有画布尺寸要改（块里没有别的字段）：交给原位路径写 figsize 字面量 ——
@@ -4864,10 +5524,15 @@ def writeback(script, data, params_path, verify=True, python=None,
                     'applied': False, 'needs_block': False,
                     'block_lines': 0, 'style': 'block', 'anchor': None})
         return res
+    # §25.2：源码的 figsize 是变量/表达式时才提示"块里的 set_size_inches 会覆盖你的
+    # 动态配置"。判据只看**结构**（是不是字面量），不另算一遍尺寸。
+    _fs_runtime = bool(figsize_in_block) and _figsize_source_dynamic(
+        tree, _fig_idx_b if isinstance(_fig_idx_b, int) else 0)
     block, warnings = render_block(data, fig_var, mappables, cb_args,
                                    figsize_in_block, mappable_map, tag,
                                    multi_fig=(n_fig > 1), needed=_needed_b,
-                                   targets=_targets, fig_target=_fig_target)
+                                   targets=_targets, fig_target=_fig_target,
+                                   figsize_runtime=_fs_runtime)
     warnings = pre_warnings + warnings
     # ---- T18 自检：块表达不了的目标字段 -------------------------------------
     # 每个 pending 字段都必须能在块行里找到对应写法；找不到就不能报
@@ -4933,14 +5598,18 @@ def writeback(script, data, params_path, verify=True, python=None,
         return st if st is not None else n
 
     cands = []
-    if isinstance(fig_index, int):
-        saves = find_savefigs(tree)
-        if 0 <= fig_index < len(saves):
-            cands.append(('before', _promote(saves[fig_index])))
-    for c in (anchor, ('tail', None)):
-        c = (c[0], _promote(c[1]))
-        if _key(c) not in [_key(x) for x in cands]:
-            cands.append(c)
+    if _fa_scope is not None:
+        # A1：**只留这一个候选**（互斥；见 anchor 处的说明）—— 不掺 savefig / tail。
+        cands.append(('before', _promote(anchor[1])))
+    else:
+        if isinstance(fig_index, int):
+            saves = find_savefigs(tree)
+            if 0 <= fig_index < len(saves):
+                cands.append(('before', _promote(saves[fig_index])))
+        for c in (anchor, ('tail', None)):
+            c = (c[0], _promote(c[1]))
+            if _key(c) not in [_key(x) for x in cands]:
+                cands.append(c)
     if anchor[1] is not None:
         anchor = (anchor[0], _promote(anchor[1]))
     # T23 / 外部评审条目 3(b)：块锚点**不得落在最后一个 savefig/show 之后**。
@@ -4948,8 +5617,10 @@ def writeback(script, data, params_path, verify=True, python=None,
     # 块插在 savefig 之后时，语义比对照样通过、还报"已验证/语义一致"，但 out.png
     # 根本没变。所以：有 savefig/show 时，只有"插在最后一个 savefig/show 之前"的
     # 锚点才算合规；`('tail', None)`（脚本尾）在这种脚本里一律不合格。
+    # A1：函数封装那条路**不看**行号先后 —— 块在那条 return 之前，而 savefig 在模块层
+    # 消费这个函数的返回值，两者**不同作用域**，行号大小没有可比性（拿它过滤会误杀）。
     _last_out = max([n.lineno for n in find_savefigs(tree)], default=None)
-    if _last_out is not None:
+    if _last_out is not None and _fa_scope is None:
         cands = [c for c in cands
                  if c[1] is not None and c[1].lineno <= _last_out]
     if not cands:

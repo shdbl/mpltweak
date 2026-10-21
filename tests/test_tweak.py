@@ -866,7 +866,7 @@ finally:
 # 根因：① Tk 的 winfo_screen* 是**物理** px（逻辑屏其实 1920×1080），而引擎其余部分
 #      （fig.canvas.get_width_height() / Tk 的 <Configure> 客户区）用**逻辑** px；
 #      ② device_pixel_ratio 未映射时是 1.0（matplotlib 在 <Map> 才更新它）；
-#      ③ 钳制判据把逻辑画布比物理屏幕 ⇒ 条件恒假 ⇒ 永不恢复。
+#      ③ 钳制判据把逻辑画布比物理屏幕 -> 条件恒假 -> 永不恢复。
 # 本用例仍用**假 window**（Agg，绝不开窗）复现这条时序，不依赖真开窗。
 _TK_PHYS = (3840, 2160)           # Tk 报的物理屏（= 本机 200% 缩放下的真分辨率）
 _TK_DPR = 2.0                     # 映射后 matplotlib 读出的 device_pixel_ratio
@@ -1041,7 +1041,7 @@ plt.close(_f20d)
 #   press(673,191) → motion(-1541,842) → release(1071,550)，高度 0.45094 → 0.01411（223.7→7.0px）。
 # 最小复现（2 面板，3 事件）：A 的 y1=0.70，B 的中线 y=0.6841；按 A 的下边沿往下拖出画布外松手。
 # 机理：`_resize_frac` 先把边夹到 h=MIN_SIZE(0.02)，随后 `_snap_resize` 又把它吸到 B 的中线
-#   → h = 0.70 - 0.6841 = 0.0159 < MIN_SIZE ⇒ A 只剩 ~9.5px（本机 800px 画布）。
+#   → h = 0.70 - 0.6841 = 0.0159 < MIN_SIZE -> A 只剩 ~9.5px（本机 800px 画布）。
 # 修法：`_snap_resize(..., min_size=...)` **过滤掉会造成越界的候选线**（宁可不吸）+ 出口保险。
 _fig31 = plt.figure(figsize=(8, 6))
 _A31 = _fig31.add_axes([0.10, 0.30, 0.40, 0.40])          # y1 = 0.70
@@ -1067,7 +1067,7 @@ check('t24① 往下拖出画布外松手：A 高度 ≥ MIN_SIZE（吸附不得
       _h31 >= MIN_SIZE - 1e-9,
       'h=%.5f (%.1fpx) MIN_SIZE=%.3f' % (_h31, _h31 * _Y31, MIN_SIZE))
 # ② 单测：会造成越界的候选线必须被**跳过**（0.6800 距 B 中线 0.6841 仅 0.0041 < tol，
-#    但吸过去会让 h=0.0159 < MIN_SIZE ⇒ 宁可不吸）
+#    但吸过去会让 h=0.0159 < MIN_SIZE -> 宁可不吸）
 _b31b, _gx31b, _gy31b = _snap_resize(
     [0.10, 0.6800, 0.50, 0.70], 'bottom', [[0.60, 0.6841, 0.90, 0.8441]],
     min_size=MIN_SIZE)
@@ -1093,6 +1093,152 @@ check('t24⑤ 边界线上边吸附仍受 min_size 约束（吸到 1.0 后 h ≥
       (_b31e[3] - _b31e[1]) >= MIN_SIZE - 1e-9, 'b=%s h=%.5f' % (_b31e, _b31e[3] - _b31e[1]))
 plt.close(_fig31)
 
+# ---- 32. ★25.3 / t101：sticky drag 自愈（外部程序抢走鼠标 → button_release 丢了）----
+# 真机（用户 2026-10-14）：按住子图拖动 → 按 QQ 截图 → 框选 → 松开键，蓝框仍跟着鼠标。
+# 根因是 QQ 截图**接管鼠标**，release 事件根本没送到画布 -> 工具一直以为"还在拖"。
+# 修法：motion 报「没有任何键按着」**且**「本次手势见过按键」-> 当次 motion 内收尾（走
+# 既有 `_on_release`）；另加 `figure_leave_event` 兜底（离开画布 + 确证没键按着才收尾）。
+# 判据带**能力闸门**：后端没报过"有键按着"时一律不启用 —— 否则**离屏合成事件**
+# （不传 buttons -> 恒为空）会把"按下 → motion → 松开"整片误判成"拖完了"（见 ③）。
+import mpltweak.toolbox as _tb32
+from matplotlib.backend_bases import LocationEvent as _LE32
+
+
+def _t101_mk(tag32):
+    '小夹具：单面板图 + Tweak（重图关掉，落位当场生效，和 §28 同口径）。'
+    fig = plt.figure(figsize=(9, 6))
+    ax = fig.add_axes([0.20, 0.25, 0.40, 0.45])
+    ax.plot([0, 1], [0, 1])
+    fig.canvas.draw()
+    tw = Tweak(fig, export_path=os.path.join(
+        tempfile.gettempdir(), tag32 + '.json'), heavy=False)
+    X, Y = fig.bbox.width, fig.bbox.height
+    b = _bbox(ax)
+    return fig, ax, tw, (int(round((b[0] + b[2] / 2) * X)),
+                         int(round((b[1] + b[3] / 2) * Y)))
+
+
+def _t101_fire(tw32, name, x, y, button=None, buttons=None, ax=None):
+    '发一个事件进对应 handler；motion/press 显式给 inaxes（离屏拿不到自动命中）。'
+    canvas = tw32.fig.canvas
+    if name in ('figure_leave_event', 'figure_enter_event'):
+        ev = _LE32(name, canvas, int(x), int(y))
+    elif name == 'key_press_event':
+        raise ValueError('本段不发键盘事件')
+    else:
+        ev = _ME(name, canvas, int(x), int(y), button=button, buttons=buttons)
+        if ax is not None:
+            ev.inaxes = ax
+    if name in ('button_press_event', 'button_release_event'):
+        tw32._on_press(ev) if name == 'button_press_event' else tw32._on_release(ev)
+    elif name == 'motion_notify_event':
+        tw32._on_motion(ev)
+    else:
+        tw32._on_figure_leave(ev)
+    return ev
+
+
+_FIG32, _AX32, _TW32, (_PX32, _PY32) = _t101_mk('test_t101_heal')
+_B32_0 = _bbox(_AX32)
+_t101_fire(_TW32, 'button_press_event', _PX32, _PY32, button=1, ax=_AX32)
+check('t101① 按下 -> 进入拖动，且记下"见过按键"',
+      bool(_TW32._drag) and _TW32._btn_seen and not _TW32._btn_capable,
+      'drag=%s seen=%s capable=%s' % (_TW32._drag, _TW32._btn_seen,
+                                      _TW32._btn_capable))
+# 真机形态：拖拽中的 motion 报 buttons = frozenset({左键})
+_t101_fire(_TW32, 'motion_notify_event', _PX32 + 40, _PY32 + 20,
+           buttons=frozenset({1}), ax=_AX32)
+_B32_1 = _bbox(_AX32)
+check('t101② 带按键的 motion 照常跟手（判据不许提前收尾；能力闸门打开）',
+      bool(_TW32._drag) and _bbox(_AX32) != _B32_0 and _TW32._btn_capable,
+      'b0=%s b1=%s capable=%s' % ([round(v, 4) for v in _B32_0],
+                                  [round(v, 4) for v in _B32_1],
+                                  _TW32._btn_capable))
+# 外部程序抢走鼠标：下一个 motion 的 buttons 为空 -> 当次 motion 内收尾
+_t101_fire(_TW32, 'motion_notify_event', _PX32 + 80, _PY32 + 40, ax=_AX32)
+check('t101③ motion 报"没有键按着" -> 当次 motion 内拖动已结束（不等 release）',
+      not _TW32._drag and _TW32._ax is None and not _TW32._drag_active(),
+      'drag=%s ax=%s' % (_TW32._drag, _TW32._ax))
+check('t101④ 面板落在"键丢失那一下"之前的位置（蓝框不再跟随）',
+      _bbox(_AX32) == _B32_1,
+      'now=%s' % ([round(v, 4) for v in _bbox(_AX32)],))
+_t101_fire(_TW32, 'motion_notify_event', _PX32 + 200, _PY32 + 120, ax=_AX32)
+check('t101⑤ 收尾后继续移动，面板一个像素都不动',
+      _bbox(_AX32) == _B32_1, 'now=%s' % ([round(v, 4) for v in _bbox(_AX32)],))
+plt.close(_FIG32)
+
+# ③ 负例（守整个仓库的历史形态）：按下 + motion **不表达按键** -> 不许自愈
+_FIG32b, _AX32b, _TW32b, (_PX32b, _PY32b) = _t101_mk('test_t101_legacy')
+_B32b_0 = _bbox(_AX32b)
+_t101_fire(_TW32b, 'button_press_event', _PX32b, _PY32b, button=1, ax=_AX32b)
+_t101_fire(_TW32b, 'motion_notify_event', _PX32b + 40, _PY32b + 20, ax=_AX32b)
+check('t101⑥ 老形态 motion（不带 buttons）-> 拖动照旧（离屏合成事件不许误触发）',
+      bool(_TW32b._drag) and _bbox(_AX32b) != _B32b_0 and not _TW32b._btn_capable,
+      'drag=%s capable=%s' % (_TW32b._drag, _TW32b._btn_capable))
+_t101_fire(_TW32b, 'button_release_event', _PX32b + 40, _PY32b + 20, button=1)
+check('t101⑦ 真松手照旧收尾（自愈没抢掉正常路径）',
+      not _TW32b._drag and not _TW32b._btn_seen, 'drag=%s' % _TW32b._drag)
+plt.close(_FIG32b)
+
+# ④ 能力探针：离屏 Agg 问不出全局按键状态 -> None（判不了就不许动）
+_FIG32c, _AX32c, _TW32c, _ = _t101_mk('test_t101_probe')
+check('t101⑧ 离屏 Agg 画布 `_mouse_buttons_down` 返回 None（不瞎猜）',
+      _tb32._mouse_buttons_down(_FIG32c.canvas) is None,
+      repr(_tb32._mouse_buttons_down(_FIG32c.canvas)))
+plt.close(_FIG32c)
+
+# ⑤ leave 兜底三态：确证没键按着才收尾；还按着 / 问不出来都**不许打断**
+_orig_mbd32 = _tb32._mouse_buttons_down
+try:
+    for _val32, _want32 in ((False, False), (True, True), (None, True)):
+        _figE, _axE, _twE, (_pxE, _pyE) = _t101_mk('test_t101_leave')
+        _t101_fire(_twE, 'button_press_event', _pxE, _pyE, button=1, ax=_axE)
+        _t101_fire(_twE, 'motion_notify_event', _pxE + 30, _pyE + 15,
+                   buttons=frozenset({1}), ax=_axE)
+        _tb32._mouse_buttons_down = (lambda canvas, _v=_val32: _v)
+        _t101_fire(_twE, 'figure_leave_event', _pxE + 30, _pyE + 15)
+        check('t101⑨ 离画布兜底（查询=%r）-> %s' % (_val32, '仍挂着拖动（不打断）'
+                                                    if _want32 else '收尾'),
+              bool(_twE._drag) is _want32, 'drag=%s' % _twE._drag)
+        plt.close(_figE)
+finally:
+    _tb32._mouse_buttons_down = _orig_mbd32
+
+# ⑥ teeth：把自愈分支关掉 -> 上面 ③ 的断言必红（这里直接验"它确实没在自愈"）
+_orig_heal32 = Tweak._self_heal_drag
+Tweak._self_heal_drag = lambda self, event: False
+try:
+    _figT, _axT, _twT, (_pxT, _pyT) = _t101_mk('test_t101_teeth')
+    _t101_fire(_twT, 'button_press_event', _pxT, _pyT, button=1, ax=_axT)
+    _t101_fire(_twT, 'motion_notify_event', _pxT + 40, _pyT + 20,
+               buttons=frozenset({1}), ax=_axT)
+    _t101_fire(_twT, 'motion_notify_event', _pxT + 80, _pyT + 40, ax=_axT)
+    _still32 = bool(_twT._drag)
+    plt.close(_figT)
+finally:
+    Tweak._self_heal_drag = _orig_heal32
+check('t101⑩【有牙】关掉自愈分支 -> "当次 motion 内结束"必红（这里仍挂着拖动）',
+      _still32 is True, 'drag=%s' % _still32)
+
 print('----')
 print('FAILED: %d' % fail if fail else 'ALL PASS')
-sys.exit(1 if fail else 0)
+
+
+def test_tweak_suite():
+    """pytest 入口：本文件是**线性脚本式套件**（全部断言在模块级执行）。
+
+    为什么需要这一段（0.1.12 / t10）：``python -m pytest -q tests/test_tweak.py``
+    原先**必然 INTERNALERROR**（rc=3）—— 模块级 ``sys.exit(0)`` 在 import 期把 pytest
+    进程带走，于是 ``tools/ci_pytest_summary.py`` 那条「全量 pytest」CI 腿只要收集到
+    本文件就整体崩。现在把收尾的 ``sys.exit`` 收进 ``if __name__ == '__main__':``，
+    并补这个入口断言结论（模块级已经跑完全部检查，这里只复述 ``fail`` 的最终值）。
+
+    两种调用方式结论一致：
+      * ``python tests/test_tweak.py`` → 打印 ``ALL PASS`` / rc=0（逐条 PASS 行不变）；
+      * ``python -m pytest -q tests/test_tweak.py`` → 1 passed（收集期跑正文，测试期断言）。
+    """
+    assert fail == 0, 'test_tweak 有 %d 条 FAIL（见收集期的详细输出）' % fail
+
+
+if __name__ == '__main__':
+    sys.exit(1 if fail else 0)

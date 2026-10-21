@@ -1761,12 +1761,22 @@ print("RESULT " + "|".join([
         #    ① `for prob in ...` **逐字符**打印（实测 541 行，每行一个字符）；
         #    ② `'; '.join(_errs)` 把字符用 "; " 串起来 ⇒ JSON 里的 err 是乱码。
         #    调用侧归一成 list 后：结构警告只剩 1 行、err 是一句完整的话。
+        #    ⚠ 前置：⑤⑥ 两条子跑**写过** fig.py，而 p_toplist.json 是 setup 时建的 ——
+        #    脚本比参数新 >1s 就先命中"参数比脚本旧"守卫（reason=stale，根本进不到
+        #    validate，结构警告自然一行都没有）。这里只刷新参数文件的时间戳，让本组
+        #    专心考察"顶层非对象"这一件事（argv 与被测行为都不改）。
+        os.utime(os.path.join(_tmp23, 'p_toplist.json'), None)
         _rc, _o, _e = run('apply', 'fig.py', '--params', 'p_toplist.json',
                           '--write', env=_env23, cwd=_tmp23)
         _w7 = [l for l in _o.splitlines() if 'structure warning' in l]
         check(_rc == 2 and len(_w7) == 1,
               '§23⑧ 顶层非对象：结构警告只有 1 行（旧版逐字符打了 541 行）',
               (_rc, len(_w7)))
+        # A3（0.1.12 / §25.15）：拒写的**人读错误**必须只在 stderr，
+        # stdout 只留报告（结构警告就是报告的一部分）。
+        check(_e.strip() != '' and 'structure warning' not in _e,
+              '§23⑧ A3：拒写的人读错误只在 stderr（stdout 保留结构警告这条报告）',
+              (_e.strip().splitlines() or [''])[:2])
         _rc, _d, _o, _e = _j23('apply', 'fig.py', '--params', 'p_toplist.json',
                                '--write', '--json')
         _err7 = str((_d.get('files') or [{}])[0].get('err') or '')
@@ -1777,12 +1787,141 @@ print("RESULT " + "|".join([
     finally:
         shutil.rmtree(_tmp23, ignore_errors=True)
 
+    # ------------------------------------------------------------------
+    # §24 A3（0.1.12 / MAINTENANCE §25.15）：**人读错误走 stderr** 的输出契约。
+    #
+    # 问题：`apply` 不带 --json 时，人读错误行原先和正常报告一样走 stdout，于是
+    # `mpltweak apply foo.py > out.txt` 把错误也写进了 out.txt —— 管道/重定向没法
+    # 干净区分"数据 / 错误"（2026-10-15 用户拍的板，进 0.1.12）。
+    # 契约（边界表见 docs/exec-boundaries.md）：
+    #   * stdout = 数据/报告：成功摘要、逐处清单、预览的「会改：…」、--json 载荷；
+    #   * stderr = 人读错误：失败、回滚、拒写、参数文件坏、外部改动被跳过、验证失败
+    #     及其归因、用法/输入错误。
+    # 判据（本组钉死的就是它）：
+    #   ① 成功 / 预览：**stderr 必须为空**；
+    #   ② 失败：stderr 非空，且**没有任何一行 stderr 文本同时出现在 stdout**
+    #      （比"不含某个关键词"更狠：语言/文案改了也不会失效）；
+    #   ③ `--json`：stdout 只有 JSON（既有契约），错误码/退出码一字不变。
+    # 反向验证（teeth）：把 apply 里任一处 `_emit_err(...)` 改回 `print(...)`
+    #   ⇒ 本组②必红（stderr 里就少了那一行 / 那行跑到了 stdout）。
+    # ------------------------------------------------------------------
+    _tmp24 = tempfile.mkdtemp(prefix='mpltweak_t24_')
+    try:
+        with open(os.path.join(_tmp24, 'fig.py'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            _f.write(DEMO)
+        with open(os.path.join(_tmp24, 'p.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            json.dump({'version': _params.SCHEMA_VERSION, 'script': 'fig.py',
+                       'fig_index': 0, 'n_figs': 1,
+                       'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6]}]},
+                      _f, ensure_ascii=False)
+        with open(os.path.join(_tmp24, 'p_bad.json'), 'w', encoding='utf-8',
+                  newline='\n') as _f:
+            json.dump({'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                       'axes': []}, _f, ensure_ascii=False)
+        _env24 = {'MPLBACKEND': 'Agg', 'MPLTWEAK_LANG': 'zh',
+                  'PYTHONIOENCODING': 'utf-8'}
+        _SRC24 = os.path.join(_tmp24, 'fig.py')
+
+        def _dup24(o, e):
+            """stderr 的行有几行同时出现在 stdout（"错误行漏进 stdout"）。"""
+            _ls = {_l.strip() for _l in (e or '').splitlines() if _l.strip()}
+            _lo = {_l.strip() for _l in (o or '').splitlines() if _l.strip()}
+            return sorted(_ls & _lo)
+
+        # ① 预览：stderr 为空
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p.json',
+                          env=_env24, cwd=_tmp24)
+        check(_rc == 0 and _e == '',
+              '§24① 只读预览成功：stderr **一个字都不打**（rc=0）',
+              (_rc, repr(_e[:80])))
+        # ② 写回成功：stderr 为空
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p.json', '--write',
+                          '--verify-fast', env=_env24, cwd=_tmp24)
+        check(_rc == 0 and _e == '',
+              '§24② 写回成功：stderr **一个字都不打**（rc=0，成功摘要仍在 stdout）',
+              (_rc, repr(_e[:80])))
+        check(_o.strip() != '' and not any(_l.startswith('!!')
+                                           for _l in _o.splitlines()),
+              '§24② 写回成功的报告仍在 stdout（不是被整体搬到 stderr）',
+              _o.strip().splitlines()[-2:])
+        # ③ 输入错误（脚本不存在）：stdout 无错误行、stderr 非空
+        _rc, _o, _e = run('apply', 'nope.py', '--params', 'p.json',
+                          env=_env24, cwd=_tmp24)
+        check(_rc == 2 and _e.strip() != '' and not _dup24(_o, _e),
+              '§24③ 脚本不存在：rc=2 + 错误行只在 stderr（stdout 一行都没有）',
+              (_rc, _dup24(_o, _e), _o.strip()[:60], _e.strip()[:60]))
+        # ④ 参数文件坏（缺 version）：stdout 无错误行、stderr 非空
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p_bad.json', '--write',
+                          env=_env24, cwd=_tmp24)
+        check(_rc == 2 and _e.strip() != '' and not _dup24(_o, _e),
+              '§24④ 参数文件坏：rc=2 + 拒写/未写回两行只在 stderr，stdout 只剩报告',
+              (_rc, _dup24(_o, _e), _o.strip().splitlines()[-2:]))
+        # ⑤ 外部改动被跳过（脚本比参数新）：错误行只在 stderr
+        import time as _time24
+        _future = _time24.time() + 5
+        os.utime(_SRC24, (_future, _future))
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p.json', '--write',
+                          '--verify-fast', env=_env24, cwd=_tmp24)
+        check(_rc == 1 and _e.strip() != '' and not _dup24(_o, _e),
+              '§24⑤ 脚本在参数之后被改过（外部改动）：rc=1 + 提示只在 stderr',
+              (_rc, _dup24(_o, _e), _e.strip().splitlines()[:2]))
+        # ⑤ 把脚本时间戳推到了"未来"；⑥ 之前必须还原、并让参数文件更新，否则 ⑥ 会先
+        # 命中 stale 守卫（那测到的就不是"参数文件坏"这条出口了）。
+        _now24 = _time24.time()
+        os.utime(_SRC24, (_now24 - 1, _now24 - 1))
+        os.utime(os.path.join(_tmp24, 'p_bad.json'), None)
+        # ⑥ --json：stdout 仍是干净 JSON，错误码/退出码不变。
+        #    两条失败出口分开钉：
+        #      · 脚本不存在 → 这条出口**只**给 JSON（人读行一个字都不打，stderr 空）；
+        #      · 参数文件坏 → 人读错误行照旧要打，但必须在 **stderr**（不污染 JSON）。
+        _rc, _o, _e = run('apply', 'nope.py', '--params', 'p.json', '--json',
+                          env=_env24, cwd=_tmp24)
+        try:
+            _d24 = json.loads(_o)
+        except Exception:                                       # noqa: BLE001
+            _d24 = {}
+        check(_rc == 2 and _d24.get('ok') is False
+              and _d24.get('error_code') == 'file_not_found',
+              '§24⑥ --json 失败：stdout 只有 JSON（可解析）+ rc/error_code 一字不变',
+              (_rc, sorted(_d24)[:6], _o.strip()[:80]))
+        check(_e.strip() == '',
+              '§24⑥ 脚本不存在 --json：人读行一个字都不打（stderr 空，错因在载荷里）',
+              repr(_e[:80]))
+        _rc, _o, _e = run('apply', 'fig.py', '--params', 'p_bad.json', '--write',
+                          '--json', env=_env24, cwd=_tmp24)
+        try:
+            _d24b = json.loads(_o)
+        except Exception:                                       # noqa: BLE001
+            _d24b = {}
+        check(_rc == 2 and _d24b.get('error_code') == 'bad_params'
+              and _d24b.get('files', [{}])[0].get('reason') == 'bad_params'
+              and _e.strip() != '' and not _dup24(_o, _e),
+              '§24⑥ 参数文件坏 --json：JSON 依然可解析、人读错误只在 stderr',
+              (_rc, _d24b.get('error_code'), _e.strip().splitlines()[:2]))
+    finally:
+        shutil.rmtree(_tmp24, ignore_errors=True)
+
     print()
     if _fails:
         print('FAILED: %d 项 -> %s' % (len(_fails), _fails))
         return 1
     print('ALL PASS')
     return 0
+
+
+def test_agent_api_suite():
+    """pytest 入口：本文件是**脚本式套件**（§1 … §24 全在 ``main()`` 里）。
+
+    为什么需要这一行：``python -m pytest -q tests/test_agent_api.py`` 对本文件
+    **一个用例都收集不到**（rc=5 "no tests ran"），于是 CI 里跑 ``pytest tests/``
+    时这条 1000+ 行、覆盖 agent 契约的套件等于**没接进 pytest**（只有
+    ``tests/test_suites.py`` 的逐套件子进程表会跑到它）。这里补一个薄入口，
+    断言与 ``python tests/test_agent_api.py`` 是同一套结论（``main()`` 返回 0 即
+    ALL PASS）。模块级只有定义与常量，没有在 import 时执行任何用例。
+    """
+    assert main() == 0
 
 
 if __name__ == '__main__':
