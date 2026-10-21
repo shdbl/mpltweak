@@ -1126,7 +1126,11 @@ def _t101_fire(tw32, name, x, y, button=None, buttons=None, ax=None):
     elif name == 'key_press_event':
         raise ValueError('本段不发键盘事件')
     else:
-        ev = _ME(name, canvas, int(x), int(y), button=button, buttons=buttons)
+        # mpl 3.9.x 的 MouseEvent.__init__ 没有 buttons 形参（3.10 才有），
+        # 先按老签名构造、再补属性 —— 两版语义一致（3.10 里它也是普通属性）。
+        ev = _ME(name, canvas, int(x), int(y), button=button)
+        if buttons is not None:
+            ev.buttons = buttons
         if ax is not None:
             ev.inaxes = ax
     if name in ('button_press_event', 'button_release_event'):

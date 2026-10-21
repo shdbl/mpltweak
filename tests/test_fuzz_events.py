@@ -185,8 +185,11 @@ def send(canvas, name, x=None, y=None, button=None, key=None, buttons=None):
             canvas._key = key or None
         except AttributeError:
             pass
-        ev = MouseEvent(name, canvas, x, y, button=button, key=(key or None),
-                        buttons=buttons)
+        ev = MouseEvent(name, canvas, x, y, button=button, key=(key or None))
+        if buttons is not None:
+            # mpl 3.9.x 的 MouseEvent.__init__ 没有 buttons 形参（3.10 才有）；
+            # 属性本身两版都有，构造后补赋值，语义与 3.10 传参一致。
+            ev.buttons = buttons
     canvas.callbacks.process(name, ev)
     return ev
 
