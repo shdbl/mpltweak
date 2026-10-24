@@ -28,17 +28,27 @@
   **没有机械可证的办法**（同一段、同一句、甚至同一口气都可能指别的文件），所以判据只认
   一行之内这个**可指证的证据**：宁可少判（记提示），也不误报（记可疑）。
 * **(b) 符号锚**：文档可以写 `` `writeback.py:2255 # _prune_backups` ``。
-  工具在目标行 **±`--anchor-window`（默认 3）** 行内搜这个符号，搜不到就报
+  工具在目标行 **±`--anchor-window`（默认 0 = 只认被引的那一行）** 里搜这个符号，搜不到就报
   `symbol_mismatch`，并把**最近一次出现的行号**打出来（人一眼能看出漂了多少）。
-  窗口刻意**小**：窗口越大越迟钝，`+5` 这种漂移必须被咬到。符号按**子串**匹配
+  窗口默认 **0**（§28-A1，2026-10-24）而不是 3：±3 那个默认让 **1~3 行的小位移看不见**
+  —— 本批 `−1` 瞬时树就是实证（8 条恰好落空行才报红，其余 ~90 条静默差 1 行）；
+  窗口越大越迟钝，`+1` 这种漂移也必须被咬到。需要放宽就显式给 `--anchor-window N`
+  （**别改默认值**；`--self-test` 方向 10 会咬住默认值）。符号按**子串**匹配
   （`_prune_backups` / `Fig.savefig` 这种带点的名字都按原样搜），不做正则解释。
+
+  **纯注释行不承重**（§28-A2，2026-10-24）：匹配与"最近出现"两个环节都跳过真注释行 ——
+  一行横幅注释里满是符号名，锚指向它等于"引用了一句注释"，代码挪走后注释一动不动，
+  闸门绿着而引用早失效。判"真注释"用 `tokenize` 的 `COMMENT` token（不是 `#` 前缀）：
+  **docstring / 多行字符串里以 `#` 开头的行不是注释**，照样承重（现役就有一条：
+  `docs/verify.md:75` 的 `writeback.py:3108 # first` 落在 docstring 正文里）。行尾注释
+  （`x = 1  # sym`）所在的那一行仍算代码行、仍承重。
 * **(c) 豁免口径（三张表，逐条带理由，键都不含文档行号）**：
 
   | 表 | 语义 | 命中时 | 豁免范围 |
   |---|---|---|---|
   | `HISTORICAL_ALLOW` | **历史留痕**：`MAINTENANCE.md` 是日志型手册，记的是当时现场 | 打印「放行」、不计可疑 | 任何 `why`（它说的就是"当时对、现在不对"） |
-  | `KNOWN_DRIFT` | **已知漂移·待文档侧修**（带 owner + 为什么本批不能改） | 打印「待修」、不计可疑；条目消失会提示删掉 | 任何 `why`（同上） |
-  | `UNANCHORED_ALLOW` | **未锚基线**：加锚之前的存量引用，冻结（只准缩小） | 打印「未锚（冻结）」、不计可疑 | **只有 `anchor_missing`** |
+  | `KNOWN_DRIFT` | **已知漂移·待文档侧修**（带 owner + 为什么本批不能改） | 打印「待修」、不计可疑；条目失效会见「空转键」一节 | 任何 `why`（同上） |
+  | `UNANCHORED_ALLOW` | **未锚基线**：加锚之前的存量引用，冻结（只准缩小） | 打印「未锚（冻结）」、不计可疑；条目失效会提示删掉 | **只有 `anchor_missing`** |
 
   **最后一列是判据的一部分，不是注释**（t14 修）：冻结表登记的是"这条引用可以不**锚**"，
   不是"这条引用可以指错地方"。旧实现"先查表、后看 why" ⇒ 冻结条目即使已经指到空行 / 越界 /
@@ -50,6 +60,13 @@
   三张表的键都是 `(文档相对路径, 引用串)` —— **刻意不含"文档第几行"**（文档行号会漂，
   与 `tests/test_docs.py` 的 `TEST_EVIDENCE_BASELINE` / `TABLE_COLS_BASELINE` 同纪律）。
   棘轮语义同 `AMBIG_BASELINE`：**新增即红**，**消失请删条目**（会打印"请删掉"）。
+
+  **空转键（§28-A3，2026-10-24）**：三张表都会算"这条账现在还顶不顶用"，结果进
+  `scan()['stale_keys']`（`--json` 同名），人类输出里单列一节。两种原因 ——
+  `missing`：这条引用在文档里已经不存在（真该删）；`idle`：引用还在、但**这条豁免此刻没被用到**
+  （可能是问题修好了账该销，也可能只是暂时没再漂）。判定只对**本面扫到的文档**做（默认面不扫
+  `MAINTENANCE.md`，而历史留痕的键全在它上面 —— 不区分就会把 9 条健康账报成"请删"）。
+  **只提示、不影响 rc**：账没销不该挡发布，否则判据会被人骂着放宽。
   「哪些引用可以不锚」还有**第一层**、按**整份文档**给（同样不带行号、逐份带理由）：
 
   | 文档 | 理由 |
@@ -111,9 +128,9 @@
 
     python tools/check_doc_refs.py                    # 默认扫 docs/** + README*.md + skills/**
     python tools/check_doc_refs.py --with-maintenance # 追加 MAINTENANCE.md（未入库，默认不扫）
-    python tools/check_doc_refs.py --self-test        # 自带自测（9 个方向）
+    python tools/check_doc_refs.py --self-test        # 自带自测（10 个方向）
     python tools/check_doc_refs.py --self-test --break bare   # 反向验证
-    python tools/check_doc_refs.py --anchor-window 5  # 改符号锚窗口（默认 3）
+    python tools/check_doc_refs.py --anchor-window 2  # 放宽符号锚窗口（默认 0 = 只认被引那一行）
     python tools/check_doc_refs.py --json             # 机器可读
     python tools/check_doc_refs.py --root DIR         # 扫别的目录（人工夹具 / 复现）
 
@@ -141,6 +158,7 @@ import re
 import shutil
 import sys
 import tempfile
+import tokenize
 
 ROOT_DEFAULT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_INCLUDES = ('docs/**/*.md', 'README*.md', 'skills/**/*.md')
@@ -160,11 +178,12 @@ PY_TOKEN_RE = re.compile(r'[A-Za-z0-9_./\\-]+\.py')
 # 符号必须是 ASCII 标识符形态（可带点）—— 这样正文里 `# 注释` 这类中文不会被当成锚。
 ANCHOR_RE = re.compile(r'\s*[`\'"]?\s*#\s*[`]?(?P<sym>[A-Za-z_][A-Za-z0-9_.]*)')
 
-# 符号锚窗口（§25.4b）：`±N` 行内搜不到就算指错。**刻意小**：
-#   * t72 实测漂 +5~+13 ⇒ N=3 时 `+5` 一定咬得到；
-#   * N 越大越迟钝，也越容易把"指错函数但恰好相邻"放过；
-#   * 需要更宽时用 `--anchor-window`，别改默认值。
-ANCHOR_WINDOW = 3
+# 符号锚窗口（§25.4b）：`±N` 行内搜不到就算指错。**默认 0 = 只认被引的那一行**（§28-A1）：
+#   * 0.1.13 的默认是 3，代价是**1~3 行的小位移看不见** —— 0.1.14 施工中那棵 `−1` 瞬时树
+#     实测：只有恰好落空行的 8 条报红，其余 ~90 条静默差 1 行（`+5~+13` 那种大漂移才看得见）；
+#   * 归零后"写在哪行就必须在那行"是**可机械判定**的，`+1` 也咬得到；
+#   * 需要更宽时用 `--anchor-window N`，**别改默认值**（`--self-test` 方向 10 咬默认值）。
+ANCHOR_WINDOW = 0
 
 # 不索引的目录（构建产物 / 缓存）与"裸 basename 的首选解析位置"（t103）。
 # `build/` 是 `.gitignore:5` 忽略的**陈旧构建副本**；发布流程先 build wheel 再跑闸门 ⇒
@@ -178,30 +197,23 @@ SRC_PKG = os.path.join('src', 'mpltweak')
 # 这些行号一旦被"改对"就等于篡改历史（MAINTENANCE 是日志型手册）；现行行号见各节正文与 ★ 段。
 # **只准缩小**（t103 缩小记录）：`('MAINTENANCE.md', 'writeback.py:4432')` 曾在本表里 —— 那是
 # 闸门解析到旧 `build/` 副本时的产物（该副本那行是空行）；修解析后它命中 `src/mpltweak/writeback.py`
-# 的非空行 ⇒ 不再可疑，条目已删。表里现存 **9 键 / 11 条被放行引用**（`verify.py:1061` 与
-# `writeback.py:2888` 各两处同引）。
+# 的非空行 ⇒ 不再可疑，条目已删。
+# **本表（以及另外两张豁免表）有几条、本面扫到几条、本面真生效几条，一律由闸门现算**：
+# 人类输出摘要行 + `--json` 的 `counts.tables` 字段；**这里的注释刻意不写任何数字**（§28-A4）——
+# 旧注释曾写死一个手写计数，但随着条目增删早就少算了（每多一条"一处键、两行引用"就再漂一次），
+# 而且没有任何东西会因为数字错而变红。teeth51 现在咬住这条纪律：表头注释里出现手写计数即红。
 HISTORICAL_ALLOW = {
-    ('MAINTENANCE.md', 'toolbox.py:2070-2072'):
-        '§13.1（2026-10-12）实机 bug 的**修复前现场**记录',
-    ('MAINTENANCE.md', 'launch.py:359'):
-        '§12.1（2026-10-12）文档去重时的现场行号',
-    ('MAINTENANCE.md', 'src/mpltweak/launch.py:760'):
-        '§14.2 第 1 条的**原判据**（当时现场；现行行号见该条 ★ 段）',
-    ('MAINTENANCE.md', 'verify.py:1061'):
-        '§14.2 第 2 条 ★ 纠偏段 / §20.1 交接清单的当时行号（两处同引；现行见 `verify.py` 的 `_child_env`）',
-    ('MAINTENANCE.md', 'apply.py:363'):
-        '§14.2 第 5 条的**原判据**（当时现场）',
-    ('MAINTENANCE.md', 'toolbox.py:1232'):
-        '§14.2 第 5 条的**原判据**（当时现场）',
-    ('MAINTENANCE.md', 'launch.py:760'):
-        '§14.2 第 7 条的**原判据**（当时现场）',
-    ('MAINTENANCE.md', 'launch.py:74-81'):
-        '§20.1（2026-10-13 交接清单）的当时行号',
-    ('MAINTENANCE.md', 'writeback.py:2888'):
-        '§20.1 清单里的历史现场（该节自注原文："下面每条引用的行号是当时的现场值……'
-        '本节作为历史记录保留，不改写原数字"，并自带"`writeback.py:2888` → `:2694`"的现役值）；'
-        '被 t17 的 +12 位移（2026-10-22 00:11 那棵树）挤成空行 ⇒ 按历史留痕放行；'
-        '改数字等于篡改现场',
+    # ---- §20.1 交接清单（该节自注："下面每条引用的行号是当时的现场值……本节作为历史记录
+    # 保留，不改写原数字"）。这三条现在落在空行/错符号上，按历史留痕放行；现役值见 §14.2。
+    ('MAINTENANCE.md', 'verify.py:829'):
+        '§20.1 清单的当时行号（空行）；现役见 §14.2② 的 `verify.py:863`（`_collect_session` 里真钉 Agg 那行）',
+    ('MAINTENANCE.md', 'verify.py:1436'):
+        '§20.1 清单的当时行号；现役见 §14.2② 的 `verify.py:1426 def verify_semantic`',
+    ('MAINTENANCE.md', 'writeback.py:5412'):
+        '§20.1 第 5 条的当时行号；现役见 §14.2⑤ 与 `docs/exec-boundaries.md` 的 `writeback.py:5473`',
+    # ---- §25.2 dpi 判据：原文自己写明"已随 0.1.13 的重写失效，别再照着找"，属当时现场。
+    ('MAINTENANCE.md', 'writeback.py:452-483'):
+        '§25.2 记的 0.1.12 现场（原文自注"已随 0.1.13 的重写失效，别再照着找"）；现役见同段的 `writeback.py:721/803/655`',
 }
 
 # 「哪些引用可以不锚」（§25.4c）的第一层：**整份文档**层面（逐份带理由）。
@@ -223,20 +235,21 @@ ANCHOR_FREE_DOCS = {
 # **t13（0.1.13 文档批）缩小记录 39 → 6**：默认面 48 条引用里原本 39 条登记在这里；按最终代码
 # 重算行号时**行号与符号锚一次性落地**（改号那一刻新引用串不在本表里，必须先补锚，否则默认面
 # 立刻 `anchor_missing` 变红 —— t14 提醒的顺序坑），于是 33 条退役。剩下 6 条不是"懒得锚"，
-# 而是**锚不出可区分符号**：argparse 注册行只有通用的 `add_argument`（±3 行内到处都是 ⇒ 锚会
-# 退化成装饰），`tests/sandbox/*` 是测试夹具、没有产品符号。
+# 而是**锚不出可区分符号**：argparse 注册行只有通用的 `add_argument`（每行都有 ⇒ 锚了也验不出
+# 位移，纯装饰），`tests/sandbox/*` 是测试夹具、没有产品符号。
 _FIXTURE = '指向 tests/sandbox/* 测试夹具（非产品源码），没有稳定的产品符号可锚'
 _NO_SYM = '该行是 argparse 注册行 / 没有可区分符号（唯一能锚的是通用 `add_argument`，会退化成装饰性锚）⇒ 改由人工过目'
 UNANCHORED_ALLOW = {
-    # docs/exec-boundaries.md —— `--dry-run` 注册行
-    ('docs/exec-boundaries.md', 'apply.py:744-746'): _NO_SYM,
-    # docs/reliability.md —— 测试夹具
+    # 只剩测试夹具两条。**四条 argparse 注册行引用已于 0.1.14（B3）退役** ——
+    # 处理方式不是"给 add_argument 补锚"（`add_argument` 每行都有 ⇒ 锚会退化成装饰），
+    # 而是把 docs 里那 4 处改成「文件 + 选项名」的描述式引用（不带行号）：
+    #   `--dry-run` 注册点、以及 `--lang` 的三处注册。
+    # 为什么更可靠（有实证）：退役前三处的行号**全是旧号且无人察觉**
+    #   （`apply.py:754` 实为 839、`check.py:570` 实为 601、`apply.py:744-746` 实为 827），
+    #   因为挂在"未锚（冻结）"上 ⇒ 闸门从不检查它们；描述式配一条 `grep -n "'--lang'"`
+    #   反而**可当场复核**，行号只会静静烂掉。
     ('docs/reliability.md', 'tests/sandbox/sandbox_env.py:52'): _FIXTURE,
     ('docs/reliability.md', 'tests/sandbox/sitecustomize.py:42'): _FIXTURE,
-    # skills/mpltweak/SKILL.md —— 三个 `--lang` 注册行
-    ('skills/mpltweak/SKILL.md', 'apply.py:754'): _NO_SYM,
-    ('skills/mpltweak/SKILL.md', 'check.py:570'): _NO_SYM,
-    ('skills/mpltweak/SKILL.md', 'describe.py:110'): _NO_SYM,
 }
 
 # 已知漂移·待文档侧修：`(文档相对路径, 引用串)` → `owner + 为什么本批不能修`。
@@ -411,8 +424,42 @@ def _iter_refs(line, allow_bare=True):
     return out
 
 
+def _comment_lines(lines):
+    """哪些行是**纯注释行**（1-based 行号集合）：该行首个非空字符落在 `tokenize` 的 COMMENT token 上。
+
+    §28-A2（2026-10-24）：**纯注释行不承重**。理由不是洁癖 —— 一行横幅注释
+    （`# ---- prune_backups 相关 ----`）里满是符号名，锚指向它等于"引用了注释里的一句话"，
+    代码真挪走时它一动不动 ⇒ 闸门绿着而引用早失效。行尾注释（`x = 1  # sym`）**不算**：
+    那一行本身是代码，符号出现在哪儿不影响"这行是那句代码"。
+
+    为什么用 `tokenize` 而不是 `l.strip().startswith('#')`：docstring / 多行字符串里可能有以
+    `#` 开头的行（reST 的 `# ` 小标题、`>>> # 输出`），按前缀一刀切会连**字符串里的承重锚**
+    一起排掉。tokenize 只认真正的 COMMENT token，字符串内的 `#` 一律不算 —— docstring 因此
+    **不受影响**（§28-A2 的"docstring 例外"就是这个意思：不是特批，而是它本来就不是注释）。
+
+    解析不了（语法怪 / 半截文件 / 编码异常）⇒ 退回前缀法，**宁严勿松**：宁可把注释当符号，
+    也不放过"引用了一行注释"。
+    """
+    text = '\n'.join(lines) + '\n'
+    out = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type != tokenize.COMMENT:
+                continue
+            row, col = tok.start
+            src = lines[row - 1] if 0 <= row - 1 < len(lines) else ''
+            if not src[:col].strip():        # `#` 前面只有空白 ⇒ 整行是注释
+                out.add(row)
+    except Exception:
+        out = set(i for i, l in enumerate(lines, 1) if (l or '').lstrip().startswith('#'))
+    return out
+
+
 def _symbol_where(lines, sym, line_no, window):
     """符号锚判定 → `('', 命中行)` / `('out_of_window', 最近出现行)` / `('not_found', None)`。
+
+    **两个环节都跳过纯注释行**（§28-A2）：① 窗口内匹配；② 窗口外"最近出现"的定位。只排 ①
+    的话，提示会变成"最近出现于第 5 行"，而第 5 行是一行横幅注释 —— 人照着去锚就锚到注释上。
 
     窗口外时报的是**离被引行最近**的那一处（`min(..., key=|h - line_no|)`），不是"文件里第一处"。
     为什么（t16 现场）：`docs/verify.md:76` 的锚 `oldest_backup` 在 `revert.py` 出现于
@@ -420,14 +467,24 @@ def _symbol_where(lines, sym, line_no, window):
     `hits[0]` ⇒ 报"最近出现于第 58 行"，而实际只差 1 行（163）—— 文案说"最近"却给了最远的那个，
     人一眼看过去会以为差了 104 行，把"补锚还是改号"的判断带偏。**只影响提示文字，不影响判定**：
     走不走 `symbol_mismatch` 只看「窗口内有没有」，这段代码在"窗口内没有"之后才执行。
+    （那一处锚在 §28-A1 已换成同偏移的 `# args.first`；上面记的 `oldest_backup` 是 t16 的
+    历史现场，别拿它当"现在文档里写着什么"。）
+
+    **docstring 不排**（§28-A2 的"例外"不是特批，是它本来就不是注释）：现役就有一条承重锚
+    落在 docstring 里 —— `docs/verify.md:75` 的 `writeback.py:3108 # first`，命中的那一行是
+    docstring 正文（"……却仍报 `first: true`。"），一刀切按 `#` 前缀/按字符串排都会把它判红。
     """
     if not lines:
         return 'not_found', None
+    skip = _comment_lines(lines)
     lo, hi = max(1, line_no - window), min(len(lines), line_no + window)
     for i in range(lo, hi + 1):
+        if i in skip:
+            continue
         if sym in (lines[i - 1] or ''):
             return '', i
-    hits = [i for i, l in enumerate(lines, 1) if sym in (l or '')]
+    hits = [i for i, l in enumerate(lines, 1)
+            if i not in skip and sym in (l or '')]
     if hits:
         return 'out_of_window', min(hits, key=lambda h: abs(h - line_no))
     return 'not_found', None
@@ -527,7 +584,57 @@ def scan(root, patterns, allow_bare=True, anchor_window=ANCHOR_WINDOW,
                     continue
                 items.append(rec)
     used = {(r['doc'], r['ref']) for r in items}
-    stale = sorted(set(unanch_t) - used)
+    _docs = sorted({r['doc'] for r in items} | {s['doc'] for s in skipped})
+    # 哪张表**真的用上了**（§28-A3）：只统计"被豁免"的条目 —— 引用还在、但这条引用当前
+    # 根本不需要豁免，账挂着就是空转（问题修好了账还挂着 ⇒ 以后同类新问题会被旧账吞掉）。
+    _hit = {}
+    for r in items:
+        if r['exempt']:
+            _hit.setdefault(r['exempt'], set()).add((r['doc'], r['ref']))
+
+    def _stale(table, label, kind):
+        """空转键：① `missing` = 引用在仓库里已不存在；② `idle` = 引用还在但没被这条豁免用到。
+
+        **本次没扫到的文档不算空转**（`unscanned`）：例如默认面不扫 `MAINTENANCE.md`，而历史留痕
+        表的键全在它上面 —— 报成"引用已不存在（请删条目）"就是纯误导。这类只能交给人：换个面再跑。
+        """
+        out, skipped_tables = [], []
+        for (doc, ref) in sorted(table):
+            if doc not in _docs:
+                skipped_tables.append({'table': label, 'doc': doc, 'ref': ref})
+                continue
+            if (doc, ref) not in used:
+                out.append({'table': label, 'doc': doc, 'ref': ref, 'reason': 'missing'})
+            elif (doc, ref) not in _hit.get(kind, set()):
+                out.append({'table': label, 'doc': doc, 'ref': ref, 'reason': 'idle'})
+        return out, skipped_tables
+
+    stale = sorted(set(unanch_t) - used)          # 向后兼容：仍只指 UNANCHORED_ALLOW 的"引用消失"
+    stale_keys, stale_unscanned = [], []
+    for _t, _l, _k in ((hist_t, 'HISTORICAL_ALLOW', 'allowed'),
+                       (drift_t, 'KNOWN_DRIFT', 'drift'),
+                       (unanch_t, 'UNANCHORED_ALLOW', 'unanchored')):
+        _o, _s = _stale(_t, _l, _k)
+        stale_keys += _o
+        stale_unscanned += _s
+
+    def _tbl(table, kind):
+        """一张表的三个人数（§28-A4：**所有计数都由这里算**，任何人都不许再手写数字）。"""
+        return {'keys': len(table),                                     # 表里一共几条
+                'in_scan': len(set(table) & used),                      # 本面扫到的几条
+                'exercised': len(_hit.get(kind, ()))}                   # 本面真被豁免用到的几条
+
+    counts = {
+        'refs': len(items),
+        'suspicious': len(susp),
+        'anchored': len([r for r in items if r['anchor'] and not r['why']]),
+        'skipped_bare': len(skipped),
+        'tables': {'HISTORICAL_ALLOW': _tbl(hist_t, 'allowed'),
+                   'KNOWN_DRIFT': _tbl(drift_t, 'drift'),
+                   'UNANCHORED_ALLOW': _tbl(unanch_t, 'unanchored')},
+        'stale_keys': len(stale_keys),
+        'stale_unscanned': len(stale_unscanned),
+    }
     return {
         'items': items,
         'suspicious': susp,
@@ -535,8 +642,12 @@ def scan(root, patterns, allow_bare=True, anchor_window=ANCHOR_WINDOW,
         'drift': [(k, v) for k, v in drift_t.items() if k in used],
         'unanchored': sorted(k for k in unanch_t if k in used),
         'stale': stale,
+        'stale_keys': stale_keys,
+        'stale_unscanned': stale_unscanned,
+        'exercised': dict((k, sorted(v)) for k, v in _hit.items()),
+        'counts': counts,
         'skipped_bare': skipped,
-        'docs': sorted({r['doc'] for r in items} | {s['doc'] for s in skipped}),
+        'docs': _docs,
     }
 
 
@@ -576,8 +687,6 @@ def _detail(r):
 
 def render(res, root, patterns, out=None):
     out = out or sys.stdout
-    n_unanch = len(res['unanchored'])
-    n_anchor = len([r for r in res['items'] if r['anchor'] and not r['why']])
     print('文档引用检查（只报告）：root=%s' % root, file=out)
     print('扫描面：%s' % '、'.join(patterns), file=out)
     print('', file=out)
@@ -585,10 +694,41 @@ def render(res, root, patterns, out=None):
         print('%s%s:%d | %s | %s' % (_mark(r), r['doc'], r['doc_line'], r['ref'],
                                      _detail(r)), file=out)
     print('', file=out)
-    print('引用条数=%d 可疑=%d 放行(历史留痕)=%d 放行(已知漂移·待修)=%d '
-          '未锚(冻结)=%d 带符号锚=%d 裸引用未继承(只提示)=%d'
-          % (len(res['items']), len(res['suspicious']), len(res['allowed']),
-             len(res['drift']), n_unanch, n_anchor, len(res['skipped_bare'])), file=out)
+    print('引用条数=%d 可疑=%d 带符号锚=%d 裸引用未继承(只提示)=%d'
+          % (len(res['items']), len(res['suspicious']),
+             res['counts']['anchored'], len(res['skipped_bare'])), file=out)
+    # §28-A4：豁免表的人数**一律由 scan() 现算**，不手写、也不单列一个会被误读的数字。
+    # 「表内 9 / 本面生效 0」把"账挂着"和"真在放行"分得清清楚楚（旧写法「放行(历史留痕)=9」
+    # 在 `exempt` 生效数为 0 时仍显示 9，属"尺子报假绿灯"，2026-10-24 船长裁示改掉）。
+    _t = res['counts']['tables']
+    print('豁免表人数（表内 / 本面扫到 / 本面真生效）：历史留痕 %d/%d/%d ｜ 已知漂移 %d/%d/%d ｜ '
+          '未锚冻结 %d/%d/%d'
+          % (_t['HISTORICAL_ALLOW']['keys'], _t['HISTORICAL_ALLOW']['in_scan'],
+             _t['HISTORICAL_ALLOW']['exercised'],
+             _t['KNOWN_DRIFT']['keys'], _t['KNOWN_DRIFT']['in_scan'],
+             _t['KNOWN_DRIFT']['exercised'],
+             _t['UNANCHORED_ALLOW']['keys'], _t['UNANCHORED_ALLOW']['in_scan'],
+             _t['UNANCHORED_ALLOW']['exercised']), file=out)
+    _idle = [k for k in res.get('stale_keys') or []
+             if k['table'] != 'UNANCHORED_ALLOW']
+    _unsc = res.get('stale_unscanned') or []
+    if _idle:
+        print('', file=out)
+        print('空转键（历史留痕 / 已知漂移两张表里还挂着、但已经用不上；'
+              '**只提示、不影响 rc**）：', file=out)
+        for k in _idle:
+            print('  [S] %s | %s | %s —— %s'
+                  % (k['table'], k['doc'], k['ref'],
+                     '引用已不存在（文档里已没有这条引用 → 建议删条目）'
+                     if k['reason'] == 'missing'
+                     else '引用还在、但这条豁免此刻没被用到'
+                          '（账可能该销；也可能只是暂时没再漂）'), file=out)
+    else:
+        print('空转键：无（历史留痕 / 已知漂移两张表里、本面扫到的条目都还在被命中）', file=out)
+    if _unsc:
+        print('      另有 %d 条豁免条目的文档**本面没扫**（例如 MAINTENANCE.md 只在 '
+              '--with-maintenance 面出现），不计空转：%s'
+              % (len(_unsc), '、'.join(sorted({k['doc'] for k in _unsc}))), file=out)
     _free = [(d, w) for d, w in ANCHOR_FREE_DOCS.items() if d in res['docs']]
     if _free:
         print('', file=out)
@@ -604,8 +744,12 @@ def render(res, root, patterns, out=None):
     if res['allowed']:
         print('', file=out)
         print('放行（历史留痕 · 当时现场；逐条带理由，不计入可疑）：', file=out)
+        _used_hist = set(tuple(k) for k in (res.get('exercised') or {}).get('allowed', []))
         for (doc, ref), why in res['allowed']:
-            print('  [~] %s | %s —— %s' % (doc, ref, why), file=out)
+            # §28-A3：这条账**本面有没有真的用上**。没用上还挂在表里 = 空转键（见下面那一节）。
+            print('  [~] %s | %s —— %s%s'
+                  % (doc, ref, why,
+                     '' if (doc, ref) in _used_hist else '（**本面没被用到**）'), file=out)
     if res['stale']:
         print('', file=out)
         print('提示：下列未锚基线条目在仓库里已不存在（该引用已消失或已补上锚）'
@@ -628,12 +772,21 @@ def render(res, root, patterns, out=None):
               '"文档想指的那段代码现在在哪"，本工具不改任何文件。', file=out)
     else:
         print('', file=out)
+        # §28-A4：这里也不许再出现"历史留痕放行 N 条"这种会被误读的数字 —— 数字可能为 0。
+        _cnt = res['counts']['tables']
+        _extra = []
+        if res['drift']:
+            _extra.append('%d 条已知漂移待文档侧修（本面真生效 %d）'
+                          % (_cnt['KNOWN_DRIFT']['in_scan'],
+                             _cnt['KNOWN_DRIFT']['exercised']))
+        if res['allowed']:
+            _extra.append('历史留痕表内 %d 条、本面真生效 %d'
+                          % (_cnt['HISTORICAL_ALLOW']['keys'],
+                             _cnt['HISTORICAL_ALLOW']['exercised']))
         print('[OK] 没有可疑引用%s。注意：判据仍只覆盖"解析不到 / 越界 / 空行 / 符号锚不符"，'
               '%d 条未锚引用（冻结基线）与人工过目仍是必需的。'
-              % (('（另：%d 条已知漂移待文档侧修、%d 条历史留痕放行）'
-                  % (len(res['drift']), len(res['allowed']))
-                  if (res['drift'] or res['allowed']) else ''),
-                 n_unanch), file=out)
+              % (('（另：%s）' % '、'.join(_extra)) if _extra else '',
+                 _cnt['UNANCHORED_ALLOW']['keys']), file=out)
     return 1 if res['suspicious'] else 0
 
 
@@ -656,11 +809,15 @@ _WB_FIXTURE = (''.join('line%d\n' % i for i in range(1, 10))
 
 
 def _self_test(break_mode='', out=None):
-    """9 个方向的自带自测（§25.5 + t14）。返回 rc：0 = 全过；1 = 有方向 FAIL。"""
+    """12 个方向的自带自测（§25.5 + t14 + §28-A1 窗口 / §28-A2 注释 / §28-A3 空转键）。
+
+    返回 rc：0 = 全过；1 = 有方向 FAIL。
+    """
     out = out or sys.stdout
     broken = set()
     if break_mode:
-        broken = ({'bare', 'anchor', 'window', 'allow', 'herit', 'exempt', 'resolve'}
+        broken = ({'bare', 'anchor', 'window', 'allow', 'herit', 'exempt', 'resolve',
+                   'comment'}
                   if break_mode == 'all' else {break_mode})
     base = tempfile.mkdtemp(prefix='mpltweak_docrefs_selftest_')
     try:
@@ -713,16 +870,21 @@ def _self_test(break_mode='', out=None):
         ok5 = (why5 == ['symbol_mismatch', 'symbol_mismatch']
                and len(r5['items']) == 3
                and [r['why'] for r in r5['items']][0] == '')
-        # ---- 方向 6：窗口是承重的（符号在 +3 行内 ⇒ 默认过；窗口=1 ⇒ 必红）----
+        # ---- 方向 6：窗口是承重的（0 偏移必过；偏 3 行在默认窗口下必红；显式放宽 ±3 又过）----
+        # 0.1.14 §28-A1：默认窗口 3 → 0 ⇒ "偏 3 行"从"能过"变成"必须红"；
+        # `--break window` 的弄坏方式也随之反过来：把窗口**撑大**（判据变迟钝）⇒ 本方向必须 FAIL。
         d6 = os.path.join(base, 'd6')
-        _mk(os.path.join(d6, 'docs', 'd.md'), '引用：`writeback.py:13 # _prune_backups`\n')
+        _mk(os.path.join(d6, 'docs', 'd.md'),
+            '同偏移（符号就在第 10 行）：`writeback.py:10 # _prune_backups`\n\n'
+            '偏 3 行（符号在第 10 行）：`writeback.py:13 # _prune_backups`\n')
         _mk(os.path.join(d6, 'src', 'mpltweak', 'writeback.py'), _WB_FIXTURE)
-        w = 0 if 'window' in broken else ANCHOR_WINDOW
+        w = 99 if 'window' in broken else ANCHOR_WINDOW
         r6 = scan(d6, ['docs/**/*.md'], anchor_window=w,
                   strict_resolve=('resolve' not in broken))
-        r6_narrow = scan(d6, ['docs/**/*.md'], anchor_window=1)
-        ok6 = (not r6['suspicious'] and len(r6_narrow['suspicious']) == 1
-               and r6_narrow['suspicious'][0]['why'] == 'symbol_mismatch')
+        r6_wide = scan(d6, ['docs/**/*.md'], anchor_window=3)
+        _s6 = [(r['ref'], r['why']) for r in r6['suspicious']]
+        ok6 = (_s6 == [('writeback.py:13', 'symbol_mismatch')]
+               and not r6_wide['suspicious'])
         # ---- 方向 7：未锚必须红 / 登记后不红 / 失效条目要提示删（§25.4c）----
         d7 = os.path.join(base, 'd7')
         _mk(os.path.join(d7, 'docs', 'd.md'), '引用：`writeback.py:10`\n')
@@ -767,6 +929,60 @@ def _self_test(break_mode='', out=None):
                   ignore_allow=('allow' in broken), exempt_any_why=('exempt' in broken))
         _why9 = sorted(r['why'] for r in r9['suspicious'])
         ok9 = _why9 == ['blank_line', 'line_out_of_range']
+        # ---- 方向 10：窗口默认值必须是 0（§28-A1，2026-10-24；防手滑改回 3）----
+        # 三条路一起钉：模块常量 / argparse 的 default= / 真解析出来的 args —— 只看常量会漏掉
+        # "常量没动但命令行默认值被写成 3"那种改法（`__main__` 那条路才是闸门真正用的值）。
+        _ap10 = _build_parser()
+        ok10 = (ANCHOR_WINDOW == 0 and _ap10.get_default('anchor_window') == 0
+                and _ap10.parse_args([]).anchor_window == 0)
+        # ---- 方向 11：空转键能被报出来（§28-A3，2026-10-24；只提示、不影响 rc）----
+        # 三种情形一起钉：`missing`（引用已不存在）/ `idle`（引用还在但这条豁免用不上）/
+        # **真被用到的那条不许报**（否则提示就没意义了）。
+        d11 = os.path.join(base, 'd11')
+        _mk(os.path.join(d11, 'docs', 'd.md'),
+            '锚对且绿：`writeback.py:10 # _prune_backups`；符号错（交给"已知漂移"放行）：'
+            '`writeback.py:11 # nope`\n')
+        _mk(os.path.join(d11, 'src', 'mpltweak', 'writeback.py'), _WB_FIXTURE)
+        _hist11 = {('docs/d.md', 'writeback.py:19'): '自测：引用已不存在（missing）',
+                   ('docs/d.md', 'writeback.py:10'): '自测：这条引用根本不需要豁免（idle）'}
+        _drift11 = {('docs/d.md', 'writeback.py:11'): '自测：真在用（不许报）'}
+        r11 = scan(d11, ['docs/**/*.md'], hist=_hist11, drift=_drift11, unanch={},
+                   strict_resolve=('resolve' not in broken))
+        _st11 = [(k['table'], k['ref'], k['reason']) for k in r11['stale_keys']]
+        ok11 = (_st11 == [('HISTORICAL_ALLOW', 'writeback.py:10', 'idle'),
+                          ('HISTORICAL_ALLOW', 'writeback.py:19', 'missing')]
+                and not r11['stale']                       # 兼容字段：未锚表白名单没空转
+                and len(r11['suspicious']) == 0)           # 提示不改 rc 语义
+        # ---- 方向 12：纯注释行不承重（§28-A2）；`--break comment` 关掉排除 ⇒ 本方向必须 FAIL ----
+        d12 = os.path.join(base, 'd12')
+        _mk(os.path.join(d12, 'docs', 'd.md'),
+            '横幅注释行当锚（第 1 行是注释）：`writeback.py:1 # _prune_backups`\n\n'
+            '真代码行当锚（第 11 行 = def）：`writeback.py:11 # _prune_backups`\n')
+        _mk(os.path.join(d12, 'src', 'mpltweak', 'writeback.py'),
+            '# ---- _prune_backups：横幅注释，不承重 ----\n' + _WB_FIXTURE)
+        _orig_cl = globals()['_comment_lines']
+        if 'comment' in broken:
+            globals()['_comment_lines'] = lambda lines: set()      # 等价 RV-1：关掉注释排除
+        try:
+            r12 = scan(d12, ['docs/**/*.md'], strict_resolve=('resolve' not in broken))
+        finally:
+            globals()['_comment_lines'] = _orig_cl
+        _s12 = [(r['ref'], r['why']) for r in r12['suspicious']]
+        ok12 = _s12 == [('writeback.py:1', 'symbol_mismatch')]
+        # ---- 方向 13：计数由工具算，不许手写（§28-A4，2026-10-24）----
+        # 复用手臂 11 的夹具与表：`counts` 必须与"真表长 / 真扫到 / 真生效"逐项相等。
+        # 为什么钉这个：表头旧注释写死"9 键 / 11 条"，实测 12 条（三处键各被两行引用），
+        # 从 t72 起少算 1 条 —— 手写计数**必然**漂，而且没有任何东西会因此变红。
+        _c13 = r11['counts']
+        ok13 = (_c13['tables']['HISTORICAL_ALLOW'] == {'keys': len(_hist11), 'in_scan': 1,
+                                                       'exercised': 0}
+                and _c13['tables']['KNOWN_DRIFT'] == {'keys': len(_drift11), 'in_scan': 1,
+                                                      'exercised': 1}
+                and _c13['tables']['UNANCHORED_ALLOW'] == {'keys': 0, 'in_scan': 0,
+                                                           'exercised': 0}
+                and _c13['refs'] == len(r11['items'])
+                and _c13['stale_keys'] == len(r11['stale_keys']) == 2
+                and _c13['stale_unscanned'] == 0)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
@@ -776,12 +992,17 @@ def _self_test(break_mode='', out=None):
         ('3) 同名多命中 ⇒ ambiguous_basename', ok3),
         ('4) 只有 build/ 副本 ⇒ target_not_found（F1\' 回归）', ok4),
         ('5) 符号锚：对的过、错的报 symbol_mismatch', ok5),
-        ('6) 窗口是承重的（±3 过 / ±1 必红）', ok6),
+        ('6) 窗口是承重的（默认 0 偏移必过 / 偏 3 行必红 / 放宽 ±3 又过）', ok6),
         ('7) 未锚必须红 / 登记后豁免 / 失效条目提示删', ok7),
         ('8) 裸引用只在本行内继承（跨行的 `:44` 不许误继承、不许误报）', ok8),
         ('9) 豁免只豁免"未锚"：冻结条目指到空行 / 越界必须照报', ok9),
+        ('10) 窗口默认值是 0（只认被引那一行；防手滑改回 3）', ok10),
+        ('11) 空转键能报出来（missing / idle；真在用的那条不许报，且不改 rc）', ok11),
+        ('12) 纯注释行不承重（横幅注释当锚必红；`--break comment` 会把它关掉）', ok12),
+        ('13) 计数由工具算（表内 / 本面扫到 / 本面真生效，与真表长逐项相等）', ok13),
     ]
-    print('SELF-TEST（自带自测：t103 四方向 + §25.4 三项判据 + t14 两条收紧）', file=out)
+    print('SELF-TEST（自带自测：t103 四方向 + §25.4 三项判据 + t14 两条收紧'
+          ' + §28 的窗口/注释/空转键）', file=out)
     if broken:
         print('!! 反向验证模式 --break %s：判据被**故意**弄坏，下面必须出现 FAIL / rc=1'
               % break_mode, file=out)
@@ -796,8 +1017,12 @@ def _self_test(break_mode='', out=None):
 
 
 # --------------------------------------------------------------------------- CLI
-def main(argv=None):
-    _setup_console()
+def _build_parser():
+    """命令行参数表（**单独成函数**：`--self-test` 的方向 10 要读它的默认值）。
+
+    为什么抽出来：窗口默认值有两个出处 —— 模块常量 `ANCHOR_WINDOW` 与这里的 `default=`。
+    只钉常量会漏掉"常量没动、命令行默认值却写成别的"那种改法，而闸门真正跑的是后者的值。
+    """
     ap = argparse.ArgumentParser(description='检查文档里的 文件.py:行号 引用（只报告，不修改）')
     ap.add_argument('--root', default=ROOT_DEFAULT, help='仓库根（默认：本脚本的上一级）')
     ap.add_argument('--include', action='append', default=None,
@@ -806,13 +1031,20 @@ def main(argv=None):
                     help='追加 MAINTENANCE.md（未入库文件，默认不扫）')
     ap.add_argument('--json', action='store_true', help='输出 JSON')
     ap.add_argument('--anchor-window', type=int, default=ANCHOR_WINDOW,
-                    help='符号锚的搜索窗口 ±N（默认 %d；越小越敏感）' % ANCHOR_WINDOW)
+                    help='符号锚的搜索窗口 ±N（默认 %d = 只认被引那一行；越大越迟钝）'
+                         % ANCHOR_WINDOW)
     ap.add_argument('--self-test', action='store_true',
                     help='跑自带自测（t103 四方向 + §25.4 三项判据），不看仓库状态')
     ap.add_argument('--break', dest='break_mode', default='',
                     choices=('', 'bare', 'anchor', 'window', 'allow', 'herit', 'exempt',
-                             'resolve', 'all'),
+                             'resolve', 'comment', 'all'),
                     help='只配 --self-test：故意弄坏某条判据，用来看自测会不会红（反向验证）')
+    return ap
+
+
+def main(argv=None):
+    _setup_console()
+    ap = _build_parser()
     args = ap.parse_args(argv)
 
     if args.break_mode and not args.self_test:
@@ -841,6 +1073,9 @@ def main(argv=None):
                                                     for d, r in res['unanchored']],
                                      'stale_unanchored': [{'doc': d, 'ref': r}
                                                           for d, r in res['stale']],
+                                     'stale_keys': res['stale_keys'],
+                                     'stale_unscanned': res['stale_unscanned'],
+                                     'counts': res['counts'],
                                      'skipped_bare': res['skipped_bare']},
                                     ensure_ascii=False, indent=2) + '\n')
         return 1 if res['suspicious'] else 0

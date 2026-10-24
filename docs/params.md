@@ -107,8 +107,8 @@ axes[1, 1].title.set_fontsize(11)
 > （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
 > `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
 > （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
-> （`writeback.py:5213 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:5141 # _block_targets`，
-> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:4843 # _axes_binding_entries`）；
+> （`writeback.py:5294 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:5222 # _block_targets`，
+> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:4912 # _axes_binding_entries`）；
 > "轴身份"注释里恒为中文。
 > 你实际拿到的数字与轴数会跟着你的布局变。
 
@@ -182,23 +182,33 @@ warning 原文是：`块内只能按静态可证的变量名定位目标对象�
 
 实测：`rc=0`、`style=inplace`、`changes=["figsize"]`，脚本里的 `plt.subplots(figsize=(6, 4))`
 被改成 `(10, 6)`（`audit_018/promo/t14_verify.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_writeback.py`）。而 `figsize=(w,h)` 恰好是论文型绘图脚本里
-**最常见**的可静态构造目标（只算确实绘图：89.5%）。
+**最常见**的可静态构造目标（只统计确实画图的脚本；本项不对外给比例）。
 
 **3. `label_fontsize_y`：y 轴标签字号可以单独给。**
 
 参数里带 `label_fontsize_y` 时只改 y 轴标签字号（x 由 `label_fontsize` 决定）；**没写 `label_fontsize_y` 时 y 一个字节都不动**（零兼容，见 CHANGELOG「修复 · y 侧字号」），`changes` 只报真正变了的那个。字段已进 `mpltweak schema`。
 （`describe` 导出时若 y 与 x 同值就不单列这个键 —— 想单独改 y，自己加上即可。）
 
-**4. `describe --all-figs` 的产物是“一套图”，不能直接喂回 `apply --params`。**
+**4. `describe --all-figs` 的产物是“一套图”：包装本身不能直接喂回 `apply --params`，但每图那份可以（0.1.14 起自动写好）。**
 
 `describe --all-figs` 导出的是**嵌套**结构：单图状态在 `figures[i]` 里，顶层没有 `axes`
 （顶层键是 `version` / `script` / `n_figs` / `figures`）。直接
 `mpltweak apply <脚本> --params all-figs.json --write` 会以 **`rc=1 / reason=no_axes`** 明确失败
 ——**不静默、脚本一个字节都不改**（`writeback.py` 里有对应的 NO_AXES 早退）。原因是 `apply` 的
 `--all-figs` 语义是“循环出图时**统一应用**”，它读的输入仍是**单图**状态。
+**0.1.14 起不用再绕**：`describe --all-figs -o all.json` 会**顺手按每图各写一份 `all.fig<k>.json`**
+（正是 `apply` 认的命名，也是交互会话里参数文件的规范落盘名），于是
+`mpltweak apply <脚本> --params all.fig1.json --write` 直接可用；写了 `.tweak_params/<脚本>.json`
+时连 `--params` 都不用给（`apply` 自己会收 `.tweak_params/<脚本>.fig<k>.json`）。
 实测（`audit_018/promo/t24_allfigs.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）：喂嵌套文件 → `rc=1 / ok=false / reason=no_axes /
 applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <脚本> --fig 0 -o one.json`）加
-`--all-figs` 喂回则 `rc=0`。要落实多图就**逐图导出、逐图 apply**（`--fig N`）。
+`--all-figs` 喂回则 `rc=0`。
+
+> **NOTE（跨两条命令逐图 apply 会撞 `stale`）**：两张图的参数都**先存好**、却分**两条** `apply --write`
+> 分别落实时，第 1 轮写回改了脚本 ⇒ 第 2 轮会把另一张图的旧参数文件判 `stale`（`rc=1`、`reason: stale`，
+> 提示"脚本在参数保存之后被修改过"）。这是**保护机制**（套用旧参数会覆盖你中途的手改），不是丢改动：
+> 要硬套旧参数加 `--force`；更稳的做法是第 1 轮写完再 `describe --fig 1` 重存第 2 张图的参数。
+> **批内不受影响** —— 一条命令喂两份参数时，基准取"本批次开始时刻"，所以多图按一条命令落实照常。
 
 **5. `tick_fontsize_y`：y 轴刻度字号也可以单独给。**
 

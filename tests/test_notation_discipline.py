@@ -60,6 +60,29 @@ def _run_tool(root):
     return findings, r.returncode, out
 
 
+def _load_tool():
+    """按**文件路径**加载检查器模块（判据级牙齿要直接调 `rules_for()`）。
+
+    为什么不 `import notation_discipline`：`tools/` 不是包、也不在 sys.path 上；
+    按路径加载不依赖调用者的 cwd / PYTHONPATH（与 test_msg_key_audit 的 `M` 同一思路，
+    只是那边 `sys.path.insert` 了 tools/，这边用 importlib 以免污染 sys.path）。
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('_notation_under_test', TOOL)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _encodable(ch):
+    """该字符能否编进 GBK（**真编码**，失败即不合规）。"""
+    try:
+        ch.encode('gbk')
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
 def _write(root, rel, text):
     p = os.path.join(root, rel.replace('/', os.sep))
     d = os.path.dirname(p)
@@ -111,7 +134,9 @@ def teeth():
         findings, rc, out = _run_tool(tmp)
         check('teeth 01 检查器能跑通并输出合法 JSON（rc 只反映真违规）',
               findings is not None, 'rc=%s 输出头=%r' % (rc, out[:120]))
-        check('teeth 02 【误报守卫】注释 / docstring 里的 U+2713 U+21BA U+26A0 U+21D2 一处都不报',
+        check('teeth 02 【误报守卫】注释 / docstring 里的 U+2713 U+21BA U+26A0 U+21D2 一处都不报'
+              '（**不是因为它们"合规"** —— 注释不上终端；同款字符进了输出串就要报，'
+              '见 teeth 06 / 18-22）',
               not _hits(findings or [], 'clean.py'),
               '实得 %s' % _fmt(_hits(findings or [], 'clean.py')))
         check('teeth 03 【误报守卫】受准字形 \u221a(U+221A) / \u00d7(U+00D7) 不报',
@@ -142,6 +167,67 @@ def teeth():
         hg = _hits(findings or [], 'bad_gbk.py')
         check('teeth 06 sys.stderr.write() 里的 U+21D2 必须报 R2（GBK 编不出）',
               any(f['rule'] == 'gbk' for f in hg), '实得 %s' % _fmt(hg))
+
+        # ⑥ GBK 判据本体（t28 / B6）：**必须是真编码**，不是手写白名单 / 区间表。
+        # 事故：D1 往 messages.py 的两条 zh 模板里写了 `⇒`(U+21D2)，`pytest -k
+        # messages_are_gbk` 当场红（`'gbk' codec can't encode character '\u21d2'`）。
+        # 谁要是把 rules_for() 里的 `ch.encode('gbk')` 换成"箭头都算合规"这类白名单，
+        # 下面两张表里必有一张变红 —— ①逐字符字面期望 ②字面期望本身与真编码对拍。
+        _rt = _load_tool().rules_for
+        # 字面期望（**独立 oracle**：不是从 rules_for 抄来的，也不是现算的）
+        _gbk_table = [
+            ('\u21d2', False),   # ⇒ RIGHTWARDS DOUBLE ARROW —— D1 事故那次踩的就是它
+            ('\u21d4', False),   # ⇔ LEFT RIGHT DOUBLE ARROW
+            ('\u27f9', False),   # ⟹ LONG RIGHTWARDS DOUBLE ARROW
+            ('\u2192', True),    # → RIGHTWARDS ARROW（本仓库的主力箭头，GBK 里有）
+            ('\u2014', True),    # — EM DASH
+            ('\u2013', True),    # – EN DASH
+            ('\u221a', True),    # √ 受准字形（MAINTENANCE §8.5）
+            ('\u00d7', True),    # × 受准字形
+            ('\u4e2d', True),    # 中（汉字，当然编得出）
+        ]
+        _bad_pred = ['U+%04X %s 期望%s实得%s' % (
+            ord(ch), ch, '不判 gbk' if not ok else '判 gbk',
+            '判 gbk' if 'gbk' in _rt(ch) else '不判 gbk')
+            for ch, ok in _gbk_table
+            if ('gbk' in _rt(ch)) == ok]          # ← 期望 ok 却判了 gbk / 反之
+        check('teeth 18 【判据】U+21D2 / U+21D4 / U+27F9 判"编不进"，'
+              'U+2192 / U+2014 / U+221A / U+00D7 / 汉字 判"能编"',
+              not _bad_pred, '不符 %s' % (_bad_pred,))
+        # 字面期望本身也要对拍真编码（期望写错了 == 牙齿本身失效）
+        _bad_oracle = ['U+%04X %s 字面期望%s，真编码%s' % (
+            ord(ch), ch, '能编' if ok else '编不进',
+            '能编' if _encodable(ch) else '编不进')
+            for ch, ok in _gbk_table if _encodable(ch) != ok]
+        check('teeth 19 上面那张**字面期望表**与真实 `encode("gbk")` 一致（期望表本身不许错）',
+              not _bad_oracle, '不符 %s' % (_bad_oracle,))
+        # 定位精度：这条判据是按**字符**判的（不能靠整串混过去）
+        check('teeth 20 判据按字符粒度：`"a ⇒ b"` 里只有 U+21D2 被点名',
+              [c for c in 'a \u21d2 b' if ord(c) > 127 and 'gbk' in _rt(c)]
+              == ['\u21d2'],
+              '实得 %s' % ([c for c in 'a \u21d2 b'
+                            if ord(c) > 127 and 'gbk' in _rt(c)],))
+
+        # ⑦ CLI 级复刻 D1：**产品面** MESSAGES 表里的 ⇒ 必须报 gbk/error，→ / — 不报
+        _write(tmp, 'src/mpltweak/fake_messages.py',
+               '# -*- coding: utf-8 -*-\n'
+               'MESSAGES = {\n'
+               '    "a": {"zh": "x \u21d2 y", "en": "x -> y"},\n'
+               '    "b": {"zh": "x \u21d4 y", "en": "x <-> y"},\n'
+               '    "c": {"zh": "x \u27f9 y", "en": "x => y"},\n'
+               '    "d": {"zh": "x \u2192 y", "en": "x -> y"},\n'
+               '    "e": {"zh": "x \u2014 y", "en": "x - y"},\n'
+               '}\n')
+        findings, _rc, _out = _run_tool(tmp)
+        fm = _hits(findings or [], 'src/mpltweak/fake_messages.py')
+        _gbk_lines = sorted({f['line'] for f in fm if f['rule'] == 'gbk'})
+        check('teeth 21 消息表里的 ⇒ / ⇔ / ⟹ 各报一条 gbk（行 3/4/5，severity=error）',
+              _gbk_lines == [3, 4, 5]
+              and all(f['severity'] == 'error' for f in fm if f['rule'] == 'gbk'),
+              '实得 gbk 行 %s；命中 %s' % (_gbk_lines, _fmt(fm)))
+        check('teeth 22 【误报守卫】同一张表里的 → / — 一条都不报',
+              not [f for f in fm if f['line'] in (6, 7)],
+              '实得 %s' % _fmt([f for f in fm if f['line'] in (6, 7)]))
 
         # ④ 打印助手**按函数体自动发现**（不靠名字白名单）
         _write(tmp, 'helper.py',

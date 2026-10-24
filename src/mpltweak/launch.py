@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ==== §1 文件头：外部启动器的目标、用法与退出码 ====
+
 # ======================================================================
 # tweak_launch.py —— 无侵入交互调图「外部启动器」
 #
@@ -26,6 +28,28 @@
 #           **3 已退役**：常量（messages.EXIT_SCRIPT）保留，但任何路径都不再返回它。
 # ======================================================================
 
+# ---- 快速导航（顶层 §1-§7 的分区横幅被文件尾索引收录；main() 体内的小节用
+#      `# ==== §7.N … ====`，工具不索引，跳转请 `grep -n '§7.5'`）----
+#
+#   §1 文件头：外部启动器的目标、用法与退出码（就是本段）
+#   §2 基础设施：UTF-8 流（只给 doctor）、stderr 行数计数、后端候选探测
+#   §3 一次性提示与戳记：mpltweak 家目录 / Tk 回退提示 / 首次开窗 / 可重跑预检 /
+#      「需要参数」的开窗专属人话（都用 ~/.mpltweak 下的戳文件保证"每个用户只打一次"）
+#   §4 参数文件与「关窗后怎么写回」：参数路径、摘要、shell 相对化、可复制命令
+#   §5 收尾清理、摘要与续调：删掉本轮新产生且没改的参数文件 + 全部 .lock、比对摘要、
+#      把上次的(还没落实的)参数套回图上
+#   §6 doctor 结论与 doctor 子命令：后端/Qt 绑定/版本/光标枚举，一句人能看懂的判断
+#   §7 主流程 main（开窗调图）：内分 6 小节 ——
+#      §7.1 开窗前的提示（布局引擎冲突、可重跑预检）/ §7.2 后端与工作目录 /
+#      §7.3 执行用户脚本（拦 show / matplotlib.use / close）/ §7.4 抓图与后端兜底 /
+#      §7.5 挂控制器（每图一个 Tweak，各写自己的参数文件）/
+#      §7.6 续调与关窗之后（套回参数、落盘、摘要、写回命令）
+#
+# ---- 这一层与另外三层的分工（跳读时先看这条）----
+#   launch = 开窗（人手动调）；toolbox = 窗口内的交互（拖/缩放/键位）；
+#   describe/check = 不开窗导出与体检；apply + writeback = 把参数落实成代码。
+#   参数文件是四者之间**唯一的接口**（.tweak_params/<stem>.json + <stem>.fig<k>.json）。
+
 import argparse
 import json
 import os
@@ -38,6 +62,8 @@ import traceback
 # 与这里的 `_msg.t_ui(...)` 不冲突；模块级导入 messages 无循环（messages 只 import 标准库）。
 from . import messages as _msg                      # noqa: E402
 
+
+# ==== §2 基础设施：UTF-8 流、stderr 计数与后端探测 ====
 
 def _force_utf8_streams():
     """P2-9（t69）：把 stdout/stderr 显式切到 UTF-8（**只给 doctor 用**）。
@@ -189,6 +215,8 @@ def _backend_missing_msg(err):
         msg = tmpl % {'err': err}
     return msg
 
+
+# ==== §3 一次性提示与戳记：Tk 回退 / 首次开窗 / 可重跑预检 / 需要参数 ====
 
 def _mpltweak_home(environ=None):
     '''mpltweak 的家目录（戳文件放这里）：``MPLTWEAK_HOME`` 可改，默认 ``~/.mpltweak``。
@@ -419,6 +447,8 @@ def _emit_needs_args_action(script, pf_res=None, environ=None, stderr=None):
     return True
 
 
+# ==== §4 参数文件与「关窗后怎么写回」的命令 ====
+
 def _params_path(script, override=None):
     if override:
         return os.path.abspath(override)
@@ -466,6 +496,8 @@ def _next_step_cmd(script, params, script_args=(), params_given=False, base=None
         parts += ['--'] + [_quote_arg(str(a)) for a in script_args]
     return ' '.join(parts)
 
+
+# ==== §5 收尾清理、摘要与续调：把上次的参数套回图上 ====
 
 def _prune_fig_params(tmps, keep_keys, protect=()):
     """收尾清理：删掉**本轮新产生且未改动**的参数文件 + 全部 ``.lock``。
@@ -620,6 +652,8 @@ def _apply_saved(fig, params):
     return n
 
 
+# ==== §6 doctor 结论与 doctor 子命令 ====
+
 def _doctor_verdict(matplotlib_ok, backend_ok, tkinter_ok=False):
     '''doctor 结尾那一句"一眼可懂的判断"（0.1.11 收尾批）。
 
@@ -713,6 +747,8 @@ def doctor():
     return 0
 
 
+# ==== §7 主流程：main（开窗调图） ====
+
 def main(argv=None):
     from . import messages   # 退出码常量（方案 A：只用 EXIT_USAGE / EXIT_OK）
     ap = argparse.ArgumentParser(add_help=True)
@@ -742,6 +778,7 @@ def main(argv=None):
         sys.stderr.write(_msg.t_ui('[launch] 找不到脚本: %s\n') % script)
         return messages.EXIT_USAGE
 
+    # ==== §7.1 开窗前的提示：布局引擎冲突与可重跑预检 ====
     # 布局引擎冲突（constrained_layout / figure.autolayout）必须**在开窗之前**提示：
     # 引擎会在每次绘制时重算轴位置，用户拖完看到的是"位置弹回去/验证不一致"，
     # 而病因在脚本第 N 行（外部审阅第 4 条）。开窗后再提醒已经白拖了。
@@ -764,6 +801,7 @@ def main(argv=None):
     # 第一次开窗提示吃掉（落戳统一在"真要建窗口"那一刻，见下面那处调用）。
     _emit_first_open_hint(dry_run=args.dry_run, stage='early')
 
+    # ==== §7.2 后端与工作目录：Qt 候选探测、Tk 回退、切 cwd/sys.path ====
     # Qt 后端必须在用户脚本之前设置。Qt 绑定/版本差异（PyQt5/PyQt6/PySide2/PySide6、
     # 老版本没有 QtAgg 名字）全在这里兜住：逐个候选后端真建一次 canvas 验证，
     # 都不行就给一句人话（而不是甩 traceback）。
@@ -793,6 +831,7 @@ def main(argv=None):
         sys.path.insert(0, script_dir)
     sys.argv = [script] + list(passthrough)
 
+    # ==== §7.3 执行用户脚本：拦 plt.show / matplotlib.use / plt.close ====
     # 1) 执行用户脚本（拦掉它自己的 plt.show，避免卡住）
     #    同时把 matplotlib.use / plt.switch_backend 临时变成空操作：
     #    科研脚本常硬写 matplotlib.use('Agg')（批量出图用），那会把我们的交互后端顶掉。
@@ -836,6 +875,7 @@ def main(argv=None):
                         '（工具自己的提示都带 [launch]/[mpltweak] 前缀）')
               % _err_probe.lines, file=sys.stderr, flush=True)
 
+    # ==== §7.4 抓图与后端兜底：把已有图重新挂回 Qt ====
     # 2) 抓脚本留下的图
     nums = plt.get_fignums()
     if not nums:
@@ -904,6 +944,7 @@ def main(argv=None):
     # 一次（新戳 first_open_shown，与 tk_hint_shown 互不影响）。
     _emit_first_open_hint(dry_run=args.dry_run)
 
+    # ==== §7.5 挂控制器：每图一个 Tweak，各写自己的参数文件 ====
     # 多图：每张图各挂一个控制器、各写自己的参数文件（``<stem>.fig<k>.json``，
     # 文件名带图号，就是它最终的正式参数）；关窗时按"哪张真被改过"决定留不留，
     # 并把最后改动的那张另存成主文件 —— 所以不必预先 --fig 指定。
@@ -971,6 +1012,7 @@ def main(argv=None):
 
         _f.canvas.mpl_connect('key_press_event', _on_quit_key)
 
+    # ==== §7.6 续调与关窗之后：套回上次参数、落参数、摘要与写回命令 ====
     # 续调：把所有参数文件各自套回它记录的图（多图会话会有主文件 + <stem>.fig<k>.json）
     def _resume_files():
         _stem = os.path.splitext(params)[0]
@@ -1143,3 +1185,41 @@ def main(argv=None):
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头：外部启动器的目标、用法与退出码（行 2-65，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 基础设施：UTF-8 流、stderr 计数与后端探测（行 66-218，5 个顶层函数）
+#     _force_utf8_streams                             68
+#     _CountingStderr                                 89
+#     _detect_backend                                176
+#     _backend_tk_hint                               194
+#     _backend_missing_msg                           204
+# §3 一次性提示与戳记：Tk 回退 / 首次开窗 / 可重跑预检 / 需要参数（行 219-449，8 个顶层函数）
+#     _mpltweak_home                                 221
+#     _tk_hint_stamp_path                            232
+#     _emit_backend_hint                             242
+#     _first_open_hint                               286
+#     _first_open_stamp_path                         311
+#     _emit_first_open_hint                          321
+#     _emit_preflight_hint                           376
+#     _emit_needs_args_action                        416
+# §4 参数文件与「关窗后怎么写回」的命令（行 450-499，5 个顶层函数）
+#     _params_path                                   452
+#     _summarize                                     460
+#     _rel_for_shell                                 465
+#     _quote_arg                                     478
+#     _next_step_cmd                                 483
+# §5 收尾清理、摘要与续调：把上次的参数套回图上（行 500-654，3 个顶层函数）
+#     _prune_fig_params                              502
+#     _diff                                          524
+#     _apply_saved                                   546
+# §6 doctor 结论与 doctor 子命令（行 655-749，2 个顶层函数）
+#     _doctor_verdict                                657
+#     doctor                                         678
+# §7 主流程：main（开窗调图）（行 750-1187，1 个顶层函数）
+#     main                                           752
+# --- END AUTO NAV ---

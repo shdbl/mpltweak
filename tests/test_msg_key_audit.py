@@ -25,6 +25,7 @@
 并把"未解析调用点数"钉成**只减不增**。
 """
 
+import ast
 import os
 import shutil
 import subprocess
@@ -78,6 +79,33 @@ KNOWN_UNRESOLVED_N = 13
 def _key_echoes(txt, keys):
     """症状判据：输出里出现了哪些**已登记键名**（出现 = 该键被回显）。"""
     return sorted(k for k in keys if k in txt)
+
+
+def _dict_literal_dups(name, path=None):
+    """`messages.py` 里 `name = {...}` 的**字典字面量**有哪些重复键 → {键: [行号...]}。
+
+    为什么必须扫**字面量**而不是 `literal_eval` 之后的 dict：后者天生去重（后写的赢），
+    重复键在结果里完全看不见 —— 只有 ast 的 `keys` 节点能看见"同一张表里写了两遍"。
+    """
+    src_path = path or os.path.join(ROOT, 'src', 'mpltweak', 'messages.py')
+    with open(src_path, encoding='utf-8') as f:
+        tree = ast.parse(f.read())
+    node = None
+    for n in tree.body:
+        if isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == name for t in n.targets):
+            node = n.value
+    if not isinstance(node, ast.Dict):
+        return {'<%s 不是字典字面量>' % name: []}
+    seen, dups = {}, {}
+    for k in node.keys:
+        if not isinstance(k, ast.Constant):
+            continue
+        if k.value in seen:
+            dups.setdefault(k.value, [seen[k.value]]).append(k.lineno)
+        else:
+            seen[k.value] = k.lineno
+    return dups
 
 
 def _pin(env):
@@ -135,7 +163,8 @@ def teeth(keys, cwd):
             _p('  （嵌套层：跳过 teeth⑤/⑥，防无限递归）')
             return
         # 变异②（captain t96 要求）：删掉 `doctor_verdict_headless` 的登记
-        # （= t96 修好**之前**的状态）⇒ **副本里的套件自己**必须 rc≠0 且点名 launch.py:640。
+        # （= t96 修好**之前**的状态）⇒ **副本里的套件自己**必须 rc≠0 且点名
+        # launch.py 里那条引用（行号现算，见下）。
         with open(mp, 'w', encoding='utf-8', newline='') as f:
             f.write(txt.replace("'doctor_verdict_headless':",
                                 "'doctor_verdict_headless_RENAMED_BY_T95':", 1))
@@ -149,11 +178,22 @@ def teeth(keys, cwd):
         out = (pr.stdout + pr.stderr).decode('utf-8', 'replace')
         # 注意：套件打印的是**元组 repr**（`('src/mpltweak/launch.py', 640, 't', …)`），
         # 不是 `launch.py:640` 这种拼接串 —— 第一版就按后者找、白找（假红）。
+        # ⚠ 行号**现算，不写死**（0.1.14 D1 收工时修的）：原来写死 `'640' in out`，
+        # 任何人往 launch.py 前面插行都会把它变成红 —— 本批 C 系加导航注释就把它推到了
+        # 674 行，"夹具脆"被读成"产品缺陷"。现按 launch.py 里的实际引用行号拼元组前缀，
+        # **强度不降**（仍然要求点名 文件 + 行号 + 键名，且是同一行的元组）。
+        with open(os.path.join(ROOT, 'src', 'mpltweak', 'launch.py'),
+                  encoding='utf-8') as _f:
+            _lns = _f.read().splitlines()
+        _want = next((i for i, ln in enumerate(_lns, 1)
+                      if 'doctor_verdict_headless' in ln), None)
+        assert _want is not None, 'launch.py 里找不到 doctor_verdict_headless 的引用'
+        _hit = "'src/mpltweak/launch.py', %d," % _want
         check('teeth⑤ **套件自己**在副本里必红（删掉该键登记 ⇒ 台账已空 ⇒ 真断言咬）',
-              pr.returncode != 0 and 'launch.py' in out and '640' in out
+              pr.returncode != 0 and _hit in out
               and 'doctor_verdict_headless' in out,
-              'rc=%s；含 launch.py=%s / 640=%s / 键名=%s'
-              % (pr.returncode, 'launch.py' in out, '640' in out,
+              'rc=%s；含 %r=%s / 键名=%s'
+              % (pr.returncode, _hit, _hit in out,
                  'doctor_verdict_headless' in out))
         _p('  teeth⑤ 失败原文（片段）：%s'
            % ' ⏐ '.join(ln.strip() for ln in out.splitlines()
@@ -223,6 +263,15 @@ def main():
     check('A 未解析调用点数**只减不增**（当前 %d；新增 = 新的覆盖盲点）'
           % KNOWN_UNRESOLVED_N, st['unresolved'] <= KNOWN_UNRESOLVED_N,
           '实得 %d' % st['unresolved'])
+
+    # ---- D. 三张表的字典字面量**不许出现重复键**（H1 / 0.1.14）----
+    # 为什么：`{'k': 'a', 'k': 'a'}` 是合法 Python，**后写的赢** —— 表面看两处都在，
+    # 实际只有一处生效；改错一处就静默失效（H1 实测 `UI_ZH_TO_EN` 曾有 3 个键各 3 次、
+    # 3 个键各 2 次，只因值恰好相同才没出事）。这条牙扫**字面量节点**，重复即红并点名行号。
+    for _name in ('MESSAGES', 'WB_ZH_TO_EN', 'UI_ZH_TO_EN'):
+        _dups = _dict_literal_dups(_name)
+        check('D 字典字面量 `%s` 里**没有重复键**（重复 = 后写的赢，改一处会静默失效）'
+              % _name, not _dups, '重复 %s' % (_dups,))
 
     # ---- B. 症状级 ----
     keys, _ui = M.load_registry(ROOT)

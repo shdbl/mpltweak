@@ -102,6 +102,20 @@ SUITES = [
     #     返回中文原文）分开报，否则一上来 60+ 条误报。秒级、零网络、不开窗。
     #     见 tests/test_msg_key_audit.py 文件头 ---
     ('test_msg_key_audit', {}),
+    # --- D1 挂入（0.1.14，用户拍板 B）：布局引擎冲突**默认拒绝写回** + `--force` 绕过。
+    #     四条路径各一组断言（冲突+几何 ⇒ 拒绝 / 字节不变 / rc=1 / 两条出路；
+    #     冲突+非几何 ⇒ 照写；`--force` ⇒ 照写且明说跳过；无冲突 ⇒ 行为不变）+
+    #     `check` 里该情形是 error 级。纯子进程 CLI、零窗口、秒级。
+    #     见 tests/test_apply_layout_conflict.py 文件头 ---
+    ('test_apply_layout_conflict', {}),
+    # --- F3 挂入（0.1.14，§27.10 L2）：**GUI 离屏冒烟** —— `toolbox.py` 的窗口路径
+    #     首次有自动化覆盖（开窗 → 拖一次 → 按一次键 → 关窗 → 查导出的参数文件与图一致）。
+    #     用 `QT_QPA_PLATFORM=offscreen`（不碰屏幕、不抢焦点）；**缺 PyQt5 时显式 skip
+    #     并打印原因**（这里刻意不带 `MPLTWEAK_REQUIRE_QT`：没有 Qt 的开发机也得能跑完
+    #     这一套）。CI 侧只在 3.12 腿装 PyQt5 并**先断言 `import PyQt5` 成功**，
+    #     所以"CI 里悄悄跳过"这条路是堵死的（见 `.github/workflows/tests.yml` 那段注释）。
+    #     实测（longxia + PyQt5 5.15.11 + offscreen）：2 passed / 3.4s ---
+    ('test_gui_smoke', {}),
 ]
 
 # 刻意不挂进 pytest 的两个（理由见文件头 docstring）：

@@ -199,6 +199,28 @@ def main(argv=None) -> int:
         # 与 launch/doctor 同性质的一行用户可见中文，走 messages 的 zh→en 表：
         # zh 逐字不变、en 纯 ASCII。不改退出码 / --json 键名 / 任何判定。
         sys.stderr.write(_msg.t_ui('[describe] 已写入 %s\n') % args.output)
+        # J2（0.1.14）：`--all-figs` 的包装 `{"figures": [...]}` **喂不回 apply**
+        # （apply._all_params_files 只认「主文件 + `<stem>.fig<k>.json`」⇒ 包装走成
+        # reason=no_axes）。所以在写包装之外，**顺手按每图各写一份**
+        # `<stem>.fig<k>.json` —— 正是 apply 认的命名（也是交互会话里 params.py 的
+        # 规范落盘名）。包装照旧写（agent 读它、agent.md/SKILL.md 都这么写）⇒ 纯加法。
+        if args.all_figs:
+            _stem = os.path.splitext(args.output)[0]
+            for _i, _fig in enumerate(payload.get('figures') or []):
+                _k = _fig.get('fig_index')
+                if not isinstance(_k, int):
+                    _k = _i
+                _fp = '%s.fig%d.json' % (_stem, _k)
+                try:
+                    with open(_fp, 'w', encoding='utf-8') as f:
+                        f.write(json.dumps(_fig, ensure_ascii=False,
+                                           indent=None if args.compact else 2)
+                                + '\n')
+                except OSError as _e:
+                    sys.stderr.write(_msg.t_ui('[describe] 写不进 %s：%s\n')
+                                     % (_fp, _e))
+                    return 2
+                sys.stderr.write(_msg.t_ui('[describe] 已写入 %s\n') % _fp)
     else:
         # 走 emit_json（fd 级 UTF-8）而不是 print：payload 里的中文（脚本名/路径）
         # 在 cp936 管道下会被编成 GBK，按 UTF-8 解码的 agent 直接崩（见 messages.emit_json）

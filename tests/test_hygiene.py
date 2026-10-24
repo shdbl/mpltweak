@@ -1579,11 +1579,15 @@ def test_every_suite_is_assigned_to_a_ci_leg():
 
 
 # =====================================================================
-# 自动导航索引（t12 / 0.1.13）：`writeback.py` 的分区横幅 + 文件尾索引块必须与现场一致
+# 自动导航索引（t12 / 0.1.13；t15 / 0.1.14 扩到**默认清单里的每个模块**）：
+# 分区横幅 + 文件尾索引块必须与现场一致
 #
 # 为什么做成断言：索引块是**生成**的（`tools/gen_nav.py`），手写必然过期 —— 本仓库已经
 # 踩过同款坑（`writeback.py:NNN` 的文档引用一夜漂两次）。这条断言让"漂了就红"，而不是
 # 让索引块变成指着错地方的假导航。
+# 覆盖面（0.1.14）：`gen_nav.DEFAULT_MODULES` 里**每个**模块都要被这三条断言照到
+# （writeback / toolbox / messages / verify / apply / launch / check）—— 0.1.13 时清单
+# 只有 writeback，另外 6 个模块的导航等于没有护栏：谁改谁忘了 `--write` 就会静默过期。
 # 判据与 `python tools/gen_nav.py --check`（rc=0/1）**同一份实现**，不各写一套；
 # 修法：`python tools/gen_nav.py --write`（分区横幅是人写的，工具只填行号）。
 # =====================================================================
@@ -1621,52 +1625,117 @@ def test_auto_nav_index_is_fresh():
 
 
 def test_auto_nav_check_rejects_stale_index(tmp_path):
-    """【有牙】在副本上改一个函数名（不动索引块）⇒ 同一条判据必须变红。
+    """【有牙】逐个模块在副本上改一个函数名（不动索引块）⇒ 同一条判据必须变红。
 
     在 tmp 里复制一份真模块再动它，**不碰仓库里的文件**：这条用例证明
-    `check_module` 真的在看现场（而不是恒真地放行）。
+    `check_module` 真的在看现场（而不是恒真地放行）。0.1.14 起**清单里每个模块都跑**——
+    一条牙齿只咬 writeback 的话，另外 6 个模块的索引写过期了也没人知道。
     """
     gen_nav = _gen_nav_module()
-    src = open(os.path.join(ROOT, gen_nav.DEFAULT_MODULES[0]), encoding='utf-8').read()
-    copy = tmp_path / 'wb_copy.py'
-    copy.write_text(src, encoding='utf-8')
-    # 先在副本上重算一次：让这条用例**不依赖**仓库里那份是否刚好是最新的
-    # （否则 102 号牙齿坏在源文件上时，本用例会跟着一起红，红的原因却不是它要测的）
-    gen_nav.write_module(str(copy))
-    ok, msg = gen_nav.check_module(str(copy))
-    assert ok, '刚复制过来的模块就被判过期，判据自身有问题：%s' % msg
-    # 真改一处 `def` 名字（行号不变、名字变了 ⇒ 索引块里的名字对不上）。
-    # 取副本里**第一个顶层 def**、不写死函数名：否则源文件本身处于牙齿状态时
-    # 这条用例会跟着假红（红的原因还不是它要测的那条）。
-    _m = re.search(r'^def (\w+)\(', src, re.M)
-    assert _m, '牙齿夹具前提变了：副本里一个顶层 def 都没找到'
-    _old = _m.group(1)
-    copy.write_text(src.replace('def %s(' % _old, 'def %s_teeth(' % _old, 1),
-                    encoding='utf-8')
-    ok2, msg2 = gen_nav.check_module(str(copy))
-    assert not ok2, '改了函数名但索引块仍被判最新 —— 这条断言是空转的'
-    assert '过期' in msg2 or '没有' in msg2, msg2
+    bad = []
+    for rel in gen_nav.DEFAULT_MODULES:
+        stem = os.path.basename(rel).replace('.py', '')
+        src = open(os.path.join(ROOT, rel), encoding='utf-8').read()
+        copy = tmp_path / ('%s_copy.py' % stem)
+        copy.write_text(src, encoding='utf-8')
+        # 先在副本上重算一次：让这条用例**不依赖**仓库里那份是否刚好是最新的
+        # （否则新鲜性牙齿坏在源文件上时，本用例会跟着一起红，红的原因却不是它要测的）
+        gen_nav.write_module(str(copy))
+        ok, msg = gen_nav.check_module(str(copy))
+        if not ok:
+            bad.append('%s：刚复制过来的模块就被判过期（判据自身有问题）%s' % (rel, msg))
+            continue
+        # 真改一处 `def` 名字（行号不变、名字变了 ⇒ 索引块里的名字对不上）。
+        # 取副本里**第一个顶层 def**、不写死函数名：否则源文件本身处于牙齿状态时
+        # 这条用例会跟着假红（红的原因还不是它要测的那条）。
+        _m = re.search(r'^def (\w+)\(', src, re.M)
+        if not _m:
+            bad.append('%s：牙齿夹具前提变了（副本里一个顶层 def 都没找到）' % rel)
+            continue
+        _old = _m.group(1)
+        copy.write_text(src.replace('def %s(' % _old, 'def %s_teeth(' % _old, 1),
+                        encoding='utf-8')
+        ok2, msg2 = gen_nav.check_module(str(copy))
+        if ok2:
+            bad.append('%s：改了函数名但索引块仍被判最新 —— 这条断言是空转的' % rel)
+        elif '过期' not in msg2 and '没有' not in msg2:
+            bad.append('%s：红了但理由不对：%s' % (rel, msg2))
+    assert not bad, '以下模块的「过期必红」牙齿没咬住：\n%s' % '\n'.join(bad)
 
 
 def test_auto_nav_banners_exist_and_cover_the_file():
-    """横幅存在且**覆盖到文件尾**（分区导航最容易的敷衍就是"只给前几段加横幅"）。"""
+    """横幅存在且**覆盖到文件尾**（分区导航最容易的敷衍就是"只给前几段加横幅"）。
+
+    0.1.14 起逐个模块断言：首条横幅之前不许有顶层函数（否则那段没有导航），
+    末条横幅之后**必须还有**顶层函数（否则那条横幅是空的/放错了）。
+    """
     gen_nav = _gen_nav_module()
-    path = os.path.join(ROOT, gen_nav.DEFAULT_MODULES[0])
-    lines = gen_nav._read_lines(path)
-    banners = gen_nav._banners(lines)
-    assert len(banners) >= 5, '分区横幅太少（%d 条）：导航等于没做' % len(banners)
-    try:
-        span = gen_nav.find_block(lines)
-    except ValueError as e:                                   # 块被写坏
-        raise AssertionError(str(e))
-    assert span is not None, '缺少自动索引块（跑 python tools/gen_nav.py --write）'
-    defs = gen_nav._top_defs('\n'.join(lines) + '\n')
-    assert defs, '一个顶层函数都没扫到 —— 扫描器坏了（不是好事）'
-    first_banner = banners[0][0]
-    head_fn = [n for ln, n in defs if ln < first_banner]
-    assert not head_fn, ('第一条横幅（行 %d）之前还有 %d 个顶层函数没进任何分区：%s'
-                         % (first_banner, len(head_fn), head_fn[:5]))
-    last_banner = banners[-1][0]
-    tail_fn = [n for ln, n in defs if ln > last_banner]
-    assert tail_fn, ('最后一条横幅（行 %d）之后一个顶层函数都没有 —— 那条横幅大概率'
-                     '是空的/位置放错了（分区必须真装有东西）' % last_banner)
+    bad = []
+    for rel in gen_nav.DEFAULT_MODULES:
+        path = os.path.join(ROOT, rel)
+        lines = gen_nav._read_lines(path)
+        banners = gen_nav._banners(lines)
+        if len(banners) < 5:
+            bad.append('%s：分区横幅太少（%d 条）—— 导航等于没做' % (rel, len(banners)))
+            continue
+        try:
+            span = gen_nav.find_block(lines)
+        except ValueError as e:                              # 块被写坏
+            bad.append('%s：索引块被写坏：%s' % (rel, e))
+            continue
+        if span is None:
+            bad.append('%s：缺少自动索引块（跑 python tools/gen_nav.py --write）' % rel)
+            continue
+        defs = gen_nav._top_defs('\n'.join(lines) + '\n')
+        if not defs:
+            bad.append('%s：一个顶层函数都没扫到 —— 扫描器坏了（不是好事）' % rel)
+            continue
+        first_banner = banners[0][0]
+        head_fn = [n for ln, n in defs if ln < first_banner]
+        if head_fn:
+            bad.append('%s：第一条横幅（行 %d）之前还有 %d 个顶层函数没进任何分区：%s'
+                       % (rel, first_banner, len(head_fn), head_fn[:5]))
+        last_banner = banners[-1][0]
+        tail_fn = [ln for ln, n in defs if ln > last_banner]
+        if not tail_fn:
+            bad.append('%s：最后一条横幅（行 %d）之后一个顶层函数都没有 —— 那条横幅'
+                       '大概率是空的/位置放错了（分区必须真装有东西）'
+                       % (rel, last_banner))
+    assert not bad, '以下模块的分区横幅没覆盖到整个文件：\n%s' % '\n'.join(bad)
+
+
+# =====================================================================
+# 语料差分入口（E1 / 0.1.14）：语料本体与 GIF/图片刻意留在仓外（体积），所以只钉**入口**
+#
+# 背景：16k 语料差分跑的 harness 一度只存在于会话临时目录（_corpus013/），仓库里没有
+# 入口 —— 下次做同类验证只能重新拼命令，口径（分母 / 解释器 / 参数 / 环境）也跟着重新猜。
+# 本牙齿防"入库即烂"：入口还在、`--help` 能跑、语料缺失时给**人话**而不是抛栈。
+# 反向验证：把 tools/corpus_diff.py 改名 ⇒ 这条必红（原始输出见 _team014/e1.md）。
+# =====================================================================
+def test_corpus_diff_entry_point_is_alive():
+    """语料差分入口存在、`--help` rc=0、缺语料时是人话而不是 traceback。"""
+    script = os.path.join(ROOT, 'tools', 'corpus_diff.py')
+    assert os.path.isfile(script), (
+        '语料差分入口不见了：tools/corpus_diff.py —— 它是 16k 语料验证的唯一仓内入口'
+        '（语料本体在仓外，入口必须在仓内）。')
+    env = _pin_child_env(PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    r = subprocess.run([sys.executable, script, '--help'], cwd=ROOT, env=env,
+                       capture_output=True, timeout=180)
+    out = (r.stdout + r.stderr).decode('utf-8', 'replace')
+    assert r.returncode == 0, ('--help 不是 rc=0（%d）：\n%s'
+                               % (r.returncode, out[-2000:]))
+    for flag in ('--plan', '--check', '--baseline', '--run'):
+        assert flag in out, ('--help 里看不到 %s —— 入口被改残了：\n%s'
+                             % (flag, out[-2000:]))
+    # 缺语料 / 缺工作区：必须"人话 + rc=1"，不许抛栈
+    missing = os.path.join(ROOT, '_no_such_corpus_dir_')
+    r2 = subprocess.run([sys.executable, script, '--check', '--corpus', missing,
+                         '--work', missing], cwd=ROOT, env=env,
+                        capture_output=True, timeout=180)
+    out2 = (r2.stdout + r2.stderr).decode('utf-8', 'replace')
+    assert r2.returncode == 1, ('缺语料时应 rc=1（实际 %d）：\n%s'
+                                % (r2.returncode, out2[-2000:]))
+    assert 'Traceback' not in out2, ('缺语料时抛栈了（应给人话）：\n%s'
+                                     % out2[-2000:])
+    assert '语料根不存在' in out2, ('缺语料时没给出可照做的提示：\n%s'
+                                    % out2[-2000:])

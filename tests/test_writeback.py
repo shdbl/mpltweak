@@ -3268,6 +3268,120 @@ check('64e 无 pid 副本 → revert --first 失败（rc≠0 + no_first_backup�
                                          _oo64f[-200:]))
 shutil.rmtree(_d64e, ignore_errors=True)
 
+# ---- 64g H2（0.1.14）：固定名备份被删、只剩 pid 副本时，**默认** revert 必须回到最初 ----
+#   症状（独立验证员 e2 §Q2-c 实测）：盘上明明有 `fig.tweak.<pid>.bak`（= 最初那次写回
+#   之前的原文），默认 `revert`（不带 --first）却 rc=2 报 `no_backup`「还没有可回退的
+#   备份」—— 信息明明在，默认路径却说没有。修法：固定名备份缺失时复用 `--first` 同一套
+#   "最早备份"发现逻辑（`revert.oldest_backup`），逐字节回到最初原件。
+_H2_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+           'import matplotlib.pyplot as plt\n'
+           'fig = plt.figure(figsize=(6, 4))\n'
+           'ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n'
+           'ax.plot([0, 1], [0, 1])\n'
+           "fig.savefig('o.png')\n")
+_H2_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+           'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.5, 0.5]}]}
+
+
+def _h2_setup(name):
+    """写回一次并删掉固定名备份，只留 pid 副本。返回 (目录, 脚本, 原件 sha256)。"""
+    _d, _s, _p = _mk15(name, _H2_SRC, _H2_PAR)
+    _r = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', 'fig.py',
+                         '--params', _p, '--write', '--verify-fast'],
+                        capture_output=True, cwd=_d, env=_env15)
+    _bakdir = os.path.join(_d, '.tweak_params')     # 备份恒定落在**脚本旁**
+    _fixed = os.path.join(_bakdir, 'fig.tweak.bak')
+    _pids = [n for n in os.listdir(_bakdir)
+             if n.startswith('fig.tweak.') and n.endswith('.bak')
+             and n != 'fig.tweak.bak']
+    if os.path.exists(_fixed):
+        os.remove(_fixed)
+    return _d, _s, _p, _r.returncode, _pids
+
+
+# 64g-1 默认 revert（--write）→ rc=0 且**逐字节**回到最初
+_d64g, _s64g, _p64g, _rc64g, _pids64g = _h2_setup('t26h2')
+_rr64g = subprocess.run([sys.executable, '-m', 'mpltweak', 'revert', 'fig.py',
+                         '--write', '--json'], capture_output=True, cwd=_d64g,
+                        env=_env15)
+_oo64g = _decode_out(_rr64g.stdout + _rr64g.stderr)
+_raw64g = _decode_out(_rr64g.stdout)
+try:
+    _j64g = json.loads(_raw64g) if _raw64g.strip().startswith('{') else {}
+except ValueError:
+    _j64g = {}
+check('64g-1 H2：固定名备份被删、只剩 pid 副本 ⇒ 默认 revert rc=0 且**逐字节**回到最初'
+      '（不再 rc=2 说"没有备份"）',
+      _rc64g == 0 and len(_pids64g) == 1 and _rr64g.returncode == 0
+      and read(_s64g) == _H2_SRC,
+      'apply rc=%s pid 副本=%r revert rc=%s 逐字节回到最初=%s | %s'
+      % (_rc64g, _pids64g, _rr64g.returncode, read(_s64g) == _H2_SRC,
+         _oo64g[-200:]))
+check('64g-1b H2：这次用的是**最早那份**——payload 明说 `fallback='
+      'no_fixed_backup_used_oldest_pid`（不许闷着用 pid 副本却冒充固定名）',
+      _j64g.get('fallback') == 'no_fixed_backup_used_oldest_pid'
+      and _j64g.get('first') is True and _j64g.get('written') is True
+      and 'no_backup' not in _oo64g,
+      'json=%r' % ({k: _j64g.get(k) for k in ('first', 'fallback', 'written')},))
+shutil.rmtree(_d64g, ignore_errors=True)
+
+# 64g-2 **真一份备份都没有** → 仍然 rc=2，且文案说清"哪两处都找过了"（不许含糊）
+_d64h = tempfile.mkdtemp(prefix='mpltweak_t26h2none_')
+_s64h = os.path.join(_d64h, 'fig.py')
+with open(_s64h, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_H2_SRC)
+_rr64h = subprocess.run([sys.executable, '-m', 'mpltweak', 'revert', 'fig.py',
+                         '--json'], capture_output=True, cwd=_d64h, env=_env15)
+_oo64h = _decode_out(_rr64h.stdout + _rr64h.stderr)
+check('64g-2 H2：真的一个备份都没有 ⇒ rc=2 + `no_backup`，文案点名"固定名与 pid 副本'
+      '都不存在"（不再用旧文案暗示"是不是没做过 apply"就完事）',
+      _rr64h.returncode == 2 and 'no_backup' in _oo64h
+      and '没有任何可回退的备份' in _oo64h and 'pid' in _oo64h,
+      'rc=%s | %s' % (_rr64h.returncode, _oo64h[-240:]))
+shutil.rmtree(_d64h, ignore_errors=True)
+
+# 64g-3 `--first` 语义**不变**：同一现场仍 rc=0、仍逐字节回到最初
+_d64i, _s64i, _p64i, _, _pids64i = _h2_setup('t26h2first')
+_rr64i = subprocess.run([sys.executable, '-m', 'mpltweak', 'revert', 'fig.py',
+                         '--first', '--write', '--json'], capture_output=True,
+                        cwd=_d64i, env=_env15)
+_oo64i = _decode_out(_rr64i.stdout + _rr64i.stderr)
+try:
+    _j64i = json.loads(_decode_out(_rr64i.stdout))
+except ValueError:
+    _j64i = {}
+check('64g-3 H2：`--first` 语义不变（只剩 pid 副本时仍 rc=0、回到最初、'
+      'fallback 为空而不是走默认兜底）',
+      _rr64i.returncode == 0 and read(_s64i) == _H2_SRC
+      and _j64i.get('fallback') is None and _j64i.get('first') is True,
+      'rc=%s 回到最初=%s json=%r | %s'
+      % (_rr64i.returncode, read(_s64i) == _H2_SRC,
+         {k: _j64i.get(k) for k in ('first', 'fallback')}, _oo64i[-160:]))
+shutil.rmtree(_d64i, ignore_errors=True)
+
+# 64g-4 固定名备份**在**时行为一字不改：默认 revert 用固定名那份，fallback 为空
+_d64j, _s64j, _p64j = _mk15('t26h2fixed', _H2_SRC, _H2_PAR)
+_rr64j0 = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', 'fig.py',
+                          '--params', _p64j, '--write', '--verify-fast'],
+                         capture_output=True, cwd=_d64j, env=_env15)
+_rr64j = subprocess.run([sys.executable, '-m', 'mpltweak', 'revert', 'fig.py',
+                         '--write', '--json'], capture_output=True, cwd=_d64j,
+                        env=_env15)
+_oo64j = _decode_out(_rr64j.stdout + _rr64j.stderr)
+try:
+    _j64j = json.loads(_decode_out(_rr64j.stdout))
+except ValueError:
+    _j64j = {}
+check('64g-4 H2：固定名备份**在**时行为一字不改（仍用固定名那份、`fallback: null`、'
+      '`first: false`、逐字节回到最初）',
+      _rr64j0.returncode == 0 and _rr64j.returncode == 0
+      and read(_s64j) == _H2_SRC and _j64j.get('fallback') is None
+      and _j64j.get('first') is False,
+      'rc=%s 回到最初=%s json=%r | %s'
+      % (_rr64j.returncode, read(_s64j) == _H2_SRC,
+         {k: _j64j.get(k) for k in ('first', 'fallback')}, _oo64j[-160:]))
+shutil.rmtree(_d64j, ignore_errors=True)
+
 # 64f 长路径缓解：`\\?\` 前缀 helper 的行为。
 # **平台显式**：`\\?\` 是 Windows 专属机制，POSIX 上 `_long_path` 的契约是**恒等**返回。
 # 旧写法在 POSIX 上做 `os.path.abspath(r'C:\a\b.txt')` —— POSIX 不把 `C:\…` 当绝对路径，
@@ -3887,10 +4001,14 @@ check('71①b 值不同 + 循环建轴：原位写不了 → best_effort + needs
       'reason=%r nb=%r applied=%r' % (_r71b.get('reason'),
                                       _r71b.get('needs_block'),
                                       _r71b.get('applied')))
+# J1（t30 / 0.1.14）：下面 71①b / 72② 的期望 rc 从 0 **收紧**到 1 —— 这两条都是
+# "想写却一处都没落地"的形态，现在顶层给 ok=false + error_code='nothing_applied'。
+# 收紧的是"结果需要处理"这一档，字节/块的断言一条都没放宽。
 _rc71b = apply.main([_s71b, '--params', _p71b, '--write', '--verify-fast'])
+
 _t71b = read(_s71b)
 check('71①b auto 退块时 fail-closed：不许把位置写到 fig.axes[0]（字节不变、不插块）',
-      _rc71b == 0 and _t71b == _S71_A
+      _rc71b == 1 and _t71b == _S71_A
       and writeback.BLOCK_START not in _t71b and 'set_position' not in _t71b,
       'rc=%s | %s' % (_rc71b, [_l for _l in _t71b.splitlines()
                               if 'position' in _l or 'auto layout' in _l]))
@@ -3965,7 +4083,7 @@ _rc72b, _o72b, _t72b = _s72_run(
     _S71_A, {'version': 4, 'script': 'fig.py',
              'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.50, 0.50]}]})
 check('72② 块目标证不出（一个字节都没写）：人读不得说「已写回」，须「未写回」+ 原因码',
-      _rc72b == 0 and '[OK] 已写回' not in _o72b and '未写回' in _o72b
+      _rc72b == 1 and '[OK] 已写回' not in _o72b and '未写回' in _o72b
       and 'best_effort' in _o72b and _t72b == _S71_A,
       'rc=%s | %s' % (_rc72b, [_l for _l in _o72b.splitlines() if '写回' in _l]))
 
@@ -7991,6 +8109,163 @@ check('§109⑪【有牙】`_gap_specs` 换成恒 None（= 0.1.11 行为）⇒ �
       'applied=%r pending=%r same=%s'
       % (_r109t.get('applied'), _r109t.get('pending'), _a109t == _S109_PROBE))
 shutil.rmtree(_d, ignore_errors=True)
+
+# =====================================================================
+# §110（0.1.14 / Q1 **真缺陷**）：建图写在**推导式**里 ⇒ 推导式体重复执行，
+# 块内**绝不**许用 `plt.gcf()`（实测会把参数写到**另一张图**上）
+#
+# 现场（独立验证员 e2/q1d_min.py 最小化）：`figs = [plt.figure(figsize=(4,3)) for _ in
+# range(2)]` —— 全文件只有**一个** `plt.figure()` AST 节点，运行期却执行 2 次、出 2 张图。
+# 旧判据只认 `ast.For`/`ast.While` ⇒ 判成"不在循环里" ⇒ `_gcf_provable` 认定"全文件只建
+# 一次图" ⇒ 块里写 `plt.gcf().axes[0]`；而 `plt.gcf()` 是**最后那张图** ⇒ 第 1 张图的参数
+# 被写到第 2 张图上（`--verify-fast` / `--no-verify` 下静默留下错块；默认档语义验证能拦，
+# 但归因指向的行是错的）。
+#
+# 修法（0.1.14，**窄改**）：新增 `_comprehension_scope`（"这个调用在不在推导式体里"），
+# 只加在真正需要它的两处 —— `_gcf_provable`（单图 gcf 可证性）与 `_numbered_fig_expr`
+# （多图按源码序编号）：推导式里建图 ⇒ 两条都**不可证** ⇒ 块 fail-closed + 点名原因。
+# **不动** `find_enclosing_loop`（它管的是"块位置/轴下标会不会重复应用"，是另一件事）——
+# 一口气把推导式并进那个函数，会连"图在普通语句、只有**轴**在推导式里"这种**能安全写**的
+# 脚本一起拦掉（§110⑤ 就是这条防线）。
+#
+# 断言口径：一个字节都不许写、块里不许出现 `plt.gcf()` / `.axes[`、pending 如实点名、
+# warnings 点名**为什么**（推导式）并给下一步；两档（--verify-fast / 默认）结论一致。
+_S110_SRC = '''import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+figs = [plt.figure(figsize=(4, 3)) for _ in range(2)]
+axs = [f.add_subplot(1, 1, 1) for f in figs]
+axs[0].plot([0, 1], [0, 1])
+axs[1].plot([0, 1], [1, 0])
+figs[0].savefig('m_0.png')
+figs[1].savefig('m_1.png')
+'''
+
+_S110_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 2,
+             'axes': [{'index': 0, 'pos': [0.1, 0.1, 0.5, 0.5],
+                       'lines': [{'index': 0, 'linewidth': 1.5,
+                                  'color': '#1f77b4'}]}]}
+
+_s110_runs = []
+for _fast110 in (True, False):
+    _d110, _s110, _p110 = _mk15('t110%s' % ('fast' if _fast110 else 'full'),
+                                _S110_SRC, _S110_PAR)
+    _r110 = writeback.writeback(_s110, _params.load(_p110), _p110, verify=False,
+                                fast_check=_fast110, style='block')
+    _a110 = read(_s110)
+    _s110_runs.append((_fast110, _r110, _a110))
+    check('§110① 推导式建图 ⇒ 块内**绝不写** plt.gcf() / fig.axes[k]：'
+          '脚本一个字节都没动 + pending 点名 + 文案点名"推导式"（fast=%s）' % _fast110,
+          _a110 == _S110_SRC and 'plt.gcf()' not in _a110
+          and '.axes[' not in _a110
+          and _r110.get('applied') is not True
+          and bool(_r110.get('pending'))
+          and any('推导式' in _w for _w in (_r110.get('warnings') or [])),
+          'applied=%r reason=%r pending=%r warn=%r same=%s'
+          % (_r110.get('applied'), _r110.get('reason'),
+             _r110.get('pending'), (_r110.get('warnings') or [])[:1],
+             _a110 == _S110_SRC))
+    shutil.rmtree(_d110, ignore_errors=True)
+
+_s110_fast, _s110_full = _s110_runs[0][1], _s110_runs[1][1]
+check('§110② 两档一致：同一脚本在 --verify-fast 与默认档下结论相同'
+      '（都拒写、都不含 plt.gcf()、pending 相同）—— 不许一个写错一个拦',
+      (_s110_fast.get('reason'), _s110_fast.get('applied'),
+       sorted(_s110_fast.get('pending') or []))
+      == (_s110_full.get('reason'), _s110_full.get('applied'),
+          sorted(_s110_full.get('pending') or []))
+      and all(not _x[2] or ('plt.gcf()' not in _x[2]) for _x in _s110_runs),
+      'fast=%r/%r full=%r/%r'
+      % (_s110_fast.get('reason'), _s110_fast.get('pending'),
+         _s110_full.get('reason'), _s110_full.get('pending')))
+
+# §110③ 判据本身：4 种推导式都算「重复执行上下文」；gcf 与编号两条"可证"路一起闭嘴
+_S110_COMPS = (
+    ('ListComp', 'figs = [plt.figure() for _ in range(2)]\n',
+     _ast.ListComp),
+    ('SetComp', 'figs = {plt.figure() for _ in range(2)}\n', _ast.SetComp),
+    ('DictComp', 'figs = {i: plt.figure() for i in range(2)}\n', _ast.DictComp),
+    ('GeneratorExp', 'figs = (plt.figure() for _ in range(2))\n',
+     _ast.GeneratorExp),
+)
+_s110_bad = []
+_s110_gcf = []
+for _tag110, _src110, _want110 in _S110_COMPS:
+    _t110 = _ast.parse(_src110)
+    _c110 = [n for n in _ast.walk(_t110)
+             if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+             and n.func.attr == 'figure'][0]
+    if not isinstance(writeback._comprehension_scope(_t110, _c110), _want110):
+        _s110_bad.append(_tag110)
+    # 普通语句里建图仍然返回 None（别把"能安全改的"一起拦掉）
+    _t110b = _ast.parse('import matplotlib.pyplot as plt\nfig = plt.figure()\n')
+    _c110b = [n for n in _ast.walk(_t110b)
+              if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+              and n.func.attr == 'figure'][0]
+    if writeback._comprehension_scope(_t110b, _c110b) is not None:
+        _s110_bad.append(_tag110 + '/普通语句误判')
+    # 同一个节点的两条"可证"路都必须闭嘴（否则编号路会写出 plt.figure(1) 指到第一张图）
+    _pos110 = [(writeback._node_scope(_t110, _c110.lineno), _c110.lineno + 1)]
+    if writeback._gcf_provable(_t110, _pos110, _c110) is not False:
+        _s110_gcf.append(_tag110 + ':_gcf_provable')
+    if writeback._numbered_fig_expr(_t110, _pos110, _c110) is not None:
+        _s110_gcf.append(_tag110 + ':_numbered_fig_expr')
+check('§110③ 4 种推导式都判成"重复执行上下文"（`_comprehension_scope`）；普通语句不被误拦；'
+      '`_gcf_provable` / `_numbered_fig_expr` 对推导式建图都为"不可证"',
+      not _s110_bad and not _s110_gcf,
+      'bad=%r 可证路仍开=%r' % (_s110_bad, _s110_gcf))
+
+# §110⑤ **不许把能安全改的一起拦掉**：图在普通语句、只有**轴**在推导式里（单图 ⇒
+# `fig.axes[k]` / `plt.gcf()` 确实就是它）必须照旧写块 —— 修法只动"建图节点的可证性"，不动
+# 轴枚举。实测这就是把推导式一口气并进 `find_enclosing_loop`（= 被否决的宽改）时的回归：
+# 那种改法让这条整块拒写（`_axes_binding_entries` 见到推导式里的 `add_subplot` 就返回
+# ok=False），而本窄改下它照旧写出 `fig.axes[0].set_position(...)`。
+_S110_AXONLY = '''import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig = plt.figure(figsize=(4, 3))
+axs = [fig.add_subplot(2, 2, i + 1) for i in range(4)]
+axs[0].plot([0, 1], [0, 1])
+axs[1].plot([0, 1], [1, 0])
+fig.savefig('m.png')
+'''
+_d110x, _s110x, _p110x = _mk15('t110axonly', _S110_AXONLY,
+                               {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                                'n_figs': 1,
+                                'axes': [{'index': 0,
+                                          'pos': [0.05, 0.05, 0.4, 0.4]}]})
+_r110x = writeback.writeback(_s110x, _params.load(_p110x), _p110x, verify=False,
+                             fast_check=True, style='block')
+_a110x = read(_s110x)
+check('§110⑤ 不影响"能安全写"的形态：单图 + **轴**在推导式里 ⇒ 仍写块并落到 '
+      '`fig.axes[0].set_position(`（`fig` 是静态可证的名字），只拦"建图在推导式里"',
+      _r110x.get('applied') is True and not _r110x.get('pending')
+      and 'fig.axes[0].set_position(' in _a110x
+      and 'plt.gcf()' not in _a110x,
+      'applied=%r pending=%r 含 fig.axes[0]=%s 含 gcf=%s'
+      % (_r110x.get('applied'), _r110x.get('pending'),
+         'fig.axes[0].set_position(' in _a110x, 'plt.gcf()' in _a110x))
+shutil.rmtree(_d110x, ignore_errors=True)
+
+# ---- §110④【有牙】把判据换回"推导式不算重复执行上下文"（= 修前实现）⇒ §110① 必红 ----
+# 这就是修前现场：块里又会写出 `plt.gcf().axes[0]`，运行期落到最后那张图。
+_orig_cs110 = writeback._comprehension_scope
+writeback._comprehension_scope = lambda *a, **k: None
+try:
+    _d110t, _s110t, _p110t = _mk15('t110teeth', _S110_SRC, _S110_PAR)
+    _r110t = writeback.writeback(_s110t, _params.load(_p110t), _p110t,
+                                 verify=False, fast_check=True, style='block')
+    _a110t = read(_s110t)
+finally:
+    writeback._comprehension_scope = _orig_cs110
+check('§110④【有牙】把 `_comprehension_scope` 换成恒 None（= 修前行为）⇒ '
+      '立刻又写出 `plt.gcf().axes[0]` 并改到运行期最后一张图上（即 §110① 真的在咬）',
+      'plt.gcf().axes[0]' in _a110t and _a110t != _S110_SRC,
+      '含 gcf=%s changed=%s'
+      % ('plt.gcf().axes[0]' in _a110t, _a110t != _S110_SRC))
+shutil.rmtree(_d110t, ignore_errors=True)
 
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)

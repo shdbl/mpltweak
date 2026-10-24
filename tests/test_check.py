@@ -283,7 +283,7 @@ def main():
         check(rc == 2, '不存在的脚本 → 退出码 2', rc)
         check(out.strip() == '', 'stdout 干净（错误走 stderr）', repr(out[:60]))
 
-        print('§7 布局引擎冲突（constrained_layout）单独报，且不改退出码')
+        print('§7 布局引擎冲突（constrained_layout）：D1 起默认就是 error 级问题')
         cst = os.path.join(tmp, 'constrained.py')
         with open(cst, 'w', encoding='utf-8') as f:
             f.write(CONSTRAINED)
@@ -294,9 +294,13 @@ def main():
               '检出 constrained_layout', findings)
         check(isinstance(findings[0].get('line'), int) and findings[0]['line'] > 0,
               '带行号（用户才知道去哪改）', findings)
-        check(d['ok'] is True and not d['problems'],
-              '布局引擎不进 problems（整齐的图不该被骂）', d.get('problems'))
-        check(rc == 0, '退出码仍是 0（不是 error 级）', rc)
+        check(d['ok'] is False
+              and [p['rule'] for p in d['problems']] == ['layout_engine_conflict'],
+              'D1：冲突**默认**进 problems（不再需要 --strict）',
+              (d['ok'], [p['rule'] for p in d['problems']]))
+        check([p.get('level') for p in d['problems']] == ['error'],
+              '等级是 error（用户只看 check 也得知道"写了不生效"）', d.get('problems'))
+        check(rc == 1, '退出码 1（发现问题）', rc)
 
         print('§7b 没开布局引擎的脚本 → layout_engine 为空')
         rc, out, err = run('check', paths['tidy'], '--json')
@@ -488,18 +492,18 @@ def main():
               '文字检查确实跑了（不是靠跳过它蒙对）',
               (d.get('text_checked'), d.get('n_texts')))
 
-        print('§10 check --strict：布局引擎冲突升级为问题（接 CI 用）')
+        print('§10 check --strict：兼容开关 —— 默认档已经是同一结论（D1）')
         rc, out, err = run('check', cst, '--json')
-        d = json.loads(out)
-        check(rc == 0 and not d['problems'] and d['layout_engine'],
-              '默认只是提示：rc=0 且不进 problems',
-              (rc, d['problems'], len(d['layout_engine'])))
-        rc, out, err = run('check', cst, '--json', '--strict')
         d = json.loads(out)
         check(rc == 1 and d['ok'] is False
               and [p['rule'] for p in d['problems']] == ['layout_engine_conflict'],
-              '--strict → rc=1 且问题落在 problems 里',
-              (rc, [p['rule'] for p in d['problems']]))
+              'D1：默认档 rc=1 且问题落在 problems 里',
+              (rc, d['problems']))
+        rc_st, out_st, err_st = run('check', cst, '--json', '--strict')
+        d_st = json.loads(out_st)
+        check(rc_st == rc and d_st['problems'] == d['problems'],
+              '--strict 不再改变结论（老 CI 的命令行照旧能用）',
+              (rc_st, [p['rule'] for p in d_st['problems']]))
         check(d['layout_engine'] and d['problems'][0].get('msg'),
               '原始冲突信息仍然保留在 layout_engine 里', d['layout_engine'])
 
@@ -544,9 +548,12 @@ def main():
               'note 明说"没执行、这些都没查"', str(d.get('note'))[:60])
         check(len(d.get('not_checked') or []) >= 5,
               'not_checked 列出没检查的规则', d.get('not_checked'))
-        check(d.get('ok') is True and rc == 0, '静态干净 → ok/rc=0', (d.get('ok'), rc))
-        rc, out, err = run('check', sst, '--static', '--strict')
-        check(rc == 1, '--static --strict + 冲突 → rc=1', rc)
+        check(d.get('ok') is False and rc == 1
+              and [p['rule'] for p in d['problems']] == ['layout_engine_conflict'],
+              'D1：静态档同样把冲突当 error（ok=false / rc=1）',
+              (d.get('ok'), rc, [p['rule'] for p in d.get('problems') or []]))
+        rc, out, err = run('check', sst, '--static', '--strict', '--json')
+        check(rc == 1, '--static --strict + 冲突 → rc=1（与默认档一致）', rc)
         _bad = os.path.join(tmp, 'badsyntax.py')
         with open(_bad, 'w', encoding='utf-8') as f:
             f.write('import matplotlib\nx = (1,\n')

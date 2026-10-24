@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# ==== §1 文件头：三层验证与判定口径 ====
+
 """
 mpltweak.verify —— 语义验证：写回后重跑脚本，dump **目标图的真实状态**并与参数逐项比对
 =======================================================================================
@@ -7,6 +9,26 @@ mpltweak.verify —— 语义验证：写回后重跑脚本，dump **目标图�
 本模块补上这一环：在一个干净子进程里重跑写回后的脚本 → 抓取目标图（按
 ``fig_index``，与 launch 选图口径一致）→ 把位置/字号/grid/spines/clim 与参数 JSON
 逐项比对。
+
+**快速导航**（本文件按「采集 → 语义 → 重跑」三层切；顶层横幅 `# ==== §N 名字 ====`
+被文件尾索引收录，小节横幅 `# ==== §3.N … ====` 用小数列、工具不索引，跳转请
+`grep -n '§3.4'`）：
+
+- §1 文件头：三层验证与判定口径（就是本段）
+- §2 口径：容差表（`POS_TOL` / `FS_TOL` / `CLIM_REL_TOL` / `TEXT_BOX_LIMIT`）、失败归因
+  四类（`VERIFY_FAIL_*`）与错误识别；内分 2 小节（§2.1 错误模式表 / §2.2 静态证据与归因）
+- §3 采集层：把用户脚本跑起来、把目标图的状态抓成 dict；内分 8 小节 ——
+  §3.1 文字盒 / §3.2 图元状态（cmap·lines·legend）/ §3.3 cwd 锁与 fd 重定向 /
+  §3.4 进程全局状态快照与还原（A3）/ §3.5 figure 注册表与 savefig 快照（t39）/
+  §3.6 跑一次脚本的会话边界 / §3.7 `collect_all`·`collect` 两个入口 / §3.8 独立子进程（A1）
+- §4 语义层：`compare` 逐项比对（位置 / 字号 / clim / grid / spines），返回不一致明细
+- §5 重跑层：`verify_once`（一遍跑到底）/ `verify_semantic`（子进程重跑 + 比对）
+- §6 子进程驱动：`main` 把图状态 dump 成 JSON 给父进程读
+
+**三层分工**（看代码前先记住这个，剩下都是实现细节）：**采集层**只回答"这张图现在
+长什么样"，**语义层**只回答"跟你要的一样吗"，**重跑层**负责"跑两遍还是跑一遍"的编排
+与失败归因。采集口径与 `toolbox.export()` 完全一致（同一套 `_bbox` / `_title_fs` /
+`_clim_of`），所以同一份参数在"开窗存的"与"describe 导出的"之间不会出现两套格式。
 
 判定：
   * 全部一致            → ``(True, '')``
@@ -37,6 +59,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import messages as _msg
 
+# ==== §2 口径：容差表、失败归因四类与错误识别 ====
+
 POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
 FS_TOL = 0.51         # 字号容差（磅）
 CLIM_REL_TOL = 0.01   # clim 容差（相对量程）
@@ -62,6 +86,7 @@ VERIFY_FAIL_NEEDS_ARGS = 'script_needs_args'
 VERIFY_FAIL_NEEDS_GUI = 'script_needs_gui_or_headless_impossible'
 VERIFY_FAIL_TOOL_BUG = 'tool_bug'
 
+# ==== §2.1 错误模式表：stderr 里的强证据 ====
 # stderr 里的**强证据**（小写匹配）。needs_args 必须是很具体的 argparse 报错
 # 或带 usage 的用法错误 —— 泛化的 "usage:" 单凭一行不归类（有些脚本自己打印用法）。
 _ARGS_ERR_PATTERNS = (
@@ -101,6 +126,7 @@ _MISSING_DATA_PATTERNS = (
 )
 
 
+# ==== §2.2 静态证据与归因结论（_script_static_evidence / classify_verify_failure） ====
 def _script_static_evidence(script_path: str) -> Dict[str, bool]:
     """纯静态扫描（ast，**不执行脚本**）：脚本是否读 argv / 是否带交互（GUI）标记。
 
@@ -234,6 +260,8 @@ def classify_verify_failure(err_text: str, script_path: Optional[str] = None,
     return VERIFY_FAIL_CANNOT_RUN, 'unknown'
 
 
+# ==== §3 采集层：把图跑出来并抓状态 ====
+
 def _ax_identity(ax) -> Optional[Dict[str, Any]]:
     """轴的**稳定身份**：网格位置（subplotspec）优先，其次标题/标签文字。
 
@@ -268,6 +296,7 @@ def _ax_identity(ax) -> Optional[Dict[str, Any]]:
         return None
 
 
+# ==== §3.1 文字盒采集（draw 之后的文字盒） ====
 def _collect_texts(fig, axes_items) -> Tuple[List[Dict], str]:
     """draw 之后采集文字盒（figure 归一化坐标），写进 ``axes_items[i]['_texts']``。
 
@@ -342,6 +371,7 @@ def _collect_texts(fig, axes_items) -> Tuple[List[Dict], str]:
     return out, ''
 
 
+# ==== §3.2 图元状态口径：cmap / lines / legend ====
 # ---------------------------------------------------------------------------
 # T26：图元级状态（cmap / legend / lines）
 #
@@ -625,6 +655,7 @@ def _state(fig, with_text: bool = False) -> Dict[str, Any]:
     return out
 
 
+# ==== §3.3 进程边界①：cwd 锁与 fd 重定向 ====
 # os.chdir 是**进程级**全局状态，而 MCP server 会用线程并发执行同步工具
 # （mcp 2.3 走 anyio.to_thread）。两个工具同时采集时，A 的脚本会在 B 的目录里
 # 执行 —— 实测表现为读到错误的数据且毫无提示（t3-M15 / t6-G4）。
@@ -663,6 +694,7 @@ def _fd_restore(saved):
         pass
 
 
+# ==== §3.4 进程边界②：全局状态快照与还原（A3） ====
 # ---------------------------------------------------------------------------
 # A3：进程全局状态的快照 / 还原
 #
@@ -702,6 +734,7 @@ def _restore_process_state(snap: Dict[str, Any]) -> None:
             pass
 
 
+# ==== §3.5 figure 注册表与 savefig 快照（t39） ====
 # ---------------------------------------------------------------------------
 # t39：单遍验证的取数基础 —— figure 注册表 + `Figure.savefig` 快照
 #
@@ -817,6 +850,7 @@ def _capture_figures(plt):
 
 
 @contextlib.contextmanager
+# ==== §3.6 跑一次脚本：会话边界与执行 ====
 def _collect_session(script: str):
     """一次"跑用户脚本"的进程状态边界：cwd / sys.stdout / fd1 / 全局状态 + 取数钩子。
 
@@ -910,6 +944,7 @@ def _exec_script(script: str, script_args: Optional[List[str]],
     return 'ok', ''
 
 
+# ==== §3.7 把 figure 采成状态：collect_all / collect ====
 def _states_of_all_figs(sess: _Session, with_text: bool,
                         exited: bool = False) -> Tuple[Optional[List[Dict[str, Any]]], str]:
     """把所有 figure 采成状态列表（``collect_all`` 的正常 / SystemExit 两条路共用）。"""
@@ -1041,6 +1076,7 @@ def collect(script: str, fig_index: Optional[int] = None,
                                  exited=(_kind == 'exit'), info=info)
 
 
+# ==== §3.8 独立子进程采集（A1） ====
 # ---------------------------------------------------------------------------
 # A1：把用户脚本的执行挪进**子进程**
 # ---------------------------------------------------------------------------
@@ -1146,6 +1182,8 @@ def _r(v):
     except Exception:                            # noqa: BLE001
         return v
 
+
+# ==== §4 语义层：参数与实测逐项比对 ====
 
 def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             pos_tol: float = POS_TOL,
@@ -1294,6 +1332,8 @@ def _compare_state(data: Dict[str, Any], actual: Dict[str, Any],
     return bad, _uj
 
 
+# ==== §5 重跑层：一遍跑到底与分层验证 ====
+
 def verify_once(script: str, data: Dict[str, Any], python: Optional[str] = None,
                 timeout: float = 300, fields_by_axis: Optional[Dict[int, set]] = None,
                 figsize_edited: bool = False,
@@ -1423,6 +1463,11 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
             return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
         return True, _uj
     python = python or sys.executable
+    # t36（REV1-2）：**默认路径自己建的文件自己清；调用方显式给的由调用方清**。
+    # 见过血的坑：`writeback._pending_vs_live` 传显式 `out_path`，并在本函数返回**之后**
+    # 回读那个文件（拿 actual 逐字段回比）—— 这里若一律删掉，它就读不到 → fails closed
+    # 退块 → 本该 `no_change` 的零往返变成"多插一块"（test_writeback 10 项红）。
+    _own_state = out_path is None
     if out_path is None:
         d = os.path.dirname(os.path.abspath(script))
         out_path = os.path.join(d, '.tweak_params', '_verify_state.json')
@@ -1430,10 +1475,7 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
     except OSError:
         pass
-    try:
-        os.remove(out_path)
-    except OSError:
-        pass
+    _unlink(out_path)
     fig_index = data.get('fig_index')
     idx_arg = str(fig_index) if isinstance(fig_index, int) else '-1'
     env = dict(os.environ, MPLBACKEND='Agg')
@@ -1455,7 +1497,15 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         with open(out_path, 'r', encoding='utf-8') as f:
             actual = json.load(f)
     except Exception as e:                       # noqa: BLE001
+        if _own_state:
+            _unlink(out_path)
         return None, '读取状态失败: %s' % e
+    # t36（REV1-2）：默认那份读完了就删 —— 与 verify_run（:1368/:1389/:1392/:1399）
+    # 同一套清理。以前这里只读不删，于是用户在 `.tweak_params/` 里白白多出一份
+    # `_verify_state.json`（连"拒绝写回、一个字节都没动"的路径上也留），直接违反
+    # README 的"零侵入、不生成副文件"。显式 `out_path` 不在此删（见上面的 `_own_state`）。
+    if _own_state:
+        _unlink(out_path)
     # 判据与单遍路径（verify_once）**共用同一个** _compare_state —— 两条路不可能分叉。
     bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
                               figsize_edited=figsize_edited)
@@ -1463,6 +1513,8 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
     return True, _uj
 
+
+# ==== §6 子进程驱动：把图状态 dump 成 JSON ====
 
 _USAGE = ('用法: python -m mpltweak.verify <script> <out.json> [fig_index] '
           '[--fig N] [--all-figs] [--text] [--envelope] [--onepass] '
@@ -1588,3 +1640,50 @@ def main(argv=None) -> int:
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头：三层验证与判定口径（行 2-61，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 口径：容差表、失败归因四类与错误识别（行 62-262，2 个顶层函数）
+#     _script_static_evidence                        130
+#     classify_verify_failure                        219
+# §3 采集层：把图跑出来并抓状态（行 263-1185，26 个顶层函数）
+#     _ax_identity                                   265
+#     _collect_texts                                 300
+#     _line_width                                    403
+#     _line_color                                    417
+#     _lines_state                                   457
+#     _legend_state                                  473
+#     _artist_state                                  531
+#     _state                                         563
+#     _fd_to_stderr                                  667
+#     _fd_restore                                    683
+#     _snapshot_process_state                        711
+#     _restore_process_state                         718
+#     _FigureRegistry                                766
+#     _Session                                       801
+#     _capture_figures                               812
+#     _collect_session                               854
+#     _exec_script                                   901
+#     _states_of_all_figs                            948
+#     _state_of_one_fig                              967
+#     collect_all                                   1021
+#     collect                                       1049
+#     _isolated_timeout                             1086
+#     _child_env                                    1098
+#     collect_isolated                              1109
+#     _unlink                                       1167
+#     _r                                            1174
+# §4 语义层：参数与实测逐项比对（行 1186-1334，2 个顶层函数）
+#     compare                                       1188
+#     _compare_state                                1306
+# §5 重跑层：一遍跑到底与分层验证（行 1335-1516，2 个顶层函数）
+#     verify_once                                   1337
+#     verify_semantic                               1426
+# §6 子进程驱动：把图状态 dump 成 JSON（行 1517-1642，2 个顶层函数）
+#     _int_or_none                                  1524
+#     main                                          1531
+# --- END AUTO NAV ---

@@ -22,7 +22,8 @@
 ⑥ **表格列数自洽（转义感知）**（0.1.11 扩展，见下）：每个表格块里**每个行**（表头、分隔行、
    数据行）的单元格数必须等于**表头**格数；`\|` 是字面竖线、**不**参与切分。
 ⑦ **`文件.py:行号` 引用闸门（判据级）**（0.1.13 扩展，见下 + `tools/check_doc_refs.py`）：
-   裸 `:NNN` 继承同段文件名 / 符号锚 `# 符号` 在目标行 ±N 内必须搜得到 / 三张"带理由豁免表"
+   裸 `:NNN` 继承同段文件名 / 符号锚 `# 符号` 必须在**被引的那一行**搜得到（窗口默认 0，
+   `--anchor-window N` 才放宽；0.1.14 §28-A1）/ 三张"带理由豁免表"
    的纪律，各配 teeth 与反向验证。**刻意不含"真仓库必须 0 可疑"的断言**（原因见 ⑦ 段）。
 
 ⑤ 为什么必须有（**真实口径漏洞，不是假想**）
@@ -52,7 +53,8 @@
 三类硬伤，**实测抽样 5 条里 4 条已经指错地方而闸门全绿**；`t72` 又实测到「`t80` 修过的 4 个
 锚点这次**又全漂 +5~+13**」—— 判据只看"存在性"，**指错函数它看不见**。0.1.13 给它加了三条：
 裸 `:NNN`（继承同句/同段上一处文件名，否则 `docs/verify.md:10` 后半那两处永远不查）、
-符号锚 `file.py:2255 # _prune_backups`（目标行 ±N 内搜该符号，搜不到报 `symbol_mismatch`，
+符号锚 `file.py:2255 # _prune_backups`（被引的那一行必须搜得到该符号 —— 窗口默认 0，
+`--anchor-window N` 放宽；0.1.14 §28-A1；搜不到报 `symbol_mismatch`，
 并打印**最近一次出现的行号**）、以及"哪些引用可以不锚"的**带理由豁免口径**（三张表，键都不含
 文档行号，棘轮只准缩小）。本套件只搬**判据级**的东西进 CI：
 
@@ -1060,6 +1062,23 @@ _GT_WB = (''.join('row%d\n' % i for i in range(1, 10))
           + 'def gate_symbol(x):\n'
           + ''.join('end%d\n' % i for i in range(1, 5)))
 
+# A2 夹具（§28-A2 纯注释行不承重）：**行号是断言的一部分**，别随手插行。
+# 1 = 横幅注释（含 `check_sym`）；2 = 纯注释；3 空；4 = `def real_thing`；
+# 5~8 = docstring（**6 = 以 `#` 开头的正文行**，7 = 正文，含 `gate_inner`）；
+# 9 = **行尾注释**所在的代码行（含 `tail_only`）；10 空；11 = `def check_sym`；12 = return。
+_GT_A2 = ('# ---- check_sym: 横幅注释，锚在这里等于引用一句注释 ----\n'
+          '# 第二行纯注释\n'
+          '\n'
+          'def real_thing(x):\n'
+          '    """说明。\n'
+          '    # doc_inner 在 docstring 里、以 # 开头 —— 这**不是**注释\n'
+          '    gate_inner 出现在 docstring 正文里\n'
+          '    """\n'
+          '    return x  # tail_only 在行尾注释里\n'
+          '\n'
+          'def check_sym(y):\n'
+          '    return y\n')
+
 
 def _load_gate():
     """按路径加载 `tools/check_doc_refs.py`（不污染 sys.path、不与别的模块重名）。"""
@@ -1152,7 +1171,7 @@ def refs_gate():
               'items=%d skipped=%d susp=%d'
               % (len(r3['items']), len(r3['skipped_bare']), len(r3['suspicious'])))
 
-        # ---- teeth32/33：符号锚与窗口（§25.4b）----
+        # ---- teeth32/33：符号锚与窗口（§25.4b；窗口默认值 0 见 §28-A1）----
         t.write('docs/sym.md',
                 '对：`writeback.py:10 # prune_backups`；错：`writeback.py:10 # gate_symbol`。\n')
         r4 = g.scan(t.root, ['docs/sym.md'])
@@ -1162,14 +1181,135 @@ def refs_gate():
               and _s4[0]['why'] == 'symbol_mismatch' and _s4[0]['anchor_at'] == 21,
               '实得 %s' % [(x['ref'], x['why'], x.get('anchor_at')) for x in _s4])
 
-        t.write('docs/win.md', '引用 `writeback.py:13 # prune_backups`。\n')
+        # 窗口默认值 0（§28-A1，2026-10-24）：**偏 0 行**必过、**偏 3 行**必红；
+        # 显式给 `anchor_window=3` 才放行 ⇒ 证明"承重"的是窗口这个**参数**，而不是"恰好恒红"。
+        t.write('docs/win.md', '同偏移：`writeback.py:10 # prune_backups`；偏 3 行：`writeback.py:13 # prune_backups`。\n')
+        w0 = g.scan(t.root, ['docs/win.md'], anchor_window=0)
         w3 = g.scan(t.root, ['docs/win.md'], anchor_window=3)
-        w1 = g.scan(t.root, ['docs/win.md'], anchor_window=1)
-        check('teeth33 符号锚窗口是**承重的**：默认 ±3 通过、±1 必红，且默认值就是 3',
-              not w3['suspicious'] and len(w1['suspicious']) == 1
-              and w1['suspicious'][0]['why'] == 'symbol_mismatch' and g.ANCHOR_WINDOW == 3,
-              '±3=%d 处 / ±1=%d 处 / 默认窗口=%d'
-              % (len(w3['suspicious']), len(w1['suspicious']), g.ANCHOR_WINDOW))
+        _s0 = [(x['ref'], x['why']) for x in w0['suspicious']]
+        check('teeth33 符号锚窗口是**承重的**：偏 3 行在默认窗口（0 = 只认被引那一行）下必红，'
+              '显式放宽到 ±3 才通过；且默认值就是 0',
+              _s0 == [('writeback.py:13', 'symbol_mismatch')]
+              and not w3['suspicious'] and g.ANCHOR_WINDOW == 0,
+              '±0=%s / ±3=%d 处 / 默认窗口=%d'
+              % (_s0, len(w3['suspicious']), g.ANCHOR_WINDOW))
+
+        # ---- teeth48/49：纯注释行不承重，docstring **不是**注释（§28-A2，2026-10-24）----
+        # 为什么要有这条：一行横幅注释（`# ---- foo: ...`）里满是符号名，锚指向它等于"引用了
+        # 一句注释"—— 代码挪走后注释一动不动，闸门绿着而引用已失效。docstring 则相反：它是
+        # 产品文档的一部分，`docs/verify.md:75` 的 `writeback.py:3108 # first` 就落在 docstring 里。
+        t.write('src/mpltweak/anchors.py', _GT_A2)
+        t.write('docs/anchors.md',
+                '横幅注释：`anchors.py:1 # check_sym`；'
+                '行尾注释那行（是代码）：`anchors.py:9 # tail_only`；'
+                'docstring 里以 `#` 开头的行：`anchors.py:6 # doc_inner`；'
+                'docstring 正文：`anchors.py:7 # gate_inner`。\n')
+        r5 = g.scan(t.root, ['docs/anchors.md'])
+        _s5 = [(x['ref'], x['why'], x['anchor_at']) for x in r5['suspicious']]
+        _ok5 = [x['ref'] for x in r5['items'] if not x['why']]
+        check('teeth48 纯注释行**不承重**（匹配与"最近出现"两个环节都跳过）：横幅注释当锚 ⇒ '
+              '`symbol_mismatch`，且"最近出现"跳过纯注释行、报第 11 行的 `def check_sym`；'
+              '而**行尾注释**所在的代码行（第 9 行）照样承重',
+              _s5 == [('anchors.py:1', 'symbol_mismatch', 11)]
+              and _ok5[0] == 'anchors.py:9',
+              'susp=%s / 通过=%s' % (_s5, _ok5))
+        # teeth49 只钉 docstring 那两条（不与 teeth48 的横幅断言耦合）：这样"关掉排除"只会让
+        # teeth48 红、"按 # 前缀一刀切"只会让 teeth49 红 —— 两条牙齿各自咬各自的错法。
+        _susp5 = set(x['ref'] for x in r5['suspicious'])
+        check('teeth49 docstring **不是**注释、不参与排除：docstring 里以 `#` 开头的正文行（第 6 行）'
+              '与普通正文行（第 7 行）当锚都必须命中（按 `#` 前缀一刀切就会把第 6 行误排）',
+              set(['anchors.py:6', 'anchors.py:7']) <= set(_ok5)
+              and not (_susp5 & set(['anchors.py:6', 'anchors.py:7'])),
+              '通过=%s / 可疑=%s' % (_ok5, _s5))
+
+        # ---- teeth50：空转键（§28-A3）—— 表里挂着但已经用不上的条目必须被报出来 ----
+        # 为什么要：`HISTORICAL_ALLOW`（历史留痕）是"当时对、现在不对"的账。问题修好了账还挂着，
+        # 以后同类新问题就会被旧账吞掉（同一处引用又被放行）。所以两类空转都要报：
+        #   missing = 引用在仓库里已经不存在；idle = 引用还在、但这条豁免用不上。
+        # 只提示，**不改 rc**（否则"账没销"会挡住发布，判据会被人骂着放宽）。
+        import contextlib
+        import json
+        _saved_hist, _saved_unanch = g.HISTORICAL_ALLOW, g.UNANCHORED_ALLOW
+        try:
+            g.HISTORICAL_ALLOW = {
+                ('docs/idle.md', 'writeback.py:10'): '自测：引用还在，但这条豁免用不上（idle）',
+                ('docs/idle.md', 'writeback.py:99'): '自测：引用已不存在（missing）'}
+            g.UNANCHORED_ALLOW = {}
+            t.write('docs/idle.md', '带锚且对：`writeback.py:10 # prune_backups`\n')
+            _out_js = io.StringIO()
+            with contextlib.redirect_stdout(_out_js):
+                _rc_js = g.main(['--root', t.root, '--include', 'docs/idle.md', '--json'])
+            _js = json.loads(_out_js.getvalue())
+            _keys50 = [(k['table'], k['ref'], k['reason']) for k in _js['stale_keys']]
+            _out_txt = io.StringIO()
+            with contextlib.redirect_stdout(_out_txt):
+                _rc_txt = g.main(['--root', t.root, '--include', 'docs/idle.md'])
+            _txt50 = _out_txt.getvalue()
+            g.HISTORICAL_ALLOW = {}
+            _out_none = io.StringIO()
+            with contextlib.redirect_stdout(_out_none):
+                g.main(['--root', t.root, '--include', 'docs/idle.md'])
+            _txt_none = _out_none.getvalue()
+        finally:
+            g.HISTORICAL_ALLOW, g.UNANCHORED_ALLOW = _saved_hist, _saved_unanch
+        check('teeth50 空转键：表里挂着但用不上的条目必须被报出来（missing = 引用已不存在 / '
+              'idle = 引用还在但这条豁免用不上），且**只提示、不改 rc**',
+              _keys50 == [('HISTORICAL_ALLOW', 'writeback.py:10', 'idle'),
+                          ('HISTORICAL_ALLOW', 'writeback.py:99', 'missing')]
+              and _js['stale_unanchored'] == [] and _rc_js == 0 and _rc_txt == 0
+              and '空转键' in _txt50 and 'writeback.py:99' in _txt50
+              and '空转键：无' in _txt_none,
+              'keys=%s / rc=%s,%s / 有提示=%s / 无键提示=%s'
+              % (_keys50, _rc_js, _rc_txt, '空转键' in _txt50,
+                 '空转键：无' in _txt_none))
+
+        # ---- teeth51：表头计数不许手写（§28-A4）----
+        # 病根：`HISTORICAL_ALLOW` 的表头注释写死过"9 键 / 11 条"，实测 12 条（三处键各被两行
+        # 引用），从 t72 起就少算 1 条 —— 而**没有任何东西会因此变红**。两条一起钉：
+        #   (a) 源码里三张表的"表头注释块"不许出现 `N 键` / `N 条` / `N 处` 这种手写计数；
+        #   (b) `--json` 的 counts 必须与**真表长 / 真扫到 / 真生效**逐项相等（数字只能算出来）。
+        import io as _io
+        with _io.open(_GATE_PATH, encoding='utf-8') as _f:
+            _src = _f.read().split('\n')
+        _bad_hdr = []
+        for _tname in ('HISTORICAL_ALLOW', 'KNOWN_DRIFT', 'UNANCHORED_ALLOW'):
+            _idx = None
+            for _i, _ln in enumerate(_src):
+                if _ln.startswith(_tname + ' = {'):
+                    _idx = _i
+                    break
+            if _idx is None:
+                _bad_hdr.append('%s：找不到定义' % _tname)
+                continue
+            _hdr, _j = [], _idx - 1
+            while _j >= 0 and _src[_j].lstrip().startswith('#'):
+                _hdr.insert(0, _src[_j])
+                _j -= 1
+            for _ln in _hdr:
+                if re.search(r'\d+\s*(键|条|处|个键|个条目)', _ln):
+                    _bad_hdr.append('%s: 表头注释里有手写计数 → %s'
+                                    % (_tname, _ln.strip()[:60]))
+        _real51 = g.scan(ROOT, list(_GATE_INCLUDES))
+        _c51 = _real51['counts']
+        _cnt_bad = []
+        for _tname, _kind in (('HISTORICAL_ALLOW', 'allowed'), ('KNOWN_DRIFT', 'drift'),
+                              ('UNANCHORED_ALLOW', 'unanchored')):
+            _tbl = getattr(g, _tname)
+            _one = _c51['tables'][_tname]
+            _ex = len([r for r in _real51['items'] if r['exempt'] == _kind])
+            if _one['keys'] != len(_tbl):
+                _cnt_bad.append('%s.keys=%d≠表长%d' % (_tname, _one['keys'], len(_tbl)))
+            if _one['exercised'] != _ex:
+                _cnt_bad.append('%s.exercised=%d≠实测%d' % (_tname, _one['exercised'], _ex))
+            if _one['in_scan'] > _one['keys']:
+                _cnt_bad.append('%s.in_scan=%d 大于表长' % (_tname, _one['in_scan']))
+        check('teeth51 表头计数不许手写（§28-A4）：三张表的表头注释里没有 `N 键 / N 条 / N 处`，'
+              '且 `counts` 的表内 / 本面扫到 / 本面真生效三项与真表长、真豁免数逐项相等',
+              not _bad_hdr and not _cnt_bad,
+              '手写计数：%s / 计数不符：%s / 实测 历史留痕%s 已知漂移%s 未锚%s'
+              % (_bad_hdr or '无', _cnt_bad or '无',
+                 _c51['tables']['HISTORICAL_ALLOW'], _c51['tables']['KNOWN_DRIFT'],
+                 _c51['tables']['UNANCHORED_ALLOW']))
 
         # ---- teeth34/35/36：带理由豁免口径（§25.4c）----
         t.write('docs/un.md', '引用 `writeback.py:10`。\n')
@@ -1268,6 +1408,8 @@ def refs_gate():
                                     [(x['ref'], x['exempt']) for x in _r45['items']]))
 
     # ---- teeth46：符号锚的"窗口外"提示要报**离被引行最近**的那一处（t16）----
+    # 0.1.14 §28-A1 之后"窗口 3"不再是被放宽的默认值，所以这里用**刚够到**的最小窗口（±2）
+    # 演示"放宽就能命中"，别再把 ±3 当成口径。
     _l46 = ['line%d' % i for i in range(1, 21)]
     _l46[4] = 'def alpha():'          # 第 5 行
     _l46[19] = 'alpha()'              # 第 20 行
@@ -1275,8 +1417,17 @@ def refs_gate():
     check('teeth46 窗口外提示报"**离被引行最近**"那一处（不是文件里第一处）：符号在 5 / 20、'
           '引用行 18、窗口 0 ⇒ 必须报 20（旧实现报 5，会让人以为差 13 行）',
           _v46 == ('out_of_window', 20)
-          and g._symbol_where(_l46, 'alpha', 18, 3) == ('', 20),
-          '窗口 0 得 %s / 窗口 3 得 %s' % (_v46, g._symbol_where(_l46, 'alpha', 18, 3)))
+          and g._symbol_where(_l46, 'alpha', 18, 2) == ('', 20),
+          '窗口 0 得 %s / 窗口 2 得 %s' % (_v46, g._symbol_where(_l46, 'alpha', 18, 2)))
+
+    # ---- teeth47：窗口**默认值**必须是 0（§28-A1，2026-10-24；防手滑改回 3）----
+    # 只钉模块常量不够：闸门真正运行时用的是 argparse 的默认值，两个出处都要钉。
+    check('teeth47 符号锚窗口的**默认值**是 0（只认被引那一行；常量与命令行默认值两处一致）',
+          g.ANCHOR_WINDOW == 0
+          and g._build_parser().get_default('anchor_window') == 0
+          and g._build_parser().parse_args([]).anchor_window == 0,
+          'ANCHOR_WINDOW=%d / CLI 默认=%s'
+          % (g.ANCHOR_WINDOW, g._build_parser().get_default('anchor_window')))
 
     # ---- teeth37/38：三张真表的**静态纪律**（与环境状态无关，永不因代码改动漂移）----
     def _table_bad(table):
@@ -1315,17 +1466,19 @@ def refs_gate():
     _out = (_proc.stdout or b'').decode('utf-8', 'replace')
     _tail = [l for l in _out.splitlines() if l.strip()][-1:] or ['']
     check('teeth39 工具自带自测 `--self-test` 全过（§25.5：t103 四方向 + 符号锚/窗口/豁免 '
-          '+ t14 的两条收紧）—— CI 级，不靠人工 --root',
-          _proc.returncode == 0 and '9 / 9' in _out,
+          '+ t14 的两条收紧 + §28 的默认窗口 0 / 注释行不承重 / 空转键 / 计数由工具算）'
+          '—— CI 级，不靠人工 --root',
+          _proc.returncode == 0 and '13 / 13' in _out,
           'rc=%d | %s' % (_proc.returncode, _tail[0]))
 
     # ---- teeth40：反向 —— 把每条判据**故意弄坏**，自测必须变红（证明自测不是恒绿）----
     _not_red = []
-    for _mode in ('bare', 'anchor', 'window', 'allow', 'herit', 'exempt', 'resolve'):
+    for _mode in ('bare', 'anchor', 'window', 'allow', 'herit', 'exempt', 'resolve',
+                  'comment'):
         _buf = io.StringIO()
         if g._self_test(_mode, out=_buf) != 1:
             _not_red.append(_mode)
-    check('teeth40 反向验证：`--break bare/anchor/window/allow/herit/exempt/resolve` '
+    check('teeth40 反向验证：`--break bare/anchor/window/allow/herit/exempt/resolve/comment` '
           '逐条弄坏判据 ⇒ 自测**必须**变红（rc=1）', not _not_red,
           '没变红的：%s' % (_not_red or '无'))
 
@@ -1339,11 +1492,22 @@ def refs_gate():
           len(real_nofreeze['suspicious']) > len(real['suspicious']),
           '带表 %d 处 / 清空 %d 处 / 冻结 %d 条'
           % (len(real['suspicious']), len(real_nofreeze['suspicious']), len(g.UNANCHORED_ALLOW)))
-    check('反向⑥ 对真仓库：关掉裸引用支持 ⇒ 引用条数必须变少（%d → %d 条）'
-          '（证明 §25.4a 是承重的，不是锦上添花）'
-          % (len(real['items']), len(real_nobare['items'])),
-          len(real_nobare['items']) < len(real['items']),
-          '带裸引用 %d 条 / 关掉 %d 条' % (len(real['items']), len(real_nobare['items'])))
+    # ---- 反向⑥：§25.4a 的裸引用继承是承重的（**自造文档**，不依赖真仓库里还剩几处裸引用）----
+    # 为什么改成自造：B1（0.1.14）已把 docs 里的续行裸引用全部改成显式 `文件名:NNN`
+    # ⇒ "对真仓库关掉裸引用支持"退化成恒等（48 → 48），判据变恒绿。
+    with _TmpTree() as _t6:
+        _t6.write('src/mpltweak/demo.py',
+                  'def alpha():\n    pass\n\n\ndef beta():\n    pass\n')
+        _t6.write('docs/bare.md', '`demo.py:1 # alpha` 与 `:5 # beta`。\n')
+        _on = g.scan(_t6.root, ['docs/**/*.md'], allow_bare=True)
+        _off = g.scan(_t6.root, ['docs/**/*.md'], allow_bare=False)
+        check('反向⑥ 裸引用继承是承重的（自造文档：同一行 `demo.py:1` 之后的裸 `:5` 必须继承，'
+              '且必须正好 2 条 → 关掉后 1 条）',
+              len(_on['items']) == 2 and not _on['suspicious']
+              and len(_off['items']) == 1,
+              '带裸引用 items=%d 可疑=%d / 关掉 items=%d 可疑=%d'
+              % (len(_on['items']), len(_on['suspicious']),
+                 len(_off['items']), len(_off['suspicious'])))
 
 
 def main():

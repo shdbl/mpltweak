@@ -1,5 +1,25 @@
 # -*- coding: utf-8 -*-
+# ==== §1 文件头与容差表：几何 / 文字渲染 / colorbar ====
+
 """mpltweak check —— 排版体检：不看图，只按几何规则挑毛病。
+
+**快速导航**（顶层横幅 `# ==== §N 名字 ====` 被文件尾索引收录；函数体内的小节用
+`# ==== §3.N … ====`，工具不索引，跳转请 `grep -n '§3.5'`）：
+
+- §1 文件头与容差表（就是本段；内分 §1.1 文字渲染尺寸的容差）
+- §2 文字种类与几何小工具：`_kind` / `_join` / `_tol_positive` / `_normal` / `_fmt` / `_name`
+- §3 几何规则 `analyze`（7 条规则，每条一个 §3.x 小节）：1 越界 / 2 重叠 /
+  2b colorbar × 任意轴 / 3 边缘不齐 / 4 大小不一 / 5 间距不均 / 6 字号不统一 /
+  7 轴范围不统一
+- §4 文字渲染尺寸 `analyze_texts`（按真实像素外框，不是几何框）：§4.1 超出画布 /
+  §4.2 互相压住
+- §5 共同入口、tight 探测与静态扫描：`analyze_state`（check 与 MCP 共用）/
+  `has_tight_bbox`（CH-4）/ `static_scan`（A4：完全不执行脚本）
+- §6 CLI：`main`、`--tol` 校验、`--static` 的 `_run_static`（§6.1）
+
+**与另外三层的分工**：`launch` 开窗（人手动调）、`toolbox` 窗口内交互、`describe` 导出参数、
+**本文件（check）不开窗也不写代码**——它只按几何规则挑毛病；真正执行脚本取状态的是
+`verify`（check 复用它的 `_state` 口径），把参数写成代码的是 `apply` + `writeback`。
 
 这是"人 + agent 协作"里 **agent 自检** 那一步：AI 画完图看不到好坏，
 但对齐、等大、间距均匀、字号统一这些是**几何规则**，用数字就能判断。
@@ -30,7 +50,7 @@ from . import verify
 DEFAULT_TOL = 0.010
 # 两个轴若"近到 0.2 以内"就认为它们本来该对齐（否则是分列/分区，不算不齐）
 ALIGN_NEAR = 0.20
-# --- 文字渲染尺寸检查（按真实像素外框，不是几何框）---
+# ==== §1.1 文字渲染尺寸检查的容差（按真实像素外框） ====
 # 超出画布：留一点余量再判（文字贴边不算"被裁"）
 TEXT_EDGE_EPS = 0.002
 # 互压：重叠面积下限（figure 比例²）——碰一下不算压，肉眼看得出来才算
@@ -50,6 +70,8 @@ CB_OVERLAP_TOL = 0.002
 _KIND_KEYS = ('title', 'xlabel', 'ylabel', 'xtick', 'ytick', 'text',
               'figtext', 'capped')
 
+
+# ==== §2 文字种类与几何小工具 ====
 
 def _kind(kind):
     """文字种类的人话名（跟随当前语言；未知种类退回 '文字'）。"""
@@ -92,6 +114,8 @@ def _name(a):
     return 'ax%s' % a.get('index')
 
 
+# ==== §3 几何规则：analyze（越界 / 重叠 / 对齐 / 尺寸 / 间距 / 字号 / 范围） ====
+
 def analyze(axes, tol=DEFAULT_TOL):
     """返回 (problems, warnings)。每条 = dict(rule/level/axes/msg/detail)。
 
@@ -104,7 +128,7 @@ def analyze(axes, tol=DEFAULT_TOL):
     normal = _normal(axes)
     n = len(normal)
 
-    # ---- 1. 越界（超出画布 0~1）----
+    # ==== §3.1 越界（超出画布 0~1） ====
     for a in normal:
         x0, y0, w, h = _pos(a)
         out = []
@@ -123,7 +147,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                               edges=_join(out)),
             })
 
-    # ---- 2. 重叠（两两相交，忽略仅相接的）----
+    # ==== §3.2 重叠（两两相交，忽略仅相接的） ====
     for i in range(n):
         for j in range(i + 1, n):
             ax0, ay0, aw, ah = _pos(normal[i])
@@ -138,7 +162,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                                   b=_name(normal[j]), ox=ox, oy=oy),
                 })
 
-    # ---- 2b. colorbar × **任意轴**（含 aspect 锁定的 cartopy 地图）矩形相交 ----
+    # ==== §3.3 colorbar × 任意轴的矩形相交 ====
     #   几何比对整体跳过 aspect_locked 轴（它们的长宽比由数据/投影定死，动不了），
     #   但"colorbar 压在图上"是科研图里**最高频的真实排版事故**，而"极地图 +
     #   colorbar"这个最常见组合**恰好**落在那个盲区里（t67 / 报告 P1-3 实测：
@@ -162,7 +186,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                     'overlap': [round(ox, 4), round(oy, 4)],
                 })
 
-    # ---- 3. 边缘不齐：某轴的左边（或下边）与"最近的另一个轴"差一点点 ----
+    # ==== §3.4 边缘不齐（与最近的另一个轴差一点点） ====
     #        差得远 = 本来就在另一列/另一行，不算问题。
     seen_pairs = set()
     for key, label in ((0, 'chk_edge_left'), (1, 'chk_edge_bottom')):
@@ -191,7 +215,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                                   off=_fmt(off)),
                 })
 
-    # ---- 4. 大小不一：多数一致的尺寸里混进少数派 ----
+    # ==== §3.5 大小不一（多数一致的尺寸里混进少数派） ====
     from collections import Counter
     sizes = Counter()
     for a in normal:
@@ -217,7 +241,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                                   odd=_join(odd)),
                 })
 
-    # ---- 5. 间距不均：同一列（左边相同）的面板，垂直间隙应一致 ----
+    # ==== §3.6 间距不均（同一列面板的垂直间隙应一致） ====
     groups = {}
     for a in normal:
         x0, y0, w, h = _pos(a)
@@ -249,7 +273,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                               gaps=' / '.join(_fmt(g) for g in gaps)),
             })
 
-    # ---- 6. 字号不统一（降级为提示：有时是有意的）----
+    # ==== §3.7 字号不统一（降级为提示：有时是有意的） ====
     for key, label in (('title_fontsize', 'chk_font_title'),
                        ('label_fontsize', 'chk_font_label'),
                        ('tick_fontsize', 'chk_font_tick')):
@@ -271,7 +295,7 @@ def analyze(axes, tol=DEFAULT_TOL):
                                       odd=_join(odd)),
                     })
 
-    # ---- 7. 轴范围不统一（多面板常见毛病：同一组面板该共享 xlim/ylim）----
+    # ==== §3.8 轴范围不统一（多面板该共享 xlim/ylim） ====
     # 只在"有明显多数派"时报（≥60% 的面板范围一致、另有少数不同）——各自为政的多面板
     # 图（每个面板画不同物理量）本来就不该统一，这种情况下不报。
     for key, label in (('xlim', 'chk_limit_x'), ('ylim', 'chk_limit_y')):
@@ -303,6 +327,8 @@ def analyze(axes, tol=DEFAULT_TOL):
 
     return problems, warns
 
+
+# ==== §4 文字渲染尺寸：analyze_texts（按真实像素外框） ====
 
 def analyze_texts(state, tight=False):
     """按**真实渲染尺寸**查文字：超出画布（error）/ 互相压住（warn）。
@@ -345,7 +371,7 @@ def analyze_texts(state, tight=False):
                           text=t.get('s'))
         return _msg.t('chk_text_label_canvas', kind=kind, text=t.get('s'))
 
-    # ---- 1. 超出画布（tight 脚本里降级为提示，见 docstring）----
+    # ==== §4.1 超出画布（tight 脚本里降级为提示） ====
     for where, t in entries:
         b = t.get('box') or [0, 0, 0, 0]
         out = []
@@ -373,7 +399,7 @@ def analyze_texts(state, tight=False):
             else:
                 problems.append(item)
 
-    # ---- 2. 互相压住（warn）----
+    # ==== §4.2 互相压住（warn） ====
     # 分两类，判据不同：
     #   a) 跨轴 / 不同类型的文字：按**重叠面积**判（标题压邻图标题、标注压刻度……）；
     #   b) 同轴同类刻度标签：按**沿刻度方向的重叠占标签尺寸比例**判 —— 这正是
@@ -428,6 +454,8 @@ def analyze_texts(state, tight=False):
             n_rep += 1
     return problems, warns
 
+
+# ==== §5 共同入口、tight 探测与静态扫描（A4） ====
 
 def analyze_state(state, tol=DEFAULT_TOL, with_text=True, tight=False):
     """``check`` 与 MCP ``check_layout`` 的共同入口：几何规则 + 文字渲染尺寸规则。
@@ -534,6 +562,8 @@ def static_scan(script):
     return info
 
 
+# ==== §6 CLI：main、--tol 校验与 --static 的 _run_static ====
+
 def _tol_arg(v):
     """``--tol`` 的取值校验（argparse 类型回调 → 非法参数给 usage + 退出码 2）。"""
     try:
@@ -565,8 +595,9 @@ def main(argv=None) -> int:
                     help='只做 AST + 布局引擎冲突扫描，**完全不执行**脚本'
                          '（快，但只查这两项；输出里会明说没检查什么）')
     ap.add_argument('--strict', action='store_true',
-                    help='把布局引擎冲突（constrained_layout / figure.autolayout）'
-                         '也当成问题：退出码变 1，适合接进 CI')
+                    help='兼容开关：0.1.14 起布局引擎冲突（constrained_layout / '
+                         'figure.autolayout）**默认**就算 error 级问题（退出码 1），'
+                         '这条已经不改结论，留着不影响旧脚本/CI')
     ap.add_argument('--lang', choices=('auto', 'zh', 'en'), default='auto',
                     help='界面语言（默认自动：--lang > MPLTWEAK_LANG > locale）')
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
@@ -574,7 +605,7 @@ def main(argv=None) -> int:
 
     script = os.path.abspath(args.script)
 
-    # ---- A4：--static —— 一行脚本都不执行，所以**没有** stdout 隔离问题 ----
+    # ==== §6.1 A4：--static —— 一行脚本都不执行 ====
     if args.static:
         return _run_static(script, args)
 
@@ -607,20 +638,19 @@ def main(argv=None) -> int:
     n_texts = sum(len(a.get('_texts') or []) for a in axes) \
         + len(state.get('_fig_texts') or [])
     n_cb = len([a for a in axes if a.get('is_colorbar')])
-    # 布局引擎冲突（constrained_layout / autolayout）：单独一栏报，**不进 problems**
-    # —— 它不影响退出码，也不该混进"几何问题"里（外部审阅第 4 条的落地）。
+    # 布局引擎冲突（constrained_layout / autolayout）：engine 每次绘制重算轴位置，
+    # 写回的位置一定不生效。0.1.13 只把它当**提示**（--strict 才进 problems）；
+    # D1（0.1.14，用户拍板 B）起**默认就是 error 级问题**（rc=1）—— 用户只看 check
+    # 时也必须知道"这份脚本里写回的位置会被引擎盖掉"，否则"改了没生效"要等拖图、
+    # 写回、验证三跳之后才暴露。--strict 保留为兼容开关（结论已与默认档相同）。
     conflicts = layoutwarn.scan(script)
-    # --strict：把布局引擎冲突升级成**问题**（rc=1）—— 接 CI 的用户可以这样要求
-    # "别用会被引擎覆盖的布局方式"。默认仍是提示：引擎本身是 matplotlib 的正常写法，
-    # 不该因为用了它就让 check 红掉（见 README / 手册里的取舍说明）。
-    if args.strict and conflicts:
-        for _c in conflicts:
-            problems.append({
-                'rule': 'layout_engine_conflict', 'level': 'error',
-                'axes': [],
-                'msg': _msg.t('chk_layout_conflict', line=_c.get('line'),
-                              how=_c.get('how')),
-            })
+    for _c in conflicts:
+        problems.append({
+            'rule': 'layout_engine_conflict', 'level': 'error',
+            'axes': [],
+            'msg': _msg.t('chk_layout_conflict', line=_c.get('line'),
+                          how=_c.get('how')),
+        })
 
     if args.json:
         _msg.emit_json({
@@ -655,9 +685,10 @@ def main(argv=None) -> int:
     for w in warns:
         print(_msg.t('chk_warn_line', msg=w['msg']))
     if conflicts:
+        # D1（0.1.14）：冲突点本身已经作为 **error 级问题**逐行打在上面（"× 第 N 行…"），
+        # 这里只补那条"怎么办"的建议 —— 再把每行冲突重复一遍纯属噪音。
         print()
-        for line in layoutwarn.messages_for(conflicts):
-            print(line)
+        print(_msg.t('layout_engine_hint'))
     print()
     _extra = _msg.t('chk_summary_warns', n=len(warns)) if warns else ''
     if problems:
@@ -693,13 +724,14 @@ def _run_static(script, args) -> int:
     arguments = getattr(args, 'tol', DEFAULT_TOL)
     conflicts = info['layout_engine']
     problems = []
-    if args.strict and conflicts:
-        for _c in conflicts:
-            problems.append({
-                'rule': 'layout_engine_conflict', 'level': 'error', 'axes': [],
-                'msg': _msg.t('chk_layout_conflict', line=_c.get('line'),
-                              how=_c.get('how')),
-            })
+    # D1（0.1.14）：与完整 check 同口径 —— 布局引擎冲突默认就是 error 级问题
+    # （写了不生效），不再需要 --strict。
+    for _c in conflicts:
+        problems.append({
+            'rule': 'layout_engine_conflict', 'level': 'error', 'axes': [],
+            'msg': _msg.t('chk_layout_conflict', line=_c.get('line'),
+                          how=_c.get('how')),
+        })
     # 明说"没检查什么"：这是 A4 的契约（对 agent 尤其重要 —— 别把静态结论
     # 当成完整体检的结论）。
     not_checked = ['alignment', 'size_mismatch', 'uneven_gap', 'font_mismatch',
@@ -736,8 +768,8 @@ def _run_static(script, args) -> int:
     if not problems:
         print(_msg.t('chk_all_clean'))
     if conflicts:
-        for line in layoutwarn.messages_for(conflicts):
-            print(line)
+        # 同完整 check：冲突点已经是 error 级问题（上面逐行打了），这里只留建议。
+        print(_msg.t('layout_engine_hint'))
     print()
     print(_msg.t('static_note'))
     print(_msg.t('static_ok_meaning'))
@@ -746,3 +778,32 @@ def _run_static(script, args) -> int:
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头与容差表：几何 / 文字渲染 / colorbar（行 2-73，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 文字种类与几何小工具（行 74-116，7 个顶层函数）
+#     _kind                                           76
+#     _join                                           82
+#     _tol_positive                                   87
+#     _normal                                         97
+#     _pos                                           103
+#     _fmt                                           108
+#     _name                                          112
+# §3 几何规则：analyze（越界 / 重叠 / 对齐 / 尺寸 / 间距 / 字号 / 范围）（行 117-330，1 个顶层函数）
+#     analyze                                        119
+# §4 文字渲染尺寸：analyze_texts（按真实像素外框）（行 331-457，1 个顶层函数）
+#     analyze_texts                                  333
+# §5 共同入口、tight 探测与静态扫描（A4）（行 458-564，4 个顶层函数）
+#     analyze_state                                  460
+#     _const_str                                     474
+#     has_tight_bbox                                 479
+#     static_scan                                    521
+# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 565-780，3 个顶层函数）
+#     _tol_arg                                       567
+#     main                                           579
+#     _run_static                                    701
+# --- END AUTO NAV ---

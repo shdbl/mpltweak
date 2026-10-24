@@ -87,6 +87,23 @@ jobs:
           # test_property_writeback）。**必须装**：否则它们只会打印 SKIP，property 在 CI
           # 里永远不跑（缺依赖时套件仍能 import 并跑完确定性断言，见 tests/_hypothesis_shim.py）。
           python -m pip install "pytest>=7.0" "hypothesis>=6.0"
+          # ---- F3（0.1.14，§27.10 L2）：**只在这一腿装 PyQt5** ----
+          # 为什么只 3.12（体积 + 时长 + 判据与解释器版本无关）：
+          #   * 体积：PyQt5 + PyQt5-Qt5 轮子约 100 MB，8 条腿各装一次纯属浪费；
+          #   * 时长：装 + 离屏冒烟约 20~30 秒；这条腿本来就要跑全量 pytest，捎带一脚，
+          #     CI 总时长几乎不涨（其余腿零 GUI 依赖、名单一个字没动）；
+          #   * 判据与解释器版本无关：GUI 冒烟查的是"Qt 事件 → toolbox → 关窗导出"这条链，
+          #     与 3.9/3.10/3.11 的语法差异无关 —— 那是 3.9 腿"新套件秒级冒烟"的活。
+          # 回滚办法：删掉下面这一行 `pip install "PyQt5>=5.15"` 即可 —— 冒烟会在没有 Qt 的
+          # 环境里**显式 skip 并打印原因**（见 tests/test_gui_smoke.py 文件头），
+          # 既不会假绿（下面那条 import 断言会红）也不会把别的腿拖红。
+          python -m pip install "PyQt5>=5.15"
+          # **先断言它真装上了**：否则 GUI 冒烟会走 skip 分支，"CI 里悄悄没跑"就成了假绿。
+          # 这条与套件本身的 skip 是配套的两件事：装不上 ⇒ 这里红；装上但平台插件起不来 ⇒
+          # 套件 skip 并打印原因（见该文件里的 qt_init_error 分支）。
+          python -c "import PyQt5.QtCore as c; print('PyQt5', c.PYQT_VERSION_STR)"
+          # 无头 runner 没有显示器：窗口只在 QPA 的 offscreen 插件里存在（不碰屏幕）。
+          export QT_QPA_PLATFORM=offscreen
           # 用 Python 包装：把失败摘要写进 job summary（API 拿不到 job 日志时这是唯一可读通道），
           # 并原样回传 pytest 的退出码。shell 无关（windows 是 pwsh、ubuntu 是 bash）。
           python tools/ci_pytest_summary.py

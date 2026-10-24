@@ -86,6 +86,66 @@ _LAYOUT = textwrap.dedent('''\
     fig.savefig('o.png')
 ''')
 
+# D1（0.1.14）：**只改非几何字段**的布局冲突脚本 —— 带一行可原位改的字号，
+# 用来证明"冲突 + 只改字号"照样写回（别把本来好用的路堵死）。
+_LAYOUT_FONT = textwrap.dedent('''\
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    fig, ax = plt.subplots(figsize=(5, 4), constrained_layout=True)
+    ax.plot(np.arange(10))
+    ax.set_title('A', fontsize=10)
+    fig.savefig('o.png')
+''')
+
+# D1：冲突 + `add_axes` 的**字面量位置**（与参数里的目标值一致）—— 静态可证
+# "写了也是空改"，不该被拒绝。
+_LAYOUT_ADD = textwrap.dedent('''\
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    fig = plt.figure(figsize=(6, 4), constrained_layout=True)
+    ax = fig.add_axes([0.10, 0.10, 0.70, 0.70])
+    ax.plot(np.arange(10))
+    fig.savefig('o.png')
+''')
+
+# J2（0.1.14）：**双图**脚本 —— `describe --all-figs -o` 的产物要能被 `apply` 吃回去。
+_TWO = textwrap.dedent('''\
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    f0 = plt.figure(figsize=(4, 3))
+    a0 = f0.add_axes([0.10, 0.10, 0.80, 0.80])
+    a0.plot(np.arange(5))
+    f1 = plt.figure(figsize=(4, 3))
+    a1 = f1.add_axes([0.10, 0.10, 0.80, 0.80])
+    a1.plot(np.arange(5))
+    f0.savefig('o0.png')
+    f1.savefig('o1.png')
+''')
+
+# J1（0.1.14）：**隐式建图**（`plt.*` 全局态）—— 引擎保守拒写（fail-closed）；
+# 旧版给的是 `ok=true / rc=0 / applied=false`，但盘上一个字节没动。
+_IMPLICIT = textwrap.dedent('''\
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    plt.plot([0, 1], [0, 1])
+    plt.title('implicit')
+    plt.xlim(0, 1)
+    plt.ylim(0, 1)
+    plt.grid(True)
+    plt.savefig('o.png')
+''')
+
 
 def _env(**over):
     """子进程环境：**硬钉 Agg**（宿主 MPLBACKEND 可能是 Qt5Agg/TkAgg → 抢鼠标）。
@@ -249,7 +309,119 @@ def test_layout_conflict_refusal_is_on_stderr(work):
     assert not _shared_lines(out, err), _shared_lines(out, err)
 
 
+# ----------------------------------------------------------------------
+# ①b D1（0.1.14，用户拍板 B）：布局引擎冲突按**写回路径**分流
+#     冲突 + 要写轴位置   ⇒ 默认拒绝（rc=1、不写盘、脚本字节不变、两条出路）
+#     冲突 + 只写非几何   ⇒ 照旧写回（不拒绝）
+#     --force            ⇒ 跳过这条检查，并在输出里说清（不静默）
+#     无冲突 + 写位置     ⇒ 行为完全不变
+#     冲突 + 位置恰好相等 ⇒ 不拒绝（静态或实测证得出"写了也是空改"）
+# ----------------------------------------------------------------------
+def _read_bytes(path):
+    with open(path, 'rb') as f:
+        return f.read()
+
+
+def _dump_params(work, name, payload):
+    with open(os.path.join(work, name), 'w', encoding='utf-8',
+              newline='\n') as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+
+def test_layout_conflict_position_write_refused_by_default(work):
+    """冲突 + 这次要写轴位置 → **默认拒绝**：rc=1、脚本一个字节不动。"""
+    _dump_params(work, 'lpos.json',
+                 {'version': 4, 'script': 'layout.py', 'fig_index': 0,
+                  'n_figs': 1,
+                  'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.352, 0.77]}]})
+    p = os.path.join(work, 'layout.py')
+    before = _read_bytes(p)
+    rc, out, err = _run(work, 'apply', 'layout.py', '--params', 'lpos.json',
+                        '--write')
+    assert rc == 1, '拒写走"结果需要处理"档 = rc=1：%s' % ((rc, err[-400:]),)
+    assert _read_bytes(p) == before, '拒写必须**一个字节都不动**脚本'
+    assert not os.path.exists(os.path.join(work, 'layout.tweak.bak')), \
+        '没写盘就不该留备份'
+    # 人话：为什么拒 + 两条出路（去掉引擎 / --force）都得在 stderr 上说清
+    for want in ('constrained_layout', '轴位置', '--force', '出路'):
+        assert want in err, 'stderr 缺 %r：%r' % (want, err[-500:])
+    assert '去掉 constrained_layout' in err or '去掉 constrained_layout=True' in err
+    assert not _shared_lines(out, err), _shared_lines(out, err)
+    assert '已写回' not in out, '没落地就不许说"已写回"：%r' % out[-300:]
+
+
+def test_layout_conflict_non_geometry_write_still_lands(work):
+    """冲突 + 只写非几何字段（标题字号）→ **不拒绝**，照旧写回（rc=0）。"""
+    _write(os.path.join(work, 'layout_font.py'), _LAYOUT_FONT)
+    _dump_params(work, 'lfont.json',
+                 {'version': 4, 'script': 'layout_font.py', 'fig_index': 0,
+                  'n_figs': 1,
+                  'axes': [{'index': 0, 'title_fontsize': 14.0}]})
+    p = os.path.join(work, 'layout_font.py')
+    before = _read_bytes(p)
+    rc, out, err = _run(work, 'apply', 'layout_font.py', '--params',
+                        'lfont.json', '--write')
+    assert rc == 0, (rc, out[-400:], err[-400:])
+    assert err == '', '成功路径 stderr 必须为空：%r' % err[:300]
+    after = _read_bytes(p)
+    assert after != before, '非几何字段必须真的写进去了'
+    assert b'fontsize=14' in after, after[-500:]
+    assert '跳过布局引擎冲突检查' not in out, '没加 --force 就不许说跳过'
+
+
+def test_layout_conflict_force_skips_the_check(work):
+    """`--force`：跳过这条检查、强制写回，并在输出里**明确声明**（不静默）。"""
+    _dump_params(work, 'lpos.json',
+                 {'version': 4, 'script': 'layout.py', 'fig_index': 0,
+                  'n_figs': 1,
+                  'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.352, 0.77]}]})
+    p = os.path.join(work, 'layout.py')
+    before = _read_bytes(p)
+    rc, out, err = _run(work, 'apply', 'layout.py', '--params', 'lpos.json',
+                        '--write', '--force')
+    assert rc == 0, (rc, out[-400:], err[-400:])
+    after = _read_bytes(p)
+    assert after != before, '--force 必须真的写回'
+    assert b'set_position([0.1250, 0.1100, 0.3520, 0.7700])' in after, \
+        after[-500:]
+    assert '跳过布局引擎冲突检查' in out and '--force' in out, \
+        '--force 放行必须大声说（不许静默）：%r' % out[:400]
+
+
+def test_no_layout_conflict_position_write_unchanged(work):
+    """无冲突的脚本写位置：行为**完全不变**（rc=0、无跳过声明）。"""
+    p = os.path.join(work, 'fig.py')
+    rc, out, err = _run(work, 'apply', 'fig.py', '--params', 'p.json',
+                        '--write', '--verify-fast')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    assert err == '', err[:300]
+    with open(p, encoding='utf-8') as f:
+        assert 'add_axes([0.2, 0.2, 0.6, 0.6])' in f.read()
+    assert '跳过布局引擎冲突检查' not in out
+    assert '轴位置' not in out, '没有冲突就不许打布局引擎的话'
+
+
+def test_layout_conflict_position_already_equal_is_not_refused(work):
+    """冲突 + 参数里的位置**恰好等于源码现值** → 不拒绝（写了也是空改）。
+
+    这条守的是"别把本来好用的路堵死"：`add_axes` 的字面量静态可证，不必重跑
+    脚本、也不该拦下。
+    """
+    _write(os.path.join(work, 'layout_add.py'), _LAYOUT_ADD)
+    _dump_params(work, 'ladd.json',
+                 {'version': 4, 'script': 'layout_add.py', 'fig_index': 0,
+                  'n_figs': 1,
+                  'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.70, 0.70]}]})
+    rc, out, err = _run(work, 'apply', 'layout_add.py', '--params', 'ladd.json',
+                        '--write', '--verify-fast')
+    assert rc == 0, (rc, out[-400:], err[-400:])
+    assert '轴位置' not in err, '位置已经一致时不该拒绝：%r' % err[-400:]
+
+
+
 def test_external_modification_notice_is_on_stderr(work):
+
+
     """脚本比参数新（外部改动）→ 跳过写回（rc=1），提示只在 stderr。"""
     import time
     future = time.time() + 5
@@ -339,6 +511,150 @@ def test_json_script_missing_emits_only_json(work):
     payload = json.loads(out)
     assert payload.get('error_code') == 'file_not_found'
     assert err.strip() == '', '这条出口只给 JSON（人读行一个字都不打）'
+
+
+# ----------------------------------------------------------------------
+# ⑨ F1：`--json` 的 `style` **永不为 null**（0.1.14）
+#
+# 口径（契约全文见 `docs/agent.md` 的 `--json` 一节 + `src/mpltweak/apply.py`
+# 的 `_emit_json` docstring）：`style` = 这次**请求的通道**；真的走过写回时它被
+# 实际采用的通道覆盖（auto 退块 ⇒ `block` + `auto_fallback=true`）。**每个
+# `files[]` 条目都有值**，调用方不必逐条特判 null（旧缺陷：预览与两条早退路径
+# 都曾给 null，agent 无法区分「没传」与「auto」）。
+# ----------------------------------------------------------------------
+def test_json_style_preview_is_requested_mode(work):
+    rc, out, err = _run(work, 'apply', 'fig.py', '--params', 'p.json', '--json')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    entry = json.loads(out)['files'][0]
+    assert entry['reason'] == 'preview', entry
+    assert entry['style'] == 'auto', (
+        '预览且没传 --style ⇒ 必须是默认的 auto（不是 null）：%r' % entry['style'])
+    # 显式 --style block 时，预览如实报请求的 block（不是退化成 auto / null）
+    rc2, out2, _ = _run(work, 'apply', 'fig.py', '--params', 'p.json',
+                        '--style', 'block', '--json')
+    entry2 = json.loads(out2)['files'][0]
+    assert rc2 == 0 and entry2['reason'] == 'preview', (rc2, entry2)
+    assert entry2['style'] == 'block', (
+        '预览要报**请求的模式**：传了 --style block 就得是 block：%r'
+        % entry2['style'])
+
+
+def test_json_style_write_is_used_channel(work):
+    rc, out, err = _run(work, 'apply', 'fig.py', '--params', 'p.json',
+                        '--write', '--json')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    entry = json.loads(out)['files'][0]
+    assert entry['reason'] in ('ok', 'best_effort', 'no_change'), entry
+    assert entry['style'] == 'inplace', (
+        '这份夹具（add_axes 明写位置）走原位改数字 ⇒ 写回后 style 必须是实际通道 '
+        'inplace：%r' % entry['style'])
+    assert entry['applied'] is True, entry
+
+
+def test_json_style_never_null_on_early_exit(work):
+    # 参数文件非法（bad_params）是**早退**路径：也要带"请求的模式"，否则调用方
+    # 得逐条特判 null，而这类条目恰恰是 agent 最需要看的时候。
+    rc, out, err = _run(work, 'apply', 'fig.py', '--params', 'p_bad.json',
+                        '--style', 'inplace', '--json')
+    assert rc == 2, (rc, out[-300:], err[-300:])
+    entry = json.loads(out)['files'][0]
+    assert entry['reason'] == 'bad_params', entry
+    assert entry['style'] == 'inplace', (
+        '早退路径要报请求的模式（传了什么就是什么），不许是 null：%r'
+        % entry['style'])
+    # 全量兜底：载荷里**任何** files[] 条目都不许出现 style=null
+    for e in json.loads(out)['files']:
+        assert e.get('style') is not None, e
+
+
+# ----------------------------------------------------------------------
+# J2（0.1.14，P1 报的 F2）：`describe --all-figs -o` 的产物必须能被 `apply` 吃回去
+# ----------------------------------------------------------------------
+def test_describe_all_figs_output_is_apply_compatible(work):
+    """`describe --all-figs -o X.json` 顺手按每图落 `X.fig<k>.json` ⇒ 回路打通。
+
+    修前：只写包装 `{"figures": [...]}`，`apply --params X.json` 一律 `no_axes`
+    （rc=1、一字节不改）；
+    修后：包装照旧写（agent 读它），**另加**每图一份（apply 认的命名）。
+    """
+    _write(os.path.join(work, 'two.py'), _TWO)
+    rc, out, err = _run(work, 'describe', 'two.py', '--all-figs', '-o', 'all.json')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    fig0 = os.path.join(work, 'all.fig0.json')
+    fig1 = os.path.join(work, 'all.fig1.json')
+    assert os.path.exists(fig0) and os.path.exists(fig1), sorted(os.listdir(work))
+    with open(fig1, encoding='utf-8') as f:
+        p1 = json.load(f)
+    assert p1.get('fig_index') == 1 and p1.get('n_figs') == 2, sorted(p1)
+    assert 'axes' in p1, '每图一份必须是**单图**结构（顶层有 axes）：%r' % sorted(p1)
+    # 真的喂回去：改第 2 张图的轴位置 → 写进源码
+    p1['axes'][0]['pos'] = [0.2, 0.2, 0.6, 0.6]
+    with open(fig1, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(p1, f, ensure_ascii=False)
+    rc, out, err = _run(work, 'apply', 'two.py', '--params', 'all.fig1.json',
+                        '--write', '--verify-fast')
+    assert rc == 0, (rc, out[-400:], err[-400:])
+    with open(os.path.join(work, 'two.py'), encoding='utf-8') as f:
+        assert 'add_axes([0.2, 0.2, 0.6, 0.6])' in f.read()
+
+
+# ----------------------------------------------------------------------
+# J1（0.1.14，P1 报的 F1）：`ok=true` 但**一字节没改** —— 契约不许撒谎
+# ----------------------------------------------------------------------
+def test_zero_change_is_not_reported_as_success(work):
+    """整批零改动（保守拒写）⇒ rc=1 / ok=false / error_code='nothing_applied'。
+
+    修前实测：`reason='best_effort'`、`applied=false`、`changes=[]`、盘上字节不变，
+    但 `ok=true`、`rc=0`、`error_code=null` —— 只看 ok/rc 的 agent 会当成"已写回"。
+    """
+    _write(os.path.join(work, 'imp.py'), _IMPLICIT)
+    rc, out, err = _run(work, 'describe', 'imp.py', '-o', 'imp.json')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    with open(os.path.join(work, 'imp.json'), encoding='utf-8') as f:
+        d = json.load(f)
+    d['axes'][0]['title_fontsize'] = 13.0
+    d['axes'][0]['xlim'] = [-0.5, 1.5]
+    with open(os.path.join(work, 'imp.json'), 'w', encoding='utf-8',
+              newline='\n') as f:
+        json.dump(d, f, ensure_ascii=False)
+    p = os.path.join(work, 'imp.py')
+    before = _read_bytes(p)
+    rc, out, err = _run(work, 'apply', 'imp.py', '--params', 'imp.json',
+                        '--write', '--json')
+    payload = json.loads(out)
+    entry = payload['files'][0]
+    assert _read_bytes(p) == before, '这个形态必须**一个字节都不改**（拒写）'
+    assert entry.get('applied') is False, entry
+    assert rc == 1, '零改动要落到"结果需要处理"档：%s' % ((rc, err[-300:]),)
+    assert payload.get('ok') is False, '不许再报 ok=true：%r' % payload.get('ok')
+    assert payload.get('error_code') == 'nothing_applied', payload.get('error_code')
+    assert '未被改动' in err or 'NOT modified' in err, err[-300:]
+
+
+def test_no_change_still_counts_as_success(work):
+    """反面对照：**参数已经一致**（no_change）仍是成功 —— 不许被 J1 误伤。
+
+    这里刻意**手写最小参数**（只给 `pos`，且等于源码里 `add_axes` 的字面量），不再拿
+    `describe` 的整份产物当输入：整份产物里含 `lines[].linewidth/color` 这类"源码没写、
+    取的是 matplotlib 默认值"的字段，它们的可证伪判据由 writeback 侧决定（会随别人的
+    改动在"no_change"和"插块"之间摆动），与本用例要钉的东西（零改动的档位）无关。
+    """
+    _write(os.path.join(work, 'one.py'), _SCRIPT)
+    with open(os.path.join(work, 'one.json'), 'w', encoding='utf-8',
+              newline='\n') as f:
+        json.dump({'version': 4, 'script': 'one.py', 'fig_index': 0,
+                   'n_figs': 1,
+                   'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.70, 0.70]}]},
+                  f, ensure_ascii=False)
+    before = _read_bytes(os.path.join(work, 'one.py'))
+    rc, out, err = _run(work, 'apply', 'one.py', '--params', 'one.json',
+                        '--write', '--json')
+    payload = json.loads(out)
+    assert rc == 0, (rc, err[-300:])
+    assert _read_bytes(os.path.join(work, 'one.py')) == before
+    assert payload.get('ok') is True, payload.get('ok')
+    assert 'error_code' not in payload, payload.get('error_code')
+    assert payload['files'][0]['reason'] == 'no_change', payload['files'][0]
 
 
 # ----------------------------------------------------------------------

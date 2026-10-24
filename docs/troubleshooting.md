@@ -22,15 +22,20 @@
 
 ## ② 拖了又弹回去（位置被布局引擎覆盖）
 
-**现象**：窗口里拖到位了，重开窗 / 重跑脚本又回到原来的位置；`apply --write` 也可能直接报布局引擎冲突。
-**一句话原因**：脚本里开着 `constrained_layout=True` 或 `rcParams['figure.autolayout']` —— 这类**布局引擎会在每次绘制时重算轴位置**，你手动排的位置会被它覆盖（所以表现常常是"验证不一致"，而不是位置没改）。
+**现象**：窗口里拖到位了，重开窗 / 重跑脚本又回到原来的位置；`apply --write` 也可能直接报**拒绝写回**（"这次要写的是轴位置"）。
+**一句话原因**：脚本里开着 `constrained_layout=True` 或 `rcParams['figure.autolayout']` —— 这类**布局引擎会在每次绘制时重算轴位置**，你手动排的位置会被它覆盖。所以 0.1.14 起 `apply --write` 遇到"冲突 + 这次真要写轴位置"就**默认拒绝**（不写盘、脚本一个字节不动、`rc=1`）：宁可拦下并说明，也不让你白拖一轮。
 **怎么做**：
 
 1. 调图前先关掉引擎：删掉 `constrained_layout=True`（或改成 `layout=None`，也可以 `fig.set_layout_engine('none')`）；`figure.autolayout` 同理。
 2. 或者把要精调的轴改成 `fig.add_axes([...])` 定位 —— **引擎不管这类轴**。
-3. 先确认有没有踩到：`mpltweak check <脚本> --static` 把布局引擎冲突**单列一栏**（**带行号**，且**不执行**脚本）；`mpltweak check <脚本> --strict` 可把它从提示升级为问题（`rc=1`），`apply --write --strict` 遇到冲突直接**拒绝写回**（要放行加 `--allow-layout-conflict`）。
+3. 确实要写就加 `--force`（`apply --write --force`）：跳过这条检查强制写回，输出里会明说"已按 --force 跳过布局引擎冲突检查" —— 位置写进去了，但绘制时仍会被引擎覆盖，图不会变。
+4. 先确认有没有踩到：`mpltweak check <脚本> --static` 把布局引擎冲突报成 **error 级问题**（**带行号**，且**不执行**脚本）；完整 `check` 同样默认当问题（`rc=1`），不需要再带 `--strict`。
 
-> 细节见 [interaction.md](interaction.md) 的「如果没反应」末尾一行、[verify.md](verify.md) 的「接进 CI：`--strict`」。
+**只有"写位置"才拦**：冲突脚本上只改字号 / 线宽 / cmap / 标题这类**非几何字段**时照旧写回（`rc=0`）—— 引擎只重算位置，不动这些。判据是"这次到底会不会改轴位置"（参数里没位置就绝不拦；位置与源码现值已一致也不拦）。
+
+**判不出来时保守拒绝**：`--no-verify` / `--verify-fast` 档不重跑脚本，网格轴（`plt.subplots()`）的位置只有实测才知道 ⇒ 一律按"可能要写"处理（stderr 会说明这一点），确要写就加 `--force`。
+
+> 细节见 [interaction.md](interaction.md) 的「如果没反应」末尾一行、[verify.md](verify.md) 的「布局引擎冲突：`check` 默认当问题，`apply` 默认拒绝写位置」。
 
 ## ③ 报错 / 失败怎么办：先分清是谁的问题
 

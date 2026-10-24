@@ -95,8 +95,8 @@ mpltweak doctor
 | `mpltweak apply <脚本.py> --snippet` | 输出可粘贴片段（你要手动按用户风格落实时用） |
 | `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr） |
 | `mpltweak revert <脚本.py>` | **预览回退**：打印会改回什么，**一个字节都不动** |
-| `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**备份里的字节**（默认用固定名 `.tweak.bak`；它**首份优先** ⇒ 回到它建立那一刻、通常就是你第一次改这张图之前的原件）；`--first` 回到**最早**那次写回之前（读最早一份 pid 副本） |
-| `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，不能直接喂回 `apply --params`，见「口径与默认值」）；`-o 文件` 写文件；`--compact` 紧凑 |
+| `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**备份里的字节**（默认用固定名 `.tweak.bak`；它**首份优先** ⇒ 回到它建立那一刻、通常就是你第一次改这张图之前的原件；**固定名缺失但还有 pid 副本时自动退回最早那份**，`rc=0`、逐字节回到最初，`--json` 用 `fallback: "no_fixed_backup_used_oldest_pid"` 标明；两处都没有才 `rc=2` / `no_backup`）；`--first` 回到**最早**那次写回前（读最早一份 pid 副本） |
+| `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，包装本身不能直接喂回 `apply --params`；但 **0.1.14 起会顺手按每图写好 `<stem>.fig<k>.json`**，那个能喂，见「口径与默认值」）；`-o 文件` 写文件；`--compact` 紧凑 |
 | `mpltweak check <脚本.py>` | **排版体检**：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠。`--json` 机器可读，退出码 1 = 有问题 |
 | `mpltweak check <脚本.py> --static` | 只做 AST 解析 + 布局引擎冲突扫描，**不执行脚本**（脚本有副作用 / CI 里先查一眼时用；代价是不量真实渲染尺寸，`--static` 通过 ≠ 图没问题） |
 | `mpltweak schema` | 参数文件的 JSON Schema（draft-07），校验你自己生成的参数 |
@@ -108,7 +108,7 @@ mpltweak doctor
 - **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
-- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `doctor` **不接受**（`rc=2`：`unrecognized arguments`；实测源码里只有三处注册：`apply.py:754`、`describe.py:110`、`check.py:570`）。**`launch`（含顶层 `mpltweak <脚本>`）是最坑的一条：它用 `parse_known_args`，`--lang en` 不会报错、也不会切语言，而是被当成"你脚本自己的参数"原样塞进脚本的 `sys.argv`** ⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`。
+- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `doctor` **不接受**（`rc=2`：`unrecognized arguments`；实测源码里只有三处注册（复核：`grep -n "'--lang'" src/mpltweak/*.py` ⇒ `apply.py` / `describe.py` / `check.py` 各一处；`cli.py` 里那处是过滤、不是注册））。**`launch`（含顶层 `mpltweak <脚本>`）是最坑的一条：它用 `parse_known_args`，`--lang en` 不会报错、也不会切语言，而是被当成"你脚本自己的参数"原样塞进脚本的 `sys.argv`** ⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`。
 - **`--force` 只有 `apply` 认**（参数比脚本旧时照样套用；`describe` / `check` / `revert` 给了是 `rc=2`）；**`--no-tight` 只有 `check` 认**（按 0.1.8 旧口径严判 `bbox_inches='tight'`；`apply` / `describe` / `revert` 给了是 `rc=2`）。
 
 **`--timeout` 只有 `apply` 认** —— `check` / `describe` / `launch` **都不认**（实测：`mpltweak check <脚本> --timeout 900` ⇒ `unrecognized arguments`、`rc=2`）。**`check` 也不需要它**：实测一份要读 NSIDC + 128 个 MME 文件的重脚本，`check` 只用 **50 秒**左右（远低于 300 秒）⇒ "默认 300 秒不够"这个担心对 `check` 不成立。选项清单以 `mpltweak <子命令> --help` 为准。
@@ -217,9 +217,11 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **`--all-figs` 在两条命令上含义不同**：`describe --all-figs` 导出的是**嵌套**的
   `{"version": 4, "script": ..., "n_figs": N, "figures": [...]}`（单图状态在 `figures[i]` 里，
   顶层**没有** `axes`）；而 `apply --all-figs` 指的是"循环出图时**统一应用**"，它的输入仍是
-  **单图**状态。所以 `describe --all-figs` 的产物**不能**直接喂回 `apply --params` ——
-  会 `rc=1 / reason=no_axes`（**明确失败**、脚本一个字节都不改，不是静默忽略）。
-  要落实多图：逐图 `describe --fig N` 导出单图状态，再逐图 `apply`。
+  **单图**状态。所以那个**包装**不能直接喂回 `apply --params` —— 会 `rc=1 / reason=no_axes`
+  （**明确失败**、脚本一个字节都不改，不是静默忽略）。
+  要落实多图：**0.1.14 起 `describe --all-figs -o all.json` 会顺手按每图各写一份
+  `all.fig<k>.json`**（apply 认的命名）⇒ 直接 `apply <脚本> --params all.fig1.json --write`；
+  写进 `.tweak_params/` 时连 `--params` 都不用给。也可以老办法逐图 `describe --fig N`。
 - **模式固定为"重图"**（ghost + blit 预览）：所有拖拽 / 框选 / 多选都先预览、松手才落位。
 - **后端**：脚本里写 `matplotlib.use('Agg')` 或 `'TkAgg'` **都不用改**（启动器会拦掉切换）；
   后端按 **QtAgg → Qt5Agg → Qt6Agg → TkAgg 真建 canvas 逐个探测**。`pip install mpltweak` **不含 Qt**（Qt 是可选 extra `[qt]`）：Windows / macOS 官方 Python 自带 `tkinter`，因此只装核心包也能开窗，用的是 **Tk 后端（交互弱化版）**，并在 **stderr** 打一句人话提示（`MPLTWEAK_NO_HINT=1` 静默、`--dry-run` 不提示）；想要 Qt 体验让用户 `pip install "mpltweak[qt]"`。两个后端都拿不到（典型 Linux 服务器没装 `python3-tk`）→ 开窗 `rc=4`，提示装 `mpltweak[qt]` 或系统包的 `python3-tk`；**纯 CLI（describe / check / apply / mcp）不需要任何图形后端**。当前用的是哪个：`mpltweak doctor` 会打印一行“开窗后端”。
@@ -256,17 +258,30 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   `semantic_basis` = 语义判定的依据：**`live+savefig`**（图对象状态 + 磁盘那张图的追加判据）/
   **`live`**（只有图对象状态）/ **空串**（这次没有语义判定依据）。想知道"这次**为什么**回退到两遍"：
   先看 `verify_passes=2`，再读同一条目的 `warnings`。
+- **`style`**（**恒有值，永不为 `null`**）：这次**请求的通道**（`auto` / `inplace` / `block`）。真走过写回
+  时它被**实际采用的通道**覆盖（`auto` 退块 ⇒ `block` + `auto_fallback: true`）；预览与早退条目
+  （`bad_params` / `stale` / `layout_conflict`）填的是**请求值**。**别拿 `style` 当"落没落地"** ——
+  那件事只看 `reason` 与 `applied`。
+- **`layout_conflicts` / `layout_why`**：`layout_conflicts` **恒有**（数组）—— 脚本里开着的布局引擎冲突点
+  （`constrained_layout` / `figure.autolayout`，带行号）。**空 = 没开引擎**；非空且 `reason='layout_conflict'`
+  ⇒ 这次要写轴位置被默认拦下（`applied: false`，**只这一份**没写盘，见下表）；非空而 `reason` 是
+  `ok` / `best_effort` ⇒ 这次只改了非几何字段或加了 `--force`，已写回。`layout_why` 是"这次会不会真改
+  位置"的判定依据（五值：`no_pos` 参数里没有位置字段 / `proved_equal` 源码现值已等于目标 /
+  `live_equal` 实测一致 / `live_differs` 实测不同、真要写 / `unjudged` 判不了 ⇒ 保守拒绝）；
+  **0.1.14 的 `--json` 还没带出这个键**，此时按"这次有没有 `--no-verify` / `--verify-fast`"分流：
+  关了验证还拒 ⇒ `unjudged`，正常验证后仍拒 ⇒ `live_differs`。
 - **`reason`** 常见取值（都在集成树上实测过）：
 
   | 值 | 含义 | 你该做什么 |
   |---|---|---|
   | `ok` | 写回成功且验证通过 | 完事 |
   | `no_change` | 参数与源码一致 → **一个字节都没改**（`applied: false` 属正常） | 不用做 |
-  | `best_effort` | 写回成功，但有字段**没能原位落地**（已退块落地）；`--keep-unverified` 保留时也是它 | 看 `inplace_pending` / `warnings` |
+  | `best_effort` | 写回成功，但有字段**没能原位落地**（已退块落地）；`--keep-unverified` 保留时也是它。⚠️ 若同一条目 `applied: false`，那这次是**一个字节都没写**（顶层会给 `rc=1 / ok=false / error_code="nothing_applied"`） | 看 `inplace_pending` / `warnings`；`applied:false` 时别当写好了 |
   | `fail` | **已回滚 / 拒绝写回**，原因在 `err`（语法被写坏、重跑不通、没有合规块锚点…） | 读 `err`，修脚本或重调 |
   | `stale` | 参数比脚本旧（存参数之后脚本被手改过）→ **跳过** | 重新 `describe` / 开窗调；确要覆盖手改才用 `--force` |
-  | `no_axes` | 参数文件里没有 `axes`（最典型：`describe --all-figs` 的**嵌套**产物直接喂回 `apply`） | 逐图导出（`--fig N`）再逐图 apply |
+  | `no_axes` | 参数文件里没有 `axes`（最典型：`describe --all-figs` 的**嵌套包装**直接喂回 `apply`） | 喂它顺手写出的 `<stem>.fig<k>.json`（0.1.14 起），或逐图 `--fig N` 导出 |
   | `bad_params` | 参数结构硬错误（`rc=2`），`err` 指出是哪个字段 | 修参数文件 |
+  | `layout_conflict` | 脚本开着布局引擎、这次真要写**轴位置** ⇒ **默认拒绝**（这一份没写盘，默认档 `rc=1`；`--strict` 下则整批中止 `rc=2`） | 先关引擎（删 `constrained_layout=True` / 改 `layout=None`）或把要精调的轴改成 `add_axes([...])`；确实要写就 `--force` |
 
 - **默认不保留"没验证过"的写回**：脚本在无头环境跑不通（缺数据 / 缺依赖 / 需要 GUI）时，默认
   **回滚 + `reason=fail`**，`err` 会写明"要保留请显式 `--keep-unverified`"。**只有你明确要留住半成品**
@@ -278,7 +293,7 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **多图逐张写回不会把后续参数误判为过期**：一次 `apply` 发现多份参数文件（主文件 +
   `<stem>.fig<k>.json`）时逐张落实，基准是**本批次开始时刻**（不是"刚被我们改新的脚本 mtime"），
   成功后还会刷新这批参数的 mtime。真正过期的参数（脚本 mtime 比参数新 >1s，即存参数之后脚本被手改过）
-  仍会被拦下（`reason=stale`）。
+  仍会被拦下（`reason=stale`）。**布局冲突的判定也是逐份的**：同一批里可能「这图写了、那图被拒」（拒的那份 `reason='layout_conflict'`、`applied: false`），顶层 `error_code` 取第一个失败文件、默认档 `rc=1` —— 判整体落地情况只看各条 `applied`，不要用那句「脚本一个字节没动」当整批结论。
 
 ## 本 skill 是薄壳
 

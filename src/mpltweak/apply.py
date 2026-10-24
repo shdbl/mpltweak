@@ -1,7 +1,39 @@
 # -*- coding: utf-8 -*-
+# ==== §1 文件头：apply 的职责与两条输出（人读 / --json） ====
+
 """
 mpltweak apply —— 「落实」助手（CLI：mpltweak apply <脚本.py>）
 =====================================================================
+
+**快速导航**（顶层横幅 `# ==== §N 名字 ====` 被文件尾索引收录；`main()` 体内的小节
+用 `# ==== §8.N … ====`，工具不索引，跳转请 `grep -n '§8.5'`）：
+
+- §1 文件头：apply 的职责与两条输出（就是本段）
+- §2 人读输出：行格式（`_fmt` / `_num` / `_axlabel`）、错误行出口（`_emit_err`）、
+  改动清单（`_print_changes`）、可复制骨架（`_snippet_*` / `--snippet`）
+- §3 「验了哪几层」的说明文案：`_LAYERS_*`（经 `_t_new` 取词；文案键都在 messages 表里，
+  这几个常量是 test_writeback 引用的稳定符号）
+- §4 验证重跑判定与 auto 回退：`_verify_rerun_state`（**只认真凭据**，不按 flag 反推）/
+  `_t_new` / `_auto_should_fallback` / `_success_tail`（无感化②：成功只报一行）
+- §5 参数文件收集与失败错误码：`_all_params_files`（主文件 + `<stem>.fig<k>.json`）/
+  `_OK_REASONS` / `_FAIL_ERROR_CODE` / `_failure_code`
+- §6 `--json` 机器可读输出：`_emit_json`（每个 return 分支前都要调用一次）
+- §7 验证失败归因与下一步：`_VERIFY_FAIL_*` / `_classify_verify_failure` /
+  `_is_rerun_failure` / `_print_attribution` / `_next_step_cmd`
+- §8 主流程 `main`：预备 → 逐份参数文件写回 → 输出。内分 6 小节 ——
+  §8.1 入口与 `--json` 分流 / §8.2 前置检查（存在性、布局引擎冲突、可重跑预检）/
+  §8.3 批次基准与备份透传（T36 / T23）/ §8.4 逐份校验与拒写 /
+  §8.5 写回（串行锁、style 与 auto 回退）/ §8.6 收尾（mtime 同步 + 输出）
+
+**与 `writeback.py` 的分区对照**（两边跳读用同一套词，不另造）：
+
+| 这件事 | 这边 | writeback.py |
+|---|---|---|
+| 验证（重跑 / 语义 / 层级） | §4 判定 + `verify` 调用 | §22 验证：无头重跑与一遍式验证、§15 语义比对 |
+| 备份（固定名 / 批前原件） | §8.3 透传本批第一份备份 | §12 备份（固定名 / pid 副本 / 裁剪） |
+| 并发 | §8.5 串行化写回 | §13 并发锁与原子写 |
+| 外部改动（脚本比参数新） | §8.4 拒写 | §14 外部改动检测（落盘前的指纹校验） |
+| 真正改脚本 | 调 `writeback.writeback` | §16 原位写回主流程、§23 写回入口 |
 
 把 .tweak_params/*.json 变成改动清单 / 纯 matplotlib 片段，或**确定性写回脚本**：
 
@@ -31,6 +63,8 @@ from . import preflight
 from . import verify as _verify
 from . import writeback
 
+
+# ==== §2 人读输出：行格式、改动清单与可复制骨架 ====
 
 def _fmt(v):
     try:
@@ -305,19 +339,13 @@ def _print_snippet(data):
     _print_snippet_fields(data, None, None)
 
 
-# 这几条新文案走 messages.t()（key：nothing_applied / dryrun_inplace / dryrun_block，
-# 由 cli-hunter 在 T8 里补进中英表）。下面三个 `_FALLBACK_*` 只是**过渡兜底**：
-# messages.py 由 cli-hunter 独占（并发写坏风险），所以这里只**读**它的 MESSAGES 表 ——
-# key 还没落地时用兜底文案，等 T8 合并后自动切到 messages.py，不必再动本文件。
-# TODO(i18n): T8 落地后这三个兜底常量可以删掉（保留也无害）。
-_FALLBACK_NOTHING_APPLIED = '[--] 本次没有可落地的字段：脚本未被改动（%(script)s）'
-_FALLBACK_DRYRUN_INPLACE = '[预览] 将原位修改 %(n)d 处: %(items)s（未落盘）'
-_FALLBACK_DRYRUN_BLOCK = '[预览] 将插入调整块: %(script)s（未落盘）'
-# T15：显式 --style inplace 时，有些字段"代码里没有可改的写法"，只能靠调整块落地。
-# 这时必须明确说出来（并让 rc≠0），绝不能让 agent 从 rc=0/applied=true 推断"都改好了"。
-_FALLBACK_NEEDS_BLOCK = ('[!] 这些字段代码里没有可改的写法、本次**没能落地**：%(items)s\n'
-                         '    → 用 --style auto（默认，会自动插入调整块）或 --style block '
-                         '重新落实；原位模式只改代码里已有的数字。')
+# ==== §3 兜底文案与「验了哪几层」的说明 ====
+
+# REV1-7（t35 / 0.1.14）：这里原来有 4 个 `_FALLBACK_*` 过渡兜底（nothing_applied /
+# dryrun_inplace / dryrun_block / needs_block_hint）+ 一句"T8 落地后可以删掉"的 TODO。
+# T8 早已落地（这些键都在 messages.MESSAGES 里），兜底**永远不会被选中** ⇒ 死代码 +
+# 假承诺（"接了线但永不触发"）。现在直接用 `_msg.t(key)`（键由 test_msg_key_audit
+# 静态扫描兜住：漏登记就红），4 个常量与那句过期 TODO 一并删掉。
 # T23 / 外部评审条目 3(d)：把"这次到底验了哪几层"如实打出来（快速档 / 没重跑 / 没语义）。
 # TODO(i18n): 交给 cli-hunter 搬进 messages.py（键名建议 verify_layers_fast /
 #             verify_layers_no_rerun / verify_layers_no_rerun_plain /
@@ -339,6 +367,8 @@ _LAYERS_DRYRUN_MAYBE = (
 _LAYERS_NO_SEMANTIC = ('[i] 本次**没有做语义比对**（第③层没跑）：只确认了"脚本能跑通"，'
                        '不保证布局真的落到目标图上')
 
+
+# ==== §4 验证重跑判定与 auto 回退（口径同 writeback §22 验证） ====
 
 def _verify_rerun_state(res, args):
     """这次到底有没有**为验证重跑**脚本 —— 真凭据优先，**不按 flag 反推**。
@@ -379,10 +409,13 @@ def _verify_rerun_state(res, args):
 
 
 def _t_new(key, fallback, **kw):
-    """新文案：优先 ``messages.t(key)``，key 还没搬进消息表时用兜底模板。
+    """取词：``messages.t(key)`` 优先，键缺失时退回 ``fallback`` 模板。
 
-    不能只写 `_msg.t(key)` 就完事：`t()` 的容错契约是"key 缺失就原样返回 key"，
-    在 T8 合并之前终端上会出现 `nothing_applied` 这种裸 key 行（不崩，但很难看）。
+    REV1-7（t35）：现在**只剩 verify_layers_* 一族**还走这里 —— 它们的兜底常量
+    （``_LAYERS_*``）是 `tests/test_writeback.py` 引用的稳定符号，所以保留这层间接；
+    `nothing_applied` / `dryrun_*` / `needs_block_hint` 四个键早已在 messages 表里，
+    原先那 4 个 `_FALLBACK_*` 常量是"接了线但永不触发"的死代码，已删。
+    注意别用它包"表里没有的新键"：`t()` 的容错是"缺键原样返回键名"，那会打到用户脸上。
     """
     if key in getattr(_msg, 'MESSAGES', {}):
         return _msg.t(key, **kw)
@@ -430,6 +463,8 @@ def _success_tail(res):
     return _msg.t('written_tail_run')
 
 
+# ==== §5 参数文件收集与失败错误码 ====
+
 def _all_params_files(script, override=None):
     """收集脚本的全部参数文件（主文件 + ``<stem>.fig<k>.json``），按图号排序。
 
@@ -466,6 +501,8 @@ def _all_params_files(script, override=None):
     return [by_idx[k] for k in sorted(by_idx)] + fallback
 
 
+# ==== §6 `--json` 机器可读输出（每条失败出口都带稳定码） ====
+
 # ---------------------------------------------------------------------------
 # B9（t33 / V1-F4）：`apply --json` 的**每一条失败出口**都要带稳定、可分支的
 # `error_code`。值域（全部 ASCII、snake_case、不随文案漂移；与 check/describe/revert
@@ -474,7 +511,8 @@ def _all_params_files(script, override=None):
 #   file_not_found            脚本不存在
 #   no_params                 没有参数文件
 #   mutually_exclusive_flags  --no-verify 与 --verify-fast 同时给
-#   layout_conflict           --strict 下检测到布局引擎冲突，拒绝写回
+#   layout_conflict           --strict 下检测到布局引擎冲突，拒绝写回；
+#                             默认档下"冲突 + 这次真要写轴位置"也归这一码（D1，0.1.14）
 #   bad_params                参数文件结构/取值硬错误（缺 version、顶层非对象、字段非法）
 #   stale_params              脚本比参数文件新（套用旧参数会覆盖手改，要 --force）
 #   no_axes                   参数里没有可落地的轴/字段
@@ -495,6 +533,14 @@ _FAIL_ERROR_CODE = {
     'no_fig': 'no_fig',
     'fail': 'writeback_failed',
     'external_modified': 'external_modified',
+    # D1（0.1.14）：布局引擎冲突下"这次要写轴位置"被默认拒绝 —— 与 --strict 那份
+    # 拒绝共用同一个码（同一件事：写了不生效），agent 只需认这一个。
+    'layout_conflict': 'layout_conflict',
+    # J1（0.1.14，REV1-1 收口）：整批零改动的码，值域登记在这一张表里 —— 它由
+    # `_nothing_applied()` 判、在 `--json` 那处 emit 时直接给（见 main 的 `_nothing`），
+    # 不经过 "reason 不在 _OK_REASONS 里" 那条路径；登记在这里是为了**值域有唯一出处**，
+    # 将来若真有 reason='nothing_applied' 的条目也能映射到同一个码。
+    'nothing_applied': 'nothing_applied',
 }
 
 
@@ -508,30 +554,56 @@ def _failure_code(results):
     return None
 
 
+# J1（0.1.14，独立验证 P1 报的 F1）：`ok=true + applied=false + rc=0` 但**脚本一字节
+# 没改** —— 只看 `ok`/`rc` 的 agent 会当成"已写回"。实测形态：隐式建图 / `for` 里建图 /
+# 函数里建图 / 类里 `self.ax`（fail-closed 保守拒写）⇒ `reason='best_effort'`、
+# `applied=false`、`changes=[]`、盘上字节不变、rc=0。
+# 判据只认"**这次确实想写**却**一处都没落地**"：
+#   * `no_change` **不算**（参数与源码本来就一致 = 正常成功，不是失败）；
+#   * dry-run 不算（预览本来就不落盘，另有 `dry_run` 字段）；
+#   * 部分落地（applied=true）不算（那是真·best_effort）。
+def _nothing_applied(results):
+    """整批**零改动**且确实尝试过写 ⇒ True（理由见上一条注释）。"""
+    rows = [r for _p, r in results or []]
+    if not rows:
+        return False
+    tried = [r for r in rows if r.get('reason') in ('ok', 'best_effort')]
+    return bool(tried) and not any(r.get('applied') for r in rows)
+
+
 def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
-               preflight_res=None, error_code=None):
+               preflight_res=None, error_code=None, args_style='auto'):
     """--json 的机器可读输出（每个 return 分支前都要调用一次）。
 
     ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
     而退出码却是 2 —— 退出码与 ok 字段语义打架（t6-M7）。
 
-    ``extra``：额外平铺进每个 files[] 条目的键（如 ``dry_run``）。
+    ``extra``：额外平铺进每个 files[] 条目的键（如 ``dry_run``）。``args_style``：只给"条目自己没带 style"兜底用（防以后新增早退路径又漏掉）。
 
     ``preflight_res``：可重跑预检结果（0.1.10），作为**顶层** ``preflight`` 键给出
     —— agent 在动笔写回之前就能知道"这个脚本重跑会卡在哪"，而不是等失败后靠
     attribution 反推。
+
     """
     sys.stdout = stdout_ref
     _ok = (not [r for _, r in results
                 if r['reason'] not in ('ok', 'best_effort', 'no_change',
                                        'preview')]) if ok is None else ok
+    # REV1-1（t35）：**零改动**这件事在这里统一兜底，别只靠调用点传 ok/error_code ——
+    # 判据只有 `_nothing_applied()` 一处（"确实想写、却一处都没落地"）；dry-run 不算
+    # （预览本来就不落盘，另有 dry_run 字段）。漏传的调用点也因此不会退回"看起来成功"。
+    _zero = _nothing_applied(results) and not bool((extra or {}).get('dry_run'))
+    if ok is None and _zero:
+        _ok = False
+    if not error_code and _zero:
+        error_code = 'nothing_applied'
     _payload = {
         'script': os.path.basename(script),
         'ok': _ok,
         'files': [
             {'params': os.path.basename(p),
              'reason': r.get('reason', 'unknown'),
-             'style': r.get('style'),
+             'style': r.get('style') or args_style,   # F1：永不为 null（请求的通道；走过写回则是实际通道），口径见 docs/agent.md
              'changes': r.get('changes') or [],
              # RC-9：块模式的 changes 是空的，agent 完全看不出"写了什么"——
              # 用 block_lines（块行数）与 applied（这次到底改没改磁盘）补上。
@@ -589,6 +661,11 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              'semantic': r.get('semantic'),
              'warnings': r.get('warnings') or [],
              'layout_conflicts': r.get('layout_conflicts') or [],
+             # REV1-1b（t35）：**判据依据**一栏 —— 只抄 `layout_conflicts`（"哪一行开了
+             # 引擎"）不足以让 agent 分支：真正决定拦不拦的是 `layout_why`
+             # （no_pos / proved_equal / live_equal / live_differs / unjudged）。
+             # 类型归一与 semantic_basis 同款：缺键给 None。
+             'layout_why': r.get('layout_why'),
              # 0.1.10：失败归因（script_cannot_run / script_needs_args /
              # script_needs_gui_or_headless_impossible / tool_bug）—— agent 可
              # 据此自动分支，不再只靠读 err 文本猜。next_step 是可直接执行的命令。
@@ -610,6 +687,8 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
         _payload['error_code'] = error_code
     _msg.emit_json(_payload)
 
+
+# ==== §7 验证失败归因与下一步（attribution / next_step） ====
 
 # ---------------------------------------------------------------------------
 # 失败归因（0.1.10）：验证重跑失败时把"脚本跑不起来"和"工具改坏了"彻底分开报。
@@ -691,8 +770,11 @@ def _next_step_cmd(kind, script):
 
 
 @_msg.guard_json_main
+# ==== §8 主流程：main（预备 → 逐份写回 → 输出） ====
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    # ==== §8.1 入口：`--` 截断、选项解析与 --json 分流 ====
     # `--` 分隔（bug #6）：`--` 之后的内容是**用户脚本自己的参数**，不是 apply 的
     # 开关 —— 透传给写回后的重跑验证（verify_run / verify_semantic），依赖
     # sys.argv 的脚本（python fig.py --data x.npz）apply --write 时才能与基线
@@ -722,9 +804,9 @@ def main(argv=None):
                          '但"能跑通"和"布局真的落到目标图上"都不保证。'
                          '适合脚本重跑很贵、且你先要快速看一眼结果的场景')
     ap.add_argument('--strict', action='store_true',
-                    help='遇到布局引擎冲突（constrained_layout / autolayout）拒绝写回：'
-                         '引擎会在每次绘制时重算轴位置，写回的位置会被它覆盖。'
-                         '确要写回加 --allow-layout-conflict')
+                    help='布局引擎冲突（constrained_layout / autolayout）下**一律**拒绝写回'
+                         '（含只改字号的那种）。默认档只在"这次真要写轴位置"时拒绝，'
+                         '这条留作更保守的旧口径')
     ap.add_argument('--all-figs', action='store_true',
                     help='循环出图时统一应用到所有迭代（默认只对参数记录的图号加 if 守卫）')
     ap.add_argument('--keep-unverified', action='store_true',
@@ -732,7 +814,8 @@ def main(argv=None):
                          '**保留**这次写回（默认是回滚 + 明确失败：那时验证证明不了'
                          '写回是否可用，留下坏写回比失败更糟）')
     ap.add_argument('--allow-layout-conflict', action='store_true',
-                    help='与 --strict 配对：明知有布局引擎冲突也照样写回')
+                    help='明知有布局引擎冲突也照样写回（与 --force 同效：放行"写轴位置"'
+                         '那次写回并在输出里声明）')
     ap.add_argument('--style', default='auto', choices=('auto', 'inplace', 'block'),
                     help='写回方式：auto=每张图各自决定（默认，能改代码里已有的数字就改，'
                          '改不了才插入调整块）；inplace=只用原位改数字（改不了就保持原样）；'
@@ -749,8 +832,10 @@ def main(argv=None):
                     help='展开细节（逐处改动清单 / 备份路径 / 验证分层结论）；'
                          '默认成功只报一行，失败与降级信息一直都在')
     ap.add_argument('--force', action='store_true',
-                    help='即便脚本在参数保存之后被改过，也照样套用参数（默认会跳过，'
-                         '以免静默覆盖你的手动改动）')
+                    help='两处都放行：① 脚本在参数保存之后被改过，也照样套用参数'
+                         '（默认会跳过，以免静默覆盖你的手动改动）；'
+                         '② 布局引擎冲突下要写轴位置的那次写回（默认拒绝）。'
+                         '两处都会在输出里声明"已按 --force 跳过"')
     ap.add_argument('--lang', default=None, choices=('auto', 'zh', 'en'),
                     help='界面语言：auto=跟随系统（默认），或强制 zh / en。'
                          '--json 的错误码始终是英文，不受此影响')
@@ -779,6 +864,7 @@ def main(argv=None):
         return 2
 
     script = os.path.abspath(args.script)
+    # ==== §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检 ====
     # 顺序（方案 A，t58）：**脚本本身是主参数，参数文件是次要产物** —— 脚本不存在时先说
     # “脚本找不到”，再去查参数文件（否则先报 `no params:`，用户以为是自己没调过图）。
     # 与 describe / check / revert 同族：file_not_found 文案 + rc=2。
@@ -792,7 +878,8 @@ def main(argv=None):
         return 2
     # 布局引擎冲突（constrained_layout / figure.autolayout）：位置写回会被引擎在每次
     # 绘制时覆盖。只扫一次，逐份参数文件复用到 res['layout_conflicts']。
-    _conflicts = layoutwarn.messages_for(layoutwarn.scan(script))
+    _findings = layoutwarn.scan(script)
+    _conflicts = layoutwarn.messages_for(_findings)
     if _conflicts and args.strict and args.write and not args.allow_layout_conflict:
         # --strict：布局引擎会在**每次绘制**时重算轴位置，写回的位置/尺寸会被它覆盖，
         # 所以拒绝写回并给出可操作的办法（关掉引擎 / 用 add_axes 定位 / 显式放行）。
@@ -833,6 +920,14 @@ def main(argv=None):
 
     results = []
     _applied_files = []
+    # D1（0.1.14）：冲突下强行走写回必须**说清**，不许静默 —— 用户得知道"位置写进去了，
+    # 但绘制时仍会被引擎覆盖"。只在真的会写盘时打一次（预览/ dry-run 没这回事）。
+    if _conflicts and args.write and not args.dry_run \
+            and (args.force or args.allow_layout_conflict):
+        print(_msg.t('apply_layout_conflict_skipped',
+                     flag=('--force' if args.force
+                           else '--allow-layout-conflict')))
+    # ==== §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份） ====
     # T36：本批次的"批前原件"备份。多图会话里一次 `apply --write` 会**连着改同一个
     # 脚本好几遍**（每份参数一次），每次写盘都会备一份 —— 固定名 `<stem>.tweak.bak`
     # 于是被后来的写盘**覆盖成中间态**：`revert` 还原出来的是"改了一半"的脚本，不是
@@ -861,12 +956,13 @@ def main(argv=None):
                         err=str(e)[:160])
             _emit_err(_msg.t('apply_params_errors', msg=_e),
                       _msg.t('not_written', reason='bad_params', script=script))
-            results.append((p, {'reason': 'bad_params', 'err': _e, 'changes': []}))
+            results.append((p, {'reason': 'bad_params', 'err': _e, 'changes': [], 'style': args.style}))
             continue
         except OSError as e:
             _emit_err(_msg.t('skipped_file', name=os.path.basename(p), err=e))
             continue
         k = data.get('fig_index')
+        # ==== §8.4 逐份参数文件：校验与拒写 ====
         # 参数比脚本旧 → 脚本在保存参数之后被手动改过，套用旧参数会**静默覆盖**
         # 那些改动（对照 launch.py 的同类保护；t3-M5 / t6-M8）。
         # 只读预览不拦（它本来就不写文件）。
@@ -881,7 +977,7 @@ def main(argv=None):
                                  name=os.path.basename(p)))
                 results.append((p, {'reason': 'stale', 'changes': [],
                                     'block': None, 'backup': None,
-                                    'warnings': []}))
+                                    'warnings': [], 'style': args.style}))
                 continue
         print('=' * 62)
         print(_msg.t('params_file_header', name=os.path.basename(p),
@@ -913,7 +1009,8 @@ def main(argv=None):
                       # 不许出现"已写回"。
                       _msg.t('not_written', reason='bad_params', script=script))
             results.append((p, {'reason': 'bad_params',
-                                'err': '; '.join(_errs), 'changes': []}))
+                                'err': '; '.join(_errs), 'changes': [],
+                                'style': args.style}))
             continue
 
         _print_changes(script, data, p)
@@ -924,10 +1021,49 @@ def main(argv=None):
                 _print_snippet(data)
             # 只读预览也计入结果（给 --json）。`style` 填**请求的模式**：
             # 预览阶段还没决定"这张图最后会不会退到块"，用 'auto' 如实表达"待定"；
-            # 之前这里不带 style → 预览时 JSON 里 style=null，与写回时的取值口径不一致。
+            # 之前这里不带 style → 预览时 JSON 里 style=null，与写回时的取值口径不一致（F1）。
             results.append((p, {'reason': 'preview', 'style': args.style}))
             continue
 
+        # ==== §8.4b D1 布局引擎冲突：这次真要写轴位置 ⇒ 默认拒绝（0.1.14，用户拍板 B） ====
+        # 为什么拒绝（而不是继续只给 warning）：引擎在**每次绘制**时重算轴位置，
+        # 写进源码的位置一定被它覆盖 —— 用户"拖完白拖"，而 0.1.13 拿到的往往只是
+        # 写回后"验证不一致 → 自动回滚"的一句莫名结论。所以宁可在写盘之前拦下、把
+        # 病因和两条出路说清。
+        # 为什么**不是一刀切**：只改字号/线宽/cmap 的那次写回完全不受引擎影响（参数里
+        # 根本没有 pos），拦了就是给本来好用的路添堵 —— 判据交给
+        # `writeback.position_write_needed`（它只在"这次真的会改位置"时回 True）。
+        # dry-run 不写盘 ⇒ 不拦（它本来就是预览）。
+        if _conflicts and not args.dry_run and not (args.force
+                                                    or args.allow_layout_conflict):
+            if not args.no_verify and not args.verify_fast:
+                # 判"这次会不会真改位置"要重跑一次脚本（网格轴的位置只有实测才知道）
+                print(_msg.t('apply_verifying', sec=args.timeout))
+            _need, _why = writeback.position_write_needed(
+                script, data, p, python=args.python, timeout=args.timeout,
+                verify=not args.no_verify and not args.verify_fast,
+                fast_check=bool(args.verify_fast),
+                script_args=script_args)
+            if _need is not False:
+                # 冲突行只取"哪一行开了什么"（hint=False）：下面已经有专门的两条出路，
+                # 再叠一条同样意思的通用建议只会让人看不清重点。
+                _lines = ['[apply] %s' % _l
+                          for _l in layoutwarn.messages_for(_findings, hint=False)]
+                _lines.append(_msg.t('apply_layout_conflict_refused', script=script))
+                if _need is None:
+                    # 判不了（--no-verify / --verify-fast / 脚本重跑不了）⇒ fail-closed，
+                    # 但必须说清"为什么没给你放行"，否则用户以为工具在瞎拦。
+                    _lines.append(_msg.t('apply_layout_conflict_unjudged'))
+                _lines.append(_msg.t('apply_layout_conflict_ways_out'))
+                _emit_err(*_lines)
+                # 不写盘、脚本字节不变；退出码走"写回没落地"档（rc=1，见 §8.6）。
+                results.append((p, {'reason': 'layout_conflict',
+                                    'err': '; '.join(_conflicts),
+                                    'changes': [], 'block': None, 'backup': None,
+                                    'warnings': [], 'needs_block': False,
+                                    'layout_conflicts': _conflicts,
+                                    'layout_why': _why, 'style': args.style}))
+                continue
         print('-' * 62)
         if not args.no_verify and not args.dry_run:
             # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
@@ -945,6 +1081,7 @@ def main(argv=None):
                    script_args=script_args)
         _lk = None
         if args.write and not args.dry_run:
+            # ==== §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁） ====
             # 串行化写回：并发跑两个 apply --write 时两边都基于同一份原文算替换，
             # 后写者会盖掉先写者，而且都会打印"✓ 已写回"（t5-S4 实测 7/7）。
             try:
@@ -1029,8 +1166,8 @@ def main(argv=None):
                 ch = res.get('changes') or []
                 if args.dry_run:
                     # E9：dry-run 下不得出现"已写回"字样（脚本一个字节没动）
-                    print(_t_new('dryrun_inplace', _FALLBACK_DRYRUN_INPLACE,
-                                 n=len(ch), items=', '.join(ch)[:160]))
+                    print(_msg.t('dryrun_inplace', n=len(ch),
+                                 items=', '.join(ch)[:160]))
                 elif _applied and ch:
                     # 无感化②：默认收成一行（含"几处"这个关键数字），逐处清单进 -v。
                     if _verbose:
@@ -1060,14 +1197,13 @@ def main(argv=None):
                 # T15（INT-2 的 B 情形）：显式 --style inplace 时，**原位写不了**的字段
                 # 这次没能落地 —— 必须说出来（rc 也会变 1），不能只埋在 warnings 里。
                 if res.get('needs_block') and not args.dry_run:
-                    _emit_err(_t_new('needs_block_hint', _FALLBACK_NEEDS_BLOCK,
+                    _emit_err(_msg.t('needs_block_hint',
                                      items=_msg.t('items_sep').join(
                                          res.get('pending') or [])
                                      or _msg.t('apply_pending_see_warnings')))
             else:
                 if args.dry_run:
-                    print(_t_new('dryrun_block', _FALLBACK_DRYRUN_BLOCK,
-                                 script=script))
+                    print(_msg.t('dryrun_block', script=script))
                 elif _applied:
                     # T68：**只有真的写进文件**才说"已写回"（旧实现只看 reason，
                     # 于是 applied=false 的拒绝路径也报 `[OK] 已写回`）。
@@ -1196,6 +1332,7 @@ def main(argv=None):
                 res['next_step'] = _next_step_cmd(_kind, script)
                 _print_attribution(_kind, _detail, script)
 
+    # ==== §8.6 收尾：mtime 同步与人读 / --json 输出 ====
     # T23：把这一批里**落地过**的参数文件互相同步 mtime —— 它们此刻都等于"写回后
     # 的代码状态"，下一次批量写回/开窗就该一致地被判为新鲜（而不是只有最后一份新鲜）。
     if args.write and not args.dry_run and len(_applied_files) > 1:
@@ -1214,7 +1351,8 @@ def main(argv=None):
             _emit_json(script, results, _stdout,
                        extra={'dry_run': bool(args.dry_run)},
                        preflight_res=_pf_res,
-                       error_code=_failure_code(results))
+                       error_code=_failure_code(results),
+                       args_style=args.style)
         # 参数文件硬错误（error 级）→ 与写回路径同一档：rc=2（输入/用法错误）
         return 2 if any(r['reason'] == 'bad_params' for _, r in results) else 0
 
@@ -1226,13 +1364,26 @@ def main(argv=None):
     _unlanded = [r for _, r in results
                  if r.get('needs_block') and args.style == 'inplace'
                  and not args.dry_run]
+    # J1：整批零改动（确实想写、却一处都没落地）⇒ 不能报 rc=0/ok=true。
+    # 这类是"结果需要处理"档（与 stale / needs_block / layout_conflict 同档 = 1），
+    # 并在 --json 里给独立 error_code='nothing_applied'。
+    _nothing = _nothing_applied(results) and not args.dry_run
+    if _nothing:
+        for _p, _r in results:
+            if not _r.get('applied') and _r.get('reason') in ('ok', 'best_effort'):
+                _emit_err(_msg.t('nothing_applied',
+                                 script=os.path.basename(_p)))
     # 参数文件非法 → rc=2（"输入/用法错误"，与 --strict 拒绝、缺参数文件同一档），
     # 让 agent 能区分"你的参数不对"和"写回失败"（审计 E6 的修法）。
     _rc = (2 if any(r['reason'] == 'bad_params' for _, r in results)
-           else (1 if (bad or _unlanded) else 0))
+           else (1 if (bad or _unlanded or _nothing) else 0))
     if args.json:
         _emit_json(script, results, _stdout, extra={'dry_run': bool(args.dry_run)},
-                   preflight_res=_pf_res, error_code=_failure_code(results))
+                   preflight_res=_pf_res,
+                   # REV1-1（t35）：ok / error_code 的"零改动"覆盖现在由 `_emit_json`
+                   # 自己按 `_nothing_applied()` 兜底（单一判据），这里不再各传一份。
+                   error_code=_failure_code(results),
+                   args_style=args.style)
     if len(results) > 1:
         # 多份参数文件的收尾总结。**--json** 时必须走 stderr（否则会拼在 JSON 尾巴上，
         # 让 json.loads 报 "Extra data"，t3-H1 / t6-H3）；**非 --json** 时它是报告的
@@ -1250,3 +1401,42 @@ def main(argv=None):
 
 if __name__ == '__main__':
     sys.exit(main())
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头：apply 的职责与两条输出（人读 / --json）（行 2-66，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 人读输出：行格式、改动清单与可复制骨架（行 67-341，10 个顶层函数）
+#     _fmt                                            69
+#     _num                                            77
+#     _axlabel                                        88
+#     _emit_err                                       97
+#     _print_changes                                 123
+#     _snippet_line                                  225
+#     _snippet_refs                                  261
+#     _snip_val                                      281
+#     _print_snippet_fields                          290
+#     _print_snippet                                 333
+# §3 兜底文案与「验了哪几层」的说明（行 342-370，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §4 验证重跑判定与 auto 回退（口径同 writeback §22 验证）（行 371-465，4 个顶层函数）
+#     _verify_rerun_state                            373
+#     _t_new                                         411
+#     _auto_should_fallback                          425
+#     _success_tail                                  445
+# §5 参数文件收集与失败错误码（行 466-503，1 个顶层函数）
+#     _all_params_files                              468
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 504-690，3 个顶层函数）
+#     _failure_code                                  547
+#     _nothing_applied                               565
+#     _emit_json                                     574
+# §7 验证失败归因与下一步（attribution / next_step）（行 691-772，4 个顶层函数）
+#     _classify_verify_failure                       719
+#     _is_rerun_failure                              742
+#     _print_attribution                             747
+#     _next_step_cmd                                 762
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 773-1403，1 个顶层函数）
+#     main                                           775
+# --- END AUTO NAV ---

@@ -18,7 +18,7 @@
 |---|---|
 | 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
 | 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
-| 需要在特定交互后端才有意义的图 | 验证**默认** Agg 无头，但没"钉死"：重跑层只设 `MPLBACKEND=Agg` 就裸跑子进程（`writeback.py:5547 # MPLBACKEND` 设 env、`:5550 # cmd` 裸跑），脚本自己写 `matplotlib.use('TkAgg')` 能顶回去 ⇒ 无头机器上跑不通、有桌面的机器上可能真弹窗（采集 / 语义层另把后端钉成 Agg：verify.py:829-836 # matplotlib.use） |
+| 需要在特定交互后端才有意义的图 | 验证**默认** Agg 无头，但没"钉死"：重跑层只设 `MPLBACKEND=Agg` 就裸跑子进程（`writeback.py:5628 # MPLBACKEND` 设 env、`writeback.py:5631 # cmd` 裸跑），脚本自己写 `matplotlib.use('TkAgg')` 能顶回去 ⇒ 无头机器上跑不通、有桌面的机器上可能真弹窗（采集 / 语义层另把后端钉成 Agg：verify.py:863-870 # matplotlib.use） |
 
 **跑得久不算"不适用"**：脚本慢只意味着这次写回**等得久一点**，机制上没有任何一条会因为脚本慢就不成立
 （单次重跑的默认超时是 300 秒，`--timeout` 可放宽；超时不会被判成写坏 —— 保留写回并提示手动确认）。
@@ -29,9 +29,10 @@
 
 ## 二、执行边界：哪些命令会跑你的脚本
 
-**它不是一个沙箱**：`describe` / `check` 会**执行**你的脚本（在**子进程**里、默认 Agg 无头，退出码与全局状态留在子进程内）；**开窗**（`mpltweak <脚本>` / `launch`）也在**本进程**里跑一遍脚本（`runpy.run_path`，launch.py:815 # runpy.run_path），用的是**交互后端**（QtAgg 优先、TkAgg 兜底，launch.py:150-165 # _detect_backend）—— 脚本改过的全局 `rcParams` 留在窗口进程里，关窗即结束；`apply` 只做 AST 改写，除非你要求**重跑验证**（`--write` 后默认重跑一次，`--verify-fast` 只做 `ast.parse`）。
+**它不是一个沙箱**：`describe` / `check` 会**执行**你的脚本（在**子进程**里、默认 Agg 无头，退出码与全局状态留在子进程内）；**开窗**（`mpltweak <脚本>` / `launch`）也在**本进程**里跑一遍脚本（`runpy.run_path`，launch.py:854 # runpy.run_path），用的是**交互后端**（QtAgg 优先、TkAgg 兜底，launch.py:176-191 # _detect_backend）—— 脚本改过的全局 `rcParams` 留在窗口进程里，关窗即结束；`apply` 只做 AST 改写，除非你要求**重跑验证**（`--write` 后默认重跑一次，`--verify-fast` 只做 `ast.parse`）。
 
-**同一个脚本会被重复执行**：开窗 1 次、每次 `check` / `describe` 1 次、每次 `apply --write` 1 次 ——
+**同一个脚本会被重复执行**：开窗 1 次、每次 `check` / `describe` 1 次、每次 `apply --write` **至少** 1 次
+（参数里有"原位写不了"的字段、又要退块时是 3 遍，见 [verify.md](verify.md#写回会跑几遍脚本)）——
 所以别把它指向"跑一次会花钱 / 会改数据 / 会发消息"的脚本。
 
 逐命令的实测表（每条都标"会不会跑脚本"）、工具自己的副作用（写哪些文件、写在哪、联不联网、

@@ -63,8 +63,21 @@ END_MARK = '# --- END AUTO NAV ---'
 #: 分区横幅：`# ==== §4 分区名 ====`（§ 后面是编号，名称里不许再出现 `====`）
 BANNER_RE = re.compile(r'^# ==== §(?P<num>\d+)\s+(?P<name>[^=].*?)\s*====\s*$')
 
-#: 默认清单：本批（0.1.13）只给 writeback.py 落地；其余按文件大小排队，见交付说明。
-DEFAULT_MODULES = ('src/mpltweak/writeback.py',)
+#: 默认清单：**本仓库所有已加导航的模块**都要在这里，否则 CI 的新鲜性断言管不到它
+#: （0.1.14 起：C 批给 6 个大文件都加了导航，清单只剩 writeback 就等于没护栏）。
+#: 顺序按文件大小从大到小 —— 报错信息里先看到大文件，方便判断影响面。
+#: 新增模块的流程：① 按真实功能边界加分区横幅；② `python tools/gen_nav.py <模块>
+#: --write`；③ 把相对路径加进本清单；④ 跑 `python tools/gen_nav.py --check` 与
+#: `pytest -q tests/test_hygiene.py -k auto_nav`（牙齿会逐个模块断言）。
+DEFAULT_MODULES = (
+    'src/mpltweak/writeback.py',
+    'src/mpltweak/toolbox.py',
+    'src/mpltweak/messages.py',
+    'src/mpltweak/verify.py',
+    'src/mpltweak/apply.py',
+    'src/mpltweak/launch.py',
+    'src/mpltweak/check.py',
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

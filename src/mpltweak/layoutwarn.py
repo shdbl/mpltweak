@@ -209,8 +209,13 @@ def scan(script: str) -> List[Dict[str, Any]]:
     return scan_source(src)
 
 
-def messages_for(findings: List[Dict[str, Any]]) -> List[str]:
-    """把冲突点转成可以直接打印的人话（每条冲突一行 + 末尾一条修复建议）。"""
+def messages_for(findings: List[Dict[str, Any]], hint: bool = True) -> List[str]:
+    """把冲突点转成可以直接打印的人话（每条冲突一行 + 末尾一条修复建议）。
+
+    ``hint=False``：只给"哪一行开了什么"的那几行，**不带**末尾那条修复建议。
+    D1（0.1.14）的拒绝路径用它 —— 那里已经有专门的"两条出路"文案（去掉引擎 /
+    加 --force），再叠一条同样意思的建议就成了三遍重复，反而看不清。
+    """
     from . import messages as _msg
     if not findings:
         return []
@@ -223,5 +228,6 @@ def messages_for(findings: List[Dict[str, Any]]) -> List[str]:
         seen.add(key)
         out.append(_msg.t('layout_engine_conflict', line=f.get('line'),
                           how=f.get('how')))
-    out.append(_msg.t('layout_engine_hint'))
+    if hint:
+        out.append(_msg.t('layout_engine_hint'))
     return out

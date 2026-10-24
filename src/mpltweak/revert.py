@@ -13,6 +13,10 @@
   写回 / 跨进程"的**最早**那一份，用 ``--first``（读 pid 副本里最早的一份；
   ``_prune_backups`` 永久保留最早那份、只裁中间的）。pid 副本写不出来时（典型是
   Windows 长路径），``--first`` **明确失败 rc=2**，不会拿固定名备份冒充"最早"（T41）。
+  **H2（0.1.14）**：固定名备份**被删**（手工清理 / 旧版覆盖）时，默认 revert 不再
+  rc=2 说"没有可回退的备份"—— 盘上还有 pid 副本，信息就在那儿。它复用 ``--first``
+  同一套"最早备份"发现逻辑，逐字节回到最初原件，并在 payload 的 ``fallback`` 里标明
+  ``no_fixed_backup_used_oldest_pid``；只有**真一份备份都没有**时才 rc=2。
 * **默认只预览**：与 `apply` 一致，`revert` 不加 `--write` 只打印"会改回什么"，
   一个字节都不动。要真回退必须显式 `--write`。
 * **revert 自身也可逆**：覆盖前先把当前文件另存为
@@ -187,6 +191,20 @@ def main(argv=None) -> int:
         if _legacy != backup and os.path.exists(_legacy):
             backup = _legacy
 
+    # H2（0.1.14）：**信息明明在，默认路径不许说没有**。固定名备份可能被删（手工
+    # 清理、旧版覆盖、别的工具），而盘上还留着 `<stem>.tweak.<pid>.bak` 副本 ——
+    # 那里面就有"最初那次写回之前"的原文。默认回退这时复用 `--first` 同一套发现
+    # 逻辑（`oldest_backup`），逐字节回到最初原件，而不是 rc=2 把人挡回去。
+    # 边界：① `--first` 的语义不变（那条路自己带回落到这里的 --first 语义判断，
+    # 走到这里时 `args.first` 必为 False）；② 只改"用哪一份备份"，不改备份命名规则、
+    # 不改 `_prune_backups` 的保留策略；③ 固定名备份**存在**时行为一字不改。
+    _fallback_oldest = False
+    if not args.first and not os.path.exists(backup):
+        _old = oldest_backup(script, params_path)
+        if _old:
+            backup = _old
+            _fallback_oldest = True
+
     def _out(payload, human_lines, rc=0):
         if args.json:
             _msg.emit_json(payload)
@@ -196,9 +214,15 @@ def main(argv=None) -> int:
         return rc
 
     if not os.path.exists(backup):
-        msg = (_msg.t_ui('还没有可回退的备份：%s\n'
-               '  revert 只能回退"做过 mpltweak apply --write 的脚本"——'
-               '备份是写回时留下的写回前原文。') % backup)
+        # 走到这里才是"真的一份备份都没有"：固定名（含 0.1.8 旧位置）与 pid 副本
+        # 都不存在。文案必须说清**找过哪些**，别让人以为"是不是还有别的办法"。
+        _fixed = backup_path(script, params_path)
+        _dir = writeback._backup_dir(script, params_path)
+        msg = (_msg.t_ui('没有任何可回退的备份：%s 下既没有固定名 `%s`，'
+               '也没有 `<脚本名>.tweak.<pid>.bak` 专属副本。\n'
+               '  · revert 只能回退"做过 mpltweak apply --write 的脚本"——'
+               '备份是写回时留下的写回前原文。')
+               % (_dir, os.path.basename(_fixed)))
         if args.json:
             _msg.fail_json('no_backup', msg)
         sys.stderr.write(_msg.t_ui('[revert] %s\n') % msg)
@@ -224,7 +248,12 @@ def main(argv=None) -> int:
         'changed': True,
         # 键保持稳定（agent 不该因为"有没有差异"拿到不同形状的 payload）；
         # first：这次用的是不是"最早那份"备份（RC-7 的可逆范围要说清楚）。
-        'first': bool(args.first),
+        'first': bool(args.first or _fallback_oldest),
+        # H2：`_fallback_oldest` 为真 = 固定名备份不存在，默认回退**自动**退回到
+        # 最早一份 pid 副本（与 `--first` 找的是同一份）。显式标出来，agent 才分得清
+        # "我拿到的是固定名那份"还是"我拿到的是最初原件"。
+        'fallback': ('no_fixed_backup_used_oldest_pid'
+                     if _fallback_oldest else None),
         'diff': {'added': added, 'removed': removed},
         'lines': show,
         'written': False,
@@ -236,7 +265,11 @@ def main(argv=None) -> int:
              '之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 '
              '--first')
              % (_msg.t_ui('最早一份专属副本（最早那次写回之前）')
-                if args.first else _msg.t_ui('固定名备份（它建立那一刻的原文）')),
+                if args.first else
+                (_msg.t_ui('最早一份专属副本（固定名备份已不存在 → 自动退回到它，'
+                           '= 最初那次写回之前）')
+                 if _fallback_oldest
+                 else _msg.t_ui('固定名备份（它建立那一刻的原文）'))),
              # added = unified_diff(current → backup) 的 '+' 行 = **会被恢复**的行；
              # removed = '-' 行 = 会被删掉的行。这两个参数曾经写反：块写回后
              # 当前 40 行 / 备份 9 行时打印成"将改回 31 行、去掉 0 行"（独立审阅 F3）。

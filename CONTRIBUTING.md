@@ -96,8 +96,11 @@ check, …). The two original ones:
   pytest -q -k every_suite_is_assigned   # just the CI per-leg coverage check
   ```
 
-  The usual offenders are characters outside cp936: box drawing, emoji, `→` / `✓`, en/em dashes and
-  CJK punctuation such as `「」`. Prefer ASCII or plain Chinese. The JSON path has the same trap for the
+  The usual offenders are characters outside cp936: box drawing, emoji, `✓`, and `⇒` (U+21D2) /
+  `⇔` (U+21D4) / `⟹` (U+27F9) — **`⇒` cannot be encoded in GBK, use `→` (U+2192) instead**. (`→`,
+  the en/em dashes `–`/`—` and CJK punctuation such as `「」` *are* encodable; `⇒`/`⇔`/`⟹`/`✓` are
+  not, and one of them turns the message into `UnicodeEncodeError` on a cp936 pipe.) Prefer ASCII or
+  plain Chinese. The JSON path has the same trap for the
   *other* reason (UTF-8 consumers): emit through `messages.emit_json` (fd-level UTF-8) instead of
   `print()`.
 
@@ -272,13 +275,18 @@ python tools/check_doc_refs.py --json            # machine-readable
 
 Three things to know before you write a reference:
 
-1. **Bare `:NNN` works.** `` `writeback.py:4513` … `:4527` `` inherits `writeback.py` from the
-   previous reference **in the same paragraph** (a blank line ends the paragraph; a bare reference
-   with nothing to inherit is reported as a hint, never as suspicious).
-2. **Anchor new references**: `` `writeback.py:2255 # _prune_backups` `` — the gate searches that
-   symbol within **±3 lines** (`--anchor-window`) of the quoted line and reports `symbol_mismatch`
-   (with the nearest line the symbol does appear on). Existence alone was never enough: `t72`
-   measured four anchors that had drifted by +5…+13 while still pointing at *a* non-blank line.
+1. **Bare `:NNN` works — but only inside the same line.** `` `writeback.py:4513` … `:4527` ``
+   inherits `writeback.py` from the **last `.py` name earlier on that same line**; a continuation
+   line does *not* inherit the filename from the paragraph above (paragraph-scope inheritance was
+   measured to cause silent false greens, so the gate was narrowed). A bare reference with nothing
+   to inherit is printed as a hint (`bare ref not inherited`), never as suspicious — write
+   `` `filename:NNN` `` on the continuation line instead.
+2. **Anchor new references**: `` `writeback.py:2255 # _prune_backups` `` — the gate looks for that
+   symbol **exactly on the quoted line**: `ANCHOR_WINDOW` defaults to **0** since 0.1.14. Widen it
+   for one run with `--anchor-window N` (e.g. `--anchor-window 3` restores the old ±3 tolerance)
+   and it reports `symbol_mismatch` with the nearest line the symbol does appear on. Existence
+   alone was never enough: `t72` measured four anchors that had drifted by +5…+13 while still
+   pointing at *a* non-blank line — and the old ±3 default hid 1–3 line shifts entirely.
 3. **Exemptions carry a written reason, and they only shrink.** Three tables in the tool, all keyed
    by `(doc path, reference)` — **never by doc line number** (that is what drifts):
    `HISTORICAL_ALLOW` (the maintenance log quotes the *then-current* line: correct history, keep it),

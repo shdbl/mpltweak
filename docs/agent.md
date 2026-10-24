@@ -37,11 +37,11 @@ mpltweak 把这部分从"猜"变成"写文件"：
 
 | 命令 | 作用 |
 |---|---|
-| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"）；`-o/--output 文件` 直接写进文件（最常用）；`--all-figs` 时是嵌套的 `{"figures": [...]}`，**不能**直接喂回 `apply --params`（`rc=1 / reason=no_axes`，见「参数文件」） |
+| `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"）；`-o/--output 文件` 直接写进文件（最常用）；`--all-figs` 时是嵌套的 `{"figures": [...]}`，**顶层没有 `axes`**（直接喂回 `apply --params` 是 `rc=1 / reason=no_axes`，见「参数文件」）——但**0.1.14 起 `--all-figs` 会顺手按每图写一份 `<stem>.fig<k>.json`**（apply 认的命名），所以"导出全部再逐图落实"不必再逐图 `--fig N` 导一遍 |
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr）。**脚本自己带参数**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）时在 `--` 后透传：`apply <脚本> --write -- --data x.npz`（bug #6，否则重跑验证与基线不一致而误回滚） |
 | `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
-| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突单独一栏（`--strict` 可升级为问题） |
+| `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突**默认就是 error 级问题**（`rule='layout_engine_conflict'`，0.1.14 起；`--strict` 只是兼容开关） |
 
 **三个选项各自只属于一个子命令**（`--help` 里都列着，这里再点名一次：它们**不是**全局开关，给错了子命令是 `rc=2`）
 
@@ -73,11 +73,15 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 `audit_018/promo/t16_probe2.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
-**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。另有三个键给 agent 判"这次到底验了什么"：
+**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。下面几个键的口径容易读错，逐个写清（0.1.14 起 `style` 也在此列）：
 
+* `files[].style`（**恒存在，永不为 `null`**）：这次**请求的通道**（`auto` / `inplace` / `block`）。走过写回时它被**实际采用的通道**覆盖 —— `auto` 退块就是 `block`（同时 `auto_fallback=true`、`inplace_reason` 说为什么没原位落地）；只读预览（`reason=preview`）与早退条目（`bad_params` / `stale` / `layout_conflict` 等）填的是**请求值**，`auto` = 逐图待定。**别把 `style` 单独当"落没落地"**：那件事只看 `reason` 与 `applied`（早退条目也带请求的 `style`，但它一个字节都没写）。
 * `files[].verify_passes`（**恒存在**，int）：**1** = 默认单遍；**2** = 单遍取不到目标图状态、已回退两遍；**0** = 这次**没有**为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 / 没有可写字段）—— **`0` 不是失败**，它只表示"这一档没为验证重跑脚本"。它**只数主验证的遍数**：参数里有"原位写不了"的字段时先额外跑的那一遍**不计入**（所以 `verify_passes=1` ≠ 整条命令只跑了 1 遍脚本）。要判断"这次为什么回退"，看 `verify_passes=2` 再读同一条目的 `warnings`。
 * `files[].semantic_basis`（**恒存在**，str）：`live+savefig` = 图对象状态 + 磁盘那张图的追加判据；`live` = 只有图对象状态；**空串** = 这次没有语义判定依据（没跑 / 回退后如实记"没验到"）。
-* 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
+* `files[].layout_conflicts`（**恒存在**，数组）：脚本里**开着的布局引擎冲突点**（`constrained_layout` / `figure.autolayout`），每项一句人话并带脚本行号。**空数组 = 这份脚本没开引擎**，位置的写回不会被覆盖。非空要看同一条目的 `reason` 分流：`reason='layout_conflict'` ⇒ 这次要写轴位置、被默认拦下（`applied=false`、**这一份**没写盘、`rc=1`）；`reason` 是 `ok` / `best_effort` ⇒ 这次只动了非几何字段（字号 / 线宽 / cmap / 标题），或者你给了 `--force`，冲突仍在但没挡这次。**它只说明"脚本开着引擎"，不说明"这次写不写位置"**。
+* `files[].layout_why`（**判定依据**，稳定英文枚举，不进文案）：这条参数到底会不会改到轴位置 —— `no_pos` = 参数里没有位置类字段，不可能写位置；`proved_equal` = 静态证得出源码现值已等于目标位置，写了也是空改；`live_equal` = 重跑实测参数里的位置与现状一致，不用写；`live_differs` = 重跑实测确实不同，**这次真要写位置**（冲突下会被拒）；`unjudged` = 判不了（没开验证、脚本重跑不了、解析失败）⇒ 保守按"可能要写"处理。判据只有一处：`writeback.position_write_needed`（返回 `(True|False|None, why)`）。
+  **注意（0.1.14 现状）**：`--json` 载荷目前只带出 `layout_conflicts`，**还没有** `layout_why` 这个键；它此刻只体现在**人读输出**上 —— 判不了那一档会多一句「补充：本次没有跑（或跑不出）脚本重跑验证 → 无法确认参数里的位置是否已经与现状一致，按"可能要写"处理（保守拒绝）」。所以 `--json` 下要分「实测有差异」与「判不了」，按**这次有没有关掉重跑验证**判：带了 `--no-verify` / `--verify-fast`，或脚本本身跑不起来 ⇒ `unjudged`；正常跑过验证仍被拒 ⇒ `live_differs`。想让判定更准，就别关验证。
+* 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / **`nothing_applied`** / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。**`nothing_applied`（0.1.14）** = 整批**一个字节都没写**而这次确实想写（典型：隐式建图 / `for` 里建图 / 函数里建图 / 类里 `self.ax` —— 引擎证不出目标变量名，按 fail-closed 保守拒写）：这一档 `ok=false`、`rc=1`，而 `files[].reason` 可能仍是 `best_effort`、`files[].applied=false` —— **旧版正是这里撒谎**（`ok=true` + `rc=0`，agent 当成"已写回"）。反面对照：`reason=no_change`（参数与源码本来就一致）仍是 `ok=true` / `rc=0` / 无 `error_code`，那不是失败。所以判"写没写"只看 `applied` / `changes` / `reason`，判"成没成"才看 `ok` / `rc` / `error_code`。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
 
 （这三个键的口径全文在 `docs/verify.md` 的「机器可读通道」一节。）
 
@@ -100,7 +104,12 @@ stderr**（失败与回滚、拒写与「未写回」、参数文件坏、外部
 
 **mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
 
-> **读排版前先看布局引擎冲突**：`describe` 的产物带 `layout_engine` 字段（脚本里 `constrained_layout` / `figure.autolayout` 的冲突点，带行号），MCP 的 `describe_layout` / `check_layout` 同样带。**非空就先 `mpltweak check <脚本> --static` 看一眼再动位置** —— 这些引擎会在每次绘制时重算轴位置，你排好的布局会被它覆盖（表现为"验证不一致"）。这是 0.1.9 实机调图会话踩出来的：人类开窗有终端提示，agent 通道却没有，白调一轮。
+> **读排版前先看布局引擎冲突**：`describe` 的产物带 `layout_engine` 字段（脚本里 `constrained_layout` / `figure.autolayout` 的冲突点，带行号），MCP 的 `describe_layout` / `check_layout` 同样带。**非空就先 `mpltweak check <脚本> --static` 看一眼再动位置** —— 这些引擎会在每次绘制时重算轴位置，你排好的布局会被它覆盖。这是 0.1.9 实机调图会话踩出来的：人类开窗有终端提示，agent 通道却没有，白调一轮。
+>
+> 0.1.14 起这条约束变成了硬拦：**`check` 把冲突当 error 级问题**（`rc=1`、`problems[].rule='layout_engine_conflict'`）；**`apply --write` 在"冲突 + 这次真要写轴位置"时默认拒绝**（不写盘、`files[].reason='layout_conflict'`、顶层 `error_code='layout_conflict'`、`rc=1`，**脚本字节不变**）。只写字号 / 线宽 / cmap / 标题这类非几何字段照旧放行。agent 的正解是**先关引擎再写位置**；确实要写（例如脚本不能改）就加 `--force`（老开关 `--allow-layout-conflict` 同效，保留兼容），输出里会有 `[i] 已按 --force 跳过布局引擎冲突检查`；这一档**不会**静默放行 —— 那行声明一定会打出来。
+> **逐份拒绝、`--strict` 与退出码**：上面这条拦截是**按参数文件逐份**判的 —— 一次 `apply` 会把主文件与 `<stem>.fig<k>.json` 一起收上来**逐份落实**，每份单独判，所以同一批里完全可能「图 1 写了、图 2 被拒」，**不是整批中止**。识别只看 `files[]`：`applied=true` 的那几条落地了，`reason='layout_conflict'` 的那条没落地；顶层 `error_code` 取**第一个失败文件**，默认档 `rc=1`。人读摘要讲的只是**这一份**没写盘（不是说整批没动）。**判断整体结果一律以 `files[].applied` 为准，别用人读摘要。**
+> `apply --strict` 是另一档：冲突 + 这次要写位置 ⇒ **整批中止、`rc=2`**（`error_code='layout_conflict'`、`files=[]`、脚本字节一个都不变），不给逐份机会。**同一种情况两种退出码，按你要的语义选**：想**整批中止**（要么全写、要么一个都不写）就用 `--strict`（`rc=2`）；想**逐份评估**（能写的先写、不能写的逐条报）就用默认档（`rc=1`）。`check --strict` 反过来是**兼容开关**：`check` / `check --static` 与加不加 `--strict` **载荷逐字节相同、退出码相同**（冲突已经默认按 error 级报），加它只为旧脚本/CI 不改命令。
+
 
 ## 也可以接进 AI 客户端（MCP）——**可选适配层**
 

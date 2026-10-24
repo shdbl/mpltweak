@@ -1,5 +1,55 @@
 # -*- coding: utf-8 -*-
+# ==== §1 文件头：两层输出与 GBK 硬约束 ====
+
 """对外消息表与语言检测。
+
+**读这份文件的三步**：① 查/改某条文案 → 先看下面的「§4 小节 → 键名前缀」定位段，
+再 ``grep -n '§4.N'`` 跳过去；② 改「这个键在两种语言下各说什么」→ 每个 entry 都是
+``{'zh': …, 'en': …}`` **成对**写在同一个 entry 里（两行紧挨），改一条别忘了另一条；
+③ 改「文案怎么取出来」→ §5（t / code / t_en）、§7（t_wb）、§9（t_ui）。
+
+**快速导航**（顶层横幅 ``# ==== §N 名字 ====`` 被自动索引收录；表内小节用缩进 4 空格的
+``# ==== §4.N 名字 ====``，自动索引不收录它们 —— 跳小节请 ``grep -n '§4.7'``）：
+
+- §1 文件头：两层输出与 GBK 硬约束（就是本段）
+- §2 语言状态与退出码常量：``LANGS`` / ``_DEFAULT`` / ``_lang`` / ``EXIT_*``
+- §3 语言探测：``detect_lang``（--lang > 环境变量 > locale）/ ``set_lang`` / ``current_lang``
+- §4 对外消息表 ``MESSAGES``：每键 zh/en 成对，内分 23 个小节（见下）。**不写死键数**
+  —— 这个数字每次加键都会漂，需要计数就 ``len(MESSAGES)`` 现算（或看文件尾索引块）
+- §5 取词：``t``（当前语言 + %(name)s 插值）/ ``code``（稳定机器码）/ ``t_en``（强制英文）
+- §6 JSON 通道：``_finite`` / ``emit_json`` / ``fail_json`` / ``guard_json_main``（归因 + 下一步）
+- §7 写回 zh→en 对照表 ``WB_ZH_TO_EN`` + ``t_wb``（t63；test_writeback §98 守覆盖率）
+- §8 UI zh→en 对照表 ``UI_ZH_TO_EN``（t64；test_launch §9 守覆盖率）
+- §9 查表函数 ``t_ui`` + 运行期追加的两块 ``update``（t79 交互行 / t71 逃生通道）
+
+**§4 小节 → 键名前缀**（按功能段切，不按键名字母序；小节边界只落在 entry 之间，
+不会把一对 zh / en 切散；每个小节的准确定位是 ``grep -n '§4.N'``）：
+
+- §4.1 apply 写回结果 —— ``written_*`` / ``snippet_*`` / ``not_written`` / ``block_info``
+- §4.2 失败归因（0.1.10）—— ``fail_*`` / ``verify_run_*``（脚本侧 vs 工具侧分开报）
+- §4.3 跨组约定键（T7/T11）—— ``semantic_*`` / ``kept_as_is`` / ``dry_run*`` / ``no_fig*``
+- §4.4 launch —— ``no_backend`` / ``all_windows_closed`` / ``script_failed``
+- §4.5 布局引擎冲突 —— ``layout_engine_*``
+- §4.6 写进用户脚本里的文案 —— ``block_comment``（**哨兵行绝不翻译**）
+- §4.7 通用 —— ``file_not_found`` / ``collect_failed`` / ``guard_error``
+- §4.8 check/describe 采集边界 —— ``collect_timeout`` / ``collect_no_state`` / ``collect_bad_state``
+- §4.9 check 几何规则 —— ``chk_out_of_canvas`` / ``chk_overlap`` / ``chk_not_aligned`` …
+- §4.10 check 文字渲染尺寸 —— ``chk_text_*`` / ``chk_tick_crowded`` / ``chk_font_*``
+- §4.11 check 参数校验 / 人读输出 / --static —— ``chk_tol_*`` / ``chk_static_*`` / ``static_*``
+- §4.12 MCP —— ``mcp_*``（机器可读：一律稳定英文，见下面两层设计）
+- §4.13 窗口后端 —— ``backend_tk_hint``（回退到 Tk 必须告知，走 stderr）
+- §4.14 首次开窗 —— ``first_open_*``（每个用户只打一次，戳记 first_open_shown）
+- §4.15 launch 关窗后的下一步 —— ``next_step_apply``
+- §4.16 schema —— ``schema_usage``（CH-9：schema 不再忽略参数）
+- §4.17 可重跑预检 —— ``preflight_*``（apply 写回前 / launch 开窗前两个入口）
+- §4.18 launch 的三处人话 —— ``launch_*`` / ``doctor_verdict_*``（rc=4 / 需要参数 / 结论）
+- §4.19 apply 人读输出（B4 / t33）—— ``apply_*_label`` / ``apply_axis_*`` / ``apply_will_change*``
+- §4.20 落地提示与「验了哪几层」—— ``needs_block_hint`` / ``verify_layers_*``
+- §4.21 writeback 生成的文案（B4 + 原 t9）—— ``wb_*``（会进 stdout/stderr 或写进用户源码）
+- §4.22 params 校验文案（t55）—— ``pv_*``（校验逻辑一行没动，只搬文案）
+- §4.23 参数文件自身损坏（t56）—— ``apply_params_unreadable``（归 bad_params，**不是**工具 bug）
+
+**口径**（这一段是原来就在的，别改）：
 
 **为什么分两层**：
 
@@ -17,6 +67,8 @@
 import locale
 import os
 import sys
+
+# ==== §2 语言状态与退出码常量 ====
 
 LANGS = ('zh', 'en')
 _DEFAULT = 'en'
@@ -50,6 +102,8 @@ EXIT_USAGE = 2
 EXIT_INTERNAL = 2
 EXIT_SCRIPT = 3   # 已退役（方案 A）：保留常量兼容外部 import；任何路径都不再返回它
 
+
+# ==== §3 语言探测：detect_lang / set_lang / current_lang ====
 
 def detect_lang():
     """按优先级推断界面语言：--lang > MPLTWEAK_LANG > locale > LANG/LC_ALL > en。
@@ -97,13 +151,15 @@ def current_lang():
     return _lang
 
 
+# ==== §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死） ====
+
 # ---------------------------------------------------------------------------
 # 消息表：key -> {语言: 模板}。模板用 % 插值（与项目既有风格一致）。
 # 约定：key 同时就是**稳定的机器可读错误码**（英文小写），--json 直接用它，
 # 不翻译、不受系统语言影响。
 # ---------------------------------------------------------------------------
 MESSAGES = {
-    # --- apply：写回结果 ---
+    # ==== §4.1 apply 写回结果 ====
     'written_inplace': {
         'zh': '[OK] 已原位写回: %(script)s',
         'en': '[OK] Written back in place: %(script)s',
@@ -205,7 +261,7 @@ MESSAGES = {
         'zh': '  [X] Agg 重跑验证失败（已回滚到备份）',
         'en': '  [X] Agg re-run check failed (rolled back to backup)',
     },
-    # ---- 失败归因（0.1.10）：把"脚本跑不起来"和"工具改坏了"分开报，每类一句下一步 ----
+    # ==== §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了 ====
     'fail_attribution_head': {
         'zh': '  归因：%(kind)s%(unknown)s',
         'en': '  Attribution: %(kind)s%(unknown)s',
@@ -291,7 +347,7 @@ MESSAGES = {
         'zh': '  [dry-run] 未落盘；生成的调整块：',
         'en': '  [dry-run] nothing written; generated block:',
     },
-    # --- 跨组约定键（T7/T11 在 apply.py 里接的，键名按船长约定：无下划线）---
+    # ==== §4.3 跨组约定键（T7/T11，键名无下划线） ====
     # 注意：与上面 `dry_run_inplace`/`dry_run_block`（**带**下划线）不是一回事 ——
     # 那一组是"把预览块正文打出来"，这一组是"结尾的落地小结"。两组并存。
     # 参数签名由调用方（apply.py）定：nothing_applied(script) /
@@ -372,7 +428,7 @@ MESSAGES = {
         'en': '!! another mpltweak write-back is running (pid=%(pid)s); waited '
               '%(sec)s s. If it is really gone, delete %(lock)s manually',
     },
-    # --- launch ---
+    # ==== §4.4 launch ====
     'lang_hint': {
         'zh': '[launch] 提示：请用英文输入法（中文输入法下 c/s/g/x/y 等字母'
               '快捷键会直接上屏）',
@@ -407,7 +463,7 @@ MESSAGES = {
         'zh': '[launch] 共 %(n)d 个窗口，全部关闭后才退出',
         'en': '[launch] %(n)d window(s) - the process exits after all are closed',
     },
-    # --- 布局引擎冲突（constrained_layout / autolayout）---
+    # ==== §4.5 布局引擎冲突（constrained_layout / autolayout） ====
     'layout_engine_conflict': {
         'zh': '[!] 脚本第 %(line)d 行启用了 %(how)s：布局引擎会在**每次绘制**时'
               '重算轴位置，拖拽/写回的位置改动会被它覆盖'
@@ -433,13 +489,13 @@ MESSAGES = {
         'en': '[launch] the script left no interactive figure (maybe closed or '
               'save-only)',
     },
-    # --- 写进用户脚本里的东西（也必须语言化；哨兵本身除外）---
+    # ==== §4.6 写进用户脚本里的文案（哨兵行除外） ====
     'block_comment': {
         'zh': '# 本块由 mpltweak 自动生成于 %(ts)s（可手动微调，勿删上下两行标记）',
         'en': '# auto-generated by mpltweak at %(ts)s (feel free to tweak; '
               'keep the marker lines above and below)',
     },
-    # --- 通用 ---
+    # ==== §4.7 通用 ====
     'file_not_found': {
         'zh': '找不到脚本: %(path)s',
         'en': 'script not found: %(path)s',
@@ -452,7 +508,7 @@ MESSAGES = {
         'zh': '[mpltweak] 未处理的错误: %(err)s',
         'en': '[mpltweak] unhandled error: %(err)s',
     },
-    # --- check / describe 的采集边界（A1/A2：子进程 + 超时）---
+    # ==== §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时） ====
     'collect_timeout': {
         'zh': '采集超时（超过 %(sec)d 秒；脚本是不是在等输入或在跑重活？'
               '可用 MPLTWEAK_TIMEOUT 放宽）',
@@ -467,7 +523,7 @@ MESSAGES = {
         'zh': '子进程返回的状态文件无法解析: %(err)s',
         'en': 'the state file written by the child could not be parsed: %(err)s',
     },
-    # --- check：几何规则（CH-12：机器可读的 msg 也要跟随语言，不再硬编码中文）---
+    # ==== §4.9 check：几何规则（CH-12） ====
     'chk_out_of_canvas': {
         'zh': '%(ax)s 超出画布：%(edges)s',
         'en': '%(ax)s is outside the canvas: %(edges)s',
@@ -525,13 +581,16 @@ MESSAGES = {
     'chk_font_label': {'zh': '轴标签', 'en': 'axis label'},
     'chk_font_tick': {'zh': '刻度', 'en': 'tick'},
     'chk_layout_conflict': {
+        # D1（0.1.14，用户拍板 B）：这条**默认**就是 error 级问题（0.1.13 只有
+        # --strict 才升级）—— 引擎每次绘制重算轴位置，写进去的位置一定不生效，
+        # 用户"只看 check"也得知道，所以文案直接说结论，不再提 --strict。
         'zh': '第 %(line)d 行开了 %(how)s：布局引擎会在每次绘制时重算轴位置，'
-              '写回的位置会被覆盖（--strict 视为问题）',
+              '写回的位置会被覆盖（写了不生效）',
         'en': 'line %(line)d enables %(how)s: the layout engine recomputes axes '
-              'positions on every draw, overriding written-back positions '
-              '(--strict treats this as a problem)',
+              'positions on every draw, so written-back positions never take '
+              'effect',
     },
-    # --- check：文字渲染尺寸 ---
+    # ==== §4.10 check：文字渲染尺寸 ====
     'chk_kind_title': {'zh': '标题', 'en': 'title'},
     'chk_kind_xlabel': {'zh': 'x 轴标签', 'en': 'x label'},
     'chk_kind_ylabel': {'zh': 'y 轴标签', 'en': 'y label'},
@@ -575,7 +634,7 @@ MESSAGES = {
         'zh': '%(a)s 与 %(b)s 压在一起（重叠 %(dx).3f×%(dy).3f）',
         'en': '%(a)s and %(b)s sit on top of each other (overlap %(dx).3f x %(dy).3f)',
     },
-    # --- check：参数校验 / 人读输出 / --static（A4）---
+    # ==== §4.11 check：参数校验 / 人读输出 / --static（A4） ====
     'chk_tol_invalid': {
         'zh': '容差必须是**有限正数**（收到 %(tol)s）：inf / nan / <= 0 会让几何检查'
               '静默失效（0.1.8 实测：--tol inf 时输出 `"tol": Infinity` 且 rc=0）',
@@ -653,7 +712,7 @@ MESSAGES = {
         'en': 'ok=true here only means "the script parses and no layout-engine '
               'conflict was found"; it does NOT mean the layout is fine.',
     },
-    # --- MCP（机器可读：一律稳定英文，见模块开头两层设计）---
+    # ==== §4.12 MCP（机器可读通道，一律稳定英文） ====
     'mcp_no_mcp_pkg': {
         'zh': '[mcp] 需要 mcp 包：pip install "mpltweak[mcp]"',
         'en': '[mcp] the mcp package is required: pip install "mpltweak[mcp]"',
@@ -662,14 +721,14 @@ MESSAGES = {
         'zh': '几何容差 tol 必须是有限正数（收到 %(tol)r）',
         'en': 'tol must be a finite positive number (got %(tol)r)',
     },
-    # --- 窗口后端（gui-hunter 调用；P0-1 方案 B：回退到 Tk 必须告知，走 stderr）---
+    # ==== §4.13 窗口后端（回退到 Tk 必须告知） ====
     'backend_tk_hint': {
         'zh': '当前是 Tk 后端（交互体验不如 Qt）；想要 Qt 界面：'
               'pip install "mpltweak[qt]"',
         'en': 'using the Tk backend (less polished than Qt); for the Qt UI: '
               'pip install "mpltweak[qt]"',
     },
-    # --- 首次开窗（B 组，0.1.11：每个用户只打一次；新戳 first_open_shown）---
+    # ==== §4.14 首次开窗（每个用户只打一次） ====
     # 与 backend_tk_hint 同一范式：launch._first_open_hint 优先取本键，键缺失时退回
     # launch 内置兜底（文案与这里逐字一致）。en 纯 ASCII、zh/en 都 GBK 可编码。
     'first_open_hint': {
@@ -692,7 +751,7 @@ MESSAGES = {
               '(longer for big scripts) - no new output here is normal, not a '
               'freeze.',
     },
-    # --- launch 关窗后的下一步（无感化①：省掉"记住怎么写回"这一步）---
+    # ==== §4.15 launch 关窗后的下一步 ====
     # 只在**这次真的存过参数**（用户拖过东西）时打；没拖过零噪音。
     # 动作仍要用户自己确认 —— 绝不自动写回用户源码（红线）。
     # 命令行单独占一行、**不带任何前缀**，确保能整行复制粘贴；
@@ -703,7 +762,7 @@ MESSAGES = {
         'en': '[launch] params saved to %(params)s (script untouched); to write '
               'them back into the source:\n  %(cmd)s',
     },
-    # --- schema（CH-9：schema 不再忽略参数）---
+    # ==== §4.16 schema（CH-9） ====
     'schema_usage': {
         'zh': '用法: mpltweak schema [--compact]\n'
               '  输出参数文件的 JSON Schema（draft-07），供 agent 校验自己生成的内容。',
@@ -711,7 +770,7 @@ MESSAGES = {
               '  print the params JSON Schema (draft-07) so agents can validate '
               'what they generate.',
     },
-    # --- 可重跑预检（0.1.10 pre-flight；两个入口：apply 写回前 / launch 开窗前）---
+    # ==== §4.17 可重跑预检（0.1.10 pre-flight） ====
     # 用户视角评审的最大留存瓶颈：本工具要求"在你的环境里重跑脚本"。0.1.10（t39 起）
     # 的口径是**写回默认只重跑 1 遍**（这一遍同时判定"脚本还跑得通吗"与"改动真落到
     # 目标图上了吗"），**只有目标图取不到状态时才回退 2 遍**并把原因打进 warnings，
@@ -772,7 +831,7 @@ MESSAGES = {
               'rerun use --verify-fast (syntax only) or --keep-unverified '
               '(keep the write-back, rely on version control).',
     },
-    # --- 0.1.11 收尾批：launch 的三处"人话"（rc=4 / 需要参数 / doctor 结论）---
+    # ==== §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论） ====
     # 统一口径：每句都写清「**发生了什么**（含后果：脚本跑了没有、盘上有没有动）+
     # **你现在该做什么**（可照抄的下一步）」，与 apply.py 那批失败归因文案同风格。
     # 一律优先走 messages 表；en 纯 ASCII、zh/en 都必须 GBK 可编码（见模块开头）。
@@ -841,6 +900,7 @@ MESSAGES = {
               'mcp keep working). Install one: pip install "mpltweak[qt]"; on '
               'Linux the system package python3-tk also works.',
     },
+    # ==== §4.19 apply 人读输出（B4 / t33） ====
     # =====================================================================
     # B4（t33 / V1-F5）：apply **人读输出的固定文案** —— 过去这些是 apply.py 里的
     # 硬编码中文，`MPLTWEAK_LANG=en` 下照样打中文（V1 实测 `# p.json （第 1 张图）`、
@@ -953,6 +1013,46 @@ MESSAGES = {
         'en': '[apply] --strict: layout engine conflict detected, write refused. '
               'Add --allow-layout-conflict to write anyway',
     },
+    # ==== §4.19b D1 布局引擎冲突：默认拒绝"写位置"的那次写回（0.1.14，用户拍板 B） ====
+    # 为什么单独一组键（而不是复用 layout_engine_conflict/hint）：那两条是**提示**口吻
+    # （"会被覆盖，建议关掉"），这两条是**拒绝**口吻（"这次不写了，两条出路"）。
+    # 语义不同就不许共用一条文案 —— 拒绝时用户要能一眼看到"为什么没写"+"怎么办"。
+    'apply_layout_conflict_refused': {
+        'zh': '[--] 这次要写的是**轴位置**（几何类字段），而脚本开着布局引擎：'
+              '它会在每次绘制时重算位置，写进代码的位置一定被覆盖 → 默认拒绝写回'
+              '（**这一份**没有写盘；同批次的其它份可能已经写了）：%(script)s',
+        'en': '[--] this write-back would change **axes positions** (geometry), but '
+              'the script enables a layout engine: it recomputes positions on every '
+              'draw, so anything written into the code is overridden -> refused by '
+              'default (**this file** was NOT written; other files in the batch may '
+              'have been): %(script)s',
+    },
+    'apply_layout_conflict_unjudged': {
+        'zh': '    补充：本次**没有跑（或跑不出）脚本重跑验证** → 无法确认参数里的'
+              '位置是否已经与现状一致，按"可能要写"处理（保守拒绝）。',
+        'en': '    note: the script was not rerun (or its state could not be '
+              'read) -> cannot tell whether the requested positions already match '
+              'the current figure, so this is treated as a position write '
+              '(fail-closed).',
+    },
+    'apply_layout_conflict_ways_out': {
+        'zh': '    出路一：去掉 constrained_layout=True（或 figure.autolayout / '
+              'layout= 那一项）后重试；把要精调的轴改成 add_axes([...]) 定位也行 —— '
+              '引擎不管这类轴。\n'
+              '    出路二：确实要写就加 --force（本次跳过这条检查，位置照写）。',
+        'en': '    option 1: remove constrained_layout=True (or the '
+              'figure.autolayout / layout= argument) and retry; positioning the '
+              'axes you care about with add_axes([...]) also works - the engine '
+              'does not manage those axes.\n'
+              '    option 2: if you really want this write, add --force (skips '
+              'this check; positions are written as requested).',
+    },
+    'apply_layout_conflict_skipped': {
+        'zh': '[i] 已按 %(flag)s 跳过布局引擎冲突检查：位置照写，绘制时仍可能被'
+              '引擎覆盖。',
+        'en': '[i] layout-engine conflict check skipped as requested by %(flag)s: '
+              'positions are written and may still be overridden on draw.',
+    },
     # 只读预览收尾的三行提示（原为 apply.py:1099-1101 的硬编码中文）。
     # t94（t84 取证后的收口，方案 b）：提示改成**可直接粘贴的两行片段**（①+②），并注明
     # `extend=` 情形必须两行都加 —— 实测（t84）：自动 cax 只 ① 可修好；带
@@ -982,6 +1082,7 @@ MESSAGES = {
         'zh': '(见 warnings)',
         'en': '(see warnings)',
     },
+    # ==== §4.20 落地提示与"验了哪几层"（T15 / T23） ====
     # T15：显式 --style inplace 时"代码里没有可改的写法"的字段（键缺失时 apply.py
     # 退回内置兜底 _FALLBACK_NEEDS_BLOCK；补上本键后自动切到本表）。
     'needs_block_hint': {
@@ -1032,6 +1133,7 @@ MESSAGES = {
               '"the script runs" was confirmed; the layout landing on the target '
               'figure is not guaranteed',
     },
+    # ==== §4.21 writeback 生成的文案（B4 + 原 t9） ====
     # =====================================================================
     # B4 + 原 t9（插入块文案语言化）：**writeback 生成的、会进 stdout/stderr 或
     # 写进用户源码**的文案。过去这些是 writeback.py 里的硬编码中文 所以
@@ -1078,6 +1180,27 @@ MESSAGES = {
               '(no provable variable name, and runtime indices fig.axes[i] / '
               'plt.gcf() would write to another axes or another figure) -> '
               'fail-closed, not written this time: %(fields)s',
+    },
+    'wb_block_refused_comprehension': {
+        'zh': '目标图的建图调用在**推导式**里（第 %(line)s 行）：推导式体会重复执行，'
+              '那一个 `plt.figure()` / `plt.subplots()` 运行期会出**多张**图 —— '
+              '"本文件只建一次图 → `plt.gcf()` 就是它"不成立（实测会把参数写到**最后**'
+              '那张图上）。本次按 fail-closed **一个字节都不写**。下一步：把推导式展开成'
+              '显式的多次建图，每张图给一个变量名，并把这张图的建轴/绘图都写在它自己的'
+              '名字下（`fig0 = plt.figure()` → `ax0 = fig0.add_subplot(...)` → '
+              '`fig1 = plt.figure()` → `ax1 = ...`）再跑一次 apply；或者用 '
+              '`--style inplace`（只改代码里已有的数字）。',
+        'en': 'the target figure is created inside a **comprehension** (line %(line)s): '
+              'a comprehension body runs repeatedly, so that single `plt.figure()` / '
+              '`plt.subplots()` produces **several** figures at runtime - "this file '
+              'creates a figure once, hence `plt.gcf()` is it" does not hold (measured: '
+              'the parameters land on the **last** figure). Fail-closed: **nothing is '
+              'written** this time. Next step: unroll the comprehension into explicit '
+              'figure creations, one variable name per figure, keeping that figure\'s '
+              'axes and plotting under its own name (`fig0 = plt.figure()` -> '
+              '`ax0 = fig0.add_subplot(...)` -> `fig1 = plt.figure()` -> `ax1 = ...`), '
+              'then run apply again; or use `--style inplace` (only edits numbers already '
+              'present in the code).',
     },
     # --- A1（0.1.12）：`fig` 在函数里建、`return fig` 出函数、savefig 在模块层 ---
     # 一条能落的（锚点下沉到那条 return 之前）＋三条**不可证**形态的拒绝文案。
@@ -1181,6 +1304,7 @@ MESSAGES = {
         'zh': '（无改动）',
         'en': '(no changes)',
     },
+    # ==== §4.22 params 校验文案（t55） ====
     # =====================================================================
     # t55：params.py 的**校验/提示文案**（V1-F5 的最后一截：`MPLTWEAK_LANG=en`
     # 下 apply 人读输出仍有 5 行非 ASCII，全来自这里）。
@@ -1345,6 +1469,7 @@ MESSAGES = {
         'en': 'axes[%(i)d].legend.fontsize = 0: the legend text will be invisible '
               '(matplotlib allows it, so the write is not refused)',
     },
+    # ==== §4.23 参数文件自身损坏（t56） ====
     # t56：参数文件**自己坏了**（JSON 截断 / 多余逗号 / 编码解不出来）。
     # 它是**用户输入**的问题，与"缺 version"同族 所以 必须归 bad_params，
     # 绝不许冒到顶层 guard 被报成 internal_error + attribution='tool_bug'
@@ -1358,6 +1483,8 @@ MESSAGES = {
     },
 }
 
+
+# ==== §5 取词：t / code / t_en ====
 
 def t(key, **kw):
     """取当前语言的消息并插值。
@@ -1396,6 +1523,8 @@ def t_en(key, **kw):
     except (KeyError, TypeError, ValueError):
         return tpl
 
+
+# ==== §6 JSON 通道：emit_json / fail_json / guard_json_main ====
 
 def _finite(obj):
     """把非有限浮点（inf / nan）换成 ``None``。
@@ -1541,6 +1670,8 @@ def guard_json_main(fn):
 
     return wrapper
 
+# ==== §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63） ====
+
 # ===== t63: writeback 错误/边缘路径的 zh→en 表（自动生成，勿手改）=====
 
 WB_ZH_TO_EN = {
@@ -1564,7 +1695,7 @@ WB_ZH_TO_EN = {
         'tick_fontsize_y (the replacement range overlaps another edit; skipped)',
     'grid（替换位置重叠，已跳过）':
         'grid (the replacement range overlaps another edit; skipped)',
-    # --- A2（MAINTENANCE §25.1）原位「补一个参数」的三条拒改说明 ---
+    # ==== §7.1 A2 原位「补一个参数」的三条拒改说明 ====
     # 进 skipped 的字段名尾巴（与上面 `（替换位置重叠，已跳过）` 同一套写法；
     # 这就是 MAINTENANCE §25 登记过的"原因塞进字段名"老味道，留给 0.1.13 结构化）。
     '（这条调用带 **kwargs，认不出实际生效的参数，没有自动补参数；需要的话请手动把 fontsize=… 写进这条调用）':
@@ -1728,6 +1859,8 @@ def t_wb(zh_template):
 # ===== t63 表结束 =====
 
 
+# ==== §8 UI zh→en 对照表 UI_ZH_TO_EN（t64） ====
+
 # ===== t64: launch / doctor 的 zh→en 表（与 t63 同一纪律）=====
 # 为什么另立一张表而不是塞进 WB_ZH_TO_EN：t63 那张是 writeback 专用（且带 §98 的
 # "writeback.py 覆盖率"棘轮）；launch/doctor 有自己的棘轮（test_launch §9），
@@ -1740,7 +1873,7 @@ def t_wb(zh_template):
 # MCP 握手直接断（`test_mcp` 红，尾行 `FAILED: 1 项 -> ['MCP 端到端']`），
 # 写回 HEAD 后即绿。
 UI_ZH_TO_EN = {
-    # --- doctor 的列标签与括注（值是 messages 的 doctor_verdict_*，标签过去是硬编码中文）---
+    # ==== §8.1 doctor 的列标签与括注 ====
     'matplotlib   : 未安装 ->': 'matplotlib   : not installed ->',
     '             -> 先安装：pip install matplotlib（或直接 pip install mpltweak '
     '会一并装上）':
@@ -1766,7 +1899,7 @@ UI_ZH_TO_EN = {
         'Tk (Qt not installed; for the Qt UI: pip install "mpltweak[qt]")',
     '无（无法开窗调图，仅 CLI 可用）':
         'none (window-based tweaking is unavailable; CLI only)',
-    # --- launch 的运行时人读输出 ---
+    # ==== §8.2 launch 的运行时人读输出 ====
     '[mpltweak] 参数文件顶层不是对象，跳过续调：%s':
         '[mpltweak] the params file top level is not an object; skipping the '
         'resume: %s',
@@ -1836,9 +1969,9 @@ UI_ZH_TO_EN = {
     '[launch] 参数摘要读取失败: %s': '[launch] failed to read the params summary: %s',
     # 图摘要（进上面两条 print 的 %s；窗口标题不带它）
     '图 %dx%dpx，%d 个轴': 'figure %dx%dpx, %d axes',
-    # --- describe：写盘那一行（t64 船长授权的一行超范围改动）---
+    # ==== §8.3 describe：写盘那一行 ====
     '[describe] 已写入 %s\n': '[describe] written to %s\n',
-    # --- toolbox：启动横幅那 2 行（t64 船长授权的超范围改动；其余 49 条只登记）---
+    # ==== §8.4 toolbox：启动横幅那 2 行 ====
     '要调图的用户脚本（里面不需要任何本工具的代码）': 'the user script to tweak (it needs no code from this tool)',
     '调第 N 张图（默认最后一张）': 'tweak figure N (default: the last one)',
     '参数输出路径': 'where to write the params file',
@@ -1846,10 +1979,6 @@ UI_ZH_TO_EN = {
     '只做环境自检（后端/绑定/版本/光标），不跑脚本': 'environment self-check only (backend / bindings / version / cursor); does not run the script',
     '不开窗，只验证能抓图并存参数': 'no window: only verify that figures can be captured and params saved',
     '打印全部交互日志（缩放开始 axN <手柄> 等），排查用': 'print the full interaction log (resize start axN <handle>, ...) for debugging',
-    '[revert] 写文件失败: %s（原文件未改动）\n': '[revert] writing the file failed: %s (the original file is unchanged)\n',
-    '[revert] 找不到脚本: %s\n': '[revert] script not found: %s\n',
-    '[revert] 拿不到写回锁：%s\n': '[revert] cannot take the write-back lock: %s\n',
-    '[mcp] mpltweak MCP server 已启动（stdio）\n': '[mcp] mpltweak MCP server started (stdio)\n',
     'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n\n用法：\n  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n  mpltweak revert <script.py> [--write]           回退到上次写回之前\n  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n  mpltweak schema [--compact]                     参数 JSON Schema\n  mpltweak mcp                                    启动 MCP server\n  mpltweak doctor                                 环境自检\n\n退出码（0.1.11 起统一为 0 / 1 / 2 / 4）：0 = 没问题 / 成功；1 = 发现问题（check）；\n  2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数非法 / 工具自身异常）；\n  4 = 没有可用图形后端。\n  （0.1.9 的退出码 3 已退役：常量保留，但不再由任何路径产生。）\n同为退出码 2，**"脚本侧失败"与"工具自身 bug"分开报**（0.1.10 起，只改文案）：\n  · 脚本侧：文件不存在 / 参数文件不合法（bad_params）/ 你的脚本自己报错\n    （缺依赖 / 缺数据 / 需要命令行参数 / 无头环境要开窗口）；\n  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug）与 `next_step` 区分，agent 可据此自动分支。\n注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n\n交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n': 'mpltweak - tweak matplotlib layout like moving shapes in a slide editor (zero intrusion into your script)\n\nusage:\n  mpltweak <script.py> [--fig N] [--params X]     open the interactive window\n  mpltweak launch <script.py> [--fig N]           same (explicit subcommand)\n  mpltweak apply <script.py> [--write] [--json]   apply (preview by default)\n  mpltweak revert <script.py> [--write]           undo the last write-back\n  mpltweak describe <script.py> [--lang zh|en]    export the layout without a window\n  mpltweak check <script.py> [--json]             layout check (runs your script)\n  mpltweak check <script.py> --static             AST + layout engine only\n  mpltweak schema [--compact]                     params JSON Schema\n  mpltweak mcp                                    start the MCP server\n  mpltweak doctor                                 environment self-check\n\nexit codes (unified to 0 / 1 / 2 / 4 as of 0.1.11): 0 = fine / success; 1 = problems found (check);\n  2 = cannot run (script not found / your script raised / bad params / internal error);\n  4 = no usable GUI backend.\n  (exit code 3 from 0.1.9 is retired: the constant stays, but no path returns it.)\nFor the same exit code 2, "your script failed" and "the tool itself has a bug" are reported separately (since 0.1.10; wording only):\n  - script side: missing file / invalid params file (bad_params) / your script raised\n    (missing dependency / missing data / needs command-line arguments / needs a window in a headless env);\n  - tool side: internal_error - this tool raised an unexpected exception; unrelated to your script.\nBoth print one "attribution" line plus a copy-pasteable next step; with `--json` the\n`attribution` field (script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug) and `next_step` let an agent branch automatically.\nNote: describe / check / apply DO execute your script (in a separate process, Agg headless);\n      side effects (writing files / network / cache) really happen; --static is the only\n      option that never executes it.\n\ninteraction: drag a panel to move / PPT-style resize (Shift keeps the ratio, Alt centers) /\n      Ctrl+click multi-select / align and distribute / snapping / Ctrl+F trim margins /\n      hover +/- to change font size / arrow keys move a panel /\n      space toggles line mode / Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo / ? shows the keys\n',
 
     '[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s 导出=%s':
@@ -1866,7 +1995,6 @@ UI_ZH_TO_EN = {
     '  请确认该路径可写（父目录本命令会自动创建）；本命令不会改动你的脚本。\n': '  check that the path is writable (this command creates the parent directory itself); it never modifies your script.\n',
     '第 %d 张图不存在（脚本只有 1 张）；请用 0，或用 --all-figs 全部导出': 'figure %d does not exist (the script has only 1); use 0, or --all-figs to export it',
     '第 %d 张图不存在（脚本共留下 %d 张）；请用 0..%d 之间的序号，或用 --all-figs 全部导出': 'figure %d does not exist (the script left %d); use an index in 0..%d, or --all-figs to export them all',
-    '第 %d 张图不存在（脚本共留下 %d 张）；请用 0..%d 之间的序号，或用 --all-figs 全部导出': 'figure %d does not exist (the script left %d); use an index in 0..%d, or --all-figs to export them all',
     '第 %d 张图不存在（脚本只有 %d 张）；请用 0，或用 --all-figs 全部导出': 'figure %d does not exist (the script has only %d); use 0, or --all-figs to export it',
     '  回退前的那份留档：%s（再回退一次就回到这里）': 'the pre-revert copy is kept at: %s (one more revert goes back here)',
     '√ 已回退：%s': 'reverted: %s',
@@ -1880,12 +2008,19 @@ UI_ZH_TO_EN = {
     '固定名备份（它建立那一刻的原文）': 'the fixed-name backup (the original text as of the moment it was created)',
     '没有可用的 pid 备份（%s 下没有 `<脚本名>.tweak.<pid>.bak`）：无法回到**最早**状态。\n  · 常见原因：备份目录路径过长（Windows MAX_PATH 260），pid 副本没写出来 —— 本次写回会给出相应 warning。\n  · 固定名备份回到的是它建立那一刻的原文（通常是你第一次改这张图之前），不要拿它当 --first 用；只想要这个默认回退，请去掉 --first。': 'no usable pid backup (no `<script>.tweak.<pid>.bak` under %s): cannot go back to the **earliest** state.\n  - common cause: the backup directory path is too long (Windows MAX_PATH 260), so the pid copy was not written - this write-back will report a warning.\n  - the fixed-name backup holds the original as of the moment it was created (usually before your first edit of this figure); do not use it as --first; if you only want this default revert, drop --first.',
     '  可逆范围：本次用的是%s —— 默认回退用**固定名**备份，它**首份优先**（第一次写回时建立、之后不再覆盖），所以通常回到你**第一次改这张图之前**的原件，而不是上一步的中间态；要拿"最早那次写回之前"的快照用 --first': 'reversible range: %s\n',
-    '还没有可回退的备份：%s\n  revert 只能回退"做过 mpltweak apply --write 的脚本"——备份是写回时留下的写回前原文。': 'no write-back to revert yet: %s\n  revert only works on a script that `mpltweak apply --write` has touched - the backup is the pre-write original kept at write-back time.\\n',
+    # t26（H2）：默认 revert 在固定名备份缺失时会退回最早的 pid 副本，所以"没备份"
+    # 这条只能说**两处都找过**。zh 必须与 revert.py 里的模板**逐字一致**（含换行与 `·`），
+    # 否则 en 下查不到、中文会漏进 `--json`（test_cli_fuzz 的 corpus 会红）。
+    '没有任何可回退的备份：%s 下既没有固定名 `%s`，'
+    '也没有 `<脚本名>.tweak.<pid>.bak` 专属副本。\n'
+    '  · revert 只能回退"做过 mpltweak apply --write 的脚本"——'
+    '备份是写回时留下的写回前原文。':
+        'no backup to revert to: under %s there is neither the fixed-name '
+        '`%s` nor a `<script>.tweak.<pid>.bak` per-run copy.\n'
+        '  - revert only works on a script that `mpltweak apply --write` has '
+        'touched - the backup is the pre-write original kept at write-back '
+        'time.',
     '脚本在参数保存后被改过也强行套用旧参数（默认不套用，避免静默覆盖你的手动改动）': 'apply the saved params even if the script changed after they were saved (by default they are NOT applied, to avoid silently overwriting your manual edits)',
-    '[revert] %s\n': '[revert] %s\n',
-    '[revert] 写文件失败: %s（原文件未改动）\n': '[revert] writing the file failed: %s (the original file is unchanged)\n',
-    '[revert] 找不到脚本: %s\n': '[revert] script not found: %s\n',
-    '[revert] 拿不到写回锁：%s\n': '[revert] cannot take the write-back lock: %s\n',
     '[revert] 找不到脚本: %s\n': '[revert] script not found: %s\n',
     '[revert] %s\n': '[revert] %s\n',
     '[revert] 拿不到写回锁：%s\n': '[revert] cannot take the write-back lock: %s\n',
@@ -1898,6 +2033,8 @@ UI_ZH_TO_EN = {
         'tool prefixes its own messages with [launch]/[mpltweak])',
 }
 
+
+# ==== §9 查表函数 t_ui 与运行期追加的两块 update ====
 
 def t_ui(zh_template):
     """launch / doctor / describe 的 zh 模板 → 当前语言（t64）。
@@ -1992,3 +2129,34 @@ UI_ZH_TO_EN.update({
     '穿透选中 ax%d（候选 %d 个）': 'picked through to ax%d (%d candidates)',
     'Tab 循环：ax%d/%d': 'Tab cycle: ax%d/%d',
 })
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头：两层输出与 GBK 硬约束（行 2-70，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §2 语言状态与退出码常量（行 71-105，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §3 语言探测：detect_lang / set_lang / current_lang（行 106-153，3 个顶层函数）
+#     detect_lang                                    108
+#     set_lang                                       139
+#     current_lang                                   147
+# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 154-1486，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §5 取词：t / code / t_en（行 1487-1526，3 个顶层函数）
+#     t                                             1489
+#     code                                          1505
+#     t_en                                          1510
+# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1527-1672，4 个顶层函数）
+#     _finite                                       1529
+#     emit_json                                     1548
+#     fail_json                                     1592
+#     guard_json_main                               1616
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 1673-1861，1 个顶层函数）
+#     t_wb                                          1849
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 1862-2036，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2037-2131，1 个顶层函数）
+#     t_ui                                          2039
+# --- END AUTO NAV ---

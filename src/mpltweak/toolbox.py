@@ -1,4 +1,64 @@
 # -*- coding: utf-8 -*-
+"""mpltweak.toolbox —— 交互改图层：`gaitu(fig)` 挂上去就能拖
+=====================================================================
+
+本模块管**窗口里发生的一切**：鼠标拾取子图、PPT 式拖拽与缩放、边缘吸附对齐、
+图例拖拽与 8 位吸附、悬停调字号、多选 / 框选 / 对齐 / 均分、撤销重做、线条与
+色标、线条模式，以及关窗自动导出 ``.tweak.json``。它**不改用户脚本、不写盘**
+（写回是 ``writeback.py`` 的事），只产出参数文件。
+
+读代码的顺序建议按三层走：
+  1. **顶层纯函数**（§3-§7）：字体与文本度量、读取侧取值、画布几何、坐标框
+     数学、命中检测 —— 无状态，可离屏单测（``tests/test_events.py`` 直接用）；
+  2. **``Tweak`` 类**（§8）：一个 fig 挂一个控制器，状态 + 事件接线 + 交互语义；
+  3. **入口**（§9）：``gaitu()`` 只做"建控制器 + 存 quiet 开关"。
+
+快速导航（分区名 → 这一段管什么；**行号看文件末尾的自动索引块**，块由
+``python tools/gen_nav.py --write`` 生成、``--check`` 校验，别手改）
+---------------------------------------------------------------------
+  §1  文件头、口径常量与日志                 STEP / MIN_SIZE / 吸附容差等口径；_log/_info 的安静模式
+  §2  ? 键位表数据（中英双表）               _ZH / _EN / _KEYMAP：组数与每组行数必须一一对应（棘轮盯着）
+  §3  字体 / 鼠标 / 文本度量探测             _pick_ui_font / _ui_cjk_ok / _u / _mouse_buttons_down / _text_w
+  §4  ? 键位浮层：渲染与窗口接管             _render_help / _load_help_png / _HelpWindowOp：画键位表、开窗关窗置顶
+  §5  读取侧：图例 / 标题 / colorbar / 线条  "读出来"的那一半：loc、标题字号、clim、可调线条、colorbar 端点
+  §6  画布几何与坐标框数学                   _bbox / _same_box / _best_snap / _resize_anchored：纯算术
+  §7  命中检测与 PPT 式缩放                  拾取优先级 / 手柄命中 / _resize_frac / _snap_resize：抓到谁的判据
+  §8  Tweak 交互改图控制器                   一个 fig 一个控制器；类内细分见 §8.1-§8.21
+  §8.1  开窗与事件接线                       __init__ / _init_legends / _connect：图例初始化、背景抓取、事件接线
+  §8.2  窗口尺寸与屏幕适配                   _on_resize / _canvas_dpr / _fit_to_screen：窗口被钳制、HiDPI、关窗导出
+  §8.3  重图基础：ghost 与 blit              _ensure_bg / _blit_frame / _commit：干净背景、参考线、防抖落位
+  §8.4  图例：命中、重建与循环               _legend_at / _mk_legend / _cycle_legend / _refresh
+  §8.5  字号：悬停目标与调整                 _adj_font / _ax_under_mouse：悬停哪个轴就调哪个
+  §8.6  快照与还原                           _snapshot / _restore_snap：画布要不要一起还原（with_canvas）
+  §8.7  多选：对齐与均分                     _sel_axes / _align_selection / _distribute_selection
+  §8.8  适配画布到内容（Ctrl+F）             _fit_to_content：归一化内容盒 → 新画布英寸，白边全裁
+  §8.9  吸附开关 / 浮层入口 / 状态栏         _snap_on / _axis_name / _toggle_help / _update_status / _toast
+  §8.10  撤销栈：压栈、合并、幽灵步          _push_undo / _pop_ghost_undo / _undo_once / _redo_once
+  §8.11  多选视觉：蓝框与橡皮筋              _rebuild_selection_artists / _update_band / _finish_band
+  §8.12  图例 8 位候选：预览与吸附           _legend_candidates / _snap_legend
+  §8.13  尺寸提示与鼠标按下分派              _set_title_hint / _on_press：穿透（Alt）/ 手柄 / 框选起点
+  §8.14  拖动自愈（sticky drag，t101）       _self_heal_drag：鼠标在动、键已不在 ⇒ 立刻收尾
+  §8.15  鼠标移动：拖拽 / 缩放 / 吸附        _on_motion：三条拖动路径 + 吸附 + 光标形态
+  §8.16  鼠标释放：落位与收尾                _on_release / _on_figure_leave
+  §8.17  命中表与文本字号                    _build_hits / _text_at / _text_at_slow / _adj_font_hover
+  §8.18  线条模式与方向键微调                _toggle_wireframe / _nudge_size
+  §8.19  线条 / 色标 / 网格 / 边框 / 比例尺  _cycle_linewidth / _cycle_linecolor / _cycle_cmap / _toggle_grid…
+  §8.20  键位总表 _on_key                    一处分派；键位口径与 ? 表同源
+  §8.21  导出参数 JSON                       export：位置 + 图例 + 字号 → .tweak.json（供 agent 写回）
+  §9  入口：gaitu                            挂到 fig 上（兼容旧版调用方式）
+
+**导航自身也要能被校验（口径说明）**
+  · 顶层分区横幅 = ``# ==== §N 分区名 ====``（行首无缩进，``gen_nav`` 只认这种）；
+  · ``Tweak`` 类内部写成 ``    # ==== §8.N 分区名 ====``（缩进 4 空格 + 小数编号）：
+    它们是**类内小节**，工具刻意不索引 —— 否则索引块里会塞进 20 多条
+    "0 个顶层函数"的空条目。要跳到某一小节：``grep -n '§8.12' src/mpltweak/toolbox.py``；
+  · 谁都不许手写行号：文件尾的索引块由
+    ``python tools/gen_nav.py src/mpltweak/toolbox.py --write`` 生成、
+    ``--check`` 校验（``tests/test_hygiene.py`` 里有同判据的牙齿）。
+"""
+
+# ==== §1 文件头、口径常量与日志 ====
+
 # ======================================================================
 # tweak_toolbox.py —— gaitu v3（改图工具箱）
 # v2 基础上新增：
@@ -110,7 +170,8 @@ _LOC_CODES = {0: 'best', 1: 'upper right', 2: 'upper left', 3: 'lower left',
               4: 'lower right', 5: 'right', 6: 'center left', 7: 'center right',
               8: 'lower center', 9: 'upper center', 10: 'center'}   # loc 整数码->名
 
-# ============ ? 键位表独立窗口（快捷键手册风格，中英双语） ============
+# ==== §2 ? 键位表数据（中英双表） ====
+
 # 结构化数据：每组 = (组名, [(键帽, 说明), ...])。键帽会渲染成圆角胶囊。
 _ZH = [
     ('选择', [
@@ -252,6 +313,8 @@ _UI_FONT_CANDIDATES = _CJK_FONT_CANDIDATES + ('Segoe UI', 'Helvetica Neue', 'Ari
 _UI_CJK_FONT = None      # 缓存：None=未探测；False=无 CJK；字符串=命中的 CJK 字体名
 
 
+# ==== §3 字体 / 鼠标 / 文本度量探测 ====
+
 def _pick_ui_font():
     '''跨平台可用字体探测：Windows 雅黑 → macOS PingFang → Linux Noto，
     都没有就回退 Segoe/Helvetica/Arial；全没有返回 None（matplotlib 默认）。
@@ -327,6 +390,8 @@ def _text_w(r, s, fs, font, dpi=110.0):
         _m = 0.62 if all(ord(c) < 256 for c in s) else 1.0
         return max(len(s) * fs * _m * dpi / 72.0, 10.0)
 
+
+# ==== §4 ? 键位浮层：渲染与窗口接管 ====
 
 def _render_help(fig, lang, font):
     '''在帮助窗口画布上渲染"快捷键手册"：顶部强调条 + 两列圆角卡片
@@ -627,6 +692,8 @@ def _close_help_fig():
     _HELP_FIG = None
 
 
+# ==== §5 读取侧：图例 / 标题 / colorbar / 线条 ====
+
 def _loc_name(loc):
     '''legend._loc 可能是字符串也可能是整数码，统一成字符串。'''
     if isinstance(loc, int):
@@ -882,6 +949,8 @@ def _line_at(fig, x, y):
     return None, None
 
 
+# ==== §6 画布几何与坐标框数学 ====
+
 def _bbox(ax):
     '''取坐标框 [x0, y0, w, h]（figure 比例坐标）。
 
@@ -1029,6 +1098,8 @@ def _snap_box(box, others, tol=SNAP_TOL):
     gy = [] if by is None else [by[1]]
     return [x0 + dx, y0 + dy, w, h], gx, gy
 
+
+# ==== §7 命中检测与 PPT 式缩放 ====
 
 def _body_contains(ax, x, y):
     '''**按真实绘制形状**判"这一点是否落在该轴的图里"（不是外接矩形）。
@@ -1379,8 +1450,12 @@ def _resize_box(box, key, locked):
     return box
 
 
+# ==== §8 Tweak 交互改图控制器 ====
+
 class Tweak:
     '''交互改图控制器：一个 fig 挂一个。'''
+
+    # ==== §8.1 开窗与事件接线 ====
 
     def __init__(self, fig, export_path=None, heavy=None,
                  fig_index=None, n_figs=None, edit_clock=None):
@@ -1629,7 +1704,6 @@ class Tweak:
               '关窗自动导出 | 拖窗口=画布尺寸 | 模式固定=重图'),
               flush=True)
 
-    # ---------- 初始化 ----------
     def _init_legends(self):
         '''记录每个有图例的轴的 handles/labels 与当前 loc，供循环/拖拽/导出。
 
@@ -1727,6 +1801,8 @@ class Tweak:
         c.mpl_connect('key_press_event', self._on_key)
         c.mpl_connect('close_event', self._on_close)
         c.mpl_connect('resize_event', self._on_resize)
+
+    # ==== §8.2 窗口尺寸与屏幕适配 ====
 
     def _on_resize(self, event):
         '''记录画布像素尺寸（窗口被拖多大就记多大，导出时写回 figsize）。'''
@@ -1921,7 +1997,8 @@ class Tweak:
         except Exception as e:
             _log(_msg.t_ui('[mpltweak] 关窗自动导出失败:'), e)
 
-    # ---------- ghost + blit ----------
+    # ==== §8.3 重图基础：ghost 与 blit ====
+
     def _ensure_bg(self):
         '''抓「干净背景」：覆盖层（ghost/参考线/橡皮筋/蓝框/图例预览）先隐藏再抓，
         否则移动它们会在 blit 帧里留下残影。'''
@@ -2103,7 +2180,8 @@ class Tweak:
             self._timer_bad = True
             return False
 
-    # ---------- 图例 ----------
+    # ==== §8.4 图例：命中、重建与循环 ====
+
     def _legend_at(self, x, y):
         '''返回 (ax, leg) 若鼠标点在某个图例框内。'''
         for ax in self.fig.axes:
@@ -2182,7 +2260,8 @@ class Tweak:
                 return
         self._draw_now()
 
-    # ---------- 字号 ----------
+    # ==== §8.5 字号：悬停目标与调整 ====
+
     def _adj_font(self, ax, kind, delta):
         '''调字号：title/label/tick/legend，返回新字号。'''
         if kind == 'title':
@@ -2225,8 +2304,8 @@ class Tweak:
                 pass
         return None
 
-    # ---------- 事件处理 ----------
-    # ---------- 快照（Undo/Redo） ----------
+    # ==== §8.6 快照与还原 ====
+
     def _snapshot(self, with_canvas=True):
         '''全状态快照：画布尺寸 + 每个轴的位置 + 字号 + 图例。
 
@@ -2428,6 +2507,8 @@ class Tweak:
         self._rebuild_selection_artists()
         self._refresh(moved=True)
 
+    # ==== §8.7 多选：对齐与均分 ====
+
     def _sel_axes(self):
         return [a for a in self.fig.axes if id(a) in self._selected]
 
@@ -2496,6 +2577,8 @@ class Tweak:
         self._set_title_hint(_msg.t_ui('均分 %s（%d 个面板）')
                              % (_msg.t_ui('水平') if axis == 'h' else _msg.t_ui('垂直'), len(axs)))
         self._refresh(moved=True)
+
+    # ==== §8.8 适配画布到内容（Ctrl+F） ====
 
     def _fit_to_content(self):
         '''一键「适配画布到内容」（快捷键）：把画布缩到刚好包住所有内容——
@@ -2617,6 +2700,8 @@ class Tweak:
         _info(_msg.t_ui('[mpltweak] fit: 完成 → %.2fx%.2f in（原 %.2fx%.2f）')
               % (NW_in, NH_in, fiw, fih), flush=True)
 
+    # ==== §8.9 吸附开关 / 浮层入口 / 状态栏 ====
+
     def _snap_on(self, event):
         '''当前是否吸附：开关开着 且 **没按住 Alt**（Alt = 临时关吸附）。'''
         if not self.snap:
@@ -2719,6 +2804,8 @@ class Tweak:
         except Exception:                    # noqa: BLE001
             pass
 
+    # ==== §8.10 撤销栈：压栈、合并、幽灵步 ====
+
     def _push_undo(self, with_canvas=False):
         # 每次真实改动前压快照 —— 这里同时记录"本图被改过"与全局改动顺序。
         # 快照附带操作名（diff 上一快照），撤销/重做时能告诉用户"撤的是什么"。
@@ -2809,7 +2896,8 @@ class Tweak:
         self._toast(_u('已重做：', 'Redone: ') + _n)
         self._update_status()
 
-    # ---------- 多选（PPT 式） ----------
+    # ==== §8.11 多选视觉：蓝框与橡皮筋 ====
+
     def _rebuild_selection_artists(self):
         '''按当前 _selected 重建蓝色选中外框（不重绘，由调用方 draw）。'''
         for a in self._sel_artists:
@@ -2895,6 +2983,8 @@ class Tweak:
         self._rebuild_selection_artists()
         self._refresh()
         _log(_msg.t_ui('[mpltweak] 框选 %d 个面板') % len(self._selected), flush=True)
+
+    # ==== §8.12 图例 8 位候选：预览与吸附 ====
 
     def _legend_candidates(self, ax, leg):
         '''8 个标准位的图例框（轴坐标）：{name: (x, y, w, h)}。
@@ -3012,7 +3102,8 @@ class Tweak:
         st['anchor'] = None
         _log(_msg.t_ui('[mpltweak] 图例吸附到 %s') % best, flush=True)
 
-    # ---------- 尺寸 HUD（窗口标题栏） ----------
+    # ==== §8.13 尺寸提示与鼠标按下分派 ====
+
     def _set_title_hint(self, text):
         try:
             m = self.fig.canvas.manager
@@ -3197,6 +3288,8 @@ class Tweak:
         except Exception:
             return [0.5, 0.5]
 
+    # ==== §8.14 拖动自愈（sticky drag，t101） ====
+
     def _self_heal_drag(self, event):
         '''★25.3 / t101：**鼠标在动、按键却已经不在** ⇒ 立刻结束当前拖动（自愈收尾）。
 
@@ -3227,6 +3320,8 @@ class Tweak:
             return False
         self._on_release(event)
         return True
+
+    # ==== §8.15 鼠标移动：拖拽 / 缩放 / 吸附 ====
 
     def _on_motion(self, event):
         if event.inaxes is not None:
@@ -3465,6 +3560,8 @@ class Tweak:
             except Exception:
                 pass
 
+    # ==== §8.16 鼠标释放：落位与收尾 ====
+
     def _on_release(self, event):
         # ★25.3（t101）：这次手势的"见过按键"到此为止（真松手与自愈收尾都从这里过）。
         self._btn_seen = False
@@ -3559,6 +3656,8 @@ class Tweak:
             return
         if _mouse_buttons_down(self.fig.canvas) is False:
             self._on_release(event)          # 与真松手同一条路径（落位/清状态/重建蓝框）
+
+    # ==== §8.17 命中表与文本字号 ====
 
     def _as_colorbar(self, ax):
         '''判断轴是不是 colorbar 轴，是则返回自身（多信号判定，见 _is_colorbar_ax）。'''
@@ -3747,6 +3846,8 @@ class Tweak:
         except Exception as e:
             _log(_msg.t_ui('[mpltweak] 字号调节失败:'), e, flush=True)
 
+    # ==== §8.18 线条模式与方向键微调 ====
+
     def _toggle_wireframe(self):
         '''线条模式（类似矢量软件的"轮廓/线框"视图）：只留**边框 + 坐标轴刻度 +
         文字 + 图例**，隐藏所有数据图元（海岸线、等值线、栅格、折线、散点…）。
@@ -3880,6 +3981,8 @@ class Tweak:
         return ax
 
     @staticmethod
+    # ==== §8.19 线条 / 色标 / 网格 / 边框 / 比例尺 ====
+
     def _line_lw(artist):
         try:
             v = artist.get_linewidth()
@@ -4067,6 +4170,8 @@ class Tweak:
             self._undo.pop()
             _log(_msg.t_ui('[mpltweak] %sscale 调节失败: %s') % (axis, e), flush=True)
 
+    # ==== §8.20 键位总表 _on_key ====
+
     def _on_key(self, event):
         '''键位：端点拖 clim；[/]线宽、c颜色、C色标、g网格、s边框、x/y比例尺。'''
         key = event.key
@@ -4164,7 +4269,8 @@ class Tweak:
             self._adj_font_hover(event.x, event.y, -1)
             return
 
-    # ---------- 导出 ----------
+    # ==== §8.21 导出参数 JSON ====
+
     def export(self, path=None):
         '''全部子图位置 + 图例 + 字号 -> JSON（供 DSH agent 写回 .py）。'''
         # 会话接管锁：导出路径被更新的会话接管后，本会话不再导出，
@@ -4277,6 +4383,8 @@ class Tweak:
         _log(_msg.t_ui('[mpltweak] 已导出 %d 个子图 -> %s') % (len(axes), p))
 
 
+# ==== §9 入口：gaitu ====
+
 def gaitu(fig, export_path=None, heavy=None, quiet=False,
           fig_index=None, n_figs=None, edit_clock=None):
     '''挂到 fig 上即可交互改图（兼容旧版调用方式）。
@@ -4290,3 +4398,69 @@ def gaitu(fig, export_path=None, heavy=None, quiet=False,
     QUIET = bool(quiet)
     return Tweak(fig, export_path=export_path, heavy=heavy,
                  fig_index=fig_index, n_figs=n_figs, edit_clock=edit_clock)
+
+# --- BEGIN AUTO NAV ---
+# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# §1 文件头、口径常量与日志（行 60-172，2 个顶层函数）
+#     _log                                           142
+#     _info                                          148
+# §2 ? 键位表数据（中英双表）（行 173-315，0 个顶层函数）
+#     （本分区没有顶层函数）
+# §3 字体 / 鼠标 / 文本度量探测（行 316-393，6 个顶层函数）
+#     _pick_ui_font                                  318
+#     _ui_cjk_ok                                     336
+#     _ui_fontprops                                  344
+#     _u                                             353
+#     _mouse_buttons_down                            358
+#     _text_w                                        380
+# §4 ? 键位浮层：渲染与窗口接管（行 394-694，10 个顶层函数）
+#     _render_help                                   396
+#     _load_help_png                                 524
+#     _fill_help_fig                                 540
+#     _HelpWindowOp                                  564
+#     _on_help_key                                   606
+#     _on_help_click                                 614
+#     _toggle_help_lang                              624
+#     _on_help_closed                                638
+#     _show_help_fig                                 644
+#     _close_help_fig                                684
+# §5 读取侧：图例 / 标题 / colorbar / 线条（行 695-951，13 个顶层函数）
+#     _loc_name                                      697
+#     _aspect_locked                                 704
+#     _legend_props                                  715
+#     _title_fs                                      761
+#     _is_colorbar_ax                                784
+#     _cb_mappable                                   811
+#     _cb_orientation                                820
+#     _clim_of                                       829
+#     _set_cb_clim                                   843
+#     _hit_cb_endpoint                               858
+#     _is_line_artist                                883
+#     _single_color                                  905
+#     _line_at                                       924
+# §6 画布几何与坐标框数学（行 952-1101，10 个顶层函数）
+#     _bbox                                          954
+#     _canvas_geometry                               974
+#     _cell_of                                       997
+#     _fixed_lim                                    1013
+#     _set_bbox                                     1029
+#     _same_box                                     1033
+#     _nearest                                      1040
+#     _best_snap                                    1052
+#     _resize_anchored                              1067
+#     _snap_box                                     1083
+# §7 命中检测与 PPT 式缩放（行 1102-1452，7 个顶层函数）
+#     _body_contains                                1104
+#     _pick_candidates                              1128
+#     _pick_at                                      1149
+#     _hit_handle                                   1157
+#     _resize_frac                                  1213
+#     _snap_resize                                  1290
+#     _resize_box                                   1388
+# §8 Tweak 交互改图控制器（行 1453-4385，1 个顶层函数）
+#     Tweak                                         1455
+# §9 入口：gaitu（行 4386-4400，1 个顶层函数）
+#     gaitu                                         4388
+# --- END AUTO NAV ---
