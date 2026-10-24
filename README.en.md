@@ -58,6 +58,8 @@ pip install mpltweak            # core: describe / check / apply (mcp is an opti
 pip install "mpltweak[qt]"      # add this if you want to drag figures in a window (installs the PyQt5 backend)
 ```
 
+To see which version you installed: **`mpltweak --version`** (`-V` works too) — prints one line and exits 0.
+
 The second line is for **opening a window**: that needs a graphics backend (in plain words, the component set that lets a figure appear in a draggable window — PyQt5 recommended, about +150MB). Command-line-only use (`describe` / `check` / `apply`) does not need it. The official Python installers for Windows / macOS bundle `tkinter`, so `pip install mpltweak` alone usually opens a window; in that case it uses the **Tk backend (reduced interaction)**, which is neither an installation failure nor a broken install. With no graphics backend at all, opening the window exits with `rc=4` (exit code 4: "this machine currently has nothing that can draw a window") and prints which one to install.
 
 > Backend comparison table, per-platform installs, `mpltweak doctor` probing order and per-symptom handling of a failed window — [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).

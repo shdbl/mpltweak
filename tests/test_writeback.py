@@ -8040,14 +8040,11 @@ check('§109⑨ set_fontsize(变量)：值不在字面量里 ⇒ 不改、不猜
       'applied=%r | %s' % (_r.get('applied'), _109_w[:160]))
 shutil.rmtree(_d, ignore_errors=True)
 
-# ---- §109⑩ 三个负例：不许误改 ----
-# 018 型：`plt.title/plt.xlabel` 全局写法（轴级归属判不出）
-_S109_N018 = _S109_HEAD + (
-    'plt.figure(figsize=(6, 4))\n'
-    'plt.plot([1, 2, 3])\n'
-    "plt.title('A')\n"
-    "plt.xlabel('X')\n"
-    "plt.savefig('o.png')\n")
+# ---- §109⑩ 负例：不许误改 ----
+# ⚠ 0.1.15 / N1 起，"018 型：`plt.title/plt.xlabel` 全局写法"**不再是负例** ——
+# 单图 + 静态唯一一条匿名轴时那句话是**可证**的（`writeback._single_figure_attribution`），
+# 现在会原位补成 `plt.title('A', fontsize=15)`。那条形态的**正面**断言搬到了 §111④，
+# 边界（多轴 / close / 循环）在 §111②⑤。这里只剩两条**仍然不可证**的负例。
 # gallery 型：`axs[i]` 循环里建轴（接收者是 Subscript / 循环变量，不是可证的轴名）
 _S109_NGAL = _S109_HEAD + (
     'fig, axs = plt.subplots(2, 2)\n'
@@ -8064,10 +8061,6 @@ _S109_NCB = _S109_HEAD + (
     "cb.ax.set_ylabel('Z')\n"
     "fig.savefig('o.png')\n")
 for _tag, _src, _par in (
-        ('018 型 plt.title/plt.xlabel', _S109_N018,
-         {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
-          'axes': [{'index': 0, 'title_fontsize': 15.0,
-                    'label_fontsize': 13.0}]}),
         ('gallery 型 axs[i] 循环', _S109_NGAL,
          {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
           'axes': [{'index': 0, 'title_fontsize': 15.0}]}),
@@ -8079,8 +8072,8 @@ for _tag, _src, _par in (
     _r = writeback.writeback(_s, _params.load(_p), _p, verify=False,
                              style='inplace')
     _a = read(_s)
-    # 负例只许出现"该补的那一处"：plt./循环/cb.ax 那几行一个字节都不许动
-    _ok = (_a == _src) if _tag.startswith('018') or _tag.startswith('gallery') \
+    # 负例只许出现"该补的那一处"：循环 / cb.ax 那几行一个字节都不许动
+    _ok = (_a == _src) if _tag.startswith('gallery') \
         else ("cb.ax.set_ylabel('Z')" in _a and 'cb.ax.set_ylabel(\'Z\', ' not in _a)
     check('§109⑩ 负例不误改（%s）：不可证的轴一个字节都不动，'
           '该拒的拒（applied=false + pending 点名）' % _tag,
@@ -8266,6 +8259,214 @@ check('§110④【有牙】把 `_comprehension_scope` 换成恒 None（= 修前�
       '含 gcf=%s changed=%s'
       % ('plt.gcf().axes[0]' in _a110t, _a110t != _S110_SRC))
 shutil.rmtree(_d110t, ignore_errors=True)
+
+# §111（0.1.15 / N1）：**隐式建图**的单图 —— 全文件没有一行显式建图（图由 pyplot 第一次
+# 建轴/绘图时隐式创建）、只建一张图、写法是 `plt.plot(...)` / `plt.subplot(111)` ⇒ 块里可以
+# **可证**地用 `plt.gcf()` 定位（N1 修前的现场：这类脚本被"没有可证的变量名"全拒）。
+# 硬约束：close / 额外建轴 / 推导式·循环·函数体里的建轴调用一律**维持** fail-closed 并点名
+# 原因（判据见 `writeback._implicit_gcf_verdict`）；块注释必须说"隐式建图"，不许照抄
+# "本文件只有一次建图"（源码里根本没有建图那一行 —— 注释说谎比没有注释更糟）。
+_S111_HEAD = """import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+"""
+_S111_PURE = _S111_HEAD + ("plt.plot([1, 2, 3], [2, 1, 3])\nplt.title('pure plt')\n"
+                           "plt.savefig('o.png', dpi=100)\n")
+_S111_PAR = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.6, 0.6],
+                       'title_fontsize': 18}]}
+_d111, _s111, _p111 = _mk15('t111', _S111_PURE, _S111_PAR)
+_r111 = writeback.writeback(_s111, _params.load(_p111), _p111, verify=False,
+                            fast_check=True, style='block')
+_a111 = read(_s111)
+check('§111① 隐式建图的单图（纯 plt.*、无显式建图调用）⇒ 写块并落到 '
+      '`plt.gcf().axes[0].set_position(`；块注释说的是"没有显式建图调用"',
+      _r111.get('applied') is True and not _r111.get('pending')
+      and 'plt.gcf().axes[0].set_position(' in _a111
+      and '没有显式建图调用' in _a111
+      and '本文件只有一次建图' not in _a111,
+      'applied=%r pending=%r' % (_r111.get('applied'), _r111.get('pending')))
+
+# 四条"仍然必须拒"的形态：原因不同、warnings 必须点名，且**一个字节都不许写**
+_S111_BAD = (
+    ('close', 'plt.plot([1, 2, 3])\nplt.savefig("a.png")\nplt.close("all")\n',
+     'close('),
+    ('colorbar', 'plt.imshow([[1, 2], [3, 4]])\nplt.colorbar()\n'
+     'plt.savefig("a.png")\n', '额外建轴来源'),
+    ('comprehension', 'ys = [plt.plot([0, 1], [i, i + 1]) for i in range(2)]\n'
+     'plt.savefig("a.png")\n', '推导式'),
+    ('loop', 'for i in range(3):\n    plt.plot([0, 1], [i, i + 1])\n'
+     'plt.savefig("a.png")\n', '循环'),
+)
+for _tag111, _body111, _why111 in _S111_BAD:
+    _d111b, _s111b, _p111b = _mk15('t111' + _tag111, _S111_HEAD + _body111,
+                                   _S111_PAR)
+    _r111b = writeback.writeback(_s111b, _params.load(_p111b), _p111b,
+                                 verify=False, fast_check=True, style='block')
+    _a111b = read(_s111b)
+    check('§111② 隐式建图 + %s ⇒ 维持 fail-closed：字节不变、不写 `.axes[`、'
+          'warnings 点名" %s "' % (_tag111, _why111),
+          _r111b.get('applied') is not True and _a111b == _S111_HEAD + _body111
+          and '.axes[' not in _a111b
+          and any(_why111 in _w for _w in (_r111b.get('warnings') or [])),
+          'reason=%r warn=%r' % (_r111b.get('reason'),
+                                 (_r111b.get('warnings') or [])[-1:]))
+    shutil.rmtree(_d111b, ignore_errors=True)
+
+# ---- §111③【有牙】把新判据换成"恒不可证"（= N1 修前行为）⇒ §111① 立刻退回拒写 ----
+_orig_im111 = writeback._implicit_gcf_verdict
+writeback._implicit_gcf_verdict = lambda *a, **k: (False, 'none', 0)
+try:
+    _d111t, _s111t, _p111t = _mk15('t111teeth', _S111_PURE, _S111_PAR)
+    _r111t = writeback.writeback(_s111t, _params.load(_p111t), _p111t,
+                                 verify=False, fast_check=True, style='block')
+    _a111t = read(_s111t)
+finally:
+    writeback._implicit_gcf_verdict = _orig_im111
+check('§111③【有牙】把 `_implicit_gcf_verdict` 换成恒"不可证"（= 修前行为）⇒ §111① '
+      '立刻退回"没有可证的变量名"拒写（即 N1 真的靠这条新判据在咬）',
+      _r111t.get('applied') is not True and _a111t == _S111_PURE
+      and any('没有可证的变量名' in _w for _w in (_r111t.get('warnings') or [])),
+      'applied=%r changed=%s' % (_r111t.get('applied'), _a111t != _S111_PURE))
+shutil.rmtree(_d111t, ignore_errors=True)
+shutil.rmtree(_d111, ignore_errors=True)
+
+# §111④（0.1.15 / N1）：单图纯 `plt.*` 的字号 **原位补参数** —— 这是 N1 的主目标
+# （队长 2026-10-24 明确："不是让拒写的脚本能写，而是把插块升级成原位补参数"）。
+# 现场：`plt.title('(a)')` 没有接收者变量名，旧行为一律进 skipped → 退块。
+_S111_INPLACE = _S111_HEAD + (
+    'plt.figure(figsize=(6, 4))\n'
+    'plt.plot([1, 2, 3])\n'
+    "plt.title('A')\n"
+    "plt.xlabel('X')\n"
+    "plt.savefig('o.png')\n")
+_d111i, _s111i, _p111i = _mk15('t111inplace', _S111_INPLACE,
+                               {'version': 4, 'script': 'fig.py',
+                                'fig_index': 0, 'n_figs': 1,
+                                'axes': [{'index': 0, 'title_fontsize': 15.0,
+                                          'label_fontsize': 13.0}]})
+_r111i = writeback.writeback(_s111i, _params.load(_p111i), _p111i,
+                             verify=False, style='inplace')
+_a111i = read(_s111i)
+check('§111④ 单图纯 plt.* 只改字号 ⇒ **原位补参数**（`plt.title(\'A\', fontsize=15)` / '
+      '`plt.xlabel(\'X\', fontsize=13)`），不插块、pending 空',
+      _r111i.get('applied') is True and not _r111i.get('pending')
+      and "plt.title('A', fontsize=15)" in _a111i
+      and "plt.xlabel('X', fontsize=13)" in _a111i
+      and 'auto layout' not in _a111i,
+      'applied=%r pending=%r' % (_r111i.get('applied'), _r111i.get('pending')))
+# 幂等：同一份参数再跑一次 ⇒ no_change、0 字节变化（补上的 fontsize 被认成"已等值"）
+_r111i2 = writeback.writeback(_s111i, _params.load(_p111i), _p111i,
+                              verify=False, style='inplace')
+check('§111④b 连跑两次：第二次 no_change 且 0 字节变化（补出来的 fontsize 被认成等值）',
+      read(_s111i) == _a111i and _r111i2.get('applied') is not True,
+      'applied=%r reason=%r' % (_r111i2.get('applied'), _r111i2.get('reason')))
+shutil.rmtree(_d111i, ignore_errors=True)
+# §111⑤ N1 的边界：同一脚本**多一条 `plt.close()`** ⇒ 原位补参数也必须关上
+# （关图之后 `plt.title` 作用的是另一张图 ⇒ 不可证），一个字节都不动。
+_S111_INPLACE_CLOSE = _S111_INPLACE + "plt.close('all')\n"
+_d111c, _s111c, _p111c = _mk15('t111inplaceclose', _S111_INPLACE_CLOSE,
+                               {'version': 4, 'script': 'fig.py',
+                                'fig_index': 0, 'n_figs': 1,
+                                'axes': [{'index': 0, 'title_fontsize': 15.0,
+                                          'label_fontsize': 13.0}]})
+_r111c = writeback.writeback(_s111c, _params.load(_p111c), _p111c,
+                             verify=False, style='inplace')
+_a111c = read(_s111c)
+check('§111⑤ N1 边界：同一脚本多一条 `plt.close()` ⇒ **不原位补参数**（不可证），'
+      '字节不变、如实进 pending',
+      _a111c == _S111_INPLACE_CLOSE and _r111c.get('applied') is not True
+      and bool(_r111c.get('pending')),
+      'applied=%r pending=%r' % (_r111c.get('applied'), _r111c.get('pending')))
+shutil.rmtree(_d111c, ignore_errors=True)
+
+# §112（0.1.15 / F6）：**块合成口径去冗余** —— 原位已经改过的字段不再进块。
+# 现场：单图 + 完整 describe 参数（pos/lines/title…）+ 只改标题字号 ⇒ 原位写成
+# `plt.title('(a)', fontsize=14)`，块里**又**写一遍 `…title.set_fontsize(14)`。
+# 块只保留"无法原位表达"的字段（pos / lines），文字字号这一族不再重复。
+_S112_PURE = ("import matplotlib\nmatplotlib.use('Agg')\n"
+              "import matplotlib.pyplot as plt\n\n"
+              "plt.figure(figsize=(6, 4))\n"
+              "plt.plot([0, 1], [1, 0])\n"
+              "plt.title('(a)')\n"
+              "fig = plt.gcf()\n"
+              "fig.savefig('out.png')\n")
+_S112_NAMED = ("import matplotlib\nmatplotlib.use('Agg')\n"
+               "import matplotlib.pyplot as plt\n\n"
+               "fig, ax = plt.subplots(figsize=(6, 4))\n"
+               "ax.plot([0, 1], [1, 0])\n"
+               "ax.set_title('A')\n"
+               "fig.savefig('out.png')\n")
+_S112_LINES = [{'index': 0, 'linewidth': 1.5, 'color': '#1f77b4'}]
+
+
+def _s112_run(src, par):
+    """按 apply 的 auto 口径跑两趟：原位先写盘，再按需要补块。"""
+    d, s, p = _mk15('t112', src, par)
+    writeback.writeback(s, _params.load(p), p, verify=False, style='inplace')
+    writeback.writeback(s, _params.load(p), p, verify=False, style='block')
+    return d, s, p, read(s)
+
+
+_d112a, _s112a, _p112a, _a112a = _s112_run(
+    _S112_PURE, {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                 'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.775, 0.77],
+                           'title_fontsize': 14.0, 'lines': _S112_LINES}]})
+check('§112① 纯 plt.* 单图 + 完整参数：原位 `plt.title(\'(a)\', fontsize=14)`，'
+      '**块里不再有 title 行**，而 pos / lines 仍在块里（布局不丢）',
+      "plt.title('(a)', fontsize=14)" in _a112a
+      and 'auto layout' in _a112a and 'title.set_fontsize' not in _a112a
+      and 'axes[0].set_position(' in _a112a
+      and 'lines[0].set_linewidth(' in _a112a,
+      'block_has_title=%s has_pos=%s has_lines=%s'
+      % ('title.set_fontsize' in _a112a, 'set_position(' in _a112a,
+         'set_linewidth(' in _a112a))
+_d112b, _s112b, _p112b, _a112b = _s112_run(
+    _S112_NAMED, {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                  'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.775, 0.77],
+                            'title_fontsize': 15.0}]})
+check('§112② 有变量名的单轴（`fig, ax = plt.subplots()`）：块里不再有 '
+      '`ax.title.set_fontsize`（名字来自解包，旧实现证不出等值）',
+      "ax.set_title('A', fontsize=15)" in _a112b
+      and 'auto layout' in _a112b and 'ax.title.set_fontsize' not in _a112b
+      and 'ax.set_position(' in _a112b,
+      'block_has_title=%s has_pos=%s'
+      % ('ax.title.set_fontsize' in _a112b, 'set_position(' in _a112b))
+_r112b2 = writeback.writeback(_s112b, _params.load(_p112b), _p112b,
+                              verify=False, style='block')
+check('§112③ 幂等：块去冗余后再跑一次 ⇒ 0 字节变化、不再改（块自检不谎报）',
+      read(_s112b) == _a112b and _r112b2.get('applied') is not True,
+      'applied=%r reason=%r' % (_r112b2.get('applied'), _r112b2.get('reason')))
+shutil.rmtree(_d112a, ignore_errors=True)
+shutil.rmtree(_d112b, ignore_errors=True)
+# §112④【有牙】把 F6 的两条判据各自换回"恒不可用"（= 修前行为）⇒ 冗余行必须回来
+_o_pyplot_eq, _o_text_name = writeback._pyplot_text_equal, writeback._text_axis_name
+try:
+    writeback._pyplot_text_equal = lambda *a, **k: False
+    writeback._text_axis_name = lambda *a, **k: None
+    _d, _s, _p, _a = _s112_run(
+        _S112_PURE, {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                     'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.775, 0.77],
+                               'title_fontsize': 14.0}]})
+    _a_pure = _a
+    shutil.rmtree(_d, ignore_errors=True)
+    _d, _s, _p, _a = _s112_run(
+        _S112_NAMED, {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                      'n_figs': 1,
+                      'axes': [{'index': 0, 'pos': [0.125, 0.11, 0.775, 0.77],
+                                'title_fontsize': 15.0}]})
+    _a_named = _a
+    shutil.rmtree(_d, ignore_errors=True)
+    check('§112④【有牙】两条判据都换回恒 False ⇒ 冗余行立刻回来'
+          '（`title.set_fontsize` / `ax.title.set_fontsize` 重新出现在块里）',
+          'title.set_fontsize' in _a_pure
+          and 'ax.title.set_fontsize' in _a_named,
+          'pure_dup=%s named_dup=%s'
+          % ('title.set_fontsize' in _a_pure, 'ax.title.set_fontsize' in _a_named))
+finally:
+    writeback._pyplot_text_equal = _o_pyplot_eq
+    writeback._text_axis_name = _o_text_name
 
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 sys.exit(1 if fail else 0)

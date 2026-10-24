@@ -765,18 +765,45 @@ def main(argv=None):
                     help=_msg.t_ui('不开窗，只验证能抓图并存参数'))
     ap.add_argument('--verbose', action='store_true',
                     help=_msg.t_ui('打印全部交互日志（缩放开始 axN <手柄> 等），排查用'))
+    # 0.1.15（N3）：launch 过去**完全没有** --json —— 开窗这条路的失败（后端不可用 /
+    # 脚本自己报错 / 没留下图）只能从 stderr 的中文行里猜。这里只补**失败**出口：
+    # 成功路径照旧开窗、不产 JSON（开窗是长时间交互，机器格式在那条路上没有意义）。
+    # 注意：这会吃掉原本透传给你脚本的 `--json`；要透传请写 `mpltweak launch x.py -- --json`。
+    ap.add_argument('--json', action='store_true',
+                    help=_msg.t_ui('失败时往 stdout 打一条机器可读 JSON'
+                         '（成功路径不开窗以外的输出不受影响；要透传给脚本用 --）'))
     args, passthrough = ap.parse_known_args(argv)
+
+    def _json_fail(stage, error_code, error, next_step, rc):
+        """失败出口（0.1.15 / N3）：`--json` 时把结论打成**一条**可解析 JSON，再返回同一 rc。
+
+        三条不变：① 退出码口径一个字不改（JSON 只是把已写在 stderr 的那句话说成机器可读的）；
+        ② `error` 恒英文纯 ASCII（这是机器通道，与 apply 的 t_en 口径一致）；
+        ③ `next_step` 是**建议不是保证** —— 按"这条失败最常见的成因"给，工具不保证它一定
+        跑得通（docs/agent.md 的 stage 对照表里写清了这层语义）。
+        """
+        if args.json:
+            _msg.emit_json({'ok': False, 'error_code': error_code,
+                            'stage': stage, 'error': error,
+                            'next_step': next_step})
+        return rc
 
     if args.doctor:
         return doctor()
     if not args.script:
         sys.stderr.write(_msg.t_ui('[launch] 需要脚本路径，或用 --doctor 做环境自检\n'))
-        return messages.EXIT_USAGE
+        return _json_fail('params', 'no_script',
+                          'launch needs a script path (or --doctor)',
+                          'mpltweak launch --doctor', messages.EXIT_USAGE)
 
     script = os.path.abspath(args.script)
     if not os.path.exists(script):
         sys.stderr.write(_msg.t_ui('[launch] 找不到脚本: %s\n') % script)
-        return messages.EXIT_USAGE
+        return _json_fail('params', 'file_not_found',
+                          'script not found: %s' % script,
+                          'point it at an existing .py file, then: '
+                          'mpltweak launch %s' % _msg.shell_path(script),
+                          messages.EXIT_USAGE)
 
     # ==== §7.1 开窗前的提示：布局引擎冲突与可重跑预检 ====
     # 布局引擎冲突（constrained_layout / figure.autolayout）必须**在开窗之前**提示：
@@ -816,7 +843,11 @@ def main(argv=None):
         # 'launch_backend_missing'，中英齐备）—— 说全后果：脚本没跑、盘上没动；
         # 再给两条可照抄的下一步（装后端 / 只走 CLI）。
         sys.stderr.write(_backend_missing_msg(backend_err) + '\n')
-        return 4
+        return _json_fail('preflight', 'no_backend',
+                          'no interactive backend: Qt and Tk both failed to '
+                          'create a canvas',
+                          'pip install pyqt5, then: mpltweak launch %s'
+                          % _msg.shell_path(script), 4)
     # P0-1 方案 B：PyQt5 不在 → Tk 开窗。这里在真正开窗前打一句人话（stderr），
     # 绝不污染 stdout（--json / MCP 的机器可读输出仍干净）。
     _emit_backend_hint(backend_name, dry_run=args.dry_run)
@@ -854,14 +885,20 @@ def main(argv=None):
         runpy.run_path(script, run_name='__main__')
     except SystemExit:
         pass
-    except Exception:
+    except Exception as e:
         plt.show = real_show
         matplotlib.use = real_use
         plt.switch_backend = real_switch
         os.chdir(old_cwd)
         traceback.print_exc()
         sys.stderr.write(_msg.t_ui('[launch] 用户脚本执行出错，已中止\n'))
-        return messages.EXIT_USAGE
+        # stage='writeback'：launch 的"写回"就是**执行你的脚本**这一步（apply 那边
+        # 对应 AST 写回）。跑不起来 ⇒ 下一步是脱离工具直接跑一遍，拿完整报错。
+        return _json_fail('writeback', 'script_failed',
+                          'the script raised %s: %s'
+                          % (type(e).__name__, e),
+                          'run it directly to see the full traceback: python %s'
+                          % _msg.shell_path(script), messages.EXIT_USAGE)
     finally:
         plt.show = real_show
         matplotlib.use = real_use
@@ -881,7 +918,12 @@ def main(argv=None):
     if not nums:
         os.chdir(old_cwd)
         sys.stderr.write(_msg.t_ui('[launch] 脚本没有留下可交互的图（可能已 close 或只存盘）\n'))
-        return 2
+        return _json_fail('writeback', 'no_figures',
+                          'the script left no interactive figure (closed or '
+                          'save-only)',
+                          'make sure the script creates a figure and leaves it '
+                          'open, then: mpltweak launch %s'
+                          % _msg.shell_path(script), 2)
     # 兜底：脚本若通过别的途径（如 `from matplotlib import use` 的引用、
     # 或某个库在 import 时切后端）把后端弄成非交互，就把已有图**重新挂回 Qt**——
     # switch_backend 会保留 figure 对象、只换 canvas，图内容不丢。
@@ -899,12 +941,23 @@ def main(argv=None):
         os.chdir(old_cwd)
         sys.stderr.write(_msg.t_ui('[launch] 后端仍是非交互（%s），窗口无法显示。\n') % be)
         sys.stderr.write(_msg.t_ui('[launch] 请临时注释脚本里的 matplotlib.use(...) 那行再试。\n'))
-        return 2
+        # stage='finalize'：脚本跑通了、图也有了，**收尾**时后端仍不满足交互。
+        return _json_fail('finalize', 'backend_not_interactive',
+                          'the backend is non-interactive after the script ran: '
+                          '%s' % be,
+                          'comment out matplotlib.use(...) / '
+                          'plt.switch_backend(...) in the script, then: '
+                          'mpltweak launch %s' % _msg.shell_path(script), 2)
     if args.fig >= 0:
         if args.fig >= len(nums):
             sys.stderr.write(_msg.t_ui('[launch] 只有 %d 张图，取不到第 %d 张\n')
                              % (len(nums), args.fig))
-            return 2
+            # stage='params'：这是**你给的** --fig 越界（脚本与图都没问题）。
+            return _json_fail('params', 'fig_out_of_range',
+                              'only %d figure(s); --fig %d is out of range'
+                              % (len(nums), args.fig),
+                              'drop --fig (defaults to the last figure): '
+                              'mpltweak launch %s' % _msg.shell_path(script), 2)
         targets = [args.fig]
     else:
         targets = list(range(len(nums)))       # 默认：每张图都可交互
@@ -1220,6 +1273,6 @@ if __name__ == '__main__':
 # §6 doctor 结论与 doctor 子命令（行 655-749，2 个顶层函数）
 #     _doctor_verdict                                657
 #     doctor                                         678
-# §7 主流程：main（开窗调图）（行 750-1187，1 个顶层函数）
+# §7 主流程：main（开窗调图）（行 750-1240，1 个顶层函数）
 #     main                                           752
 # --- END AUTO NAV ---

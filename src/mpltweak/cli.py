@@ -27,6 +27,7 @@ def _usage(out):
         '用法：\n'
         '  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n'
         '  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n'
+        '  mpltweak --version                              打印版本号后退出（rc=0）\n'
         '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
         '  mpltweak revert <script.py> [--write]           回退到上次写回之前\n'
         '  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n'
@@ -76,6 +77,16 @@ def _schema_command(argv):
     return schema_main(argv)
 
 
+def _version_text():
+    """``mpltweak --version`` 的一行输出（只报版本号，不给别的废话）。
+
+    为什么单独一条：过去 ``mpltweak --version`` 落到"默认 = launch"分支，被当成
+    **脚本路径** ⇒ "找不到脚本: ...\--version" + rc=2（agent 打包/自检时最先踩的坑）。
+    """
+    from . import __version__
+    return 'mpltweak %s' % __version__
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -84,6 +95,11 @@ def main(argv=None):
     cmd = argv[0]
     if cmd in ('-h', '--help', 'help'):
         _usage(sys.stdout)
+        return 0
+    if cmd in ('-V', '--version'):
+        # 只认**第一个**位置参数：`mpltweak fig.py --version` 是用户脚本自己的参数，
+        # 由默认分支透传给 launch（脚本的参数我们不许抢）。
+        sys.stdout.write(_version_text() + '\n')
         return 0
     if cmd == 'apply':
         from .apply import main as apply_main

@@ -30,7 +30,7 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 ```bash
 mpltweak doctor
 ```
-> 自检一律用 `mpltweak doctor`。**没有 `mpltweak --version` 这个命令** —— 传 `--version` 会被当成"要开窗"，反而报脚本路径缺失。
+> 自检一律用 `mpltweak doctor`。**查版本用 `mpltweak --version`（`-V` 同义，0.1.15 起）**：打印一行 `mpltweak <版本号>`、退出码 0。它只认命令行**第一个**位置参数 —— `mpltweak x.py --version` 仍是老规矩（`--version` 原样透传给你脚本的 `sys.argv`），别指望那样查版本。
 > Windows 上若 `doctor` 的中文在 PowerShell 里显示成乱码：doctor 的输出是**显式 UTF-8**，重定向一下再读即可 —— `mpltweak doctor > doctor.txt` 然后 `Get-Content -Encoding UTF8 doctor.txt`（或先 `chcp 65001`）。
 
 **⚠️ `pip install` 之后命令还是"不存在"？** Windows + conda 很常见：包装好了，但 `Scripts` 目录不在 PATH
@@ -96,16 +96,17 @@ mpltweak doctor
 | `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr） |
 | `mpltweak revert <脚本.py>` | **预览回退**：打印会改回什么，**一个字节都不动** |
 | `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**备份里的字节**（默认用固定名 `.tweak.bak`；它**首份优先** ⇒ 回到它建立那一刻、通常就是你第一次改这张图之前的原件；**固定名缺失但还有 pid 副本时自动退回最早那份**，`rc=0`、逐字节回到最初，`--json` 用 `fallback: "no_fixed_backup_used_oldest_pid"` 标明；两处都没有才 `rc=2` / `no_backup`）；`--first` 回到**最早**那次写回前（读最早一份 pid 副本） |
-| `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，包装本身不能直接喂回 `apply --params`；但 **0.1.14 起会顺手按每图写好 `<stem>.fig<k>.json`**，那个能喂，见「口径与默认值」）；`-o 文件` 写文件；`--compact` 紧凑 |
+| `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，包装本身不能直接喂回 `apply --params`；但 **0.1.14 起会顺手按每图写好 `<stem>.fig<k>.json`**，那个能喂，见「口径与默认值」）；`-o 文件` **只落盘、不打印 JSON**（stdout 为空，屏幕上只有一句「已写入 …」走 stderr）；`--compact` 紧凑 |
 | `mpltweak check <脚本.py>` | **排版体检**：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠。`--json` 机器可读，退出码 1 = 有问题 |
 | `mpltweak check <脚本.py> --static` | 只做 AST 解析 + 布局引擎冲突扫描，**不执行脚本**（脚本有副作用 / CI 里先查一眼时用；代价是不量真实渲染尺寸，`--static` 通过 ≠ 图没问题） |
 | `mpltweak schema` | 参数文件的 JSON Schema（draft-07），校验你自己生成的参数 |
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
 | `mpltweak doctor` | 环境自检（后端 / Qt 绑定 / matplotlib 版本） |
+| `mpltweak --version` | 打印一行版本号（`-V` 同义，`rc=0`）；只认第一个位置参数，`mpltweak x.py --version` 会透传 |
 
 其他选项（**按子命令分列 —— 选项不是全局通用的**）：
 - **`apply`**：`--timeout 秒`（**默认 300**，就是它在子进程里重跑脚本做验证的等待上限；脚本很慢就调大）、`--python 解释器`、`--style auto|inplace|block`、`--force`、`--snippet`、`--json`、`--dry-run`、`--all-figs`、`--keep-unverified`、`--no-verify` / `--no-semantic` / `--verify-fast`、`--strict` / `--allow-layout-conflict`、`-v`。
-- **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`。
+- **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`、**`--json`（0.1.15 起，只覆盖失败出口）** —— 成功路径照旧开窗、不产出 JSON；失败时 stdout 只有一条 JSON（`ok=false` + `error_code` + `stage` + `error` + `next_step`），退出码口径不变。**副作用**：这个开关会吃掉原本要透传给你脚本的 `--json`，要透传请写 `mpltweak launch x.py -- --json`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
 - **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `doctor` **不接受**（`rc=2`：`unrecognized arguments`；实测源码里只有三处注册（复核：`grep -n "'--lang'" src/mpltweak/*.py` ⇒ `apply.py` / `describe.py` / `check.py` 各一处；`cli.py` 里那处是过滤、不是注册））。**`launch`（含顶层 `mpltweak <脚本>`）是最坑的一条：它用 `parse_known_args`，`--lang en` 不会报错、也不会切语言，而是被当成"你脚本自己的参数"原样塞进脚本的 `sys.argv`** ⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`。
@@ -244,6 +245,12 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 ## 写回失败 / 半成功时怎么读结果
 
 `apply --json` 的 `files[]` 里有几个字段决定"这次到底算不算成功"——**别只看 `ok`**：
+
+- **`stage` / `next_step`**（0.1.15 起，**顶层**，只在失败/降级时出现）：`stage` 说失败卡在哪一步
+  （`params` 参数本身 / `preflight` 动手前检查 / `backup` 备份与留档 / `writeback` 真正动文件 /
+  `verify` 写回后验证 / `finalize` 收尾）；`next_step` 给一句可直接照着做的下一步。**它们是建议不是
+  保证**（脚本自己有语法错时 `--force` 也救不回来）；**判定结果仍只看 `ok` / `error_code` / 退出码**。
+  成功载荷**没有**这两个键，`files[]` 条目里也没有 `stage`（逐文件原因照旧看 `files[].reason`）。
 
 - **`layers = {syntax, rerun, semantic}`**：三层各自"跑没跑"。`true` = 跑了，`null` / 缺键 = **没跑**。
   **只有 `semantic: true` 才算"布局真的落到目标图上"**；`verified: null` 表示**语义层没跑**（取不到图

@@ -180,7 +180,12 @@ hand-written, only the line numbers come from the tool.
 ### CI coverage: one list per leg, and a check that no suite falls through
 
 A **leg** is one cell of the workflow matrix (`ubuntu-latest` / `windows-latest` × Python
-3.9 / 3.10 / 3.11 / 3.12 = 8 legs), and the legs do **not** all run the same list of suites:
+3.9 / 3.10 / 3.11 / 3.12 = 8 legs), and the legs do **not** all run the same list of suites.
+The split is deliberate — **3.9 is the key leg** (minimum supported interpreter, so it is the one
+that must carry evidence for the write-back/CLI surfaces), and **3.10 / 3.11 are interpreter
+sentinels** (a small list is enough there: they only have to prove the package imports, the CLI
+starts and the core flows run on that interpreter — they are not a regression net, and their short
+list is not a gap):
 
 - the plain-script loop runs the **seven legacy suites** on all 8 legs;
 - the 3.12 legs additionally run `pytest -q`, i.e. **every suite in `SUITES`** plus the hygiene
@@ -189,9 +194,17 @@ A **leg** is one cell of the workflow matrix (`ubuntu-latest` / `windows-latest`
   `test_cli_output` is pytest-function-style, so the bare `pytest -q` route above does not collect it
   (`python_files` pins only the two wrappers). Cost: +13–14 s, on the two 3.12 legs only;
 - the 3.9 legs additionally run the fast smoke (`-k "docs or notation_discipline or
-  tmpdir_discipline"`).
+  tmpdir_discipline or msg_key_audit or cli_fuzz or verify_onepass or sandbox or
+  apply_layout_conflict"`): the three document-class suites, plus — since 0.1.15 — five
+  CLI/write-back suites, so "the minimum supported interpreter can actually write back" has
+  evidence. All eight are subprocess-only, window-free and need no new dependency; measured on
+  Python 3.9.25 + matplotlib 3.9.4: 3.0 / 4.3 / 10.3 / 12.0 / 29.0 s (whole `-k` run: 10 passed,
+  65 s), i.e. **+~59 s on each 3.9 leg only**. Deliberately still *not* on 3.9: `test_figure_matrix`
+  (N=100 would cost 260–350 s on CI), `test_journey_wheel` (the one suite with no green 3.9
+  evidence — it fails locally for an unrelated non-editable-install reason), `test_gui_smoke`
+  (~100 MB of PyQt5; 3.12 only) and `test_suites` (the wrapper that runs the whole table).
 
-So of the 26 `tests/test_*.py` files, **24 are named by at least one leg**; the other two are
+So of the 28 `tests/test_*.py` files, **26 are named by at least one leg**; the other two are
 `SUITES_EXCLUDED` (`test_real_window`, `test_corpus_invariants`).
 
 Coverage is therefore *assigned*, not automatic — a new suite can be silently on no leg at all
@@ -233,11 +246,12 @@ Two rules come with it:
    the checker green.
 
 **Still a known gap (kept as a TODO, not hidden): the check is "at least one leg", not "every leg".**
-The plain-script loop still runs only the seven legacy suites, so everything added after 0.1.9 is
-exercised on 3.12 only. Closing that means adding those suites to the loop or dropping the 3.12-only
-guard — a release-pipeline change that multiplies CI time, so it is recorded here rather than changed
+The plain-script loop still runs only the seven legacy suites on every leg, so everything added
+after 0.1.9 is exercised on 3.12 only — **except** the eight suites the 3.9 smoke picks up.
+Closing that means adding those suites to the loop or dropping the 3.12-only guard — a
+release-pipeline change that multiplies CI time, so it is recorded here rather than changed
 silently. `python tools/ci_suite_coverage.py -v` prints the histogram; today it reads
-"8 legs: 7 / 4 legs: 3 / 2 legs: 14" (the 3.9 legs carry 10 suites, the 3.12 legs carry all 24).
+"8 legs: 7 / 4 legs: 8 / 2 legs: 11" (the 3.9 legs carry 15 suites, the 3.12 legs carry all 26).
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose

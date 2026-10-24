@@ -56,6 +56,8 @@ pip install mpltweak            # 核心：describe / check / apply（mcp 是可
 pip install "mpltweak[qt]"      # 要开窗拖图再加这个（装 PyQt5 图形后端）
 ```
 
+装好想知道是哪一版：**`mpltweak --version`**（`-V` 同义）—— 打印一行版本号、退出码 0。
+
 第二条是为**开窗**装的：开窗需要一个图形后端（白话：让图能显示在一个可拖动窗口里的那套组件，推荐 PyQt5，约 +150MB）。只跑命令行（`describe` / `check` / `apply`）不用装。Windows / macOS 的官方 Python 自带 `tkinter`，所以只装 `mpltweak` 一般也能开窗，此时用的是 **Tk 后端（交互弱化版）**，不是安装失败、也不是没装好；一个图形后端都没有时开窗 `rc=4`（退出码 4，意思是"这台机器现在没有能画窗口的组件"）并给出该装哪个的提示。
 
 > 后端对照表、各平台装法、`mpltweak doctor` 探测顺序与开窗失败逐条处理 —— [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。

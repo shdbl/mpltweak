@@ -156,9 +156,14 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     script = os.path.abspath(args.script)
+    _revert_cmd = 'mpltweak revert %s --write' % _msg.shell_path(script)
     if not os.path.exists(script):
         if args.json:
-            _msg.fail_json('file_not_found', 'script not found: %s' % script)
+            _msg.fail_json('file_not_found', 'script not found: %s' % script,
+                           stage='params',
+                           next_step=('point it at an existing .py file, then: '
+                                      'mpltweak revert %s'
+                                      % _msg.shell_path(script)))
         sys.stderr.write(_msg.t_ui('[revert] 找不到脚本: %s\n') % script)
         return 2
     params_path = params.params_path(script, args.params)
@@ -180,7 +185,10 @@ def main(argv=None) -> int:
                   '请去掉 --first。')
                   % _d)
             if args.json:
-                _msg.fail_json('no_first_backup', _m)
+                _msg.fail_json('no_first_backup', _m, stage='backup',
+                               # 建议就是"别用 --first"：默认回退用固定名备份，
+                               # 它首份优先 → 通常也是你第一次改这张图之前的原件。
+                               next_step=_revert_cmd)
             sys.stderr.write(_msg.t_ui('[revert] %s\n') % _m)
             return 2
         backup = _first
@@ -224,7 +232,10 @@ def main(argv=None) -> int:
                '备份是写回时留下的写回前原文。')
                % (_dir, os.path.basename(_fixed)))
         if args.json:
-            _msg.fail_json('no_backup', msg)
+            _msg.fail_json('no_backup', msg, stage='backup',
+                           # 备份是"写回时留下的写回前原文" ⇒ 先做一次写回才有得退回。
+                           next_step='mpltweak apply %s --write'
+                                     % _msg.shell_path(script))
         sys.stderr.write(_msg.t_ui('[revert] %s\n') % msg)
         return 2
 
@@ -288,13 +299,15 @@ def main(argv=None) -> int:
         lock = writeback.script_lock(script)
         lock.__enter__()
     except RuntimeError as e:
-        payload.update({'ok': False, 'error': str(e)})
+        payload.update({'ok': False, 'error': str(e), 'stage': 'backup',
+                        'next_step': _revert_cmd})
         if args.json:
             _msg.emit_json(payload)
         sys.stderr.write(_msg.t_ui('[revert] 拿不到写回锁：%s\n') % e)
         return 1
     except Exception as e:                                  # noqa: BLE001
-        payload.update({'ok': False, 'error': str(e)})
+        payload.update({'ok': False, 'error': str(e), 'stage': 'backup',
+                        'next_step': _revert_cmd})
         if args.json:
             _msg.emit_json(payload)
         sys.stderr.write(_msg.t_ui('[revert] 拿不到写回锁：%s\n') % e)
@@ -304,7 +317,10 @@ def main(argv=None) -> int:
         try:
             _atomic_restore(script, backup)
         except OSError as e:
-            payload.update({'ok': False, 'error': '写文件失败: %s' % e})
+            payload.update({'ok': False, 'error': '写文件失败: %s' % e,
+                            # 写盘这一步没成（原文件未改动）：多半是占用/权限，原命令重试
+                            'stage': 'writeback',
+                            'next_step': _revert_cmd})
             if args.json:
                 _msg.emit_json(payload)
             sys.stderr.write(_msg.t_ui('[revert] 写文件失败: %s（原文件未改动）\n') % e)

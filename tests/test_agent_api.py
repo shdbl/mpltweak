@@ -1903,6 +1903,160 @@ print("RESULT " + "|".join([
     finally:
         shutil.rmtree(_tmp24, ignore_errors=True)
 
+    print('§25 N3：失败时告诉 agent「哪一步没成」+ 一句可复制的下一步')
+    # 背景（0.1.15 N3，用户 2026-10-24 批准）：0.1.14 让"想写却零改动"不再假成功
+    # （ok=false + error_code=nothing_applied），但失败时 agent 仍不知道下一步做什么。
+    # 这里钉两个**只加不改**的顶层键：
+    #   * stage     —— 值域见 messages.STAGES（文档化，机器分支用）；
+    #   * next_step —— 一句可复制的命令（**建议不是保证**，docs/agent.md 写清）。
+    # 口径：成功载荷**没有**这两个键；files[] 条目也不新增 stage；rc 与既有字段一字不变。
+    import time as _t25
+    from mpltweak import messages as _msg25
+    _tmp25 = tempfile.mkdtemp(prefix='mpltweak_n3_')
+    _env25 = dict(os.environ)
+    _env25['PYTHONPATH'] = os.path.join(ROOT, 'src')
+    _move25 = ('{"version": %d, "fig_index": 0, "figsize_in": [6.0, 4.0], '
+               '"axes": [{"index": 0, "pos": [0.2, 0.2, 0.5, 0.5], '
+               '"xscale": "linear", "yscale": "linear", "grid": false, '
+               '"spines": {}, "cell": null}]}' % _params.SCHEMA_VERSION)
+    _head25 = ("import matplotlib\nmatplotlib.use('Agg')\n"
+               "import matplotlib.pyplot as plt\n"
+               "fig = plt.figure(figsize=(6, 4))\n"
+               "ax = fig.add_axes([0.10, 0.10, 0.40, 0.40])\n"
+               "ax.plot([1, 2, 3])\n")
+    _seen25 = set()
+
+    def _mk25(name, body, params=None):
+        p = os.path.join(_tmp25, name)
+        with open(p, 'w', encoding='utf-8', newline='') as f:
+            f.write(body)
+        if params is not None:
+            d = os.path.join(_tmp25, '.tweak_params')
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, name[:-3] + '.json'), 'w',
+                      encoding='utf-8') as f:
+                f.write(params)
+        return p
+
+    def _json25(args):
+        """跑一次 CLI，返回 (rc, 载荷, 原始 stdout)。载荷解不开就给 {}。"""
+        _rc25, _o25, _e25 = run(*args, cwd=_tmp25, env=_env25)
+        try:
+            _d25 = json.loads(_o25)
+        except Exception:                                       # noqa: BLE001
+            _d25 = {}
+        if _d25.get('stage'):
+            _seen25.add(_d25['stage'])
+        return _rc25, _d25, _o25
+
+    try:
+        # ① 入口参数：脚本不存在（apply / revert / launch 三条同族 → stage=params）
+        _rc, _d, _o = _json25(('apply', 'nope25.py', '--json'))
+        check(_rc == 2 and _d.get('error_code') == 'file_not_found'
+              and _d.get('stage') == 'params'
+              and (_d.get('next_step') or '').startswith(
+                  'point it at an existing .py file, then: mpltweak apply'),
+              '§25① apply 找不到脚本：stage=params + next_step 是可复制命令（rc=2 不变）',
+              (_rc, _d.get('stage'), _d.get('next_step')))
+        check(bool(_d.get('next_step'))
+              and all(ord(_c) < 128 for _c in _d['next_step']),
+              '§25① next_step 走机器通道 → 纯 ASCII（与 t_en / error_code 同口径）',
+              repr(_d.get('next_step'))[:90])
+
+        # ② 成功载荷**没有**新键（只加不改：键集与语义一字不变）
+        _s25ok = _mk25('ok25.py', _head25 + "fig.savefig('o.png')\n", _move25)
+        _rc, _d, _o = _json25(('apply', _s25ok, '--write', '--json',
+                               '--style', 'inplace'))
+        check(_rc == 0 and _d.get('ok') is True and 'stage' not in _d
+              and 'next_step' not in _d,
+              '§25② 成功载荷没有 stage / next_step（新字段只在失败路径出现）',
+              (_rc, sorted(_d)[:8]))
+
+        # ③ 图建在**函数体里**（运行时才有轴、静态证不出变量名）：一处也落不下去 →
+        #    stage=writeback + next_step 指向手动片段。注意别用"隐式建图"当夹具：
+        #    0.1.15 的 N1 起那一档已经能写回（`plt.plot` 全文件恰好一张图即可证），
+        #    拿它当"零改动"样例会随实现变化而假红。
+        _s25imp = _mk25('zerowrite25.py',
+                        "import matplotlib\nmatplotlib.use('Agg')\n"
+                        "import matplotlib.pyplot as plt\n"
+                        "def draw():\n"
+                        "    plt.plot([1, 2, 3])\n"
+                        "draw()\n"
+                        "plt.savefig('o.png')\n", _move25)
+        _rc, _d, _o = _json25(('apply', _s25imp, '--write', '--json'))
+        check(_rc == 1 and _d.get('error_code') == 'nothing_applied'
+              and _d.get('stage') == 'writeback'
+              and (_d.get('next_step') or '').endswith('--snippet'),
+              '§25③ 零改动：stage=writeback + next_step=mpltweak apply ... --snippet',
+              (_rc, _d.get('stage'), _d.get('next_step')))
+
+        # ④ 写回成功但**重跑验证**失败：stage=verify（病因在脚本，不在写回）
+        _s25arg = _mk25('needargs25.py',
+                        _head25 + "data = sys.argv[1]\nfig.savefig('o.png')\n",
+                        _move25)
+        _rc, _d, _o = _json25(('apply', _s25arg, '--write', '--json'))
+        check(_rc == 1 and _d.get('stage') == 'verify'
+              and '<your args...>' in (_d.get('next_step') or ''),
+              '§25④ 重跑失败 → stage=verify + next_step 带 `-- <your args...>`',
+              (_rc, _d.get('stage'), _d.get('next_step')))
+        check('stage' not in (_d.get('files') or [{}])[0],
+              '§25④ files[] 条目不新增 stage（新键只在顶层）',
+              sorted((_d.get('files') or [{}])[0])[-4:])
+
+        # ⑤ 脚本在参数保存后被改过（拒写）：stage=preflight + next_step 带 --force
+        _s25st = _mk25('stale25.py', _head25 + "fig.savefig('o.png')\n", _move25)
+        _fut25 = _t25.time() + 5
+        os.utime(_s25st, (_fut25, _fut25))
+        _rc, _d, _o = _json25(('apply', _s25st, '--write', '--json'))
+        check(_rc == 1 and _d.get('error_code') == 'stale_params'
+              and _d.get('stage') == 'preflight'
+              and '--force' in (_d.get('next_step') or ''),
+              '§25⑤ 脚本比参数新：stage=preflight + next_step 带 --force',
+              (_rc, _d.get('stage'), _d.get('next_step')))
+
+        # ⑥ revert：从没写回过的脚本（没有备份）→ stage=backup
+        _s25rv = _mk25('revert25.py', _head25 + "fig.savefig('o.png')\n")
+        _rc, _d, _o = _json25(('revert', _s25rv, '--json'))
+        check(_rc == 2 and _d.get('error_code') == 'no_backup'
+              and _d.get('stage') == 'backup'
+              and (_d.get('next_step') or '').startswith('mpltweak apply'),
+              '§25⑥ revert 无备份：stage=backup + next_step 指向先做一次写回',
+              (_rc, _d.get('stage'), _d.get('next_step')))
+
+        # ⑦ revert 找不到脚本：与 apply 同口径（stage=params）
+        _rc, _d, _o = _json25(('revert', 'nope25.py', '--json'))
+        check(_rc == 2 and _d.get('error_code') == 'file_not_found'
+              and _d.get('stage') == 'params',
+              '§25⑦ revert 找不到脚本：stage=params（三条命令同口径）',
+              (_rc, _d.get('stage')))
+
+        # ⑧ launch 的失败分支（0.1.15 之前 launch 完全没有 --json）
+        _s25boom = _mk25('boom25.py', _head25 + "import t11_gone_pkg\n")
+        _rc, _d, _o = _json25(('launch', _s25boom, '--json'))
+        if _rc == 4:
+            # headless 机器走不到"跑脚本"那一步：无后端本身也是一条失败出口
+            check(_d.get('error_code') == 'no_backend'
+                  and _d.get('stage') == 'preflight',
+                  '§25⑧ launch 无交互后端：stage=preflight + error_code=no_backend',
+                  (_rc, _d.get('stage'), _d.get('error_code')))
+        else:
+            check(_rc == 2 and _d.get('error_code') == 'script_failed'
+                  and _d.get('stage') == 'writeback'
+                  and 'python' in (_d.get('next_step') or ''),
+                  '§25⑧ launch 脚本自己报错：stage=writeback + next_step=直接跑脚本',
+                  (_rc, _d.get('stage'), _d.get('next_step')))
+
+        # ⑨ launch 找不到脚本 + ⑩ stage 值域封闭
+        _rc, _d, _o = _json25(('launch', 'nope25.py', '--json'))
+        check(_rc == 2 and _d.get('error_code') == 'file_not_found'
+              and _d.get('stage') == 'params',
+              '§25⑨ launch 找不到脚本：stage=params', (_rc, _d.get('stage')))
+        check(bool(_seen25) and _seen25 <= set(_msg25.STAGES),
+              '§25⑩ 出现过的 stage 全部落在 messages.STAGES 值域内（文档化的那一组）',
+              (sorted(_seen25), _msg25.STAGES))
+    finally:
+        shutil.rmtree(_tmp25, ignore_errors=True)
+
     print()
     if _fails:
         print('FAILED: %d 项 -> %s' % (len(_fails), _fails))
@@ -1912,7 +2066,7 @@ print("RESULT " + "|".join([
 
 
 def test_agent_api_suite():
-    """pytest 入口：本文件是**脚本式套件**（§1 … §24 全在 ``main()`` 里）。
+    """pytest 入口：本文件是**脚本式套件**（§1 … §25 全在 ``main()`` 里）。
 
     为什么需要这一行：``python -m pytest -q tests/test_agent_api.py`` 对本文件
     **一个用例都收集不到**（rc=5 "no tests ran"），于是 CI 里跑 ``pytest tests/``

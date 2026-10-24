@@ -131,9 +131,25 @@ _TWO = textwrap.dedent('''\
     f1.savefig('o1.png')
 ''')
 
-# J1（0.1.14）：**隐式建图**（`plt.*` 全局态）—— 引擎保守拒写（fail-closed）；
-# 旧版给的是 `ok=true / rc=0 / applied=false`，但盘上一个字节没动。
+# J1（0.1.14）：零改动夹具。0.1.15 起夹具必须换形态：**单图纯 `plt.*` 已经可写回**
+# （N1：全文件没有一行显式建图 ⇒ `plt.gcf()` 可证），拿它当"保守拒写"夹具已经失效。
+# 这里改用**仍然**证不出目标的形态：图在**函数体**里建 ⇒ 建轴/绘图调用不在模块层直
+# 线执行一次，隐式建图那档 fail-closed（实测 `nothing_applied` / rc=1 / 零改动）。
 _IMPLICIT = textwrap.dedent('''\
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    def draw():
+        plt.plot([0, 1], [0, 1])
+        plt.title('implicit in a function')
+
+    draw()
+    plt.savefig('o.png')
+''')
+
+# 0.1.15 / N1：老夹具原样留着当**新能力**的正面用例（单图 + 满篇 `plt.*`）。
+_IMPLICIT_PURE = textwrap.dedent('''\
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -629,6 +645,35 @@ def test_zero_change_is_not_reported_as_success(work):
     assert payload.get('ok') is False, '不许再报 ok=true：%r' % payload.get('ok')
     assert payload.get('error_code') == 'nothing_applied', payload.get('error_code')
     assert '未被改动' in err or 'NOT modified' in err, err[-300:]
+
+
+def test_implicit_single_figure_is_writable(work):
+    """N1（0.1.15）：只建一张图、满篇 `plt.*`（**没有一行显式建图**）⇒ 现在可证写回。
+
+    修前：`_block_targets` 证不出目标（`fig_call is None` ⇒ `plt.gcf()` 不可证）⇒ 全拒、
+    `nothing_applied`（这就是 J1 老夹具的形态）。修后：全文件恰好一张图、没有 close、
+    没有额外建轴、那些调用都在模块层直线执行 ⇒ `plt.gcf()` 就是它 ⇒ 块里落
+    `plt.gcf().axes[0].set_position(`，而且块注释如实写"没有显式建图调用"。
+    """
+    _write(os.path.join(work, 'imp1.py'), _IMPLICIT_PURE)
+    rc, out, err = _run(work, 'describe', 'imp1.py', '-o', 'imp1.json')
+    assert rc == 0, (rc, out[-300:], err[-300:])
+    with open(os.path.join(work, 'imp1.json'), encoding='utf-8') as f:
+        d = json.load(f)
+    d['axes'][0]['pos'] = [0.2, 0.2, 0.6, 0.6]
+    with open(os.path.join(work, 'imp1.json'), 'w', encoding='utf-8',
+              newline='\n') as f:
+        json.dump(d, f, ensure_ascii=False)
+    rc, out, err = _run(work, 'apply', 'imp1.py', '--params', 'imp1.json',
+                        '--write', '--json')
+    payload = json.loads(out)
+    entry = payload['files'][0]
+    with open(os.path.join(work, 'imp1.py'), encoding='utf-8') as f:
+        src = f.read()
+    assert rc == 0 and payload.get('ok') is True, (rc, out[-400:], err[-400:])
+    assert entry.get('applied') is True, entry
+    assert 'plt.gcf().axes[0].set_position(' in src, src[-500:]
+    assert '# 目标定位（SFA' in src, '块注释必须说"隐式建图"，不许照抄"只有一次建图"'
 
 
 def test_no_change_still_counts_as_success(work):

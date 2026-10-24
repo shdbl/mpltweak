@@ -554,6 +554,91 @@ def _failure_code(results):
     return None
 
 
+# ---------------------------------------------------------------------------
+# N3（0.1.15）：顶层 `stage` / `next_step` —— "在哪一步没成" + 一句能**直接复制**的下一步。
+#
+# 为什么要有（用户 2026-10-24 批准的范围）：0.1.14 让"想写却零改动"不再假成功
+# （`ok=false` + `error_code=nothing_applied`），但 agent 拿到码之后仍然不知道下一步
+# 该干什么 —— 得去读中文文案。这两个键只**新增**，不改任何既有字段/退出码：
+#   * `stage`：值域见 messages.STAGES（params / preflight / backup / writeback /
+#     verify / finalize），口径与 `error_code` 一样是**机器分支用的稳定值**；
+#   * `next_step`：一句可复制的命令（或一句动作），**是建议不是保证** —— 它按
+#     "这条失败最常见的成因"给，工具没义务替你验证它一定跑得通（docs/agent.md 写清）。
+# 成功载荷**不带**这两个键（键集与语义不变）。
+# ---------------------------------------------------------------------------
+_FAIL_STAGE = {
+    'bad_params': 'params',
+    'stale': 'preflight',
+    'no_axes': 'preflight',
+    'no_fig': 'preflight',
+    'layout_conflict': 'preflight',
+    'fail': 'writeback',            # 重跑验证失败会再细分到 verify，见下
+    'external_modified': 'verify',
+}
+
+
+def _failure_stage(results):
+    """顶层 stage：按**第一个失败文件**判（与 `_failure_code` 同一口径）；无失败 → None。
+
+    `reason='fail'` 有两类：写回自己失败（写盘/语法/锚点）与**写回后的重跑验证**失败。
+    后者 agent 该去查的是"我的脚本能不能跑"，不是"写回有没有坏" ⇒ 单独归 `verify`
+    （判据复用 §7 的 `_is_rerun_failure`，按 writeback 的稳定信号判、不读文案）。
+    """
+    for _p, _r in results or []:
+        if _r.get('reason') in _OK_REASONS:
+            continue
+        if _r.get('reason') == 'fail' and _is_rerun_failure(_r):
+            return 'verify'
+        return _FAIL_STAGE.get(_r.get('reason'), 'writeback')
+    if _nothing_applied(results):
+        # 写回走完了、盘上一个字节没动（fail-closed 拒写）：坏在 writeback 这一步。
+        return 'writeback'
+    return None
+
+
+def _failure_next_step(results, script):
+    """顶层 next_step：一句**可直接复制**的下一步；全成功 → None。
+
+    `script` 用绝对路径并总是加双引号（`messages.shell_path`）：agent 拿到后**逐字**
+    粘到 shell 里就该能跑，不受它自己的 cwd 与空格路径影响。失败文件自己带了
+    `next_step`（验证失败归因那条路已在 0.1.10 算好）就原样透出，不再另编一份。
+    """
+    _cmd = _msg.shell_path(os.path.abspath(script))
+    first = None
+    for _p, _r in results or []:
+        if _r.get('reason') not in _OK_REASONS:
+            first = (_p, _r)
+            break
+    if first is None:
+        if _nothing_applied(results):
+            # AST 一处都落不下去（隐式建图 / for 里建图 / 包在函数里）⇒ 改走**手动片段**
+            return 'mpltweak apply %s --snippet' % _cmd
+        return None
+    _p, _r = first
+    _reason = _r.get('reason')
+    if _reason == 'fail':
+        # 验证失败那条路已经算好了具体命令（要参数 / 无头 / 跑不起来各不相同）；
+        # 写回自己失败时没有现成命令 ⇒ 指向静态检查（不执行脚本，先分清病因）。
+        return _r.get('next_step') or 'mpltweak check %s --static' % _cmd
+    if _reason == 'bad_params':
+        # 参数文件坏了/越界 ⇒ 重新导出一份（describe 会按脚本现状重算，含 -o 写文件）
+        return 'mpltweak describe %s -o %s' % (_cmd,
+                                               _msg.shell_path(os.path.abspath(_p)))
+    if _reason == 'stale':
+        return 'mpltweak apply %s --write --force' % _cmd
+    if _reason == 'layout_conflict':
+        return 'mpltweak apply %s --write --allow-layout-conflict' % _cmd
+    if _reason == 'no_axes':
+        # 参数里没有可落地的轴 ⇒ 先看工具到底把这张图认成了几张/哪些轴
+        return 'mpltweak describe %s --all-figs' % _cmd
+    if _reason == 'no_fig':
+        return 'mpltweak apply %s --snippet' % _cmd
+    if _reason == 'external_modified':
+        # 用户保存完了就能原命令重跑（参数此刻仍与代码一致，不需要 --force）
+        return 'mpltweak apply %s --write' % _cmd
+    return 'mpltweak check %s --static' % _cmd
+
+
 # J1（0.1.14，独立验证 P1 报的 F1）：`ok=true + applied=false + rc=0` 但**脚本一字节
 # 没改** —— 只看 `ok`/`rc` 的 agent 会当成"已写回"。实测形态：隐式建图 / `for` 里建图 /
 # 函数里建图 / 类里 `self.ax`（fail-closed 保守拒写）⇒ `reason='best_effort'`、
@@ -572,7 +657,8 @@ def _nothing_applied(results):
 
 
 def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
-               preflight_res=None, error_code=None, args_style='auto'):
+               preflight_res=None, error_code=None, args_style='auto',
+               stage=None, next_step=None):
     """--json 的机器可读输出（每个 return 分支前都要调用一次）。
 
     ``ok`` 可显式覆盖：没有参数文件时 results 是空的，``not []`` 会算成 True，
@@ -584,6 +670,9 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
     —— agent 在动笔写回之前就能知道"这个脚本重跑会卡在哪"，而不是等失败后靠
     attribution 反推。
 
+    ``stage`` / ``next_step``（0.1.15 / N3）：失败发生在哪一步 + 一句可复制的下一步，
+    取值与口径见 `_failure_stage` / `_failure_next_step`。传 None 时这两个键**不出现**
+    （成功载荷的键集一个字都不变）。
     """
     sys.stdout = stdout_ref
     _ok = (not [r for _, r in results
@@ -685,6 +774,11 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
         # B9：失败载荷必须能机器分支（值域见 _FAIL_ERROR_CODE 的说明）。成功载荷
         # 不带这个键 —— 键集与语义不变。
         _payload['error_code'] = error_code
+    # N3（0.1.15）：只加不改 —— 传了才出现，顺序在 error_code 之后（agent 不必关心顺序）
+    if stage:
+        _payload['stage'] = stage
+    if next_step:
+        _payload['next_step'] = next_step
     _msg.emit_json(_payload)
 
 
@@ -859,7 +953,10 @@ def main(argv=None):
         _err = 'no_verify and verify_fast are mutually exclusive'
         if args.json:
             _emit_json(os.path.abspath(args.script), [], _stdout, ok=False,
-                       error=_err, error_code='mutually_exclusive_flags')
+                       error=_err, error_code='mutually_exclusive_flags',
+                       stage='params',
+                       next_step=('mpltweak apply %s --write'
+                                  % _msg.shell_path(os.path.abspath(args.script))))
         _emit_err(_msg.t('apply_mutex_verify'))
         return 2
 
@@ -872,7 +969,10 @@ def main(argv=None):
         if args.json:
             _emit_json(script, [], _stdout, ok=False,
                        error=_msg.t_en('file_not_found', path=script),
-                       error_code='file_not_found')
+                       error_code='file_not_found', stage='params',
+                       next_step=('point it at an existing .py file, then: '
+                                  'mpltweak apply %s'
+                                  % _msg.shell_path(script)))
         else:
             _emit_err('[apply] %s' % _msg.t('file_not_found', path=script))
         return 2
@@ -887,7 +987,10 @@ def main(argv=None):
             _emit_json(script, [], _stdout, ok=False,
                        error='layout conflict (use --allow-layout-conflict to '
                              'override)',
-                       error_code='layout_conflict')
+                       error_code='layout_conflict', stage='preflight',
+                       next_step=('mpltweak apply %s --write '
+                                  '--allow-layout-conflict'
+                                  % _msg.shell_path(script)))
         _emit_err(*['[apply] %s' % _l for _l in _conflicts],
                   _msg.t('apply_strict_layout_refused'))
         return 2
@@ -897,7 +1000,9 @@ def main(argv=None):
         _emit_err(_hint)
         if args.json:
             _emit_json(script, [], _stdout, ok=False, error=_hint,
-                       error_code='no_params')
+                       error_code='no_params', stage='params',
+                       next_step='mpltweak launch %s'
+                                 % _msg.shell_path(script))
         return 2
     if len(files) > 1:
         print(_msg.t('multi_files', n=len(files)))
@@ -1336,11 +1441,22 @@ def main(argv=None):
     # T23：把这一批里**落地过**的参数文件互相同步 mtime —— 它们此刻都等于"写回后
     # 的代码状态"，下一次批量写回/开窗就该一致地被判为新鲜（而不是只有最后一份新鲜）。
     if args.write and not args.dry_run and len(_applied_files) > 1:
+        _mtime_fail = []
         for _pf in _applied_files:
             try:
                 os.utime(_pf, None)
-            except OSError:
-                pass
+            except OSError as _e:
+                # 0.1.15 静默 except 审计（外部交互档）：过去这里 `pass`。刷不上的那份
+                # 参数文件下一次会被判 stale，用户只会看到"莫名其妙让我重新 describe"。
+                # 只加一条 warnings（进 --json 的 files[].warnings），rc 与既有字段不动。
+                _mtime_fail.append((_pf, _e))
+                for _p2, _r2 in results:
+                    if _p2 == _pf:
+                        _r2.setdefault('warnings', []).append(
+                            _msg.t('mtime_sync_fail', path=_pf, err=_e))
+        for _pf, _e in _mtime_fail:
+            print(_msg.t('kept_as_is',
+                         msg=_msg.t('mtime_sync_fail', path=_pf, err=_e)))
 
     if not args.write:
         if any(r.get('reason') == 'preview' for _, r in results):
@@ -1352,7 +1468,9 @@ def main(argv=None):
                        extra={'dry_run': bool(args.dry_run)},
                        preflight_res=_pf_res,
                        error_code=_failure_code(results),
-                       args_style=args.style)
+                       args_style=args.style,
+                       stage=_failure_stage(results),
+                       next_step=_failure_next_step(results, script))
         # 参数文件硬错误（error 级）→ 与写回路径同一档：rc=2（输入/用法错误）
         return 2 if any(r['reason'] == 'bad_params' for _, r in results) else 0
 
@@ -1383,7 +1501,10 @@ def main(argv=None):
                    # REV1-1（t35）：ok / error_code 的"零改动"覆盖现在由 `_emit_json`
                    # 自己按 `_nothing_applied()` 兜底（单一判据），这里不再各传一份。
                    error_code=_failure_code(results),
-                   args_style=args.style)
+                   args_style=args.style,
+                   # N3（0.1.15）：在哪一步没成 + 一句可复制的下一步（成功载荷不带）
+                   stage=_failure_stage(results),
+                   next_step=_failure_next_step(results, script))
     if len(results) > 1:
         # 多份参数文件的收尾总结。**--json** 时必须走 stderr（否则会拼在 JSON 尾巴上，
         # 让 json.loads 报 "Extra data"，t3-H1 / t6-H3）；**非 --json** 时它是报告的
@@ -1428,15 +1549,17 @@ if __name__ == '__main__':
 #     _success_tail                                  445
 # §5 参数文件收集与失败错误码（行 466-503，1 个顶层函数）
 #     _all_params_files                              468
-# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 504-690，3 个顶层函数）
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 504-784，5 个顶层函数）
 #     _failure_code                                  547
-#     _nothing_applied                               565
-#     _emit_json                                     574
-# §7 验证失败归因与下一步（attribution / next_step）（行 691-772，4 个顶层函数）
-#     _classify_verify_failure                       719
-#     _is_rerun_failure                              742
-#     _print_attribution                             747
-#     _next_step_cmd                                 762
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 773-1403，1 个顶层函数）
-#     main                                           775
+#     _failure_stage                                 580
+#     _failure_next_step                             599
+#     _nothing_applied                               650
+#     _emit_json                                     659
+# §7 验证失败归因与下一步（attribution / next_step）（行 785-866，4 个顶层函数）
+#     _classify_verify_failure                       813
+#     _is_rerun_failure                              836
+#     _print_attribution                             841
+#     _next_step_cmd                                 856
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 867-1524，1 个顶层函数）
+#     main                                           869
 # --- END AUTO NAV ---

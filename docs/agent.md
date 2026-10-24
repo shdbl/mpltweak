@@ -25,7 +25,9 @@ mpltweak 把这部分从"猜"变成"写文件"：
 
 ```jsonc
 // agent 产出这个 → mpltweak apply fig1.py --write → 落进你的源码
-{ "axes": [
+// 两个字段不是可选的：version 必须写 4；每条轴必须带 "index"（= fig.axes 的顺序）。
+// 缺 version ⇒ bad_params（报文会说要 version=4）；缺 index ⇒ bad_params。
+{ "version": 4, "axes": [
   { "index": 0, "pos": [0.080, 0.560, 0.395, 0.330],
     "title_fontsize": 9.5, "legend": { "loc": "upper right" } },
   { "index": 1, "pos": [0.525, 0.560, 0.395, 0.330],
@@ -60,6 +62,12 @@ mpltweak apply fig1.py --write --json       # 写：落回源码并自检
 mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 ```
 
+**`describe -o <文件>` 就是"只要文件"：它不往 stdout 打 JSON（0.1.15 定口径）**。给了 `-o` 之后
+**stdout 一个字节都没有**，屏幕上只有一句 `[describe] 已写入 <文件>`（这句走 stderr）。
+⇒ **别在 `describe -o` 之后再去找 stdout 里的 JSON —— 它不会有**；要有内容就别给 `-o`（用 stdout），
+或者直接读那份文件。**为什么这么定**：避免两种输出通道混在一起 —— 一旦 stdout 既可能被重定向成
+JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有 `-o`"来解析，容易把提示语当 JSON。
+
 **为什么需要"读"**：`add_axes([...])` 这种明写的位置，读源码就够了；但 `plt.subplots` 的网格、
 没写 `fontsize=` 时实际生效的默认值、`tight_layout` 之后的位置、colorbar 与 cartopy 锁定后的
 真实尺寸 —— 这些**源码里没有数字**，得跑一遍才知道。
@@ -84,6 +92,35 @@ mpltweak check fig1.py --json               # 查：排版体检，输出 JSON
 * 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / **`nothing_applied`** / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。**`nothing_applied`（0.1.14）** = 整批**一个字节都没写**而这次确实想写（典型：隐式建图 / `for` 里建图 / 函数里建图 / 类里 `self.ax` —— 引擎证不出目标变量名，按 fail-closed 保守拒写）：这一档 `ok=false`、`rc=1`，而 `files[].reason` 可能仍是 `best_effort`、`files[].applied=false` —— **旧版正是这里撒谎**（`ok=true` + `rc=0`，agent 当成"已写回"）。反面对照：`reason=no_change`（参数与源码本来就一致）仍是 `ok=true` / `rc=0` / 无 `error_code`，那不是失败。所以判"写没写"只看 `applied` / `changes` / `reason`，判"成没成"才看 `ok` / `rc` / `error_code`。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
 
 （这三个键的口径全文在 `docs/verify.md` 的「机器可读通道」一节。）
+
+**失败时还告诉你「哪一步没成」和「下一步做什么」（0.1.15 起，`apply` / `revert` / `launch` 同口径）**：
+失败载荷顶层多两个键。`ok` / `error_code` / `files[]` / 退出码的口径**一个字都没改**，这两个键
+只在**失败/降级**时出现（成功载荷**没有**它们，`files[]` 条目里也**没有** `stage` —— 逐文件细分原因
+照旧看 `files[].reason`）。
+
+* `stage`：失败卡在**哪一步**（稳定英文枚举，值域只有下面 6 个，唯一出处在 `messages.STAGES`，
+  机器据此决定"原命令重试 / 改输入 / 改脚本 / 报 bug"）。
+* `next_step`：一句**可直接复制**的下一步（命令或动作），路径一律带双引号。**它是建议不是保证** ——
+  按"这条失败最常见的成因"给，工具不保证照抄就一定跑得通（例：脚本本身有语法错时，`--force` 也救不回来）。
+  0.1.10 起 `files[].next_step` 只覆盖"验证失败归因"那一档；顶层这个把它抬到顶层，并且在没有逐文件
+  归因时（找不到脚本、无备份、无后端…）也给出。
+
+| `stage` | 含义（失败卡在哪一步） | 会给这个值的命令 |
+|---|---|---|
+| `params` | 入口参数 / 参数文件本身（脚本路径不存在、`--fig` 越界、缺参数文件、互斥开关） | `apply` `revert` `launch` |
+| `preflight` | 动手前的检查（脚本比参数新、布局引擎冲突、没有可落地的轴、无交互后端） | `apply` `launch` |
+| `backup` | 备份 / 留档（拿脚本锁、找备份、写备份） | `revert` |
+| `writeback` | 真正动文件那一步（AST 写回；`launch` 下 = 执行你的脚本并抓图） | `apply` `launch` |
+| `verify` | 写回后的验证（重跑、语义比对、外部改动守卫） | `apply` |
+| `finalize` | 结果收尾（当前没有命令在这一步失败，值先占位，以后新增出口不必改口径） | 无 |
+
+**`launch` 也有 `--json` 了（只覆盖失败路径）**：成功路径照旧开窗、不产出 JSON（开窗是长时间交互，
+机器格式在那条路上没有意义）。失败时 stdout 只有**一条** JSON：`ok=false` + `error_code` + `stage` +
+`error`（恒英文纯 ASCII）+ `next_step`；`error_code` 值域是 `no_script` / `file_not_found` / `no_backend` /
+`script_failed` / `no_figures` / `backend_not_interactive` / `fig_out_of_range`。**退出码口径不变**
+（脚本/用法问题 `2`、无交互后端 `4`）。副作用：这个开关会吃掉原本透传给你脚本的 `--json`，
+要透传请写 `mpltweak launch x.py -- --json`（`--` 之后一律原样进脚本的 `sys.argv`）。
+`--doctor` 不在这个通道里：它是**人读诊断报告**（`rc=0`，从不以失败退出），本来就不需要机器码。
 
 **解析契约：错误只出现在 stderr（0.1.12 起）**。不带 `--json` 时，`apply` 的人读输出分两条流 ——
 **stdout 只有数据/报告**（成功摘要、逐处清单、「会改：…」预览、可粘贴骨架），**人读错误全在
