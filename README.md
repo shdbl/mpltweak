@@ -15,18 +15,18 @@
 
 </div>
 
-> 🤖 让 AI 助手（Agent）直接读写你的绘图脚本？看 [给 Agent 用](#给-agent-用)
-
 ## 它解决什么问题
 
-调一张多面板图（multi-panel figure，就是一张画布里并排放好几张小图）时，麻烦通常出在排版而不是数据：挪一下子图，旁边的轴标签就被挡住；字号放大一点，图例又压到曲线上 —— 而每改一次，都要重跑脚本、再看一遍图。
+调一张多面板图（一张画布里并排放好几张小图）时，麻烦通常出在排版而不是数据：挪一下子图，旁边的轴标签就被挡住；字号放大一点，图例又压到曲线上 —— 而每改一次，都要重跑脚本、再看一遍图。
 
 **mpltweak 的做法**：像在 PPT 里摆放图片那样直接拖，拖完把那几个数字写回源码。它**只管样式和位置，不发明内容** —— 文字、数据、图形仍完全由你的代码决定。
+
+**零侵入**：不改你的代码、不加 `import`、不生成副文件 —— 拖出来的参数单独存在 `.tweak_params/fig1.json`；**只有你明确要求写回，`.py` 才会变**。
 
 | 方式 | 流程 |
 |---|---|
 | **传统方式** | 改一个数字 → 重跑脚本 → 等几十秒 → 看 PNG → 还是不对 → 再改 |
-| **mpltweak** | 打开窗口 → 拖到位 → `mpltweak apply --write` → 那几个数字回到代码里 |
+| **mpltweak** | 打开窗口 → 拖到位 → **让它把那几个数字写回代码** |
 
 演示：
 
@@ -45,36 +45,216 @@
 </tr>
 </table>
 
-> 完整手势与键位速查（拖动 / 多选、对齐 / 均分、吸附、`Ctrl+F` 裁白边、空格线框、悬停改字号、图例 8 个标准位、colorbar 调长 / 调厚、**叠在一起时 `Alt+点击` 穿透**、**`Tab` 循环同级元素**）见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
 
-## 安装
+## 两条路，挑一条
 
-所有命令都在**终端**里执行 —— Windows 用 cmd / PowerShell，macOS / Linux 用 Terminal；在 PyCharm 里是底部的 **Terminal** 面板（**不是** Python Console / 交互式解释器）。
+mpltweak 自带一份**给 AI 助手（Agent）看的手册（Skill）**：把这份手册交给能读写你电脑文件的 Agent，它会替你把命令全部敲完。所以有两条路可选——**用的是同一个工具、同一份 Skill**，区别只在"谁敲命令"：
+
+- **路线 A：交给 Agent**（不熟悉命令行就选这条）：你只负责看图、说话。← **下面先讲这条**
+- **路线 B：自己敲命令**：几条命令，十分钟能跑通。→ [跳到文末](#路线-b自己敲命令)
+
+## 路线 A：交给 Agent
+
+**你不需要懂命令行 —— 把这件事交给 Agent 就行。**
+（**要能直接读写你电脑上文件的那种 Agent**；只在网页聊天窗口里聊天的不行。）
+
+**把下面这句话直接复制给你正在用的 Agent**（Claude Code / Codex / Cursor / DeepSeek Harness 等，只要它能读写你电脑上的文件）：
+
+> 请读一下 https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md ，然后按里面的说明把 mpltweak 装好；装好之后先跑一下示例给我看效果。
+
+### 先花两分钟看看效果（让 Agent 跑示例）
+
+不想拿自己的脚本冒险？跟 Agent 说一句：
+
+> 跑一下 mpltweak demo 给我看看
+
+它会装好依赖、生成一份**示例脚本**（四面板合成图，纯 matplotlib 写法）并打开调图窗口，你随便拖、随便改字号；关掉窗口后它会用人话告诉你**你改了哪几处**、并把**代码会变成什么样**逐行给你看。
+
+觉得不错，就让它把改动写回那份**示例脚本**、重跑一遍，并给你看**改前 / 改后**两张图。
+
+> 全程只在当前目录下新建一个 `mpltweak-demo/` 文件夹，**不会碰你自己写的任何脚本**。
+
+### 日常使用中跟 Agent 协作的流程
+
+1. **让 Agent 帮你画图。**（**如果你已经有画图脚本、只想改排版，可以直接跳到第 3 步，并告诉它脚本名，比如 `fig1.py`。**）
+   *你会看到*：Agent 把画好的图贴给你看。
+2. **先确认图的内容对不对**（这一步别急着调排版）。坐标轴、标签、数据是不是你要的？不对就现在说，让 Agent 改。
+   *你会看到*：内容定稿的版本 —— 后面要调的只是"排版"，不是"画什么"。
+3. **跟 Agent 说一句"我要交互式修改"。** 它会自己把调图窗口弹出来（你不用装东西、也不用打任何命令）。
+   *你会看到*：一个窗口弹出来，里面就是你的图，可以用鼠标拖、缩放。
+4. **你在窗口里改。** 拖面板、拖图例、调字号、对齐、均分（**在窗口里按 `?`，随时调出全部键位说明**）。
+   *你会看到*：拖动时是半透明预览，松手才落位。
+5. **Agent 用人话告诉你它改了什么，并等你确认。** 比如"子图 (a) 往右挪了一点、标题字号从 12 调到 14"。
+   这一步**代码还没动** —— 你不同意就继续说，它接着改。
+   *你会看到*：一份"改了什么"的人话清单 + 一句"要不要写进代码？"
+6. **你说"可以"，Agent 才把改动写回代码，然后重跑给你看。** 重跑之后对着第 2 步的内容再看一眼，确认没被改坏。
+   *你会看到*：重跑出来的新图 + 它改了哪几处；不满意可以接着调，或者让它退回上一次。
+
+> **全程你不需要打开命令行、不需要记任何命令** —— 你只需要看图 + 说话。
+
+```mermaid
+flowchart LR
+    A["① 你对 Agent 说：我要什么图"]:::script --> B["② Agent 写脚本 + 跑出图"]:::win
+    B --> C{"③ 你看图：内容对不对？"}:::check
+    C -->|不对| B
+    C -->|对| D["④ 你说：要交互式修改<br/>Agent 弹出调图窗口"]:::win
+    D --> E["你在窗口里拖着改<br/>（按 ? 看键位）"]:::win
+    E --> F{"⑤ Agent 用人话说明改了哪些地方"}:::check
+    F -->|不满意| E
+    F -->|满意| G["⑥ Agent 写回代码 + 重跑"]:::win
+    G --> Z(["你看新图，完事"]):::ok
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
+```
+
+**窗口里的键位（按 `?` 随时调出全部）**：拖动 / 多选、对齐 / 均分、吸附、`Ctrl+F` 裁白边、空格线框提速、悬停文字后按 `+` / `-` 调字号、图例 8 个标准位、colorbar 调长 / 调厚、**叠在一起时 `Alt+点击` 穿透**、**`Tab` 循环同级元素**。完整版见 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
+
+## 它会怎么改你的代码？三种结果
+
+它对每份脚本的处理结果，事先就能说清，只有三种：
+
+| 情况 | 它会怎么做 | 结果 |
+|---|---|---|
+| **源码里明写着这个数字**<br>（`fig.add_axes([0.08, 0.66, 0.30, 0.21])`） | **原位改那一个数**，不插任何东西 | 代码里那一行变了，别处一个字不动 |
+| **源码里没有能改的数字**<br>（`plt.subplots()` / `GridSpec` 画的图） | **在文件末尾追加一小段自包含代码**，不加 `import`、不动你原有逻辑 | 代码末尾多出一个带 `auto layout` 标记的块 |
+| **它证明不了该改哪一个**<br>（`fig.axes[i]` / `plt.gca()` / 循环里建轴 —— 运行时才知道指向谁） | **不写**。它不会猜一个"大概是这张"的对象 | **代码一个字节都不变**；并给出一条**能让 Agent 照着动手**的定位说明（改哪个符号、改成什么） |
+
+### 1. 能原位改的：直接改那一行
+
+改前：
+
+```python
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax1.set_title('(a)', fontsize=12)
+```
+
+改后：
+
+```python
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_axes([0.06, 0.68, 0.32, 0.23])   # ← 就改这几个数字
+ax1.set_title('(a)', fontsize=15)              # ← 字号补在同一行末尾
+```
+
+**没有新增任何行，别处一个字不动。**
+
+### 2. 不能原位改的：文件末尾追加一小段
+
+改前（`subplots` 画的图，源码里没有能直接改的数字）：
+
+```python
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+axes[0].plot(np.arange(5), np.arange(5))
+axes[0].set_title('(a)')
+axes[1].plot(np.arange(5), np.arange(5) * 2)
+axes[1].set_title('(b)')
+fig.savefig('fig1.png', dpi=150)
+```
+
+改后（下面整段是真跑输出的原文，只有时间戳随生成时刻改变）：
+
+```python
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+axes[0].plot(np.arange(5), np.arange(5))
+axes[0].set_title('(a)')
+axes[1].plot(np.arange(5), np.arange(5) * 2)
+axes[1].set_title('(b)')
+# ===== auto layout (generated) - do not edit inside =====
+# 本块由 mpltweak 自动生成于 <时间>（可手动微调，勿删上下两行标记）
+# 轴身份（调图时）：ax0=网格[1, 2, 0, 0]，ax1=网格[1, 2, 0, 1]
+axes[0].set_position([0.0800, 0.1500, 0.3800, 0.7500])
+axes[1].set_position([0.5477, 0.1100, 0.3523, 0.7700])
+axes[0].lines[0].set_linewidth(1.5)
+axes[0].lines[0].set_color('#1f77b4')
+axes[1].lines[0].set_linewidth(1.5)
+axes[1].lines[0].set_color('#1f77b4')
+# ===== end auto layout =====
+fig.savefig('fig1.png', dpi=150)
+```
+
+**你原来写的代码一行都没被改写**；不满意就整段删掉，或一条命令撤回（见下节）。
+
+### 3. 证明不了的：不写，告诉你怎么办
+
+改前（轴是循环建的，运行时才知道 `fig.axes[i]` 指的是哪一根）：
+
+```python
+fig = plt.figure(figsize=(8, 3))
+for i, name in enumerate(['a', 'b', 'c']):
+    fig.add_subplot(1, 3, i + 1).plot(np.arange(5), np.arange(5) * (i + 1))
+    fig.axes[i].set_title(name)
+fig.savefig('fig2.png', dpi=150)
+```
+
+它给出的是（真跑输出的原文，节选最后一行）：
+
+```text
+· 保持原样: 块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标
+  （没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴或别的图上）
+  → 按 fail-closed 处理，本次不写：ax0.lines、ax0.pos、ax1.lines、ax1.pos、ax2.lines、ax2.pos
+```
+
+退出码 `1`。
+
+**代码一个字节都没变。** 这不是死路：那段话直接告诉你**改哪一处就能改**。**如果是 Agent 在替你操作，它看到这句话会自己把脚本改好、再回来接着调图 —— 你不用复制、不用转达。**
+
+## 它可靠吗？
+
+**四道保险，从松到紧：**
+
+1. **只要你不要求写回，你的 `.py` 就保持原样。** 开窗、拖动、关窗，全程只往 `.tweak_params/` 里写参数，代码不动。
+2. **写回前可以先看。** 让它先把"要动哪几行、从什么改成什么"逐行给你看——只看不改。
+3. **真写回会自动备份**，一条命令就能退回写回前。
+4. **证明不了的写法一律不写**，并说明原因 —— 宁可这次不生效，也不给你的代码里塞一个指错对象的东西。
+
+每次真写回还会自动过**三道检查**：**语法**（改完的代码还能不能正常解析）→ **重跑**（脚本能不能真的再跑一遍、图还能不能出）→ **语义**（图上的位置、字号是不是跟你拖的一致）。任何一道不过，它会**自动退回写回前**，你拿到的仍是原来那份脚本。
+
+拿 **10,158 份**真实科研绘图脚本、**1,780 份**真跑、**13,000 次**随机操作试过：**"说了改好、其实没改" 这类事 0 次。**
+
+（静态差分那一批语料扩到 **16,126 份** `.py` = **10,158 份第三方公开绘图脚本** + **5,968 份本项目自身脚手架**；谈"真实用户脚本"时分母只用前者，两者不混着说。）
+
+完整的样本分母、判据与逐族结果见 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)；不适用场景与不声称项见 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md)。
+
+## 路线 B：自己敲命令
+
+### 安装
 
 ```bash
-pip install mpltweak            # 核心：describe / check / apply（mcp 是可选适配层，见「给 Agent 用」）
+pip install mpltweak            # 核心：describe / check / apply
 pip install "mpltweak[qt]"      # 要开窗拖图再加这个（装 PyQt5 图形后端）
 ```
 
-装好想知道是哪一版：**`mpltweak --version`**（`-V` 同义）—— 打印一行版本号、退出码 0。
+```bash
+mpltweak --version      # 版本
+```
 
-第二条是为**开窗**装的：开窗需要一个图形后端（白话：让图能显示在一个可拖动窗口里的那套组件，推荐 PyQt5，约 +150MB）。只跑命令行（`describe` / `check` / `apply`）不用装。Windows / macOS 的官方 Python 自带 `tkinter`，所以只装 `mpltweak` 一般也能开窗，此时用的是 **Tk 后端（交互弱化版）**，不是安装失败、也不是没装好；一个图形后端都没有时开窗 `rc=4`（退出码 4，意思是"这台机器现在没有能画窗口的组件"）并给出该装哪个的提示。
+**退出码**（脚本里判断用）：`0` 成功 / `1` 检查发现问题 **或本次不写**（含 fail-closed 拒写）/ `2` 跑不起来（脚本找不到、脚本自身报错、参数非法）/ `4` 没有可用图形后端。四个入口口径一致。
+
+`[qt]` 提供 PyQt5 后端；只跑 `describe` / `check` / `apply` 不需要。没有 Qt 时回退 Tk（交互能力受限，开窗会提示）；一个后端都没有时开窗失败并说明原因。
 
 > 后端对照表、各平台装法、`mpltweak doctor` 探测顺序与开窗失败逐条处理 —— [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md)。
 > 哪些命令会**执行**你的脚本、退出码怎么算 —— [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md)。
-> 退出码只有四个：**0 = 没问题 / 成功；1 = 发现问题（check）；2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数不对，所有入口一致）；4 = 没有可用图形后端**（0.1.9 的 3 已退役）。
 
-## 5 分钟上手
-
-> 也可以直接让 AI 助手代劳：见 [给 Agent 用](#给-agent-用)（六步照着跟 Agent 说）。
-
-调图前先 `cd` 到脚本所在目录：
+### 示例
 
 ```bash
-cd 你的文件夹          # ← 换成你放 fig1.py 的那个目录（整行可复制）
+mpltweak demo            # 生成 ./mpltweak-demo/ 并开窗；不写盘
+mpltweak demo --write    # 写回示例脚本 + 重跑 + 生成 before.png / after.png
 ```
 
-示例脚本 `fig1.py`（纯 matplotlib，**一行都不用改**、不需要 `import mpltweak`、不需要任何钩子）：
+关窗后输出改动清单与逐行 diff；不带 `--write` 时示例脚本一个字节不变。目录已存在则复用，不覆盖。
+
+### 六步
+
+```
+cd 你的脚本目录
+```
+
+`fig1.py`（零侵入：不需要 `import mpltweak`，不改动任何现有代码）：
 
 ```python
 # fig1.py —— 就是平时写的 matplotlib
@@ -97,93 +277,23 @@ ax3.hist(np.random.randn(300), bins=20)
 fig.savefig('fig1.png', dpi=150)
 ```
 
-**先说清楚它会做什么**：它会把**你的脚本跑一遍**（用你自己的环境、你自己的数据；mpltweak 自己不联网，也不改你的文件），然后把图显示在一个可以拖动的窗口里。**关掉窗口之前，你的 `.py` 一个字符都不会变** —— 拖出来的参数先落在 `.tweak_params/fig1.json`（一份纯文本的参数文件，记着你拖出来的位置和字号）。
-
 | 步 | 命令 | 你会看到 |
 |---|---|---|
-| **1 · 装** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | 核心包 + 让图能在窗口里打开的那个图形库；只跑命令行（`describe` / `check` / `apply`）不用装第二条 |
+| **1 · 装** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | 核心包 / 加 PyQt5 后端（后者才需要开窗） |
 | **2 · 开窗拖** | `mpltweak fig1.py` | 调图窗口：**拖**面板改位置、拖**边 / 角**缩放、鼠标**悬停文字**按 `+` `-` 调字号、**空格**切线框提速、**Ctrl+F** 裁白边；按 **`?`** 出全部键位 |
-| **3 · 关窗** | —— | 脚本**一个字符都没变**；参数落在 `.tweak_params/fig1.json`（没调好就再开窗接着调）。**真拖过东西**的话，关窗时终端会直接给你下一条可复制的命令，不用记 |
-| **4 · 看它打算改什么** | `mpltweak apply fig1.py` | 逐轴列出位置与字号，并说明**改哪个数字 / 要不要插调整块 / 会不会拒绝**；只读，不执行脚本、不写文件 |
-| **5 · 写回** | `mpltweak apply fig1.py --write` | **三段式：预览（只读，不执行脚本）→ 你确认 → 写回**；写回**自动备份**（`.tweak_params/fig1.tweak.bak`）、成功只报一行、**不满意一条命令就撤回**（`mpltweak revert fig1.py --write`） |
-| **6 · 重跑看图** | `python fig1.py` | 图就是你拖完的样子；不满意：`mpltweak revert fig1.py --write` 退回写回前（先不带 `--write` 是预览） |
+| **3 · 关窗** | —— | 脚本**一个字符都没变**；参数落在 `.tweak_params/fig1.json`（没调好就再开窗接着调）。真拖过东西的话，关窗时终端会给你下一条可复制的命令 |
+| **4 · 预览** | `mpltweak apply fig1.py`<br>`mpltweak apply fig1.py --diff` | 前者只读列出每轴参数与「原位改 / 插块 / 拒写」判定；后者给**逐行 diff**（`{line,type,old,new}`），`type ∈ inplace / insert_block / replace`。两者都**不执行脚本、不写文件**；`--diff` 的 `preview_sha256` 与真实写盘文件 sha256 一致（跨分钟时看 `preview_sha256_norm`）。要机器可读就加 `--json` |
+| **5 · 写回** | `mpltweak apply fig1.py --write` | **原子写**（临时文件 + rename）→ 备份到 `.tweak_params/fig1.tweak.bak` → 子进程重跑验证 → 语义比对。成功只报一行；**幂等**（同参数重复写回不产生新差异）；撤回：`mpltweak revert fig1.py --write`（先不带 `--write` 是预览） |
+| **6 · 重跑看图** | `python fig1.py` | 图就是你拖完的样子 |
 
-**写回是确定性的。** AST 会把你的代码拆成一棵"语法树"（按代码结构而非文本匹配来读），所以能精确定位那几个数字。写回分两条路：**代码里写的是字面量时，直接改那几个数字**（最干净，不插入任何东西）；**否则在文件末尾追加一段自包含的调整块**（术语叫"退块"：追加一段独立代码，不加 `import`、不改动你原有的逻辑）。两条路都要过**三层验证**（语法 / 重跑 / 语义：先看语法对不对，再把脚本真跑一遍，最后核对图上的位置字号和你拖出来的是不是一致），任一层不过**默认回滚**（退回改动前的样子，`--keep-unverified` 可保留但需自己验证）。
+**写回是确定性的，不靠猜。** 它不是文本层正则替换（那样别处的 `0.08` 会被误伤），而是把脚本解析成 **AST（语法树）**，定位到"哪一句在建图、哪一个 `Constant` 是位置"，再顺着变量名绑定到目标对象；写回是 **AST 确定性重写 + 原文保真**（未命中的行逐字节不变）。整个过程**没有 LLM 参与**：同一输入、同一参数，输出恒定。
 
-**图是用 `plt.subplots()` / `GridSpec` 画的？** 源码里往往没有能直接改的数字，那就走"追加调整块"这条路 —— 但**前提是块里的目标对象能被静态认出来**（如字面量下标 `axes[0, 1]`）：`fig.axes[i]` / `plt.gca()` / 循环建轴这类"运行期才知道指向谁"的写法会被**拒绝**，`rc=1`、你的脚本一个字节都不动（不会硬塞一个作用不确定的块）。不满意用 `mpltweak revert fig1.py --write` 一键删掉；你原来写的代码一行都没被改写。
+写回分两条通道：**源码里是字面量 ⇒ 原位改常量**（不插任何节点）；**否则在 `savefig`/`show` 前插入一段自包含的 `auto layout` 块**。两条通道都要过三道验证（**语法可解析 → 子进程重跑 → 语义比对**），任一不过 **默认回滚**；写回**原子落地**（临时文件 + rename），备份在 `.tweak_params/fig1.tweak.bak`，**幂等**（同一参数重复写回不产生新差异）。`--keep-unverified` 可保留未验证结果。
+
+> 想看机器可读结果：`--json` 给 `files[].diff`（逐行 `{line,type,old,new}`）、`preview_sha256`（与真实写盘文件 sha256 一致）、`stage`（卡在哪一步）、`next_step`、`attribution`。契约见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
 
 > 卡住了见 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md)（拖了没反应 / 拖了弹回去 / 报错怎么办，每条都是「现象 → 一句话原因 → 怎么做」）。
-
-> **更多细节**：一次真实写回的完整输出样张、逐处清单 `-v`、`--style inplace` / `--style block` 两条单行路、调整块长什么样（`auto layout` 标记）、参数文件字段表 —— [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) 与 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)。
-
-## 它可靠吗
-
-已做过三类测试：**静态判定** —— 拿 **10,158 份公开绘图脚本**（真实科研绘图代码，按 sha256 唯一）逐份判定这次改动能不能**原位落进源码**，全程不执行；**真跑验证** —— 把 **1,780 份**脚本真的跑起来，核对写回后仍能出图、且图上位置字号与拖出来的参数一致；**随机操作压窗口交互** —— 离屏矩阵实跑 **13,000 次**（每次操作后都校验），真窗口 **6,000 次手势 + 27 条硬断言**。下面是实测结果（完整版见 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)）：
-
-| 层 | 测试内容 | 测试结果 |
-|---|---|---|
-| 静态语料（**不执行**脚本） | **测的是**：改动能不能**原位落进源码**（找得到目标、只动目标、语法不变）<br>**样本**：10,158 份脚本 → 其中 **4,427 份是绘图脚本** → **可测站点 4,101**（其中**可原位到达 3,610**） | **该落回原位的**成功率 **97.8%**（3,531 / 3,610）；**该追加代码块的**成功率 **100%**（427 / 427，判据＝块外原文逐字节保留 · 不用运行期定位 · 静态可证作用到目标对象）；**其余 79 例逐一归类、五类之和 = 3,610**：**走块通道 10**（真的落地 3 · 改走块但没落地 7）· **参数非法被拒 37** · **原始记录里缺该族条目 32**（流水线的记录缺口，不是"跳过"这类产品行为）；承诺违约 **0**<br>**证据**：[逐脚本判定 scan_full.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl)（复算 `python bench/tools/_cu_static_table.py`） |
-| 全量真跑（**真的重跑**脚本） | **测的是**：写回后脚本还跑得通、图还出得来、图上位置字号与参数一致<br>**样本**：池 **1,837 份** → **真跑候选 1,780 份**（= 1,837 − 28 份静态已知"要开窗" − 29 份静态已知"联网 / 子进程"） | **该写回并验证通过的** **928 份**，四条铁律（幂等 / 可逆 / 语法守恒 / 只动目标）**逐律 928 / 928**；其余 **852 份未判定、不是失败**（需开窗 317 · 等人输入 464 · 撞 90 s 超时 71；928 + 852 = 1,780）；写回不篡改：1,837 份**违约 0**<br>**证据**：[逐脚本结果 results.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/results.jsonl) · [SUMMARY.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/SUMMARY.md)（重跑 `python tests/test_corpus_invariants.py`） |
-| 窗口交互（随机操作 + 真窗口） | **测的是**：随机操作下**不崩 / 往返一致 / 几何合法 / 落位与参数一致**<br>**样本**：离屏 **12 种图形 × 1,000 次**（实跑 13,000 次，每次操作后都校验）；真窗口 **6 种图形 × 1,000 次 = 6,000 次手势** | 离屏：**该通过的不变量校验 100%**（13,000 / 13,000）；专项操作断言 **100%**（356 / 356，另有 47 条不适用、逐条带理由）；真窗口硬断言 **100%**（27 / 27）；两编码（UTF-8 / GBK）均 ALL PASS<br>**证据**：[离屏矩阵](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10/matrix) · [真窗口 NUMBERS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md)（重跑 `python tests/test_figure_matrix.py` / `python tests/test_real_window.py --backend qt`） |
-| 随机语法（不预设写法） | **测的是**：随机 / 对抗写法下**会不会改坏源码、会不会越界改到别处**<br>**样本**：生成器（`tools/ast_fuzz_gen.py`，自造语法树）按语法规则随机拼**合法**脚本 + 对抗形态；**1,000 例 = 4 × 250 并行**、seed 可复现（`tests/test_ast_fuzz.py`） | 坏语法 **0** · 越界 **0** · 不幂等 **0** · 第四种结果 **0**；对抗写法一律**安全拒写**（0 字节、语法完好）<br>**证据**：[ASSERTIONS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/ast_fuzz/ASSERTIONS.md)（四片原始日志 + 判据） |
-| 命令行组合（参数 × 脚本） | **测的是**：命令 × 输入 × 参数文件 × 选项的任意组合下**不崩、不撒谎**<br>**样本**：**5,880 种组合** = 7 命令 × 10 输入 × 6 参数文件 × 14 选项，**分层抽样**、seed 可复现（`tests/test_cli_fuzz.py`） | 无 `Traceback`；退出码都属文档集合（`0` / `1` / `2` / `4`）；`--json` 恒可解析<br>**证据**：[DENOMINATOR.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/cli_fuzz/DENOMINATOR.md)（分母推导 + `N=240` 原始输出） |
-
-**"承诺违约"** = 工具说"已写回 / 已验证"，但实际字节没变、或验证根本没做 —— 本版为 **0**。（静态层的做法：真的把公开绘图脚本拿来做定位与改写判定；交互层的判据不是"看起来对"，而是随机操作下核对不崩 / 往返一致 / 几何合法 / 落位与参数一致。） **静态联网预筛的判据**：URL 字面量只要**坐在调用实参位置**（位置实参或关键字实参，比如 `pd.read_table("https://…")`、`ax.add_wms(wms="http://…")`）即计入 `net_risk`；按这条判据同口径重算，「全量真跑」那一行的真跑候选为 **1,770 份**（1,837 − 28 − 29 − 10）、写回并验证通过为 **925 份** —— 表里的 **1,780 / 928** 是 0.1.10 那轮判据下的记录。
-
-**0.1.13 在真实语料上的口径**：同一批语料扩到 **16,126 份** `.py`（含上面那 **10,158 份**第三方公开绘图脚本）做两版差分（同一参数、同一解释器，只做静态判定）—— 「参数自相矛盾」拒写从 **1,214 份降到 170 份（−86%）**，其中 **1,006 份**是「出图调用的 `dpi=` 被当成画布 dpi」；静态判不出画布 dpi 时改为**放行并在 `warnings` 里如实说明**（**166 份**，1.03%）；另有 **19 份**（0.12%）是判据变严后**反方向新增检出**的拒写（画布侧与出图侧 `dpi` 真成倍矛盾），已含在上面 **170 份**里。口径、范围与可复核性见 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) 的「拒写判据」一节。
-
-> 完整版（逐族通过率表、块通道判据、真窗口两轮日志、以及"没到 100% 的那部分是什么"）—— [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)。
-> **每个数字怎么查**：原始产物分**两个不可变 tag** —— [`evidence-0.1.10`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10)（表里**静态语料 / 全量真跑 / 窗口交互**那三行的逐脚本判定、操作日志、可点行号）；[`evidence-0.1.11`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.11/bench/evidence/0.1.11)（**增量包**：**随机语法 1,000 例**与**命令行组合 5,880 种**的原始日志与判据，覆盖范围见 [COVERAGE.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/COVERAGE.md) · 索引 [README.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/README.md)）。逐数字的「产物 → 命令 → 可复现等级（第三方可重跑 / 需本地语料 / 与本机相关）」表在 [docs/reliability.md 的「这些数字怎么来的（可复核）」](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) 一节。
-> 它**不声称什么**（不适用场景 / 验证的不声称项 / 语料数字怎么来的）—— [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md)。
-
-## 给 Agent 用
-
-**你不需要懂命令行 —— 把这件事交给 Agent 就行。**
-（**要能直接读写你电脑上文件的那种 Agent**；只在网页聊天窗口里聊天的，做不到。）
-
-把下面这条链接发给你正在用的 Agent（Claude Code / Codex / Cursor / DeepSeek Harness 等，只要它能读写你电脑上的文件），
-它自己就会照着这份手册把环境配好、帮你调图：
-
-- **给 Agent 的操作手册**：https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md
-  （也可以让它打开仓库里的 `skills/mpltweak/SKILL.md`，或者把那份文件的内容直接贴给它。）
-
-### 首推流程：六步（照着跟 Agent 说就行）
-
-1. **让 Agent 帮你画图。**（**如果你已经有画图脚本、只想改排版，可以直接跳到第 3 步，并告诉它脚本名，比如 `fig1.py`。**）
-   *你会看到*：Agent 把画好的图贴给你看。
-2. **先确认图的内容对不对**（这一步别急着调排版）。坐标轴、标签、数据是不是你要的？不对就现在说，让 Agent 改。
-   *你会看到*：内容定稿的版本 —— 后面要调的只是"排版"，不是"画什么"。
-3. **跟 Agent 说一句"我要交互式修改"。** 它会自己把调图窗口弹出来（你不用装东西、也不用打任何命令）。
-   *你会看到*：一个窗口弹出来，里面就是你的图，可以用鼠标拖、缩放。
-4. **你在窗口里改。** 拖面板、拖图例、调字号、对齐、均分（**在窗口里按 `?`，随时调出全部键位说明**）。
-   *你会看到*：拖动时是半透明预览，松手才落位。
-5. **Agent 用人话告诉你它改了什么，并等你确认。** 比如"子图 (a) 往右挪了一点、标题字号从 12 调到 14"。
-   这一步**代码还没动** —— 你不同意就继续说，它接着改。
-   *你会看到*：一份"改了什么"的人话清单 + 一句"要不要写进代码？"
-6. **你说"可以"，Agent 才把改动写回代码，然后重跑给你看。** 重跑之后对着第 2 步的内容再看一眼，确认没被改坏。
-   *你会看到*：重跑出来的新图 + 它改了哪几处；不满意可以接着调，或者让它退回上一次（`revert`）。
-
-> **全程你不需要打开命令行、不需要记任何命令** —— 你只需要看图 + 说话。
-
-```mermaid
-flowchart LR
-    A["① 你对 Agent 说：我要什么图"]:::script --> B["② Agent 写脚本 + 跑出图"]:::win
-    B --> C{"③ 你看图：内容对不对？"}:::check
-    C -->|不对| B
-    C -->|对| D["④ 你说：要交互式修改<br/>Agent 弹出调图窗口"]:::win
-    D --> E["你在窗口里拖着改<br/>（按 ? 看键位）"]:::win
-    E --> F{"⑤ Agent 用人话说明改了哪些地方"}:::check
-    F -->|不满意| E
-    F -->|满意| G["⑥ Agent 写回代码 + 重跑"]:::win
-    G --> Z(["你看新图，完事"]):::ok
-
-    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
-    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
-    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
-    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
-```
-
-**技术指针（都在仓库的 `docs/` 里）**：MCP（可选适配层）与 JSON 契约、**读 → 改 → 写 → 查的三行命令**、四个子命令的作用表与退出码、MCP 四个工具的参数签名、**人 + agent 的几种分工**，以及**排版前要先看的布局引擎冲突**，都在 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
+> 完整输出样张、逐处清单 `-v`、`--style inplace` / `--style block`、参数字段表 —— [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) 与 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)。
 
 ## License
 
@@ -191,4 +301,4 @@ MIT
 
 ---
 
-**要看完整版：** 键位与手势 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · 参数文件字段表 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · 三层验证与备份 / `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · 卡住了 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · 实测数字 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · 边界 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · 执行边界与退出码 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · 给 Agent 的手册 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) 与 [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · 开发与跑测试 [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)
+**要看完整版：** 键位与手势 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · 参数文件字段表 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · 三道验证与备份 / `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · 卡住了 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · 实测数字 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · 边界 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · 执行边界与退出码 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · 给 Agent 的手册 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) 与 [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · 开发与跑测试 [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)

@@ -247,8 +247,12 @@ def classify_verify_failure(err_text: str, script_path: Optional[str] = None,
             return VERIFY_FAIL_CANNOT_RUN, 'missing_dependency'
         if any(_p in low for _p in _MISSING_DATA_PATTERNS):
             return VERIFY_FAIL_CANNOT_RUN, 'missing_data'
-        # 有 stderr 但没对上任何已知模式：不靠静态猜（写回后失败而原脚本可跑通
-        # 时，脚本静态读 argv 也说明不了问题）→ 保守归 cannot_run。
+        # 有 stderr 但没对上任何已知模式：**本分类器保持"三分类"的保守契约**
+        # （tests/test_agent_api.py §21 ⑦：分类器永不从脚本 stderr 判出 tool_bug ——
+        # 仅凭一段 traceback 分不清"我们改坏了"还是"用户脚本自己就这样"）。
+        # 真正知道"原脚本能跑、写回后的不能跑"的是 apply 那层（它手里有
+        # verify_fail_kind = after_write / anchors_all_failed）⇒ 归因升级放在
+        # `apply._classify_verify_failure` 里，不在这里。
         return VERIFY_FAIL_CANNOT_RUN, 'unknown'
     # 无 stderr（原脚本本身跑不通 → writeback 只给笼统文案）：静态证据补位。
     if script_path:
@@ -1643,47 +1647,48 @@ if __name__ == '__main__':
 
 # --- BEGIN AUTO NAV ---
 # 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
-# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**（1-based）。
 # 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头：三层验证与判定口径（行 2-61，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 口径：容差表、失败归因四类与错误识别（行 62-262，2 个顶层函数）
+# §2 口径：容差表、失败归因四类与错误识别（行 62-266，2 个顶层函数）
 #     _script_static_evidence                        130
 #     classify_verify_failure                        219
-# §3 采集层：把图跑出来并抓状态（行 263-1185，26 个顶层函数）
-#     _ax_identity                                   265
-#     _collect_texts                                 300
-#     _line_width                                    403
-#     _line_color                                    417
-#     _lines_state                                   457
-#     _legend_state                                  473
-#     _artist_state                                  531
-#     _state                                         563
-#     _fd_to_stderr                                  667
-#     _fd_restore                                    683
-#     _snapshot_process_state                        711
-#     _restore_process_state                         718
-#     _FigureRegistry                                766
-#     _Session                                       801
-#     _capture_figures                               812
-#     _collect_session                               854
-#     _exec_script                                   901
-#     _states_of_all_figs                            948
-#     _state_of_one_fig                              967
-#     collect_all                                   1021
-#     collect                                       1049
-#     _isolated_timeout                             1086
-#     _child_env                                    1098
-#     collect_isolated                              1109
-#     _unlink                                       1167
-#     _r                                            1174
-# §4 语义层：参数与实测逐项比对（行 1186-1334，2 个顶层函数）
-#     compare                                       1188
-#     _compare_state                                1306
-# §5 重跑层：一遍跑到底与分层验证（行 1335-1516，2 个顶层函数）
-#     verify_once                                   1337
-#     verify_semantic                               1426
-# §6 子进程驱动：把图状态 dump 成 JSON（行 1517-1642，2 个顶层函数）
-#     _int_or_none                                  1524
-#     main                                          1531
+# §3 采集层：把图跑出来并抓状态（行 267-1189，26 个顶层函数）
+#     _ax_identity                                   269
+#     _collect_texts                                 304
+#     _line_width                                    407
+#     _line_color                                    421
+#     _lines_state                                   461
+#     _legend_state                                  477
+#     _artist_state                                  535
+#     _state                                         567
+#     _fd_to_stderr                                  671
+#     _fd_restore                                    687
+#     _snapshot_process_state                        715
+#     _restore_process_state                         722
+#     _FigureRegistry                                770
+#     _Session                                       805
+#     _capture_figures                               816
+#     _collect_session                               858
+#     _exec_script                                   905
+#     _states_of_all_figs                            952
+#     _state_of_one_fig                              971
+#     collect_all                                   1025
+#     collect                                       1053
+#     _isolated_timeout                             1090
+#     _child_env                                    1102
+#     collect_isolated                              1113
+#     _unlink                                       1171
+#     _r                                            1178
+# §4 语义层：参数与实测逐项比对（行 1190-1338，2 个顶层函数）
+#     compare                                       1192
+#     _compare_state                                1310
+# §5 重跑层：一遍跑到底与分层验证（行 1339-1520，2 个顶层函数）
+#     verify_once                                   1341
+#     verify_semantic                               1430
+# §6 子进程驱动：把图状态 dump 成 JSON（行 1521-1646，2 个顶层函数）
+#     _int_or_none                                  1528
+#     main                                          1535
 # --- END AUTO NAV ---

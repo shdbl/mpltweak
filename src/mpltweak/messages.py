@@ -282,6 +282,29 @@ MESSAGES = {
         'zh': '工具自身异常（internal_error）',
         'en': 'internal tool error (internal_error)',
     },
+    # 0.1.16：**写回后的代码跑不起来，但原脚本单独能跑** ⇒ 证据就指着"我们生成错了"。
+    # 旧版这里落到 fail_kind_cannot_run + fail_unknown_reason（"无法确定原因"），
+    # 用户读到"你的脚本有问题"⇒ 不报告、只当"这种图它不支持"（元组解包那个 bug
+    # 就是这么躲过 0.1.13/0.1.14/0.1.15 三个版本的）。
+    'fail_kind_generated_code': {
+        'zh': '写回后的代码跑不起来（你的原脚本本身是能跑的）',
+        'en': 'the written-back code cannot run (your original script runs fine)',
+    },
+    'fail_next_generated_code': {
+        'zh': '  你的源码一个字节都未修改（已回滚）。**这是 mpltweak 生成的问题，不是你'
+              '脚本的问题** —— 原脚本能跑、只有写回后的版本跑不起来。下一步：把这段'
+              '输出连同脚本的建图形状（几图几轴、怎么建轴：`subplots` / `add_subplot` / '
+              '元组解包 / colorbar…）报给作者；想先自查可跑 `mpltweak check %(script)s '
+              '--static`（只做静态检查，不执行脚本）',
+        'en': '  Your source was not modified at all (rolled back). **This is a '
+              'problem in the code mpltweak generated, not in your script** - your '
+              'original script runs fine, only the written-back version fails. '
+              'Next: report this output together with the figure shape (how many '
+              'figures/axes and how they are created: `subplots` / `add_subplot` / '
+              'tuple unpacking / colorbar...) to the author; to self-check first run '
+              '`mpltweak check %(script)s --static` (static check only, does not '
+              'execute the script)',
+    },
     'fail_unknown_reason': {
         'zh': '（无法确定原因）',
         'en': ' (reason could not be determined)',
@@ -326,6 +349,26 @@ MESSAGES = {
         'en': '  Your source was not modified at all (rolled back). This is a bug '
               'in the tool - please report this output to us.',
     },
+    # 0.1.16 / S2②：收尾（finalize）降级 —— **不是**写回失败，也不是工具的 bug。
+    # 场景：写回已经落盘，只有"把参数文件 mtime 刷新成与代码一致"这一步撞上外部
+    # 环境失败（文件被占用 / 只读介质 / 杀软扫描）。0.1.15 之前这里裸抛 OSError，
+    # 被顶层 guard 说成 internal_error + tool_bug（"这是工具的 bug"）—— 误归因。
+    'fail_kind_mtime_sync_failed': {
+        'zh': '参数文件 mtime 没刷新（外部环境问题，不是工具的 bug）',
+        'en': 'params mtime was not refreshed (an external environment problem, '
+              'not a tool bug)',
+    },
+    'fail_next_mtime_sync_failed': {
+        'zh': '  你的源码**已经写回**（这次没有回滚）—— 失败的只是"把参数文件的时间戳'
+              '刷新到与代码一致"这一步：文件被别的程序占着 / 只读介质 / 杀软扫描都会这样。'
+              '下一次 apply 可能把它判成"参数过期"，所以请带 `--force` 再跑一次'
+              '（或重新 describe 一份参数）',
+        'en': '  Your source WAS written back (nothing was rolled back) - only the '
+              'step that refreshes the params mtime failed: another program holding '
+              'the file, read-only media, or an antivirus scan all do this. The next '
+              'apply may treat those params as stale, so re-run with `--force` (or '
+              're-describe them)',
+    },
     'semantic_ok': {
         'zh': '  [OK] 语义验证通过（目标图状态 == 参数）',
         'en': '  [OK] Semantic check passed (target figure matches params)',
@@ -347,6 +390,18 @@ MESSAGES = {
         'en': 'could not sync the params mtime (%(path)s: %(err)s); the next '
               'apply may treat it as stale - re-describe if needed',
     },
+    # 0.1.16 / S2①（0.1.15 静默 except 审计 §4 的遗留债）：`writeback._pending_vs_live`
+    # 删不掉旧 `_verify_state.json` 时说一句。这是整棵树里**唯一一条"静默但会影响
+    # 结论"**的吞异常：残留文件可能被 `verify_semantic` 回读，"参数 vs 现场"的判定
+    # 于是沿用上一次 —— 用户只看到"待验/已验"莫名其妙地不更新。
+    # 口径：**只加一条 warning**（不改判定、不改 rc、不改变退块与否）。
+    'probe_state_stale': {
+        'zh': '旧验证状态文件删不掉（%(path)s：%(err)s）；若这次没能重新生成，'
+              '"参数 vs 现场"的判定可能沿用上一次的状态 —— 必要时请手动删掉它',
+        'en': 'could not delete the old verification state file (%(path)s: %(err)s); '
+              'if it could not be regenerated this time, the "params vs live" '
+              'verdict may reuse the previous state - delete it by hand if needed',
+    },
     'dry_run_inplace': {
         'zh': '  [dry-run] 未落盘；原位修改预览：',
         'en': '  [dry-run] nothing written; in-place preview:',
@@ -354,6 +409,47 @@ MESSAGES = {
     'dry_run_block': {
         'zh': '  [dry-run] 未落盘；生成的调整块：',
         'en': '  [dry-run] nothing written; generated block:',
+    },
+    # ==== 0.1.16 / F1：写回前 diff 预览（`apply --diff`）====
+    # 口径：**只说"将要"**，一处"已写回"字样都不许出现 —— 预览时脚本一个字节都没动。
+    # `preview_sha256` 是"将要写出的文件"的内容指纹，可与真写盘后的文件逐字节对拍。
+    'diff_preview_head': {
+        'zh': '  [预览] %(script)s：将要改 %(n)d 行（改后 %(lines)d 行，'
+              '内容指纹 %(sha)s…）；**未落盘**',
+        'en': '  [preview] %(script)s: %(n)d line(s) would change '
+              '(%(lines)d lines after, sha256 %(sha)s...); **nothing written**',
+    },
+    'diff_preview_row': {
+        'zh': '    L%(line)s [%(kind)s]  %(old)s  =>  %(new)s',
+        'en': '    L%(line)s [%(kind)s]  %(old)s  =>  %(new)s',
+    },
+    'diff_kind_inplace': {
+        'zh': '原位补参数',
+        'en': 'in-place',
+    },
+    'diff_kind_insert_block': {
+        'zh': '插入调整块',
+        'en': 'insert block',
+    },
+    'diff_kind_replace': {
+        'zh': '替换',
+        'en': 'replace',
+    },
+    'diff_preview_same': {
+        'zh': '  [预览] 参数与源码已经一致：一个字节都不会变（未落盘）',
+        'en': '  [preview] params already match the script: not a single byte '
+              'would change (nothing written)',
+    },
+    'diff_preview_more': {
+        'zh': '    …还有 %(n)d 行（加 -v 看全部）',
+        'en': '    ...and %(n)d more line(s) (use -v to see all)',
+    },
+    'diff_preview_tail': {
+        'zh': '  [预览] 未写盘；去掉 --diff 就按上面这份差异落盘'
+              '（预览不重跑脚本 → 真写回时验证失败会回滚，那时以真写回为准）',
+        'en': '  [preview] nothing written; drop --diff to apply exactly this '
+              'diff (the preview does not re-run your script, so a failed '
+              'verification on the real write still rolls back)',
     },
     # ==== §4.3 跨组约定键（T7/T11，键名无下划线） ====
     # 注意：与上面 `dry_run_inplace`/`dry_run_block`（**带**下划线）不是一回事 ——
@@ -1179,6 +1275,46 @@ MESSAGES = {
               'block was appended at the end (it has no effect if the script never '
               'saves a figure)',
     },
+    # S3（0.1.16）静态自检：生成前问"这个符号真的能下标吗"。可证是单轴（元组解包
+    # 出来的名字 / add_subplot 名）或证不出 ⇒ **拒绝生成**并点名原因。为什么必须
+    # 提前拦：写出去再靠"重跑失败→回滚"兜，只会得到 rc=1 +「无法确定原因」，
+    # 看起来像用户脚本的问题（元组解包那个 bug 就这样隐身了三个版本）。
+    'wb_block_refused_addr': {
+        'zh': '块里的轴寻址被**静态自检**拦下：`%(symbol)s` 证不出是"能下标的轴容器"'
+              '（原因：%(why)s）—— 若照旧生成 `%(symbol)s[0]` 这类表达式，重跑会'
+              '`TypeError`、再靠回滚兜底，只会让你看到一句"脚本跑不起来"。'
+              '本次按 fail-closed 不写这些字段；**这是 mpltweak 自己的定位问题**，'
+              '不是你脚本的问题。绕开的办法：给每根轴起可证的名字'
+              '（`fig, axs = plt.subplots(...)` 之后用 `axs[0]`），或用 '
+              '`fig.add_subplot(...)` 显式建轴',
+        'en': 'axes addressing inside the block was stopped by a **static self-check**: '
+              '"%(symbol)s" cannot be proven to be a subscriptable axes container '
+              '(reason: %(why)s) - generating "%(symbol)s[0]" anyway would raise '
+              'TypeError on the re-run and only surface as "your script cannot run" '
+              'after a rollback. These fields are not written this time '
+              '(fail-closed); **this is a targeting problem in mpltweak, not in your '
+              'script**. Workaround: give each axes a provable name (use `axs[0]` '
+              'after `fig, axs = plt.subplots(...)`) or create axes explicitly with '
+              '`fig.add_subplot(...)`',
+    },
+    'wb_addr_why_unpack': {
+        'zh': '它来自 `fig, (ax1, ax2) = plt.subplots(...)` 的**元组解包** —— '
+              '每个名字本身就是一根轴，对一根轴下标必然 TypeError',
+        'en': 'it comes from tuple unpacking `fig, (ax1, ax2) = plt.subplots(...)` - '
+              'each name is a single axes, and subscripting a single axes always '
+              'raises TypeError',
+    },
+    'wb_addr_why_single': {
+        'zh': '它是**一根轴**的名字（来自 `add_subplot` / `add_axes` / `subplot` / '
+              '`twinx`），一根轴不能下标',
+        'en': 'it names a single axes (from `add_subplot` / `add_axes` / `subplot` / '
+              '`twinx`), and a single axes cannot be subscripted',
+    },
+    'wb_addr_why_unknown': {
+        'zh': '静态证不出它是"subplots 返回的轴数组"还是"一根轴"（名字来源不明）',
+        'en': 'statically unprovable whether it is an axes array returned by '
+              'subplots or a single axes (unknown binding)',
+    },
     'wb_block_refused_fields': {
         'zh': '块内只能按**静态可证的变量名**定位目标对象；这些字段证不出目标'
               '（没有可证的变量名，而运行期下标 fig.axes[i] / plt.gcf() 会写到别的轴'
@@ -1552,6 +1688,92 @@ MESSAGES = {
               'with **the params file itself** (truncated / trailing comma / bad '
               'encoding), not a bug in this tool; re-export that params file.',
     },
+    # ==== §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图 ====
+    # 口径：默认**零侵入**（只报告不落盘）；没改东西 ≠ 失败也 ≠ 完成；无图形后端
+    # 复用 launch 那句人话 + 同一个退出码 4。
+    # 注：编号取 §4.24 —— §4.19 已被「apply 人读输出」占用，小节编号必须严格递增。
+    'demo_header': {
+        'zh': '[demo] 示例目录：%(dir)s（%(note)s）',
+        'en': '[demo] demo directory: %(dir)s (%(note)s)',
+    },
+    'demo_created': {
+        'zh': '新建示例脚本',
+        'en': 'created the example script',
+    },
+    'demo_reused': {
+        'zh': '目录已存在 → **复用**里面的示例脚本，没有覆盖它',
+        'en': 'directory already exists -> reusing its example script, '
+              'not overwriting it',
+    },
+    'demo_nothing_changed': {
+        'zh': '你没有改动任何东西，所以什么都没写。',
+        'en': 'You did not change anything, so nothing was written.',
+    },
+    'demo_repeat_hint': {
+        'zh': '想体验调图：mpltweak demo（再开一次窗，拖动后关窗看差异）',
+        'en': 'to try tweaking: mpltweak demo (open again, drag something, '
+              'then close)',
+    },
+    'demo_changes_head': {
+        'zh': '改了 %(n)d 处：',
+        'en': 'changed %(n)d things:',
+    },
+    'demo_diff_head': {
+        'zh': '代码逐行差异（%(n)d 行，源自 apply --diff）：',
+        'en': 'line-by-line diff (%(n)d lines, from apply --diff):',
+    },
+    'demo_wrote': {
+        'zh': '已落盘：%(script)s',
+        'en': 'written to disk: %(script)s',
+    },
+    'demo_compare_paths': {
+        'zh': '对比图：改前 %(before)s / 改后 %(after)s',
+        'en': 'comparison images: before %(before)s / after %(after)s',
+    },
+    'demo_write_failed': {
+        'zh': '落盘没成功（%(err)s）—— 示例脚本一个字节都没动。',
+        'en': 'writing back failed (%(err)s) - the example script was not '
+              'modified.',
+    },
+    'demo_next_step': {
+        'zh': '下一步：%(cmd)s（把上面的改动落盘，并生成改前/改后对比图）',
+        'en': 'next: %(cmd)s (apply these changes and produce before/after '
+              'images)',
+    },
+    # ③ first_demo=true 时给 agent 一句**可以直接转述的用户话**（不含命令/参数名）。
+    'demo_keys_hint': {
+        'zh': '提示：窗口里按 ? 显示快捷键速查表（拖动、多选、对齐、裁白边都在里面）',
+        'en': 'tip: press ? inside the window for a shortcut cheat sheet '
+              '(drag, multi-select, align, trim margins are all in there)',
+    },
+    'demo_first_hint': {
+        'zh': '给用户看 demo 效果后，可以补一句：「以后你觉得哪里用着不顺手，'
+              '可以让我去查一下有没有新版本——这个工具一直在改，说不定已经有'
+              '更省事的做法。」',
+        'en': 'after showing the demo, you can add: "Whenever something feels '
+              'awkward, ask me to check for a newer version - this tool keeps '
+              'changing, and there may already be an easier way."',
+    },
+    # ==== §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17） ====
+    # 对象是 **agent**：要能直接照做（改哪个函数的哪一处、改成什么、然后跑什么）。
+    # 只在 func_multi_return / func_called_many 两类出现（普通拒写不加，免得误导）。
+    'wb_func_anchor_guide': {
+        'zh': '这块图是在函数 %(func)s 里建的，**模块级**没有 fig / axes 这样的名字，'
+              '所以写回时定位不到要改的那根轴。要让它能写回，二选一：\n'
+              '  1) 让函数返回 (fig, axes)，在模块级接住：'
+              '`fig, axes = %(func)s(...)`；\n'
+              '  2) 或者把 `fig, axes = plt.subplots(...)` 留在**模块级**，函数里只画'
+              '（函数只收 fig/axes 当参数）。\n'
+              '改完重跑一次 `mpltweak apply <脚本> --write` 即可。',
+        'en': 'this figure is created inside the function %(func)s, and there is no '
+              'module-level name such as fig / axes, so the write-back cannot locate '
+              'the axes it should change. To make it writable, pick one:\n'
+              '  1) return (fig, axes) from the function and bind it at module level: '
+              '`fig, axes = %(func)s(...)`;\n'
+              '  2) or keep `fig, axes = plt.subplots(...)` at module level and let '
+              'the function only draw (pass fig/axes in as arguments).\n'
+              'Then re-run `mpltweak apply <script> --write`.',
+    },
 }
 
 
@@ -1671,7 +1893,10 @@ def emit_json(obj, indent=2):
 #   backup    备份 / 留档（找备份、写备份、拿脚本锁）
 #   writeback 真正动文件的那一步（AST 写回；`launch` 下 = 执行你的脚本并抓图）
 #   verify    写回后的验证（重跑 / 语义 / 外部改动守卫）
-#   finalize  结果收尾（本批没有命令在这一步失败，值先占位：以后新增出口不必改口径）
+#   finalize  结果收尾。两处**真**用法：`launch` 的"脚本跑通、图也有了、收尾时后端不可
+#             交互"；`apply` 的"写回已落盘，但刷新参数文件 mtime 失败"（0.1.16 / S2② ——
+#             这是唯一会出现在**成功载荷**里的 stage：ok 仍为 true，stage 说的是"最后一步
+#             没干净收尾"，逐文件细节在 files[].warnings / attribution 里）
 STAGES = ('params', 'preflight', 'backup', 'writeback', 'verify', 'finalize')
 
 
@@ -2094,7 +2319,7 @@ UI_ZH_TO_EN = {
     '只做环境自检（后端/绑定/版本/光标），不跑脚本': 'environment self-check only (backend / bindings / version / cursor); does not run the script',
     '不开窗，只验证能抓图并存参数': 'no window: only verify that figures can be captured and params saved',
     '打印全部交互日志（缩放开始 axN <手柄> 等），排查用': 'print the full interaction log (resize start axN <handle>, ...) for debugging',
-    'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n\n用法：\n  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n  mpltweak --version                              打印版本号后退出（rc=0）\n  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n  mpltweak revert <script.py> [--write]           回退到上次写回之前\n  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n  mpltweak schema [--compact]                     参数 JSON Schema\n  mpltweak mcp                                    启动 MCP server\n  mpltweak doctor                                 环境自检\n\n退出码（0.1.11 起统一为 0 / 1 / 2 / 4）：0 = 没问题 / 成功；1 = 发现问题（check）；\n  2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数非法 / 工具自身异常）；\n  4 = 没有可用图形后端。\n  （0.1.9 的退出码 3 已退役：常量保留，但不再由任何路径产生。）\n同为退出码 2，**"脚本侧失败"与"工具自身 bug"分开报**（0.1.10 起，只改文案）：\n  · 脚本侧：文件不存在 / 参数文件不合法（bad_params）/ 你的脚本自己报错\n    （缺依赖 / 缺数据 / 需要命令行参数 / 无头环境要开窗口）；\n  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug）与 `next_step` 区分，agent 可据此自动分支。\n注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n\n交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n': 'mpltweak - tweak matplotlib layout like moving shapes in a slide editor (zero intrusion into your script)\n\nusage:\n  mpltweak <script.py> [--fig N] [--params X]     open the interactive window\n  mpltweak launch <script.py> [--fig N]           same (explicit subcommand)\n  mpltweak --version                              print the version and exit (rc=0)\n  mpltweak apply <script.py> [--write] [--json]   apply (preview by default)\n  mpltweak revert <script.py> [--write]           undo the last write-back\n  mpltweak describe <script.py> [--lang zh|en]    export the layout without a window\n  mpltweak check <script.py> [--json]             layout check (runs your script)\n  mpltweak check <script.py> --static             AST + layout engine only\n  mpltweak schema [--compact]                     params JSON Schema\n  mpltweak mcp                                    start the MCP server\n  mpltweak doctor                                 environment self-check\n\nexit codes (unified to 0 / 1 / 2 / 4 as of 0.1.11): 0 = fine / success; 1 = problems found (check);\n  2 = cannot run (script not found / your script raised / bad params / internal error);\n  4 = no usable GUI backend.\n  (exit code 3 from 0.1.9 is retired: the constant stays, but no path returns it.)\nFor the same exit code 2, "your script failed" and "the tool itself has a bug" are reported separately (since 0.1.10; wording only):\n  - script side: missing file / invalid params file (bad_params) / your script raised\n    (missing dependency / missing data / needs command-line arguments / needs a window in a headless env);\n  - tool side: internal_error - this tool raised an unexpected exception; unrelated to your script.\nBoth print one "attribution" line plus a copy-pasteable next step; with `--json` the\n`attribution` field (script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug) and `next_step` let an agent branch automatically.\nNote: describe / check / apply DO execute your script (in a separate process, Agg headless);\n      side effects (writing files / network / cache) really happen; --static is the only\n      option that never executes it.\n\ninteraction: drag a panel to move / PPT-style resize (Shift keeps the ratio, Alt centers) /\n      Ctrl+click multi-select / align and distribute / snapping / Ctrl+F trim margins /\n      hover +/- to change font size / arrow keys move a panel /\n      space toggles line mode / Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo / ? shows the keys\n',
+    'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n\n用法：\n  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n  mpltweak --version                              打印版本号后退出（rc=0）\n  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n  mpltweak revert <script.py> [--write]           回退到上次写回之前\n  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n  mpltweak schema [--compact]                     参数 JSON Schema\n  mpltweak mcp                                    启动 MCP server\n  mpltweak doctor                                 环境自检\n\n退出码（0.1.11 起统一为 0 / 1 / 2 / 4）：0 = 没问题 / 成功；1 = 发现问题（check）；\n  2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数非法 / 工具自身异常）；\n  4 = 没有可用图形后端。\n  （0.1.9 的退出码 3 已退役：常量保留，但不再由任何路径产生。）\n同为退出码 2，**"脚本侧失败"与"工具自身 bug"分开报**（0.1.10 起，只改文案）：\n  · 脚本侧：文件不存在 / 参数文件不合法（bad_params）/ 你的脚本自己报错\n    （缺依赖 / 缺数据 / 需要命令行参数 / 无头环境要开窗口）；\n  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed）与 `next_step` 区分，agent 可据此自动分支。\n注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n\n交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n': 'mpltweak - tweak matplotlib layout like moving shapes in a slide editor (zero intrusion into your script)\n\nusage:\n  mpltweak <script.py> [--fig N] [--params X]     open the interactive window\n  mpltweak launch <script.py> [--fig N]           same (explicit subcommand)\n  mpltweak --version                              print the version and exit (rc=0)\n  mpltweak apply <script.py> [--write] [--json]   apply (preview by default)\n  mpltweak revert <script.py> [--write]           undo the last write-back\n  mpltweak demo [--write]                         try the bundled example (copy + window + comparison images)\n  mpltweak describe <script.py> [--lang zh|en]    export the layout without a window\n  mpltweak check <script.py> [--json]             layout check (runs your script)\n  mpltweak check <script.py> --static             AST + layout engine only\n  mpltweak schema [--compact]                     params JSON Schema\n  mpltweak mcp                                    start the MCP server\n  mpltweak doctor                                 environment self-check\n\nexit codes (unified to 0 / 1 / 2 / 4 as of 0.1.11): 0 = fine / success; 1 = problems found (check);\n  2 = cannot run (script not found / your script raised / bad params / internal error);\n  4 = no usable GUI backend.\n  (exit code 3 from 0.1.9 is retired: the constant stays, but no path returns it.)\nFor the same exit code 2, "your script failed" and "the tool itself has a bug" are reported separately (since 0.1.10; wording only):\n  - script side: missing file / invalid params file (bad_params) / your script raised\n    (missing dependency / missing data / needs command-line arguments / needs a window in a headless env);\n  - tool side: internal_error - this tool raised an unexpected exception; unrelated to your script.\nBoth print one "attribution" line plus a copy-pasteable next step; with `--json` the\n`attribution` field (script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed) and `next_step` let an agent branch automatically.\nNote: describe / check / apply DO execute your script (in a separate process, Agg headless);\n      side effects (writing files / network / cache) really happen; --static is the only\n      option that never executes it.\n\ninteraction: drag a panel to move / PPT-style resize (Shift keeps the ratio, Alt centers) /\n      Ctrl+click multi-select / align and distribute / snapping / Ctrl+F trim margins /\n      hover +/- to change font size / arrow keys move a panel /\n      space toggles line mode / Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo / ? shows the keys\n',
 
     '[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s 导出=%s':
         '[mpltweak] mode=full redraw (ghost+blit) full-redraw=%s snap=%s '
@@ -2247,8 +2472,9 @@ UI_ZH_TO_EN.update({
 
 # --- BEGIN AUTO NAV ---
 # 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
-# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**（1-based）。
 # 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
+# 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头：两层输出与 GBK 硬约束（行 2-70，0 个顶层函数）
 #     （本分区没有顶层函数）
 # §2 语言状态与退出码常量（行 71-105，0 个顶层函数）
@@ -2257,22 +2483,52 @@ UI_ZH_TO_EN.update({
 #     detect_lang                                    108
 #     set_lang                                       139
 #     current_lang                                   147
-# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 154-1557，0 个顶层函数）
+# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 154-1779，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §5 取词：t / code / t_en（行 1558-1597，3 个顶层函数）
-#     t                                             1560
-#     code                                          1576
-#     t_en                                          1581
-# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1598-1772，5 个顶层函数）
-#     _finite                                       1600
-#     emit_json                                     1619
-#     shell_path                                    1678
-#     fail_json                                     1687
-#     guard_json_main                               1716
-# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 1773-1969，1 个顶层函数）
-#     t_wb                                          1957
-# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 1970-2151，0 个顶层函数）
+#         §4.1 apply 写回结果                            162
+#         §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了          264
+#         §4.3 跨组约定键（T7/T11，键名无下划线）                  454
+#         §4.4 launch                                535
+#         §4.5 布局引擎冲突（constrained_layout / autolayout）   570
+#         §4.6 写进用户脚本里的文案（哨兵行除外）                     596
+#         §4.7 通用                                    602
+#         §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时）   615
+#         §4.9 check：几何规则（CH-12）                     630
+#         §4.10 check：文字渲染尺寸                         697
+#         §4.11 check：参数校验 / 人读输出 / --static（A4）     741
+#         §4.12 MCP（机器可读通道，一律稳定英文）                   819
+#         §4.13 窗口后端（回退到 Tk 必须告知）                    828
+#         §4.14 首次开窗（每个用户只打一次）                       835
+#         §4.15 launch 关窗后的下一步                       858
+#         §4.16 schema（CH-9）                         869
+#         §4.17 可重跑预检（0.1.10 pre-flight）             877
+#         §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论）   938
+#         §4.19 apply 人读输出（B4 / t33）                1007
+#         §4.20 落地提示与"验了哪几层"（T15 / T23）             1189
+#         §4.21 writeback 生成的文案（B4 + 原 t9）          1240
+#         §4.22 params 校验文案（t55）                    1514
+#         §4.23 参数文件自身损坏（t56）                       1679
+#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1691
+#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1757
+# §5 取词：t / code / t_en（行 1780-1819，3 个顶层函数）
+#     t                                             1782
+#     code                                          1798
+#     t_en                                          1803
+# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1820-1997，5 个顶层函数）
+#     _finite                                       1822
+#     emit_json                                     1841
+#     shell_path                                    1903
+#     fail_json                                     1912
+#     guard_json_main                               1941
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 1998-2194，1 个顶层函数）
+#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2023
+#     t_wb                                          2182
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2195-2376，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §9 查表函数 t_ui 与运行期追加的两块 update（行 2152-2246，1 个顶层函数）
-#     t_ui                                          2154
+#         §8.1 doctor 的列标签与括注                       2216
+#         §8.2 launch 的运行时人读输出                      2242
+#         §8.3 describe：写盘那一行                       2312
+#         §8.4 toolbox：启动横幅那 2 行                    2314
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2377-2471，1 个顶层函数）
+#     t_ui                                          2379
 # --- END AUTO NAV ---

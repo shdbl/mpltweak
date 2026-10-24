@@ -43,6 +43,7 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr）。**脚本自己带参数**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）时在 `--` 后透传：`apply <脚本> --write -- --data x.npz`（bug #6，否则重跑验证与基线不一致而误回滚） |
 | `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
+| `mpltweak apply <脚本> --diff --json` | **写回前先看差异**（0.1.16，别名 `--preview-diff`，同一个开关）：引擎**照真写回的路跑**，只是把目标换成同目录的**影子副本**（跑完即删），所以内容与真写盘**同源**（含 `--style auto` 退块那次"重读源码"的语义）。`files[].diff` 逐行给出 `{line, type, old, new}`（`type` = `inplace` 原位补参数 / `insert_block` 插入调整块 / `replace` 替换）。这一档 `reason='preview'` / `applied=false` / `rc=0`（与只读预览同档，**不是**"已写回"），**脚本一个字节都不动、不造备份**。**它不重跑脚本**，所以边界是：真写盘时**验证失败**触发的回滚/换锚点重试不会体现在预览里 —— 那一档以真写回为准 |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突**默认就是 error 级问题**（`rule='layout_engine_conflict'`，0.1.14 起；`--strict` 只是兼容开关） |
 
 **三个选项各自只属于一个子命令**（`--help` 里都列着，这里再点名一次：它们**不是**全局开关，给错了子命令是 `rc=2`）
@@ -87,6 +88,7 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 * `files[].verify_passes`（**恒存在**，int）：**1** = 默认单遍；**2** = 单遍取不到目标图状态、已回退两遍；**0** = 这次**没有**为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 / 没有可写字段）—— **`0` 不是失败**，它只表示"这一档没为验证重跑脚本"。它**只数主验证的遍数**：参数里有"原位写不了"的字段时先额外跑的那一遍**不计入**（所以 `verify_passes=1` ≠ 整条命令只跑了 1 遍脚本）。要判断"这次为什么回退"，看 `verify_passes=2` 再读同一条目的 `warnings`。
 * `files[].semantic_basis`（**恒存在**，str）：`live+savefig` = 图对象状态 + 磁盘那张图的追加判据；`live` = 只有图对象状态；**空串** = 这次没有语义判定依据（没跑 / 回退后如实记"没验到"）。
 * `files[].layout_conflicts`（**恒存在**，数组）：脚本里**开着的布局引擎冲突点**（`constrained_layout` / `figure.autolayout`），每项一句人话并带脚本行号。**空数组 = 这份脚本没开引擎**，位置的写回不会被覆盖。非空要看同一条目的 `reason` 分流：`reason='layout_conflict'` ⇒ 这次要写轴位置、被默认拦下（`applied=false`、**这一份**没写盘、`rc=1`）；`reason` 是 `ok` / `best_effort` ⇒ 这次只动了非几何字段（字号 / 线宽 / cmap / 标题），或者你给了 `--force`，冲突仍在但没挡这次。**它只说明"脚本开着引擎"，不说明"这次写不写位置"**。
+* `files[].diff`（**恒存在**，数组；只有 `--diff` 时非空）：写回前预览的**行级差异**，每项 `{line, type, old, new}`。`line` 是**新文件**里的行号（1 基）；`old` 是原行（插入时 `null`）、`new` 是改后行（删除时 `null`）。`type` 三档：`inplace` = 一对一换行（原位补参数 / 改数字）、`insert_block` = 新增行落在自动生成的调整块里、`replace` = 其余（已有块被整体替换 / 行数变了）。**用它就能在落盘前复现"改完是什么样"**：把每项按 `line` 重放到原文即可（`old` 必须与原文同位置的整行一致，对不上就是口径错）。同组的三个键：`preview_sha256`（**影子副本最终内容**的严格字节指纹 —— 它就是真写盘后文件的 sha256，唯一例外是调整块说明行里的"生成于 <时间>"：预览与真写回是两次运行，跨了分钟就只差这几个字符）、`preview_sha256_norm`（把"生成于 <时间>"抹成 `<ts>` 之后再算，**跨分钟也稳定**，"预览 == 真写盘"的确定性对拍用它）、`preview_bytes`（将要写出的字节数）。**边界说清**：`--diff` **不重跑你的脚本**，所以"验证失败 → 自动回滚 / 换锚点重试"这类**由验证结果驱动**的分支不在预览里；那种情况下以真写回为准。
 * `files[].layout_why`（**判定依据**，稳定英文枚举，不进文案）：这条参数到底会不会改到轴位置 —— `no_pos` = 参数里没有位置类字段，不可能写位置；`proved_equal` = 静态证得出源码现值已等于目标位置，写了也是空改；`live_equal` = 重跑实测参数里的位置与现状一致，不用写；`live_differs` = 重跑实测确实不同，**这次真要写位置**（冲突下会被拒）；`unjudged` = 判不了（没开验证、脚本重跑不了、解析失败）⇒ 保守按"可能要写"处理。判据只有一处：`writeback.position_write_needed`（返回 `(True|False|None, why)`）。
   **注意（0.1.14 现状）**：`--json` 载荷目前只带出 `layout_conflicts`，**还没有** `layout_why` 这个键；它此刻只体现在**人读输出**上 —— 判不了那一档会多一句「补充：本次没有跑（或跑不出）脚本重跑验证 → 无法确认参数里的位置是否已经与现状一致，按"可能要写"处理（保守拒绝）」。所以 `--json` 下要分「实测有差异」与「判不了」，按**这次有没有关掉重跑验证**判：带了 `--no-verify` / `--verify-fast`，或脚本本身跑不起来 ⇒ `unjudged`；正常跑过验证仍被拒 ⇒ `live_differs`。想让判定更准，就别关验证。
 * 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / **`nothing_applied`** / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。**`nothing_applied`（0.1.14）** = 整批**一个字节都没写**而这次确实想写（典型：隐式建图 / `for` 里建图 / 函数里建图 / 类里 `self.ax` —— 引擎证不出目标变量名，按 fail-closed 保守拒写）：这一档 `ok=false`、`rc=1`，而 `files[].reason` 可能仍是 `best_effort`、`files[].applied=false` —— **旧版正是这里撒谎**（`ok=true` + `rc=0`，agent 当成"已写回"）。反面对照：`reason=no_change`（参数与源码本来就一致）仍是 `ok=true` / `rc=0` / 无 `error_code`，那不是失败。所以判"写没写"只看 `applied` / `changes` / `reason`，判"成没成"才看 `ok` / `rc` / `error_code`。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
@@ -98,8 +100,14 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 只在**失败/降级**时出现（成功载荷**没有**它们，`files[]` 条目里也**没有** `stage` —— 逐文件细分原因
 照旧看 `files[].reason`）。
 
+**唯一例外：收尾降级（0.1.16 起）。** 写回**已经落盘**、只是收尾那一步没干净完成时，`ok` 仍是
+`true`、`rc=0`，载荷顶层会带 `stage='finalize'` + `next_step`（典型：写回后刷新参数文件 mtime 失败）。
+这一档**不是**写回失败，也**不是**"工具的 bug" —— 判"写没写"照旧只看 `applied` / `changes` / `reason`，
+逐文件原因看同一条目的 `files[].warnings` 与 `files[].attribution`。
+
 * `stage`：失败卡在**哪一步**（稳定英文枚举，值域只有下面 6 个，唯一出处在 `messages.STAGES`，
-  机器据此决定"原命令重试 / 改输入 / 改脚本 / 报 bug"）。
+  机器据此决定"原命令重试 / 改输入 / 改脚本 / 报 bug"）。**其中 `finalize` 会出现在成功载荷上**
+  （见下表的说明）。
 * `next_step`：一句**可直接复制**的下一步（命令或动作），路径一律带双引号。**它是建议不是保证** ——
   按"这条失败最常见的成因"给，工具不保证照抄就一定跑得通（例：脚本本身有语法错时，`--force` 也救不回来）。
   0.1.10 起 `files[].next_step` 只覆盖"验证失败归因"那一档；顶层这个把它抬到顶层，并且在没有逐文件
@@ -112,7 +120,23 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 | `backup` | 备份 / 留档（拿脚本锁、找备份、写备份） | `revert` |
 | `writeback` | 真正动文件那一步（AST 写回；`launch` 下 = 执行你的脚本并抓图） | `apply` `launch` |
 | `verify` | 写回后的验证（重跑、语义比对、外部改动守卫） | `apply` |
-| `finalize` | 结果收尾（当前没有命令在这一步失败，值先占位，以后新增出口不必改口径） | 无 |
+| `finalize` | 结果收尾（0.1.16 起**真会用到**，且这一档**会出现在成功载荷**：`apply` 写回**已落盘**、之后刷新参数文件 mtime 失败 ⇒ `ok` 仍 `true` / `rc=0`，只有收尾降级；`launch` 侧同一档 = 脚本跑通、图也有了，收尾时后端已不可交互） | `apply` `launch` |
+
+**`files[].warnings` 里 0.1.16 新增的两类留痕（都不影响 `ok` / `rc`）**：`probe_state_stale` = 旧的验证
+状态文件删不掉（这次仍按重跑回读的结果判，但"待验 / 已验"可能沿用了上一次的结论）；`mtime_sync_fail` =
+写回成功后刷新参数文件 mtime 失败（下次 `apply` 可能把这份参数判成 `stale`，必要时重新 `describe`）。
+收尾降级那一档的逐文件归因是 `attribution='mtime_sync_failed'`（归因取值表见
+[exec-boundaries.md](exec-boundaries.md)「跑不起来时，是谁的错、下一步做什么」）。
+
+**`files[].attribution_detail`：`tool_bug` 有两种来源（0.1.16 起）。** `attribution` 的**值域一个都没变**
+（仍是脚本侧三类 + `tool_bug` + `mtime_sync_failed`），细分加在 `attribution_detail` 上：`generated_code_failed`
+= **写回之后的代码跑不起来，而你的原脚本本身是能跑的** ⇒ 有问题的是**工具生成的那几行**，不是你的脚本
+（`attribution` 仍归 `tool_bug`，因为该修的是工具）。它是**升级、不是新分类**：底层分类器仍然只产出三类
+（`script_cannot_run` / `script_needs_args` / `script_needs_gui_or_headless_impossible`），"判成 `tool_bug`"
+这件事**只发生在 `apply` 这一层**，且只在"重跑失败的证据表明卡在写回那一步"（`verify_fail_kind` =
+`after_write_broken` / `anchors_all_failed`）时才做 —— **绝不从 stderr 文案反推**（0.1.13 的教训：按文案反推
+在英文下会静默失效）。**为什么值得单列**：这一档以前落到「脚本跑不起来（无法确定原因）」，用户读到的
+是"你的脚本有问题"，于是根本没来报。
 
 **`launch` 也有 `--json` 了（只覆盖失败路径）**：成功路径照旧开窗、不产出 JSON（开窗是长时间交互，
 机器格式在那条路上没有意义）。失败时 stdout 只有**一条** JSON：`ok=false` + `error_code` + `stage` +

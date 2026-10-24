@@ -33,6 +33,22 @@
 行号 = 该 `def` 的**定义行**（1-based）。块放在**文件末尾**是刻意的：它自己占的行都在
 所有函数之后，重算不会把前面的行号挤动（否则生成-校验会互相打架、永远不一致）。
 
+## 类内 / 函数内小节（F8 / 0.1.16）
+
+顶层函数之外，**缩进**的分区横幅（`    # ==== §8.1 开窗与事件接线 ====`）也是导航：
+`toolbox.Tweak` 里有 21 条、`apply.main` 里有 6 条、`messages.MESSAGES` 里有 28 条。
+它们以小一号的层级挂在**包含它的那个顶层定义**（类 / 函数）下面；不在任何顶层定义
+里的（如 `messages.py` 里 `MESSAGES = {…}` 字典内部），挂到它**大号对应的分区**下：
+
+    # §8 …（行 1200-4400，1 个顶层函数）
+    #     Tweak                                       1205
+    #         §8.1 开窗与事件接线                         1458
+
+判据（**稳，不猜**）：必须①有缩进、②`§` 后紧跟数字、③编号**带小数点**。缩进的
+**整数**编号（`    # ==== §8 …`）是用法错（rc=2）—— 两套口径混用会让"§8 是分区还是
+类内小节"无法判定；小节的**大号前缀**必须对应一个真实存在的顶层分区，同组编号必须
+严格递增（与顶层一套纪律）。
+
 ## 分区怎么来（为什么不许自动按 500 行切）
 
 分区横幅是人按**真实功能边界**写的注释行：
@@ -62,6 +78,13 @@ BEGIN_MARK = '# --- BEGIN AUTO NAV ---'
 END_MARK = '# --- END AUTO NAV ---'
 #: 分区横幅：`# ==== §4 分区名 ====`（§ 后面是编号，名称里不许再出现 `====`）
 BANNER_RE = re.compile(r'^# ==== §(?P<num>\d+)\s+(?P<name>[^=].*?)\s*====\s*$')
+
+#: 类内/函数内小节横幅（F8）：**缩进** + `§` 紧跟数字 + 编号**带小数点**。
+#: 例：`    # ==== §8.1 开窗与事件接线 ====`
+SECT_RE = re.compile(r'^(?P<ind>[ \t]+)# ==== §(?P<num>\d+(?:\.\d+)+)\s+'
+                     r'(?P<name>[^=].*?)\s*====\s*$')
+#: 缩进但编号是**整数**的横幅：不允许（判用法错，见 _sections 的说明）
+SECT_INT_INDENT_RE = re.compile(r'^[ \t]+# ==== §(?P<num>\d+)\s+[^=].*?\s*====\s*$')
 
 #: 默认清单：**本仓库所有已加导航的模块**都要在这里，否则 CI 的新鲜性断言管不到它
 #: （0.1.14 起：C 批给 6 个大文件都加了导航，清单只剩 writeback 就等于没护栏）。
@@ -129,6 +152,78 @@ def _top_defs(src):
     return out
 
 
+def _sections(lines):
+    """类内/函数内小节横幅 → ``[(行号(1-based), 编号串, 名称), ...]``（按出现顺序）。
+
+    判据只看三件事（不猜）：**有缩进** + `§` **紧跟数字** + 编号**带小数点**。
+    缩进的**整数**编号（`    # ==== §8 … ====`）判用法错 —— 混用会让"§8 是分区还是
+    类内小节"无法判定；与其生成一个指着错层级的假导航，不如红在生成期。
+    """
+    out = []
+    for i, ln in enumerate(lines):
+        m = SECT_RE.match(ln)
+        if m:
+            out.append((i + 1, m.group('num'), m.group('name').strip()))
+            continue
+        if SECT_INT_INDENT_RE.match(ln):
+            raise ValueError(
+                '第 %d 行：**缩进**的横幅带整数编号 —— 类内/函数内小节必须写成小数'
+                '（`    # ==== §8.1 标题 ====`），整数编号只给顶层分区用' % (i + 1))
+    return out
+
+
+def _top_spans(src):
+    """顶层 def / class 的**行区间** ``[(起, 止, 名字), ...]``（1-based，闭区间）。
+
+    F8 用它回答"这条缩进小节属于哪个顶层定义"（`toolbox` 的 `Tweak` 与 `apply` 的
+    `main` 里都各有一整套 `§8.x`，只靠行号前后判不出归属）。``end_lineno`` 是 3.8+
+    属性；取不到就退化成"到下一个顶层定义之前"，宁可空挂也不误挂。
+    """
+    tree = ast.parse(src)
+    body = [n for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+    out = []
+    for i, node in enumerate(body):
+        hi = getattr(node, 'end_lineno', None)
+        if hi is None:
+            hi = (body[i + 1].lineno - 1 if i + 1 < len(body)
+                  else src.count('\n') + 1)
+        out.append((node.lineno, hi, node.name))
+    return out
+
+
+def _validate_sections(sects, banners):
+    """小节编号的纪律（与顶层分区同一套）：前缀要有真分区、必须在它之后、组内递增。"""
+    top_at = {num: line for line, num, _n in banners}
+    seen = {}
+    for line, num, _name in sects:
+        major = int(num.split('.')[0])
+        if major not in top_at:
+            raise ValueError('第 %d 行的 §%s：前缀 §%d 没有对应的**顶层**分区横幅'
+                             '（小节必须挂在一个真分区下面）' % (line, num, major))
+        if line < top_at[major]:
+            raise ValueError('第 %d 行的 §%s 出现在它的分区横幅 §%d（第 %d 行）**之前**'
+                             % (line, num, major, top_at[major]))
+        key = tuple(int(x) for x in num.split('.'))
+        prev = seen.get(major)
+        if prev is not None and key <= prev[0]:
+            raise ValueError('第 %d 行的 §%s 不大于同组的 §%s（第 %d 行）—— '
+                             '小节编号必须严格递增' % (line, num, prev[1], prev[2]))
+        seen[major] = (key, num, line)
+
+
+def _sect_line(num, name, line):
+    """索引块里的小节行：比 def 行**再缩进一级**（按编号里的点数分级）。
+
+    数字列与 def 行对齐（都是 56 列宽），层级只靠左侧缩进看 —— 一眼能看出
+    `§8.1` 挂在 `Tweak` 下面，而不是和顶层函数混成一片。
+    """
+    depth = num.count('.')                  # §8.1 → 1 级；§8.1.2 → 2 级
+    ind = 5 + 4 * depth
+    width = max(8, 49 - ind)                # 1+ind+width+1+5 = 56 列
+    return '#%s%-*s %5d' % (' ' * ind, width, '§%s %s' % (num, name), line)
+
+
 def _validate_banners(banners):
     """编号必须严格递增（不许重复/倒序）—— 乱序的分区导航比没有更糟。"""
     seen = None
@@ -148,6 +243,10 @@ def build_block(src, path):
                          '先按真实功能边界加横幅，本工具不替你猜分组')
     _validate_banners(banners)
     defs = _top_defs(src)
+    # F8：缩进的类内/函数内小节（`§8.1` 这类）。先校验纪律，再按"包含它的顶层定义"
+    # 挂载 —— `toolbox.Tweak` 与 `apply.main` 里各有一整套 §8.x，只靠行号前后判不出归属。
+    sects = _sections(lines)
+    _validate_sections(sects, banners)
 
     # **关键**：算分区区间时要把**已有的索引块本身**排除掉。索引块在文件末尾，否则
     # 最后一个分区的"结束行 = 文件总行数"会随索引块自己的长短而变 —— 写完再校验就永远
@@ -172,10 +271,26 @@ def build_block(src, path):
                 break
         (owner['defs'] if owner is not None else leading).append((dline, dname))
 
+    # 小节挂载：落在某个顶层 def/class 的行区间里 → 挂到那个定义（显示在它下面）；
+    # 否则（典型：`messages.MESSAGES = {…}` 字典内部的 §4.x）→ 挂到它**大号对应的分区**。
+    spans = _top_spans(src)
+    sect_by_span = {}
+    sect_by_group = {}
+    for sline, snum, sname in sects:
+        owner_lo = None
+        for lo, hi, _dn in spans:
+            if lo <= sline <= hi:
+                owner_lo = lo
+        bucket = (sect_by_span if owner_lo is not None else sect_by_group)
+        key = owner_lo if owner_lo is not None else int(snum.split('.')[0])
+        bucket.setdefault(key, []).append((sline, snum, sname))
+
     out = [BEGIN_MARK,
            '# 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验',
-           '# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。',
-           '# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。']
+           '# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**'
+           '（1-based）。',
+           '# 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。',
+           '# 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。']
     if leading:
         out.append('# （§1 之前还有 %d 个顶层定义，未归入任何分区 —— 请检查横幅位置）'
                    % len(leading))
@@ -183,10 +298,19 @@ def build_block(src, path):
         end = (groups[idx + 1]['line'] - 1) if idx + 1 < len(groups) else total
         out.append('# §%d %s（行 %d-%d，%d 个顶层函数）'
                    % (g['num'], g['name'], g['line'], end, len(g['defs'])))
-        for dline, dname in g['defs']:
-            out.append('#     %-44s %5d' % (dname, dline))
         if not g['defs']:
             out.append('#     （本分区没有顶层函数）')
+        # 组内按**行号**混合排：顶层 def 与小节谁在前就先写谁（`messages` §7.1 就排在
+        # `t_wb` 之前）—— 否则"挂不上 def 的小节"会被排到后面，看着像挂在别的 def 下。
+        items = [(dl, 0, dn) for dl, dn in g['defs']]
+        items += [(sl, 1, (sn, snm)) for sl, sn, snm in sect_by_group.get(g['num'], ())]
+        for iline, kind, payload in sorted(items):
+            if kind == 0:
+                out.append('#     %-44s %5d' % (payload, iline))
+                for sl, sn, snm in sect_by_span.get(iline, ()):
+                    out.append(_sect_line(sn, snm, sl))
+            else:
+                out.append(_sect_line(payload[0], payload[1], iline))
     out.append(END_MARK)
     return out
 

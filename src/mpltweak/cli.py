@@ -30,6 +30,7 @@ def _usage(out):
         '  mpltweak --version                              打印版本号后退出（rc=0）\n'
         '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
         '  mpltweak revert <script.py> [--write]           回退到上次写回之前\n'
+        '  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n'
         '  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n'
         '  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n'
         '  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n'
@@ -47,7 +48,7 @@ def _usage(out):
         '  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n'
         '两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n'
         '（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n'
-        '/ tool_bug）与 `next_step` 区分，agent 可据此自动分支。\n'
+        '/ tool_bug / mtime_sync_failed）与 `next_step` 区分，agent 可据此自动分支。\n'
         '注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n'
         '      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n'
         '\n'
@@ -110,6 +111,10 @@ def main(argv=None):
     if cmd == 'revert':
         from .revert import main as revert_main
         return revert_main(argv[1:])
+    if cmd == 'demo':
+        # 0.1.17 头号功能：装上一条命令就能体验（复制示例 → 开窗 → 报告 / 对比图）。
+        from .demo import main as demo_main
+        return demo_main(argv[1:])
     if cmd == 'schema':
         return _schema_command(argv[1:])
     if cmd == 'check':

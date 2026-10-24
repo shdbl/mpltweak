@@ -116,6 +116,32 @@ SUITES = [
     #     所以"CI 里悄悄跳过"这条路是堵死的（见 `.github/workflows/tests.yml` 那段注释）。
     #     实测（longxia + PyQt5 5.15.11 + offscreen）：2 passed / 3.4s ---
     ('test_gui_smoke', {}),
+    # --- S2 挂入（0.1.16，§31 A）：**两处静默点与误归因** —— 0.1.15 静默 except 审计
+    #     留下的两条债，各给一条有牙的断言（注入故障，不占文件句柄）：
+    #     ① `writeback._pending_vs_live` 删不掉旧 `_verify_state.json` ⇒ 必须进
+    #        `files[].warnings`（唯一"静默但会影响结论"的一处；判定本身不变）；
+    #     ② `apply` per-file `os.utime` 失败 ⇒ `warnings` + `attribution=mtime_sync_failed`
+    #        + 顶层 `stage=finalize`，rc/ok 不变（过去被兜成 internal_error + tool_bug）。
+    #     反向验证（把保护改回 0.1.15 原样 ⇒ 只有对应那几条红）见仓外
+    #     `_team014/silent2/reverse2.py`。纯子进程 + 一次真写回验证重跑，约 7 秒。
+    #     见 tests/test_silent2.py 文件头 ---
+    ('test_silent2', {}),
+    # --- S4 挂入（0.1.16，§31 A）：**形状矩阵 + "生成错代码"判据** —— 元组解包写回
+    #     bug（`fig, (ax1, ax2) = plt.subplots(1, 2)`）藏了三个版本，根因是测试只问
+    #     "成没成"、没问"为什么没成"。本套件把 10 种常见建轴写法（11 格，二维数组两种
+    #     下标）各跑一遍「describe -> 改一个字段 -> apply --write -> 子进程重跑」，并把
+    #     规则写死：**原脚本能跑 + 写回后跑不通 => 一律 FAIL（工具生成错代码）**，不许
+    #     skip/降级；写回被拒只允许白名单四条"结构上明确表达不了"，且必须带明确
+    #     reason/error_code，不在白名单里的拒绝同样判 FAIL。
+    #     反向验证（仓外副本里把元组解包寻址改回 0.1.15 行为 => 本套件必红）见仓外
+    #     `_team014/shapes_reverse.py`。11 格 × 4 个子进程，约 45 秒。
+    #     见 tests/test_shapes.py 文件头 ---
+    ('test_shapes', {}),
+    # --- S8 挂入（0.1.17）：`mpltweak demo` 的**离屏**验收 —— 示例随包 / 复用不覆盖 /
+    #     默认零侵入 / --write 落盘 + before.png+after.png / first_demo 真值翻转。
+    #     反向验证（把"复用不覆盖"改成覆盖 ⇒ §119② 必红）见仓外 _team014/demo_impl/。
+    #     纯子进程 + 一次真写回验证重跑，约 25 秒。见 tests/test_demo.py 文件头 ---
+    ('test_demo', {}),
 ]
 
 # 刻意不挂进 pytest 的两个（理由见文件头 docstring）：

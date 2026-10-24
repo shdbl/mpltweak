@@ -54,6 +54,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 
 from . import layoutwarn
@@ -564,7 +565,9 @@ def _failure_code(results):
 #     verify / finalize），口径与 `error_code` 一样是**机器分支用的稳定值**；
 #   * `next_step`：一句可复制的命令（或一句动作），**是建议不是保证** —— 它按
 #     "这条失败最常见的成因"给，工具没义务替你验证它一定跑得通（docs/agent.md 写清）。
-# 成功载荷**不带**这两个键（键集与语义不变）。
+# 成功载荷**不带**这两个键（键集与语义不变）。唯一例外（0.1.16 / S2②）：收尾步骤降级
+# —— 写回已落盘但刷新参数文件 mtime 失败 —— 成功载荷也带 `stage=finalize` + `next_step`
+# （`ok` 仍为 true；见下面的 `_finalize_stage` / `_finalize_next_step`）。
 # ---------------------------------------------------------------------------
 _FAIL_STAGE = {
     'bad_params': 'params',
@@ -647,6 +650,7 @@ def _failure_next_step(results, script):
 #   * `no_change` **不算**（参数与源码本来就一致 = 正常成功，不是失败）；
 #   * dry-run 不算（预览本来就不落盘，另有 `dry_run` 字段）；
 #   * 部分落地（applied=true）不算（那是真·best_effort）。
+# ---------------------------------------------------------------------------
 def _nothing_applied(results):
     """整批**零改动**且确实尝试过写 ⇒ True（理由见上一条注释）。"""
     rows = [r for _p, r in results or []]
@@ -654,6 +658,112 @@ def _nothing_applied(results):
         return False
     tried = [r for r in rows if r.get('reason') in ('ok', 'best_effort')]
     return bool(tried) and not any(r.get('applied') for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# S2②（0.1.16）：收尾步骤（`stage=finalize`）的**降级** —— 与"写回失败"是两件事。
+#
+# 场景：写回本身成功、源码已落盘，只有"把参数文件的 mtime 刷新成与代码一致"这一步
+# 撞上**外部环境**失败（文件被别的程序占着 / 只读介质 / 杀软扫描）。0.1.15 之前那个
+# per-file `os.utime` 裸抛 `OSError`，一路冒到顶层 `guard_json_main`，被报成
+# `error_code=internal_error` + `attribution=tool_bug` + 「这是工具的 bug」（rc=2）——
+# **一次文件系统失败被归因成工具缺陷**（0.1.15 静默 except 审计 §5 的遗留）。
+# 现在：① 走既有 warnings 通道（`mtime_sync_fail`，与批量同步那一句**同源**）；
+#      ② `attribution` 说清是哪一步没成（不再说 tool_bug）；
+#      ③ 顶层 `stage` 落 `finalize` —— `messages.STAGES` 里那个占位值第一次真用上。
+# 不动的：`ok` / `rc`（写回确实落了盘；判"写没写"仍看 applied / changes / reason）。
+# ---------------------------------------------------------------------------
+ATTRIB_MTIME_SYNC_FAILED = 'mtime_sync_failed'
+
+
+def _mtime_next_step(script):
+    """收尾降级后的下一步：带 `--force` 重跑（参数此刻仍与代码一致，只差时间戳）。"""
+    return ('mpltweak apply %s --write --force'
+            % _msg.shell_path(os.path.abspath(script)))
+
+
+# F1 空行 / 纯白行的展示标记（diff 里要看得出"这行确实被动过"）：zh 只用 GBK 码表内的字
+# —— cp936 控制台打不出 U+2205/U+2420，一 print 就崩并被兜成 internal_error + 误报工具 bug；
+# en 纯 ASCII（V1-F5：英文界面不许出现中文）。两条都不进消息表（那里没有这两条）。
+_DIFF_BLANK_MARK = {'zh': ('(空行)', '(纯空白 %d 个字符)'),
+                    'en': ('(empty line)', '(whitespace %d chars)')}
+
+
+def _clip_line(s, n=118):
+    """单行 diff 文本的展示截断（末尾补一个省略号，别让长行把终端撑爆）。"""
+    s = '' if s is None else str(s).rstrip('\r\n')
+    if not s.strip():
+        _mk = _DIFF_BLANK_MARK.get(_msg.current_lang()) or _DIFF_BLANK_MARK['zh']
+        return _mk[0] if not s else _mk[1] % len(s)
+    return s if len(s) <= n else s[:n] + '…'
+
+
+def _diff_kind_label(t):
+    """`files[].diff[].type` → 人读标签。
+
+    三个 `_msg.t(...)` 调用**都写字面量键**：`t('diff_kind_' + 变量)` 会被
+    tests/test_msg_key_audit.py 记成"未解析调用点"（那条棘轮只准降不准升）——
+    键名永远是这三个，没必要拼串。
+    """
+    if t == 'inplace':
+        return _msg.t('diff_kind_inplace')
+    if t == 'insert_block':
+        return _msg.t('diff_kind_insert_block')
+    return _msg.t('diff_kind_replace')
+
+
+def _print_preview_diff(script, res, verbose=False):
+    """F1（0.1.16）`--diff` 的人读输出：文件 / 行号 / 类型 / 旧行 / 新行。
+
+    纪律：**只说"将要"**，一处"已写回"字样都不许出现（脚本一个字节都没动）；
+    条目默认只展开前 8 行，`-v` 全展开 —— 与其它"逐处清单进 -v"的口径一致。
+    """
+    _rows = res.get('diff') or []
+    print(_msg.t('diff_preview_head', script=os.path.basename(script),
+                 n=len(_rows), sha=(res.get('preview_sha256') or '')[:12],
+                 lines=int(res.get('preview_lines') or 0)))
+    _lim = len(_rows) if verbose else 8
+    for _r in _rows[:_lim]:
+        print(_msg.t('diff_preview_row', line=_r.get('line'),
+                     kind=_diff_kind_label(_r.get('type') or 'replace'),
+                     old=_clip_line(_r.get('old')), new=_clip_line(_r.get('new'))))
+    if not _rows:
+        print(_msg.t('diff_preview_same'))
+    elif len(_rows) > _lim:
+        print(_msg.t('diff_preview_more', n=len(_rows) - _lim))
+    print(_msg.t('diff_preview_tail'))
+
+
+def _finalize_stage(results):
+    """收尾步骤降级 → ``'finalize'``；没有降级 → None。
+
+    **唯一会出现在成功载荷里的 stage**：`ok` 仍可以是 true（写回落了盘），这个键在
+    这里说的是"最后那一步没干净收尾"。没降级时**不出现在载荷里**（既有契约不变）。
+    """
+    for _p, _r in results or []:
+        if _r.get('finalize_warned'):
+            return 'finalize'
+    return None
+
+
+def _finalize_next_step(results, script):
+    """收尾降级时的顶层 next_step（与逐文件 `files[].next_step` 同源）。"""
+    for _p, _r in results or []:
+        if _r.get('finalize_warned'):
+            return _mtime_next_step(script)
+    return None
+
+
+def _print_finalize_attribution():
+    """人读：收尾降级的归因行 + 下一步。
+
+    走 **stdout**（与 `_print_attribution` 的 stderr 不同）：这一档 `ok`/`rc` 仍是
+    成功档，"stderr 空 = 这次没有失败"的口径不能被一条降级提醒打破；它和 0.1.15 那条
+    批量 mtime 警告一样属于"报告"而不是"错误"。
+    """
+    print(_msg.t('fail_attribution_head',
+                 kind=_msg.t('fail_kind_mtime_sync_failed'), unknown=''))
+    print(_msg.t('fail_next_mtime_sync_failed'))
 
 
 def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
@@ -672,7 +782,8 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
 
     ``stage`` / ``next_step``（0.1.15 / N3）：失败发生在哪一步 + 一句可复制的下一步，
     取值与口径见 `_failure_stage` / `_failure_next_step`。传 None 时这两个键**不出现**
-    （成功载荷的键集一个字都不变）。
+    （成功载荷的键集一个字都不变）。S2② 的收尾降级由 `_finalize_stage` /
+    `_finalize_next_step` 供给 —— 那是唯一会让**成功载荷**带上 stage 的情形。
     """
     sys.stdout = stdout_ref
     _ok = (not [r for _, r in results
@@ -712,6 +823,9 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              'inplace_needs_block': bool(r.get('inplace_needs_block')),
              'pending': r.get('pending') or [],
              'inplace_pending': r.get('inplace_pending') or [],
+             # S9（0.1.17）：**照着改**的指导（只在"函数里建图"那两类拒写时出现）。
+             # agent 拿到这段就能直接改脚本，不用再从 pending 令牌反推原因。
+             'refused_hint': r.get('refused_hint'),
              # T23：块模式的落点也必须可见（T22 实测：块落到 savefig 之后的那个 bug
              # 在 --json 里连 anchor/attempts 都没有，消费方无从判断块插到了哪里）。
              'anchor': r.get('anchor'),
@@ -760,6 +874,16 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              # 据此自动分支，不再只靠读 err 文本猜。next_step 是可直接执行的命令。
              'attribution': r.get('attribution'),
              'attribution_detail': r.get('attribution_detail'),
+             # 0.1.16 / F1：`--diff` 的行级差异（每行一条：行号 / 类型 / 旧行 / 新行）。
+             # 没开 --diff 时恒为空列表 / None（只加不改：既有键的口径一字不动）。
+             # `preview_sha256` = "将要写出的文件"的内容指纹 —— 与真写盘后的文件
+             # 逐字节对得上（同源证明就靠它对拍）。
+             'diff': r.get('diff') or [],
+             'preview_sha256': r.get('preview_sha256'),
+             # 同上，但抹掉了调整块说明行里的"生成于 <时间>"：跨分钟也稳定，
+             # 是"预览 == 真写盘"的**确定性**对拍口径（严格指纹只在同一分钟内可比）。
+             'preview_sha256_norm': r.get('preview_sha256_norm'),
+             'preview_bytes': r.get('preview_bytes'),
              'next_step': r.get('next_step')}
             for p, r in results],
     }
@@ -822,8 +946,19 @@ def _classify_verify_failure(res, script, script_args):
     这也是原本 Case A 的路径。
     """
     tail = res.get('verify_fail_tail') or ''
-    return _verify.classify_verify_failure(tail, script_path=script,
-                                           args_passed=bool(script_args))
+    kind, detail = _verify.classify_verify_failure(
+        tail, script_path=script, args_passed=bool(script_args))
+    # 0.1.16：**原脚本能跑、写回后的不能跑**，而 stderr 又不命中任何已知模式 ⇒
+    # 证据指着"我们生成的代码有问题"（writeback 只在"原文能跑、改写后的不能跑"时
+    # 才给 tail —— 见 VF_AFTER_WRITE / VF_ANCHORS）。归因升级只在这一层做：分类器
+    # 自身仍守"三分类、绝不从 stderr 判 tool_bug"的保守契约（test_agent_api §21 ⑦）。
+    # 为什么必须说清：旧文案落到「脚本跑不起来（无法确定原因）」⇒ 用户读到"你的脚本
+    # 有问题"⇒ 不报告（元组解包那个 bug 就这么躲过 0.1.13/0.1.14/0.1.15）。
+    if (kind == _verify.VERIFY_FAIL_CANNOT_RUN and detail == 'unknown'
+            and res.get('verify_fail_kind') in (writeback.VF_AFTER_WRITE,
+                                                writeback.VF_ANCHORS)):
+        return _verify.VERIFY_FAIL_TOOL_BUG, 'generated_code_failed'
+    return kind, detail
 
 
 # t65：哪些 kind 算"验证重跑失败"（要进归因分类）。取值来自 writeback 的稳定信号，
@@ -838,6 +973,16 @@ def _is_rerun_failure(res):
     return res.get('verify_fail_kind') in _RERUN_FAIL_KINDS
 
 
+# detail 级的文案覆盖（同 kind 下要说不同的话时用）：键 = (kind, detail)。
+# 0.1.16：`tool_bug` 有两种来源 —— 顶层 internal_error（工具抛异常）与**生成的代码
+# 跑不起来**（原脚本能跑、写回后的不能跑）。后者必须明说"是我们的问题"，不能复用
+# internal_error 那句，也不能落到"（无法确定原因）"。
+_DETAIL_MSG_KEYS = {
+    (_verify.VERIFY_FAIL_TOOL_BUG, 'generated_code_failed'):
+        ('fail_kind_generated_code', 'fail_next_generated_code'),
+}
+
+
 def _print_attribution(kind, detail, script):
     """人读输出：归因行 + 一句可照抄的下一步。kind 为 None（分类未启用）→ 静默。
 
@@ -845,12 +990,15 @@ def _print_attribution(kind, detail, script):
     """
     if kind not in _VERIFY_FAIL_KIND_KEY:
         return
+    _kk = _DETAIL_MSG_KEYS.get((kind, detail))
+    _kind_key, _next_key = (_kk if _kk
+                            else (_VERIFY_FAIL_KIND_KEY[kind],
+                                  _VERIFY_FAIL_MSG_KEY[kind]))
     _emit_err(_msg.t('fail_attribution_head',
-                     kind=_msg.t(_VERIFY_FAIL_KIND_KEY[kind]),
+                     kind=_msg.t(_kind_key),
                      unknown=_msg.t('fail_unknown_reason')
                      if detail == 'unknown' else ''),
-              _msg.t(_VERIFY_FAIL_MSG_KEY[kind],
-                     script=os.path.basename(script)))
+              _msg.t(_next_key, script=os.path.basename(script)))
 
 
 def _next_step_cmd(kind, script):
@@ -920,6 +1068,15 @@ def main(argv=None):
                     help='验证重跑超时秒数（默认 300）')
     ap.add_argument('--dry-run', action='store_true',
                     help='只生成调整块预览，不落盘（调试用）')
+    # 0.1.16 / F1：写回前 diff 预览（先看后改）。默认行为不变 —— 不传这个开关时
+    # `--write` 照旧直接写；传了它就**走同一条决策链但不落盘**，只打印"要动哪几行、
+    # 从什么改成什么"。--json 下给 files[].diff（机器可读 + preview_sha256 可对拍）。
+    ap.add_argument('--diff', '--preview-diff', action='store_true', dest='diff',
+                    help='写回前先看差异：引擎照真写回的路跑，只把目标换成同目录影子副本'
+                         '（跑完即删，源码一个字节都不动）——逐个文件打印"行号 / 变化'
+                         '类型（原位补参数·插入调整块·替换）/ 旧行 / 新行"，--json 下给'
+                         'files[].diff + preview_sha256。预览不重跑脚本，所以真写回时'
+                         '验证失败触发的回滚不会体现在这里（那一档以真写回为准）')
     ap.add_argument('--json', action='store_true',
                     help='以 JSON 输出结果（给 agent / 脚本消费；过程信息改走 stderr）')
     ap.add_argument('-v', '--verbose', action='store_true',
@@ -1017,8 +1174,9 @@ def main(argv=None):
     # 只在"这次真的会重跑脚本"时才提示：--no-verify / --verify-fast / --dry-run
     # 都不重跑，说了只是噪音。
     _pf_res = None
+    # 0.1.16 / F1：`--diff` 也不重跑脚本（预览只算不跑）⇒ 与 dry-run 同档，预检不说。
     if (args.write and not args.no_verify and not args.verify_fast
-            and not args.dry_run):
+            and not args.dry_run and not args.diff):
         _pf_res = preflight.analyze(script, args_passed=bool(script_args))
         for _line in preflight.message_lines(_pf_res, script):
             print(_line)
@@ -1027,7 +1185,7 @@ def main(argv=None):
     _applied_files = []
     # D1（0.1.14）：冲突下强行走写回必须**说清**，不许静默 —— 用户得知道"位置写进去了，
     # 但绘制时仍会被引擎覆盖"。只在真的会写盘时打一次（预览/ dry-run 没这回事）。
-    if _conflicts and args.write and not args.dry_run \
+    if _conflicts and args.write and not args.dry_run and not args.diff \
             and (args.force or args.allow_layout_conflict):
         print(_msg.t('apply_layout_conflict_skipped',
                      flag=('--force' if args.force
@@ -1040,6 +1198,8 @@ def main(argv=None):
     # 循环里）。修法：把本批次**第一次**写回产生的备份沿循环逐份透传（与下面
     # inplace→block 的 `_bk` 同一机制）。
     _batch_backup = None
+    # F1：预览内容与"磁盘原文"的对拍基准（必须是同一个绝对路径，别比 basename）
+    _sabs = os.path.abspath(script)
     # 批次基准（T23 / 外部评审条目 2）：**一次 apply 里脚本会被我们自己改**（每落地
     # 一张图就写一次盘 → 脚本 mtime 变新），若每条参数都拿"此刻的脚本 mtime"去比，
     # 那第 2 张图必然被判 stale（还会打印"脚本在参数保存之后被修改过"这个与事实不符的
@@ -1071,7 +1231,7 @@ def main(argv=None):
         # 参数比脚本旧 → 脚本在保存参数之后被手动改过，套用旧参数会**静默覆盖**
         # 那些改动（对照 launch.py 的同类保护；t3-M5 / t6-M8）。
         # 只读预览不拦（它本来就不写文件）。
-        if args.write and not args.force and not args.dry_run:
+        if args.write and not args.force and not args.dry_run and not args.diff:
             try:
                 _stale = (_script_mtime0 is not None
                           and _script_mtime0 > os.path.getmtime(p) + 1.0)
@@ -1120,7 +1280,7 @@ def main(argv=None):
 
         _print_changes(script, data, p)
 
-        if not args.write:
+        if not args.write and not args.diff:
             if args.snippet:
                 print('-' * 62)
                 _print_snippet(data)
@@ -1139,8 +1299,8 @@ def main(argv=None):
         # 根本没有 pos），拦了就是给本来好用的路添堵 —— 判据交给
         # `writeback.position_write_needed`（它只在"这次真的会改位置"时回 True）。
         # dry-run 不写盘 ⇒ 不拦（它本来就是预览）。
-        if _conflicts and not args.dry_run and not (args.force
-                                                    or args.allow_layout_conflict):
+        if _conflicts and not args.dry_run and not args.diff \
+                and not (args.force or args.allow_layout_conflict):
             if not args.no_verify and not args.verify_fast:
                 # 判"这次会不会真改位置"要重跑一次脚本（网格轴的位置只有实测才知道）
                 print(_msg.t('apply_verifying', sec=args.timeout))
@@ -1170,22 +1330,46 @@ def main(argv=None):
                                     'layout_why': _why, 'style': args.style}))
                 continue
         print('-' * 62)
-        if not args.no_verify and not args.dry_run:
+        if not args.no_verify and not args.dry_run and not args.diff:
             # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
             # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
             print(_msg.t('apply_verifying', sec=args.timeout))
         # --verify-fast **隐含** --no-verify：快速档要的就是"不重跑"。
         # 若 verify 仍为 True，writeback 里 `if fast_check and not verify` 的分支
         # 根本进不去（实测踩过：加了 --verify-fast 却照旧跑了完整验证）。
-        _kw = dict(verify=not args.no_verify and not args.verify_fast,
+        # 0.1.16 / F1：`--diff` 钉死"不验证" —— 预览不重跑用户脚本（与 dry-run 同档代价）。
+        # 这同时让引擎在**第一个锚点候选**就定稿（writeback 里 `if not verify: break`），
+        # 预览内容因此确定可复现，而不是"跑一次一个样"。
+        _kw = dict(verify=(not args.no_verify and not args.verify_fast
+                           and not args.diff),
                    python=args.python,
                    timeout=args.timeout, dry_run=args.dry_run,
-                   semantic=not args.no_semantic, only_fig=not args.all_figs,
+                   semantic=(not args.no_semantic and not args.diff),
+                   only_fig=not args.all_figs,
                    fast_check=bool(args.verify_fast),
                    keep_unverified=bool(args.keep_unverified),
                    script_args=script_args)
+        # F1：预览把**目标路径**换成同目录影子副本（`writeback.preview_shadow_path`）——
+        # 引擎照真写回的路跑（写影子、auto 退块时第二次从影子重读源码），跑完读出来做
+        # diff、删掉影子。第一版是"捕获住一个字节都不写"，被独立验证当场打回：
+        # auto 退块是两次独立调用、第二次从磁盘重读，不落盘就会多写块内一行
+        # （实测同一基线：预览 573 B / 真写 553 B）。影子副本让"文件状态会演进"这件事
+        # 与真写回完全一致，这才是内容级保真。
+        _sh = None
+        _shnew = None      # 影子副本的最终内容（finally 里读出来、删影子）
+        if args.diff:
+            _sh = writeback.preview_shadow_path(script)
+            try:
+                shutil.copy2(script, _sh)
+            except OSError as _e:
+                _emit_err(_msg.t('write_failed', reason='preview', err=_e))
+                results.append((p, {'reason': 'fail', 'err': str(_e),
+                                    'changes': [], 'style': args.style}))
+                continue
+            writeback.preview_begin()
+        _target = _sh or script
         _lk = None
-        if args.write and not args.dry_run:
+        if args.write and not args.dry_run and not args.diff:
             # ==== §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁） ====
             # 串行化写回：并发跑两个 apply --write 时两边都基于同一份原文算替换，
             # 后写者会盖掉先写者，而且都会打印"✓ 已写回"（t5-S4 实测 7/7）。
@@ -1207,19 +1391,24 @@ def main(argv=None):
             # 少数几张图就把整份脚本都变成插块。
             # 注意：--style 显式指定时必须直接用那个模式，不要先试 inplace。
             _first = 'inplace' if args.style == 'auto' else args.style
-            res = writeback.writeback(script, data, p, style=_first,
+            res = writeback.writeback(_target, data, p, style=_first,
                                       backup=_batch_backup, **_kw)
             if args.style == 'auto' and _auto_should_fallback(res):
                 # RC-5：块模式那次的结果会**整份覆盖**原位那次 —— 覆盖前先把原位
                 # 那次的结论留档，否则 agent 从 --json 里完全看不出"原位为什么没落地"
                 # （只能靠 style==block 反推）。
                 _ip = {k: res.get(k) for k in ('reason', 'changes', 'warnings',
-                                               'needs_block', 'pending')}
+                                               'needs_block', 'pending',
+                                               # S2①（0.1.16）：原位那次"删不掉旧验证
+                                               # 状态文件"的留痕要跟着退块走 —— 否则默认
+                                               # auto 路径的 --json 里就看不见"这次判定
+                                               # 可能不新鲜"（见下面的合并）。
+                                               'probe_warnings')}
                 # L0-4：原位那次**可能已经写过盘并备过份** —— 退块的第二次写盘必须
                 # 复用那份备份，否则固定名备份被覆盖成"改过一次"的中间态，
                 # `revert` 拿到的是半成品（主仓实测 20154193__RealSpace.py）。
                 _bk = res.get('backup')
-                res = writeback.writeback(script, data, p, style='block',
+                res = writeback.writeback(_target, data, p, style='block',
                                           backup=(_batch_backup or _bk), **_kw)
                 res['auto_fallback'] = True
                 res['inplace_reason'] = _ip['reason']
@@ -1227,6 +1416,11 @@ def main(argv=None):
                 res['inplace_warnings'] = _ip['warnings'] or []
                 res['inplace_needs_block'] = bool(_ip['needs_block'])
                 res['inplace_pending'] = _ip['pending'] or []
+                # S2①（0.1.16）：原位那次"删不掉旧验证状态文件"的留痕并进块结果 ——
+                # 这条说的是"退/不退块这个判定可能不新鲜"，退块之后更需要看见它。
+                if _ip.get('probe_warnings'):
+                    res['warnings'] = (list(res.get('warnings') or [])
+                                       + list(_ip['probe_warnings']))
                 # T42（Bug 3）：原位通道**已经把能写的那几处写进文件了** —— 退块分支
                 # 的结果对象不得把这件事抹掉，否则 JSON 报 `no_change`/`applied=false`/
                 # `changes=[]`/`backup=null`，而盘上文件真的被改过（gallery/artists.py
@@ -1249,12 +1443,53 @@ def main(argv=None):
                 if res.get('backup') is None and _ip_bk:
                     res['backup'] = _ip_bk      # 备份如实报告（盘上确实有）
         finally:
+            if _sh is not None:
+                # F1：先把影子读出来（这份就是"真写回会写成什么"），再删影子 +
+                # 退出预览态。放在 finally 里 ⇒ 失败/异常路径也不会留下临时文件、
+                # 更不会让后续文件的写回被误当成预览。
+                try:
+                    _shnew = params.read_text(_sh)
+                except OSError:
+                    _shnew = None
+                try:
+                    os.remove(_sh)
+                except OSError:
+                    pass
+                writeback.preview_end()
             if _lk is not None:
                 _lk.__exit__(None, None, None)
         # T36：记下本批次**第一次**真正做出的备份，后面的每一份写回都复用它
         # （固定名 `.tweak.bak` 从此始终是"批前原件"，`revert` 拿回的是完整原件）。
         if res.get('backup'):
             _batch_backup = _batch_backup or res['backup']
+        # ==== §8.5b F1（0.1.16）写回预览：把"影子副本里最终长成的样子"打成行级 diff ====
+        # 内容**不是**在这里另算的：引擎刚在影子副本上跑完了与真写回**完全相同**的
+        # 决策链（含 auto 退块的第二次调用 —— 它会重读影子，所以块内不会多写一行）。
+        if args.diff:
+            if res.get('reason') in ('ok', 'best_effort', 'no_change'):
+                # `params.read_text` 返回 `(text, encoding)` —— 原文与编码都拿到手
+                _old, _oldenc = params.read_text(_sabs)
+                _new, _enc = (_shnew if _shnew else (_old, _oldenc))
+                _rows = writeback.preview_diff(_old, _new)
+                _fp = writeback.preview_fingerprint(_new, _enc)
+                res['diff'] = _rows
+                res['preview_sha256'] = _fp['sha256']
+                # 跨分钟也稳定的那一份指纹：调整块的说明行里带"生成于 <日期 时间>"，
+                # 预览与真写回**必然**可能落在不同分钟 ⇒ 严格指纹只能同一分钟内对拍。
+                # 这一份按引擎自己的 `_norm_ts`（把生成时间抹成 <ts>）算，
+                # 用来做**确定性**的"预览 == 真写盘"对拍（tests §114② 用它）。
+                res['preview_sha256_norm'] = _fp['sha256_norm']
+                res['preview_bytes'] = _fp['bytes']
+                res['preview_lines'] = len(_new.splitlines())
+                # 归一成"预览"档：rc/ok 与只读预览同档，**且任何分支都不会说"已写回"**
+                # （脚本一个字节都没动，applied 必须如实为 False）。
+                res['reason'] = 'preview'
+                res['applied'] = False
+                res['verified'] = None
+                res['semantic'] = None
+                # 盘上**没有**备份（预览不复制；`_make_backup` 只报了路径）——
+                # 不许把一条指向不存在文件的路径当"备份"交给 agent / 用户。
+                res['backup'] = None
         if _conflicts and res.get('reason') in ('ok', 'best_effort', 'preview'):
             # 只在**这次确实落地/确实有计划**时才提示（no_change / fail / no_fig 不提示，
             # 否则是跟当前动作无关的噪音）。
@@ -1266,7 +1501,14 @@ def main(argv=None):
         # E7：`best_effort` 同时覆盖"改到一部分"和"一处都没改"两种情形 ——
         # 一处都没落地时绝不能打印"[OK] 已原位写回"（脚本一个字节都没动）。
         _applied = bool(res.get('applied')) and not args.dry_run
-        if res['reason'] in ('ok', 'best_effort'):
+        if args.diff and res.get('reason') == 'preview':
+            # F1：预览分支排在最前 —— 它一张"已写回"的嘴都不许张（脚本没动）。
+            # 失败档（fail / no_fig / bad_params）不走这里，落到下面原有的失败分支，
+            # 如实报（预览失败也得让人看见，不能因为加了开关就静音）。
+            _print_preview_diff(script, res, verbose=_verbose)
+            for w in res.get('warnings', []):
+                print(_msg.t('kept_as_is', msg=w))
+        elif res['reason'] in ('ok', 'best_effort'):
             if res.get('style') == 'inplace':
                 ch = res.get('changes') or []
                 if args.dry_run:
@@ -1406,8 +1648,26 @@ def main(argv=None):
             # 多图会话是同一个脚本、连着写几次，只刷新当前那份会让"还在这一批里
             # 没轮到的"看起来比脚本旧（外部评审条目 2 的现场）。**没落地**的参数
             # （stale / bad_params / fail）不动：它们本来就不该被当成"与代码一致"。
-            if not args.dry_run:
-                os.utime(p, None)
+            if not args.dry_run and not args.diff:
+                try:
+                    os.utime(p, None)
+                except OSError as _e:
+                    # S2②：写回**已经落了盘**，失败的只是"刷新这份参数文件的时间戳"
+                    # 这一步（外部环境：文件被占 / 只读介质 / 杀软）。0.1.15 之前这里
+                    # 直接抛 → 顶层 guard 报 internal_error + tool_bug +「这是工具的
+                    # bug」（rc=2）：一次文件系统失败被误归因成工具缺陷。
+                    # 现在：走既有 warnings 通道（同一个 `mtime_sync_fail` 键，与下面
+                    # 批量同步那一句同源）+ 归因说清是这一步 + 顶层 stage 落 finalize。
+                    _w = _msg.t('mtime_sync_fail', path=p, err=_e)
+                    res.setdefault('warnings', []).append(_w)
+                    res['attribution'] = ATTRIB_MTIME_SYNC_FAILED
+                    res['attribution_detail'] = 'mtime_sync_failed'
+                    res['next_step'] = _mtime_next_step(script)
+                    # `--json` 的顶层 stage 靠这个键判（它本身**不进**载荷，
+                    # 见 _emit_json 的显式键集）。
+                    res['finalize_warned'] = True
+                    print(_msg.t('kept_as_is', msg=_w))
+                    _print_finalize_attribution()
                 _applied_files.append(p)
         elif res['reason'] == 'no_change':
             print(_msg.t('no_change'))
@@ -1442,6 +1702,9 @@ def main(argv=None):
     # 的代码状态"，下一次批量写回/开窗就该一致地被判为新鲜（而不是只有最后一份新鲜）。
     if args.write and not args.dry_run and len(_applied_files) > 1:
         _mtime_fail = []
+        # 逐文件那一步已经报过归因行就不再重复（同一件事只说一次）
+        _finalize_reported = any(_r.get('finalize_warned')
+                                 for _p, _r in results)
         for _pf in _applied_files:
             try:
                 os.utime(_pf, None)
@@ -1449,14 +1712,23 @@ def main(argv=None):
                 # 0.1.15 静默 except 审计（外部交互档）：过去这里 `pass`。刷不上的那份
                 # 参数文件下一次会被判 stale，用户只会看到"莫名其妙让我重新 describe"。
                 # 只加一条 warnings（进 --json 的 files[].warnings），rc 与既有字段不动。
+                # S2②（0.1.16）：与上面 per-file 那条**同一步骤同一降级** ⇒ 机器口径
+                # 也必须一样（attribution + stage=finalize），否则同一件事在 --json 里
+                # 有时有 stage 有时没有。
                 _mtime_fail.append((_pf, _e))
                 for _p2, _r2 in results:
                     if _p2 == _pf:
                         _r2.setdefault('warnings', []).append(
                             _msg.t('mtime_sync_fail', path=_pf, err=_e))
+                        _r2['attribution'] = ATTRIB_MTIME_SYNC_FAILED
+                        _r2['attribution_detail'] = 'mtime_sync_failed'
+                        _r2['next_step'] = _mtime_next_step(script)
+                        _r2['finalize_warned'] = True
         for _pf, _e in _mtime_fail:
             print(_msg.t('kept_as_is',
                          msg=_msg.t('mtime_sync_fail', path=_pf, err=_e)))
+        if _mtime_fail and not _finalize_reported:
+            _print_finalize_attribution()
 
     if not args.write:
         if any(r.get('reason') == 'preview' for _, r in results):
@@ -1502,9 +1774,12 @@ def main(argv=None):
                    # 自己按 `_nothing_applied()` 兜底（单一判据），这里不再各传一份。
                    error_code=_failure_code(results),
                    args_style=args.style,
-                   # N3（0.1.15）：在哪一步没成 + 一句可复制的下一步（成功载荷不带）
-                   stage=_failure_stage(results),
-                   next_step=_failure_next_step(results, script))
+                   # N3（0.1.15）：在哪一步没成 + 一句可复制的下一步（成功载荷不带）。
+                   # S2②（0.1.16）：收尾降级是唯一的例外 —— 写回成功但"刷参数 mtime"
+                   # 那一步失败时，成功载荷也带 stage=finalize + next_step（见 _finalize_*）。
+                   stage=(_failure_stage(results) or _finalize_stage(results)),
+                   next_step=(_failure_next_step(results, script)
+                              or _finalize_next_step(results, script)))
     if len(results) > 1:
         # 多份参数文件的收尾总结。**--json** 时必须走 stderr（否则会拼在 JSON 尾巴上，
         # 让 json.loads 报 "Extra data"，t3-H1 / t6-H3）；**非 --json** 时它是报告的
@@ -1525,41 +1800,55 @@ if __name__ == '__main__':
 
 # --- BEGIN AUTO NAV ---
 # 自动生成，不要手改：`python tools/gen_nav.py --write` 重算、`--check` 校验
-# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def 的定义行（1-based）。
+# （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**（1-based）。
 # 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
-# §1 文件头：apply 的职责与两条输出（人读 / --json）（行 2-66，0 个顶层函数）
+# 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
+# §1 文件头：apply 的职责与两条输出（人读 / --json）（行 2-67，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 人读输出：行格式、改动清单与可复制骨架（行 67-341，10 个顶层函数）
-#     _fmt                                            69
-#     _num                                            77
-#     _axlabel                                        88
-#     _emit_err                                       97
-#     _print_changes                                 123
-#     _snippet_line                                  225
-#     _snippet_refs                                  261
-#     _snip_val                                      281
-#     _print_snippet_fields                          290
-#     _print_snippet                                 333
-# §3 兜底文案与「验了哪几层」的说明（行 342-370，0 个顶层函数）
+# §2 人读输出：行格式、改动清单与可复制骨架（行 68-342，10 个顶层函数）
+#     _fmt                                            70
+#     _num                                            78
+#     _axlabel                                        89
+#     _emit_err                                       98
+#     _print_changes                                 124
+#     _snippet_line                                  226
+#     _snippet_refs                                  262
+#     _snip_val                                      282
+#     _print_snippet_fields                          291
+#     _print_snippet                                 334
+# §3 兜底文案与「验了哪几层」的说明（行 343-371，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §4 验证重跑判定与 auto 回退（口径同 writeback §22 验证）（行 371-465，4 个顶层函数）
-#     _verify_rerun_state                            373
-#     _t_new                                         411
-#     _auto_should_fallback                          425
-#     _success_tail                                  445
-# §5 参数文件收集与失败错误码（行 466-503，1 个顶层函数）
-#     _all_params_files                              468
-# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 504-784，5 个顶层函数）
-#     _failure_code                                  547
-#     _failure_stage                                 580
-#     _failure_next_step                             599
-#     _nothing_applied                               650
-#     _emit_json                                     659
-# §7 验证失败归因与下一步（attribution / next_step）（行 785-866，4 个顶层函数）
-#     _classify_verify_failure                       813
-#     _is_rerun_failure                              836
-#     _print_attribution                             841
-#     _next_step_cmd                                 856
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 867-1524，1 个顶层函数）
-#     main                                           869
+# §4 验证重跑判定与 auto 回退（口径同 writeback §22 验证）（行 372-466，4 个顶层函数）
+#     _verify_rerun_state                            374
+#     _t_new                                         412
+#     _auto_should_fallback                          426
+#     _success_tail                                  446
+# §5 参数文件收集与失败错误码（行 467-504，1 个顶层函数）
+#     _all_params_files                              469
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-908，12 个顶层函数）
+#     _failure_code                                  548
+#     _failure_stage                                 583
+#     _failure_next_step                             602
+#     _nothing_applied                               654
+#     _mtime_next_step                               679
+#     _clip_line                                     692
+#     _diff_kind_label                               701
+#     _print_preview_diff                            715
+#     _finalize_stage                                737
+#     _finalize_next_step                            749
+#     _print_finalize_attribution                    757
+#     _emit_json                                     769
+# §7 验证失败归因与下一步（attribution / next_step）（行 909-1014，4 个顶层函数）
+#     _classify_verify_failure                       937
+#     _is_rerun_failure                              971
+#     _print_attribution                             986
+#     _next_step_cmd                                1004
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1015-1799，1 个顶层函数）
+#     main                                          1017
+#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1019
+#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1121
+#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1193
+#         §8.4 逐份参数文件：校验与拒写                         1230
+#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1373
+#         §8.6 收尾：mtime 同步与人读 / --json 输出           1700
 # --- END AUTO NAV ---

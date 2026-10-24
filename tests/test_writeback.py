@@ -6,6 +6,7 @@
 #   4. 安全网：写回后 Agg 重跑失败 → 自动回滚备份
 import os
 import io
+import contextlib
 import ast as _ast
 import re
 import shutil
@@ -8468,5 +8469,738 @@ finally:
     writeback._pyplot_text_equal = _o_pyplot_eq
     writeback._text_axis_name = _o_text_name
 
+# §113（0.1.16 / S1）：0.1.15 补的三处静默日志**必须各有一条断言盯着**。
+# 为什么必须补：卫生棘轮 test_except_exception_ratchet 只数 `except` 头的**个数**，
+# 不数体里有没有打日志；0.1.15 那三处改的正是同一个 except 体内部 ⇒ 谁改回 `pass`
+# 都不会红（独立验证员实测：`_team014/v2b_rev_silent.py`）。下面三条各自独立变红。
+_d113 = os.path.join(_TMPROOT, 'case_113')
+os.makedirs(_d113, exist_ok=True)
+_s113 = os.path.join(_d113, 'fig113.py')
+with open(_s113, 'w', encoding='utf-8', newline='\n') as f:
+    f.write('print(1)\n')
+_p113 = os.path.join(_d113, 'p113.json')
+with open(_p113, 'w', encoding='utf-8', newline='\n') as f:
+    f.write('{}')
+_bd113 = writeback._backup_dir(_s113, _p113)
+os.makedirs(_bd113, exist_ok=True)
+_baks113 = []
+for _i in range(8):
+    _b = os.path.join(_bd113, 'fig113.tweak.%d.bak' % (7000 + _i))
+    with open(_b, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('old %d\n' % _i)
+    # 固定 mtime 定序：不靠创建顺序（APFS/NTFS 的 mtime 精度不同，慢机器上会翻）。
+    os.utime(_b, (1400000000 + _i * 10, 1400000000 + _i * 10))
+    _baks113.append(_b)
+_ro113 = os.path.abspath(_baks113[2])        # 中间那份：keep=5 时它正在被裁的那几份里
+os.chmod(_ro113, 0o444)                      # Windows：只读属性会让 os.remove 直接失败
+
+_real_rm113 = os.remove
+
+
+def _rm113(p, *a, **k):
+    # POSIX 上"文件只读"挡不住 unlink（判据是**目录**写权限），CI 有 ubuntu 腿 ——
+    # 所以这里再钉一道**路径级**失败注入，让两端跑出来的是同一个场景，其余路径照旧。
+    if os.path.abspath(str(p)) == _ro113:
+        raise PermissionError(13, 'denied by test')
+    return _real_rm113(p, *a, **k)
+
+
+_warns113 = []
+try:
+    writeback.os.remove = _rm113            # writeback 里的 `os` 就是全局 os 模块
+    writeback._prune_backups(_s113, _p113, keep=5, warnings=_warns113)
+finally:
+    writeback.os.remove = _real_rm113
+    try:
+        os.chmod(_ro113, 0o666)             # 还原只读位，否则 rmtree 删不掉
+    except OSError:
+        pass
+check('§113① 裁旧备份删不掉 ⇒ warnings 说话（改回 pass 必红）',
+      any('备份目录会一直变大' in _w for _w in _warns113),
+      'warns=%d %s' % (len(_warns113), _warns113[:1]))
+
+# §113② `_atomic_write`：`os.replace` 换掉 inode 后权限位来自 mkstemp(0600)，
+# 恢复不了就是"用户脚本的可执行/共享位被悄悄改窄，而磁盘上已经换完" —— 必须有牙。
+_s113b = os.path.join(_d113, 'fig113b.py')
+with open(_s113b, 'w', encoding='utf-8', newline='\n') as f:
+    f.write('print(1)\n')
+_warns113b = []
+_real_chmod113 = os.chmod
+
+
+def _chmod113(*a, **k):
+    raise OSError(13, 'denied by test')
+
+
+try:
+    writeback.os.chmod = _chmod113
+    writeback._atomic_write(_s113b, 'print(2)\n', warnings=_warns113b)
+finally:
+    writeback.os.chmod = _real_chmod113
+check('§113② 恢复权限位失败 ⇒ warnings 说话（改回 pass 必红）',
+      any('权限可能变窄' in _w for _w in _warns113b),
+      'warns=%d %s' % (len(_warns113b), _warns113b[:1]))
+check('§113② 那条只是警告：写盘本身照旧成功（内容已换、没被吞）',
+      read(_s113b) == 'print(2)\n', read(_s113b)[:20])
+
+# §113③ `apply` 收尾刷参数 mtime 失败 ⇒ `files[].warnings` 里要有那条
+#   （0.1.15 之前是 `except OSError: pass`，用户下次只会莫名被判 stale）。
+# 用**子进程驱动器**而不是进程内：`--json` 是 fd 级直写（绕过 redirect_stdout），
+# 且 os.utime 的失败注入必须只影响这一次 apply。
+_d113c = os.path.join(_d113, 'case_113c')
+_pd113c = os.path.join(_d113c, '.tweak_params')
+os.makedirs(_pd113c, exist_ok=True)
+_s113c = os.path.join(_d113c, 'fig.py')
+with open(_s113c, 'w', encoding='utf-8', newline='\n') as f:
+    f.write('import matplotlib\nmatplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'fig1, ax1 = plt.subplots(figsize=(5, 3))\n'
+            'ax1.plot([1, 2, 3])\n'
+            'fig1.savefig("a.png")\n'
+            'fig2, ax2 = plt.subplots(figsize=(5, 3))\n'
+            'ax2.plot([3, 2, 1])\n'
+            'fig2.savefig("b.png")\n')
+for _n, _idx, _pos in (('fig.fig0.json', 0, [0.2, 0.2, 0.6, 0.6]),
+                       ('fig.fig1.json', 1, [0.5, 0.5, 0.3, 0.3])):
+    with open(os.path.join(_pd113c, _n), 'w', encoding='utf-8') as f:
+        json.dump({'version': 4, 'script': 'fig.py', 'fig_index': _idx,
+                   'n_figs': 2, 'axes': [{'index': 0, 'pos': _pos}]}, f)
+_now113 = time.time()
+os.utime(_s113c, (_now113 - 20, _now113 - 20))     # 脚本比参数旧 ⇒ 两份都合法、都会落地
+for _n in ('fig.fig0.json', 'fig.fig1.json'):
+    os.utime(os.path.join(_pd113c, _n), (_now113 - 10, _now113 - 10))
+_drv113 = os.path.join(_d113c, 'drv113.py')
+with open(_drv113, 'w', encoding='utf-8', newline='\n') as f:
+    f.write('# -*- coding: utf-8 -*-\n'
+            'import os, sys\n'
+            '_real = os.utime\n'
+            '_seen = {}\n'
+            'def _fake(p, *a, **k):\n'
+            '    key = os.path.abspath(str(p))\n'
+            '    _seen[key] = _seen.get(key, 0) + 1\n'
+            '    if _seen[key] >= 2:\n'
+            '        raise OSError(13, "denied by test")\n'
+            '    return _real(p, *a, **k)\n'
+            'os.utime = _fake\n'
+            'from mpltweak import apply\n'
+            'sys.exit(apply.main(["fig.py", "--write", "--json"]))\n')
+
+_src113 = os.path.dirname(os.path.dirname(os.path.abspath(writeback.__file__)))
+# PYTHONPATH 必须钉到**当前这份 mpltweak**：不钉的话子进程会解析到 editable 安装的
+# 那份 —— 反向验证（在副本树里变异）会跑出"变异无效仍然绿"的假绿。
+_env113 = dict(os.environ, PYTHONPATH=_src113, MPLBACKEND='Agg',
+               MPLTWEAK_LANG='zh', PYTHONIOENCODING='utf-8')
+_rr113 = subprocess.run([sys.executable, _drv113], capture_output=True,
+                        cwd=_d113c, env=_env113)
+_oo113 = _decode_out(_rr113.stdout + _rr113.stderr)
+try:
+    _j113 = json.loads(_oo113[_oo113.index('{'):_oo113.rindex('}') + 1])
+except Exception:                                                 # noqa: BLE001
+    _j113 = {}
+_warns113c = [_w for _f in (_j113.get('files') or [])
+              for _w in (_f.get('warnings') or [])]
+from mpltweak import messages as _msg113                          # noqa: E402
+# 文案从语言表现算（zh/en 两套都要成立）：只取 path 占位符之前那一段当判据。
+_head113 = _msg113.t('mtime_sync_fail', path='<P>', err='<E>').split('<P>')[0]
+check('§113③ 收尾刷 mtime 失败 ⇒ files[].warnings 里有那条（改回 pass 必红）',
+      any(_head113 in _w for _w in _warns113c),
+      'rc=%s warns=%s | %s' % (_rr113.returncode, _warns113c[:1], _oo113[-160:]))
+shutil.rmtree(_d113, ignore_errors=True)
+
+# ============================================================================
+# §114（0.1.16 / F1）写回前 diff 预览（`apply --diff`）：先看后改，一个字节都不落盘
+#
+# 为什么要这组断言：0.1.15 之前 `apply --write` 是"闭眼改"—— agent 只能改完再看
+# 盘上内容，人只能事后 `git diff`。F1 在落盘**之前**给出"要动哪几行、从什么改成
+# 什么"。判据三层：
+#   ① 单元：`writeback.preview_diff` 三档类型/行号（inplace / insert_block / replace）；
+#   ② 同源：预览声明的 diff 重放回原文 == 真写盘后的文件（逐字节；只有调整块说明行
+#      里的"生成于 <时间>"可能跨分钟不同，那一档用引擎自己的 `_norm_ts` 归一后比对）；
+#   ③ 默认行为不变：预览零副作用（脚本字节不变、不造备份），不带 --diff 照旧直接写。
+# ============================================================================
+import hashlib as _h114
+import subprocess as _sub114
+
+_OLD114 = 'a\nb\nc\n'
+_r114a = writeback.preview_diff(_OLD114, 'a\nB\nc\n')
+check('§114① 一对一换行 => type=inplace、行号指向**新文件**第 2 行、旧新行都在',
+      len(_r114a) == 1 and _r114a[0]['type'] == 'inplace'
+      and _r114a[0]['line'] == 2 and _r114a[0]['old'] == 'b'
+      and _r114a[0]['new'] == 'B', repr(_r114a))
+_NEW114 = ('a\nb\nc\n' + writeback.BLOCK_START + '\n'
+           'ax.set_position([0.1, 0.1, 0.5, 0.5])\n' + writeback.BLOCK_END + '\n')
+_r114b = writeback.preview_diff(_OLD114, _NEW114)
+check('§114① 插入调整块 => 哨兵行与块体全是 insert_block（行号 4/5/6，旧行为空）',
+      [x['type'] for x in _r114b] == ['insert_block'] * 3
+      and [x['line'] for x in _r114b] == [4, 5, 6]
+      and [x['old'] for x in _r114b] == [None, None, None], repr(_r114b))
+check('§114① 内容一致 => 空 diff（no_change 不许编造条目）',
+      writeback.preview_diff(_OLD114, _OLD114) == [],
+      repr(writeback.preview_diff(_OLD114, _OLD114)))
+_r114d = writeback.preview_diff(_OLD114, 'a\nX\nY\nc\n')       # 1 行换 2 行
+check('§114① 行数变了：配对那行如实报 inplace（一行换一行）+ 多出来那行是新增',
+      [x['type'] for x in _r114d] == ['inplace', 'replace']
+      and _r114d[0]['old'] == 'b' and _r114d[1]['old'] is None,
+      repr(_r114d))
+# ---- teeth：把 diff 生成改坏（只报第一条）=> 上面"3 行 insert_block"那条必红 ----
+_orig114 = writeback.preview_diff
+try:
+    writeback.preview_diff = lambda o, n: _orig114(o, n)[:1]
+    _r114b1 = writeback.preview_diff(_OLD114, _NEW114)
+finally:
+    writeback.preview_diff = _orig114
+check('§114② teeth：preview_diff 只报第一条 => 行数/类型断言立刻不成立（真有牙）',
+      len(_r114b1) == 1 and len(_r114b) == 3 and _r114b1 != _r114b,
+      'teeth=%r real=%d 行' % (_r114b1, len(_r114b)))
+
+# ---- 端到端：三个场景（原位 / 插块 / no_change）的预览 vs 真写盘 ----
+_src114 = os.path.dirname(os.path.dirname(os.path.abspath(writeback.__file__)))
+_d114 = tempfile.mkdtemp(prefix='mpltweak_f1diff_')
+_ENV114 = dict(os.environ, PYTHONPATH=_src114, MPLBACKEND='Agg',
+               MPLTWEAK_LANG='zh', PYTHONIOENCODING='utf-8')
+
+
+def _run114(cwd, args):
+    """跑一次 CLI（`--json`：stdout 只有载荷）→ (rc, 合并文本, 载荷 dict)。"""
+    r = _sub114.run([sys.executable, '-m', 'mpltweak'] + list(args),
+                    cwd=cwd, capture_output=True, env=_ENV114)
+    _o = _decode_out(r.stdout + r.stderr)
+    _j = {}
+    try:
+        _j = json.loads(_decode_out(r.stdout))
+    except Exception:                                             # noqa: BLE001
+        _j = {}
+    return r.returncode, _o, _j
+
+
+def _replay114(base, rows):
+    """把 `files[].diff` 重放回原文 —— **只**用提示里给出的字段（agent 也能这么复现）。
+
+    这也是一条不变量检查：`old` 必须与原文同位置的整行一致（对不上说明行号口径错），
+    所以每步都 assert 一次。
+    """
+    out = base.splitlines()
+    for r in sorted(rows, key=lambda x: x['line']):
+        i = r['line'] - 1
+        if r['old'] is None:
+            out.insert(i, r['new'])
+        else:
+            assert out[i] == r['old'], (i, out[i], r['old'])
+            if r['new'] is None:
+                del out[i]
+            else:
+                out[i] = r['new']
+    return '\n'.join(out) + ('\n' if base.endswith('\n') else '')
+
+
+_CASES114 = (
+    # name, 脚本正文, 参数（除 version/script 之外的字段）, 期望的 diff 类型
+    ('s1', "import matplotlib\nmatplotlib.use('Agg')\n"
+           "import matplotlib.pyplot as plt\n"
+           "fig, ax = plt.subplots(figsize=(6, 4))\n"
+           "ax.plot([1, 2, 3], [1, 4, 9])\n"
+           "ax.set_xlabel('x')\n"
+           "fig.savefig('out.png', dpi=100)\n",
+     {'fig_index': 0, 'n_figs': 1,
+      'axes': [{'index': 0, 'label_fontsize': 18}]}, 'inplace'),
+    ('s2', "import matplotlib\nmatplotlib.use('Agg')\n"
+           "import matplotlib.pyplot as plt\n"
+           "fig, axs = plt.subplots(1, 2, figsize=(8, 3))\n"
+           "axs[0].plot([1, 2, 3], [1, 4, 9])\n"
+           "axs[1].plot([3, 2, 1], [1, 2, 3])\n"
+           "fig.savefig('out.png', dpi=100)\n",
+     {'fig_index': 0, 'n_figs': 1,
+      'axes': [{'index': 0, 'pos': [0.1, 0.15, 0.35, 0.75]}]}, 'insert_block'),
+    ('s3', "import matplotlib\nmatplotlib.use('Agg')\n"
+           "import matplotlib.pyplot as plt\n"
+           "fig, ax = plt.subplots(figsize=(6, 4))\n"
+           "ax.plot([1, 2, 3], [1, 4, 9])\n"
+           "ax.set_xlabel('x', fontsize=18)\n"
+           "fig.savefig('out.png', dpi=100)\n",
+     {'fig_index': 0, 'n_figs': 1,
+      'axes': [{'index': 0, 'label_fontsize': 18}]}, None),
+    # s4 = **独立验证当场打回的那个场景**（0.1.16 / F1 修正的回归牙）：
+    # 字号能原位写、位置只能插块 ⇒ auto 先原位写字号、再退块写位置。退块那次会
+    # **重读源码**，所以块里**不该**再写一遍字号。第一版预览"捕获住不落盘"，
+    # 第二次读到的是原样 ⇒ 块里多写一行 `set_fontsize(18)`（实测 573 B vs 553 B）。
+    ('s4', "import matplotlib\nmatplotlib.use('Agg')\n"
+           "import matplotlib.pyplot as plt\n"
+           "fig, ax = plt.subplots(figsize=(6, 4))\n"
+           "ax.plot([0, 1], [1, 0])\n"
+           "ax.set_xlabel('x')\n"
+           "fig.savefig('o.png')\n",
+     {'fig_index': 0, 'n_figs': 1,
+      'axes': [{'index': 0, 'label_fontsize': 18,
+                'pos': [0.125, 0.11, 0.775, 0.77]}]}, 'mixed'),
+)
+
+for _nm114, _body114, _pdata114, _kind114 in _CASES114:
+    _c114 = os.path.join(_d114, _nm114)
+    os.makedirs(_c114, exist_ok=True)
+    _sp114 = os.path.join(_c114, 'fig.py')
+    with open(_sp114, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(_body114)
+    _pp114 = os.path.join(_c114, 'p.json')
+    with open(_pp114, 'w', encoding='utf-8') as f:
+        json.dump(dict({'version': 4, 'script': 'fig.py'}, **_pdata114), f)
+    _now114 = time.time()
+    os.utime(_sp114, (_now114 - 60, _now114 - 60))   # 脚本比参数旧 ⇒ 不会被判 stale
+    _before = open(_sp114, 'rb').read()
+    _bak114 = os.path.join(_c114, '.tweak_params', 'fig.tweak.bak')
+
+    # ---- ① 预览：rc 与"只读预览"同档、applied=false、零副作用 ----
+    _rc, _o, _j = _run114(_c114, ['apply', 'fig.py', '--params', 'p.json',
+                                  '--diff', '--json'])
+    _f = (_j.get('files') or [{}])[0]
+    _rows = _f.get('diff') or []
+    check('§114③[%s] 预览：rc=0 / reason=preview / applied=false（不报成功）'
+          % _nm114,
+          _rc == 0 and _f.get('reason') == 'preview'
+          and _f.get('applied') is False and _j.get('ok') is True,
+          'rc=%s reason=%r applied=%r | %s' % (_rc, _f.get('reason'),
+                                               _f.get('applied'), _o[-200:]))
+    check('§114③[%s] 预览**零副作用**：脚本字节不变、不造备份、不说"已写回"'
+          % _nm114,
+          open(_sp114, 'rb').read() == _before
+          and not os.path.exists(_bak114) and '已写回' not in _o,
+          ('bak=%s' % os.path.exists(_bak114), _o[-160:]))
+    check('§114③[%s] --json 载荷带 diff / preview_sha256 / preview_sha256_norm'
+          % _nm114,
+          all(k in _f for k in ('diff', 'preview_sha256',
+                                'preview_sha256_norm', 'preview_bytes')),
+          sorted(_f)[:8])
+    if _kind114 is None:
+        check('§114③[s3] no_change：diff 为空 + 文案说"一个字节都不会变"',
+              _rows == [] and '一个字节都不会变' in _o, (_rows, _o[-200:]))
+    elif _kind114 == 'mixed':
+        # s4：原位写字号 + 退块写位置 ⇒ diff 里两档都在，且**块里不许再写一遍字号**
+        _types = {r['type'] for r in _rows}
+        check('§114③[s4] 混合档：diff 同时含 inplace 与 insert_block（%d 行）'
+              % len(_rows),
+              _types == {'inplace', 'insert_block'}, sorted(_types))
+    else:
+        check('§114③[%s] diff 类型全为 %s（%d 行）且都带行号'
+              % (_nm114, _kind114, len(_rows)),
+              bool(_rows) and {r['type'] for r in _rows} == {_kind114}
+              and all(isinstance(r['line'], int) and r['line'] > 0
+                      for r in _rows), _rows[:3])
+    check('§114③[%s] 预览不留临时文件（影子副本已删）' % _nm114,
+          not [n for n in os.listdir(_c114) if 'mpltweak-preview' in n],
+          os.listdir(_c114))
+    # ---- ② 同源证明：真写盘之后，把预览的 diff 重放回原文 == 盘上文件 ----
+    _rc2, _o2, _j2 = _run114(_c114, ['apply', 'fig.py', '--params', 'p.json',
+                                     '--write', '--json'])
+    _f2 = (_j2.get('files') or [{}])[0]
+    _after = open(_sp114, 'rb').read().decode('utf-8')
+    _replay = _replay114(_before.decode('utf-8'), _rows)
+    check('§114④[%s] 前置：不带 --diff 时照旧直接写（默认行为不变）' % _nm114,
+          _rc2 == 0 and _f2.get('reason') in ('ok', 'no_change'),
+          'rc=%s reason=%r | %s' % (_rc2, _f2.get('reason'), _o2[-160:]))
+    check('§114④[%s] **同源**：预览 diff 重放 == 真写盘后的文件（逐字节；插块档'
+          '只可能差说明行的生成时间）' % _nm114,
+          (_replay == _after) if _kind114 not in ('insert_block', 'mixed')
+          else writeback._norm_ts(_replay) == writeback._norm_ts(_after),
+          'replay=%r after=%r' % (_replay[-90:], _after[-90:]))
+    check('§114④[%s] preview_bytes == 落盘文件字节数（预告的大小不是编的）'
+          % _nm114,
+          _f.get('preview_bytes') == len(_after.encode('utf-8')),
+          (_f.get('preview_bytes'), len(_after.encode('utf-8'))))
+    if _kind114 == 'mixed':
+        # 回归牙（独立验证 0.1.16 打回的那一条）：退块那次是**重读源码**算的，
+        # 字号已经被原位写进文件了 ⇒ 块里**不许**再出现 set_fontsize。
+        check('§114④[s4] 退块时块内**不重复**已被原位写掉的字号（重读的影子文件）',
+              'set_fontsize' not in _after and 'fontsize=18' in _after,
+              _after[-160:])
+    check('§114④[%s] preview_sha256_norm == 落盘文件按同一口径归一后的 sha256'
+          % _nm114,
+          _f.get('preview_sha256_norm') == _h114.sha256(
+              writeback._norm_ts(_after).encode('utf-8')).hexdigest(),
+          _f.get('preview_sha256_norm'))
+    if _kind114 in (None, 'inplace'):
+        # 没有调整块 ⇒ 没有"生成于 <时间>"那行 ⇒ 严格指纹必须逐字节相等
+        check('§114④[%s] 严格逐字节：preview_sha256 == 落盘文件 sha256' % _nm114,
+              _f.get('preview_sha256') == _h114.sha256(
+                  _after.encode('utf-8')).hexdigest(),
+              (_f.get('preview_sha256'), _h114.sha256(
+                  _after.encode('utf-8')).hexdigest()))
+
+shutil.rmtree(_d114, ignore_errors=True)
+
+# ============================================================================
+# §115（0.1.16）元组解包 subplots 的轴寻址：`fig, (ax1, ax2) = plt.subplots(1, 2)`
+#
+# 老 bug（0.1.15 同样有，独立验证实测）：`_iter_assign_names` 会把嵌套元组**摊平**，
+# 于是 `fig, (ax1, ax2)` 被读成 ['fig','ax1','ax2']、取第 2 个当"轴数组" ⇒ 块里写出
+# `ax1[0].set_position(...)`。而 ax1 是**一根轴** ⇒ 重跑 `TypeError: 'Axes' object is
+# not subscriptable` ⇒ 验证失败 ⇒ 回滚 ⇒ rc=1，**用户的改动没生效**。
+# 判据三层：① 写回成功且脚本能跑；② 块里按**每根轴自己的名字**寻址（不得 `ax1[0]`）；
+# ③ 反向：关掉元组解包识别 ⇒ 块里又出现 `ax1[0]`（说明这条判据真在起作用）。
+# ============================================================================
+_d115 = tempfile.mkdtemp(prefix='mpltweak_unpack_')
+_BODY115 = ("import matplotlib\nmatplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(8, 3))\n"
+            "ax1.plot([1, 2, 3], [1, 4, 9])\n"
+            "ax1.set_xlabel('x')\n"
+            "ax2.plot([3, 2, 1], [1, 2, 3])\n"
+            "fig.savefig('o.png', dpi=100)\n")
+_PDATA115 = {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+             'axes': [{'index': 0, 'pos': [0.08, 0.12, 0.42, 0.76]},
+                      {'index': 1, 'pos': [0.55, 0.12, 0.42, 0.76]}]}
+_s115 = os.path.join(_d115, 'fig.py')
+_p115 = os.path.join(_d115, 'p.json')
+with open(_s115, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_BODY115)
+with open(_p115, 'w', encoding='utf-8') as f:
+    json.dump(_PDATA115, f)
+_t115 = time.time()
+os.utime(_s115, (_t115 - 60, _t115 - 60))     # 脚本比参数旧 ⇒ 不会被判 stale
+os.utime(_p115, (_t115, _t115))
+_r115 = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', 'fig.py',
+                        '--params', 'p.json', '--write', '--json'],
+                       cwd=_d115, capture_output=True, env=_ENV114)
+_o115 = _decode_out(_r115.stdout + _r115.stderr)
+try:
+    _j115 = json.loads(_decode_out(_r115.stdout))
+except Exception:                                                 # noqa: BLE001
+    _j115 = {}
+_f115 = (_j115.get('files') or [{}])[0]
+_txt115 = open(_s115, encoding='utf-8').read()
+check('§115① 元组解包写回成功（老 bug 是 rc=1 + 回滚 + 用户改动没生效）',
+      _r115.returncode == 0 and _f115.get('applied') is True,
+      'rc=%s applied=%r reason=%r | %s' % (_r115.returncode,
+                                          _f115.get('applied'),
+                                          _f115.get('reason'), _o115[-220:]))
+# ② 块里必须按**每根轴自己的名字**寻址：`ax1.set_position(...)`，绝不能 `ax1[0]`。
+_pos115 = re.findall(r'(?m)^(\w+)\[(\d)\]\.set_position', _txt115)
+check('§115② 块里不得把单轴当数组（没有 `名字[数字].set_position`）',
+      _pos115 == [], '命中 %r' % (_pos115[:4],))
+check('§115② 位置按自己的名字写：ax1 / ax2 各一条 set_position',
+      'ax1.set_position(' in _txt115 and 'ax2.set_position(' in _txt115,
+      _txt115[-260:])
+# ③ 写回后的脚本自己也要跑得通（老 bug 就是在这一步 TypeError 被回滚的）
+_rr115 = subprocess.run([sys.executable, 'fig.py'], cwd=_d115,
+                        capture_output=True, env=_ENV114)
+_oo115 = _decode_out(_rr115.stdout + _rr115.stderr)
+check('§115③ 写回后脚本能重跑（rc=0；老 bug 在这里 TypeError）',
+      _rr115.returncode == 0, _oo115[-300:])
+# ④ 反向：把元组解包识别关掉 ⇒ 块里又出现 `ax1[0]`（说明判据真在用，不是空转）
+_s115b = os.path.join(_d115, 'fig2.py')
+with open(_s115b, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_BODY115)
+_orig115 = writeback._unpacked_axis_names
+writeback._unpacked_axis_names = lambda tree, call: None
+try:
+    _res115b = writeback.writeback(_s115b, dict(_PDATA115), _p115,
+                                   verify=False, semantic=False)
+finally:
+    writeback._unpacked_axis_names = _orig115
+_blk115b = _res115b.get('block') or ''
+# 注：$117 起，"关掉元组解包识别"不再会写出 `ax1[0]` —— 静态自检直接拦下（fail-closed，
+# 块里没有那行、并点名理由）。旧行为的复现放在 §117③（连自检的判据一起改坏才看得到）。
+check('§115④ 关掉元组解包识别 ⇒ 自检拦下：块里没有 `ax1[0]`，并点名"元组解包"',
+      not re.search(r'ax1\[\d\]', _blk115b)
+      and any('静态自检' in w and '元组解包' in w
+              for w in (_res115b.get('warnings') or [])),
+      (_blk115b[:120], [w[:50] for w in (_res115b.get('warnings') or [])[:2]]))
+
+# ============================================================================
+# §116（0.1.16）"生成的代码跑不起来"的归因文案：必须说"是我们的问题"，
+# 不许说"（无法确定原因）"—— 否则用户读到"你的脚本跑不起来"⇒ 不会报告，只当
+# "这种图它不支持"（元组解包那个 bug 就是这么躲过 0.1.13/0.1.14/0.1.15）。
+# 证据基础：能走到"写回后重跑失败"这条路径，就说明**原脚本单独是跑得通的**
+# （writeback 只在"原文能跑、写回后的不能跑"时才把 stderr 尾部交出来）。
+# ============================================================================
+_s116 = os.path.join(_d115, 'fig_attrib.py')
+with open(_s116, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_BODY115)
+_orig116 = writeback._unpacked_axis_names
+_orig_sv116 = writeback._subscript_verdict
+# 复现"旧寻址 + 旧自检"（= 0.1.15 的行为）：这两道闸都关掉，才会真的写出 `ax1[0]`
+# 并走到"重跑 TypeError → 回滚"。只关第一道的话，静态自检会拦下、根本不会进验证
+# （§115④ / §117② 就是那个更好的结果）。
+writeback._unpacked_axis_names = lambda tree, call: None
+writeback._subscript_verdict = lambda tree, container: ('array', 'mutated')
+try:
+    _res116 = writeback.writeback(_s116, dict(_PDATA115), _p115,
+                                  verify=True, semantic=True)
+finally:
+    writeback._unpacked_axis_names = _orig116
+    writeback._subscript_verdict = _orig_sv116
+_kind116, _detail116 = apply._classify_verify_failure(_res116, _s116, ())
+check('§116① 归因指向"工具生成的问题"（tool_bug / generated_code_failed），不是"无法确定原因"',
+      (_kind116, _detail116) == ('tool_bug', 'generated_code_failed'),
+      'reason=%r kind/detail=%r tail=%r' % (
+          _res116.get('reason'), (_kind116, _detail116),
+          (_res116.get('verify_fail_tail') or '')[-120:]))
+_buf116 = io.StringIO()
+with contextlib.redirect_stderr(_buf116):
+    apply._print_attribution(_kind116, _detail116, _s116)
+_o116 = _buf116.getvalue()
+check('§116② 人读文案：明说"mpltweak 生成的问题、不是你脚本的问题"+ 保留"已回滚"',
+      '生成的问题' in _o116 and '已回滚' in _o116
+      and '无法确定原因' not in _o116, _o116.strip()[:220])
+# 反向：把 detail 级文案映射摘掉（等价于"文案改回旧说法"）⇒ 上面那条必红
+_orig_map116 = apply._DETAIL_MSG_KEYS
+apply._DETAIL_MSG_KEYS = {}
+try:
+    _buf116b = io.StringIO()
+    with contextlib.redirect_stderr(_buf116b):
+        apply._print_attribution(_kind116, _detail116, _s116)
+    _o116b = _buf116b.getvalue()
+finally:
+    apply._DETAIL_MSG_KEYS = _orig_map116
+check('§116③ 反向：摘掉 detail 文案映射 ⇒ 新说法消失（这条判据不是空转）',
+      '生成的问题' not in _o116b and _o116b != _o116, _o116b.strip()[:200])
+
+# ============================================================================
+# §117（0.1.16）静态自检：**落盘前**问一句"这个符号真的能下标吗"
+#
+# 为什么必须"不跑脚本就能判错"：安全网（重跑失败 → 回滚）会把"生成了跑不通的代码"
+# 变成 rc=1 +「脚本跑不起来」，于是元组解包那个 bug 隐身了三个版本。判据只认可证的
+# 三种来源（subplots 数组 / 已带下标的元素 / 单轴），证不出就 fail-closed。
+# ============================================================================
+_t117 = _ast.parse("import matplotlib.pyplot as plt\n"
+                   "fig, (ax1, ax2) = plt.subplots(1, 2)\n"
+                   "fig2, axs = plt.subplots(1, 2)\n"
+                   "axq = fig.add_subplot(1, 1, 1)\n"
+                   "t = plt.subplots(1, 2)\n"
+                   "weird = make_axes()\n")
+check('§117① 判据：元组解包名 ⇒ single（不许下标），subplots 数组 ⇒ array',
+      writeback._subscript_verdict(_t117, 'ax1') == ('single',
+                                                     'single_axis_from_unpack')
+      and writeback._subscript_verdict(_t117, 'axs') == ('array', 'subplots_array'),
+      (writeback._subscript_verdict(_t117, 'ax1'),
+       writeback._subscript_verdict(_t117, 'axs')))
+check('§117① add_subplot 名 ⇒ single；`t[1]` 已带下标 ⇒ element；来源不明 ⇒ unknown',
+      writeback._subscript_verdict(_t117, 'axq') == ('single', 'single_axis')
+      and writeback._subscript_verdict(_t117, 't[1]') == ('element',
+                                                          'already_element')
+      and writeback._subscript_verdict(_t117, 'weird') == ('unknown',
+                                                           'unknown_symbol'),
+      (writeback._subscript_verdict(_t117, 'axq'),
+       writeback._subscript_verdict(_t117, 't[1]'),
+       writeback._subscript_verdict(_t117, 'weird')))
+# 端到端：把元组解包识别关掉（=旧寻址）⇒ 自检必须**拦住**，而不是写出 ax1[0]
+_s117 = os.path.join(tempfile.mkdtemp(prefix='mpltweak_s3chk_'), 'fig.py')
+with open(_s117, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_BODY115)
+_d117 = os.path.dirname(_s117)
+_p117 = os.path.join(_d117, 'p.json')
+with open(_p117, 'w', encoding='utf-8') as f:
+    json.dump(_PDATA115, f)
+_o_pv117, _o_un117 = writeback._subscript_verdict, writeback._unpacked_axis_names
+writeback._unpacked_axis_names = lambda tree, call: None
+try:
+    _res117 = writeback.writeback(_s117, dict(_PDATA115), _p117,
+                                  verify=False, semantic=False)
+finally:
+    writeback._unpacked_axis_names = _o_un117
+_blk117, _w117 = _res117.get('block') or '', _res117.get('warnings') or []
+check('§117② 自检拦下"对单轴下标"：块里没有 `ax1[数字]`，且给出点名理由',
+      not re.search(r'ax1\[\d\]', _blk117)
+      and any('静态自检' in w and '元组解包' in w for w in _w117),
+      'block=%r warns=%r' % (_blk117[:120], [w[:60] for w in _w117[:2]]))
+# 有牙：把判据改成恒 'array' ⇒ 上面那条必红（坏表达式又出现）
+writeback._subscript_verdict = lambda tree, container: ('array', 'mutated')
+writeback._unpacked_axis_names = lambda tree, call: None
+try:
+    _res117b = writeback.writeback(_s117, dict(_PDATA115), _p117,
+                                   verify=False, semantic=False)
+finally:
+    writeback._subscript_verdict, writeback._unpacked_axis_names = _o_pv117, _o_un117
+check('§117③ 反向：判据改成恒 array ⇒ 块里又出现 `ax1[0].set_position`（真在把关）',
+      bool(re.search(r'ax1\[\d\]\.set_position', _res117b.get('block') or '')),
+      (_res117b.get('block') or '')[:160])
+shutil.rmtree(_d117, ignore_errors=True)
+
+# ============================================================================
+# §118（0.1.16 / S7）`subplot_mosaic` 的**字典常量键**寻址：`axd['a'].set_position(...)`
+#
+# 为什么要有：mosaic 返回的是 `{键: Axes}` 字典，旧代码把它整份判成"不可证"⇒ 拼图
+# 写不进去（rc=1 / nothing_applied）。而"第 k 条轴 ↔ 第 k 个首次出现的键"是**可证**的
+# （matplotlib `_do_layout` 就是行主序扫格子、第一次见到的键新建一条轴）。
+# 判据：只认**字面量**布局（嵌套 list/tuple 的 str 常量，或 `"AB;CD"` 这种字符串）；
+# 布局是变量/表达式 ⇒ 退回旧路径（整份不可证，fail-closed）。
+# ============================================================================
+_t118 = _ast.parse("import matplotlib.pyplot as plt\n"
+                   "fig, axd = plt.subplot_mosaic([['a', 'b'], ['c', 'c']])\n"
+                   "fig2, axe = plt.subplot_mosaic('AB;CD')\n"
+                   "spec = make_spec()\n"
+                   "fig3, axf = plt.subplot_mosaic(spec)\n")
+_t118a = _ast.parse("fig, axd = plt.subplot_mosaic([['a','b'],['c','c']])")
+_t118b = _ast.parse("fig, axd = plt.subplot_mosaic('AB;CD')")
+_t118c = _ast.parse("fig, axd = plt.subplot_mosaic(spec)")
+check('§118① 键表按**首次出现（行主序）**：[[a,b],[c,c]] ⇒ [a,b,c]；"AB;CD" ⇒ [A,B,C,D]',
+      writeback._mosaic_keys(_t118a.body[0].value) == ['a', 'b', 'c']
+      and writeback._mosaic_keys(_t118b.body[0].value) == ['A', 'B', 'C', 'D'],
+      (writeback._mosaic_keys(_t118a.body[0].value),
+       writeback._mosaic_keys(_t118b.body[0].value)))
+check('§118① 布局不是字面量（变量/表达式）⇒ 读不出键 ⇒ 退回旧路径（不许猜）',
+      writeback._mosaic_keys(_t118c.body[0].value) is None,
+      writeback._mosaic_keys(_t118c.body[0].value))
+# 端到端：拼图脚本真写回 —— 块里是 `axd['键'].set_position(...)`，且**没有** `axd[数字]`
+_d118 = tempfile.mkdtemp(prefix='mpltweak_mosaic_')
+_s118 = os.path.join(_d118, 'fig.py')
+with open(_s118, 'w', encoding='utf-8', newline='\n') as f:
+    f.write("import matplotlib\nmatplotlib.use('Agg')\n"
+            "import matplotlib.pyplot as plt\n"
+            "fig, axd = plt.subplot_mosaic([['a', 'b'], ['c', 'c']], figsize=(6, 5))\n"
+            "axd['a'].plot([1, 2], [2, 1])\n"
+            "axd['b'].plot([1, 2], [1, 2])\n"
+            "axd['c'].plot([1, 2], [3, 1])\n"
+            "fig.savefig('o.png', dpi=80)\n")
+_p118 = os.path.join(_d118, 'p.json')
+with open(_p118, 'w', encoding='utf-8') as f:
+    json.dump({'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+               'axes': [{'index': 0, 'pos': [0.06, 0.1, 0.4, 0.8]}]}, f)
+_tm118 = time.time()
+os.utime(_s118, (_tm118 - 60, _tm118 - 60))
+os.utime(_p118, (_tm118, _tm118))
+_r118 = subprocess.run([sys.executable, '-m', 'mpltweak', 'apply', 'fig.py',
+                        '--params', 'p.json', '--write', '--json'],
+                       cwd=_d118, capture_output=True, env=_ENV114)
+_j118 = {}
+try:
+    _j118 = json.loads(_decode_out(_r118.stdout))
+except Exception:                                                 # noqa: BLE001
+    pass
+_f118 = (_j118.get('files') or [{}])[0]
+_txt118 = open(_s118, encoding='utf-8').read()
+_rr118 = subprocess.run([sys.executable, 'fig.py'], cwd=_d118,
+                        capture_output=True, env=_ENV114)
+check('§118② 拼图写回成功且脚本能跑：块里 `axd[\'a\'].set_position(...)`，无 `axd[数字]`',
+      _r118.returncode == 0 and _f118.get('applied') is True
+      and "axd['a'].set_position(" in _txt118
+      and not re.search(r'axd\[\d+\]', _txt118) and _rr118.returncode == 0,
+      'rc=%s applied=%r | %s' % (_r118.returncode, _f118.get('applied'),
+                                 _txt118[-200:]))
+# 反向：把字典键识别关掉 ⇒ 拼图又写不进去（块里没有 set_position、applied=false）
+_o118 = writeback._mosaic_keys
+_s118b = os.path.join(_d118, 'fig2.py')
+with open(_s118b, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(open(_s118, encoding='utf-8').read())     # 已写回版也照跑一遍
+writeback._mosaic_keys = lambda call: None
+try:
+    _res118b = writeback.writeback(_s118b, {'version': 4, 'script': 'fig.py',
+                                            'fig_index': 0, 'n_figs': 1,
+                                            'axes': [{'index': 0,
+                                                      'pos': [0.1, 0.1, 0.5, 0.5]}]},
+                                   _p118, verify=False, semantic=False)
+finally:
+    writeback._mosaic_keys = _o118
+check('§118③ 反向：关掉字典键识别 ⇒ 拼图写不进去（判据真在用）',
+      'set_position' not in (_res118b.get('block') or '')
+      and _res118b.get('applied') is False,
+      'reason=%r applied=%r' % (_res118b.get('reason'),
+                                _res118b.get('applied')))
+shutil.rmtree(_d118, ignore_errors=True)
+
+# ============================================================================
+# §120（0.1.17 / S9）「函数里建图」拒写：除了"为什么不写"，还要给**照着改**的指导
+#
+# 真实语料 535 份里，16 份"结构上写不了"有 10 份是这一类（画图封装在函数里、模块级没有
+# fig/axes）。只报"证不出目标"agent 无从下手；这里要求输出里带"改哪一处、改成什么"。
+# 只在 func_multi_return / func_called_many 出现 —— 循环建轴那种改一行也写不进去，
+# 加了只会误导（§120③ 专门钉这条边界）。
+# ============================================================================
+_D120 = tempfile.mkdtemp(prefix='mpltweak_s9_')
+_BODY120 = {
+    'multi_return': chr(10).join([
+        'import matplotlib', 'matplotlib.use(' + chr(39) + 'Agg' + chr(39) + ')',
+        'import matplotlib.pyplot as plt', '', 'def plot_it(flag):',
+        '    fig, axes = plt.subplots(2, 2, figsize=(8, 6))',
+        '    axes[0, 0].plot([1, 2], [2, 1])',
+        '    if flag:', '        return fig', '    return fig', '',
+        'plot_it(True)', '']),
+    'called_many': chr(10).join([
+        'import matplotlib', 'matplotlib.use(' + chr(39) + 'Agg' + chr(39) + ')',
+        'import matplotlib.pyplot as plt', '', 'def plot_it(tag):',
+        '    fig, axes = plt.subplots(2, 2, figsize=(8, 6))',
+        '    axes[0, 0].plot([1, 2], [2, 1])', '    return fig', '',
+        '_a = plot_it(' + chr(39) + 'a' + chr(39) + ')',
+        '_b = plot_it(' + chr(39) + 'b' + chr(39) + ')',
+        '_b.savefig(' + chr(39) + 'out.png' + chr(39) + ')', '']),
+    'loop': chr(10).join([
+        'import matplotlib', 'matplotlib.use(' + chr(39) + 'Agg' + chr(39) + ')',
+        'import matplotlib.pyplot as plt',
+        'fig = plt.figure(figsize=(8, 6))', 'for i in range(4):',
+        '    ax = fig.add_subplot(2, 2, i + 1)', '    ax.plot([1, 2], [i, i + 1])',
+        'fig.savefig(' + chr(39) + 'out.png' + chr(39) + ')', '']),
+}
+
+_S120 = {
+    'multi_return': {'fig.func_multi_return', 'refused_hint'},
+    'called_many': {'fig.func_called_many', 'refused_hint'},
+    'loop': set(),
+}
+_r120 = {}
+for _nm120, _body120 in _BODY120.items():
+    _c120 = os.path.join(_D120, _nm120)
+    os.makedirs(_c120, exist_ok=True)
+    _sp120 = os.path.join(_c120, 'fig.py')
+    with open(_sp120, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(_body120)
+    _pp120 = os.path.join(_c120, 'p.json')
+    with open(_pp120, 'w', encoding='utf-8') as f:
+        json.dump({'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                   'axes': [{'index': 0, 'pos': [0.1, 0.1, 0.4, 0.4]}]}, f)
+    _tm120 = time.time()
+    os.utime(_sp120, (_tm120 - 60, _tm120 - 60))
+    os.utime(_pp120, (_tm120, _tm120))
+    _r120[_nm120] = subprocess.run(
+        [sys.executable, '-m', 'mpltweak', 'apply', 'fig.py', '--params',
+         'p.json', '--write', '--json'],
+        cwd=_c120, capture_output=True, env=_ENV114)
+_j120 = {}
+for _nm120, _r in _r120.items():
+    try:
+        _j120[_nm120] = json.loads(_decode_out(_r.stdout))
+    except Exception:                                             # noqa: BLE001
+        _j120[_nm120] = {}
+_f120 = {k: ((v.get('files') or [{}])[0]) for k, v in _j120.items()}
+# ① / ②：两类"函数里建图"都要出现**照着改**的指导（人读 warnings + --json refused_hint）
+for _nm120 in ('multi_return', 'called_many'):
+    _f = _f120[_nm120]
+    _hit = [w for w in (_f.get('warnings') or [])
+            if '二选一' in w and '模块级' in w]
+    check('§120/%s 拒写输出带**照着改**的指导（改哪一处 + 改成什么 + 跑什么）'
+          % _nm120,
+          bool(_hit) and bool(_f.get('refused_hint'))
+          and any(_nm120 == 'x' or _p in (_f.get('pending') or [])
+                  for _p in ('fig.func_multi_return', 'fig.func_called_many')),
+          'pending=%r hint=%r' % ((_f.get('pending'),),
+                                  (_f.get('refused_hint') or '')[:60]))
+# ③ 循环建轴：普通拒写，**不许**出现这段（改一行也写不进去，加了就误导）
+_f3 = _f120['loop']
+check('§120/loop 普通拒写（循环建轴）**不带**这段指导（边界没被污染）',
+      not _f3.get('refused_hint')
+      and not any('二选一' in w for w in (_f3.get('warnings') or []))
+      and 'fig.func_multi_return' not in (_f3.get('pending') or [])
+      and 'fig.func_called_many' not in (_f3.get('pending') or []),
+      'pending=%r hint=%r' % (_f3.get('pending'),
+                              (_f3.get('refused_hint') or '')[:60]))
+# ④ 反向：关掉开关 ⇒ 指导消失（这条判据不是空转）
+_o120 = writeback.FUNC_GUIDE
+_s120b = os.path.join(_D120, 'multi_return', 'fig2.py')
+with open(_s120b, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_BODY120['multi_return'])
+writeback.FUNC_GUIDE = False
+try:
+    _res120b = writeback.writeback(
+        _s120b, {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+                 'axes': [{'index': 0, 'pos': [0.2, 0.2, 0.3, 0.3]}]},
+        os.path.join(_D120, 'multi_return', 'p.json'), verify=False,
+        semantic=False)
+finally:
+    writeback.FUNC_GUIDE = _o120
+check('§120④ 反向：关掉 FUNC_GUIDE ⇒ 指导消失（判据真在用）',
+      not _res120b.get('refused_hint')
+      and not any('二选一' in w for w in (_res120b.get('warnings') or []))
+      and 'fig.func_multi_return' in (_res120b.get('pending') or []),
+      'pending=%r' % (_res120b.get('pending'),))
+shutil.rmtree(_D120, ignore_errors=True)
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
+
 sys.exit(1 if fail else 0)

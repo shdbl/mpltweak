@@ -19,6 +19,8 @@ description: 交互式 matplotlib 排版（脚本零侵入）。AI 写完绘图�
 4. **等明确确认才落实**：只有用户说"确定 / 应用 / 落实 / 就这样"之后才 `apply --write`；落实前先把变化清单汇报给用户过目。
 5. **落实必须是纯 matplotlib**：`set_position` / `legend(loc=, fontsize=)` / `set_title(fontsize=)` / `tick_params(labelsize=)` / `figsize=`；不得引入本工具的任何符号。
 6. `.tweak_params/` 是临时产物；落实完成后问用户是否清理。
+7. **不静默升级用户的包**：`pip install -U mpltweak` 会改他的环境 ⇒ 先说明"会升到哪个版本、可能有什么变化"，**征得同意再执行**。
+8. **不在没确认版本的情况下断言"这是已知问题 / 已经修了"**：先 `mpltweak --version`，再看最新版与 `CHANGELOG.md`（见下一节）。
 
 ## 开工第一步：确认环境（缺了就装，但先问用户）
 
@@ -88,7 +90,7 @@ mpltweak doctor
 |---|---|
 | `mpltweak <脚本.py>` | **开窗调图**（主用法）。`--fig N` 只挂第 N 张；`--params X` 改参数位置 |
 | `mpltweak launch <脚本.py>` | 同上，**显式子命令**写法（脚本名容易和子命令撞、或批处理里想写明白时用） |
-| `mpltweak apply <脚本.py>` | 只读预览：列出会改哪些数字，**不动代码** |
+| `mpltweak apply <脚本.py>` | 只读预览：列出会改哪些数字，**不动代码**。想看**逐行差异**（会改哪几行、从什么改成什么）就加 `--diff`（别名 `--preview-diff`，同一个开关；同样**不落盘、不备份**） |
 | `mpltweak apply <脚本.py> --write` | **原位写回**（备份 + 三层验证 + 失败自动回滚） |
 | `mpltweak apply <脚本.py>`（默认 `--style auto`） | 每张图各自决定：代码里有数字就原位改，改不了（如 `plt.subplots` 网格位置）自动改用插入调整块 |
 | `mpltweak apply <脚本.py> --style inplace` | 强制只用原位改数字；**写不了的字段会让命令明确失败**（`rc=1`，JSON 的 `pending` 列出字段），不会静默“保持原样” |
@@ -105,7 +107,7 @@ mpltweak doctor
 | `mpltweak --version` | 打印一行版本号（`-V` 同义，`rc=0`）；只认第一个位置参数，`mpltweak x.py --version` 会透传 |
 
 其他选项（**按子命令分列 —— 选项不是全局通用的**）：
-- **`apply`**：`--timeout 秒`（**默认 300**，就是它在子进程里重跑脚本做验证的等待上限；脚本很慢就调大）、`--python 解释器`、`--style auto|inplace|block`、`--force`、`--snippet`、`--json`、`--dry-run`、`--all-figs`、`--keep-unverified`、`--no-verify` / `--no-semantic` / `--verify-fast`、`--strict` / `--allow-layout-conflict`、`-v`。
+- **`apply`**：`--timeout 秒`（**默认 300**，就是它在子进程里重跑脚本做验证的等待上限；脚本很慢就调大）、`--python 解释器`、`--style auto|inplace|block`、`--force`、`--snippet`、`--json`、`--diff`（别名 `--preview-diff`：写回前逐行 diff，不落盘）、`--dry-run`、`--all-figs`、`--keep-unverified`、`--no-verify` / `--no-semantic` / `--verify-fast`、`--strict` / `--allow-layout-conflict`、`-v`。
 - **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`、**`--json`（0.1.15 起，只覆盖失败出口）** —— 成功路径照旧开窗、不产出 JSON；失败时 stdout 只有一条 JSON（`ok=false` + `error_code` + `stage` + `error` + `next_step`），退出码口径不变。**副作用**：这个开关会吃掉原本要透传给你脚本的 `--json`，要透传请写 `mpltweak launch x.py -- --json`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
@@ -127,6 +129,27 @@ mpltweak doctor
 `--no-verify` / `--no-semantic` 会跳过验证 —— **那是写坏代码时唯一的自动安全网，一般不要用**；脚本确实无法无头重跑时才考虑，且用前先确认脚本已在版本控制里。
 
 **`--verify-fast` 不是“跳过验证”，而是“只查语法”**：它**不重跑脚本**，因此证明不了“参数里某个字段与源码现值相等”。源码里没有可比写法时（典型 `plt.subplots()` 的网格轴位置，由 subplotspec + 边距算出），它会**保守退块插块**。实测同一条 agent 路径（`describe` 原样导出 → `apply --write`）：加它会在一份 12 行 `plt.subplots(2, 2)` 脚本上插 31 行块，不加则是 `reason=no_change`、一个字节不动 —— **默认不要加 `--verify-fast`**。
+
+## 什么时候该提醒用户检查更新
+
+满足任一条，**每次会话最多查一次**版本（`mpltweak --version` + `pip index versions mpltweak`）：
+
+1. **首次使用**：本次会话第一次用 mpltweak 前，先确认版本；如果落后最新版，用一句人话告诉用户，**不阻塞**继续干活。
+2. **用户抱怨不好用**（"不好用 / 没效果 / 改了没用 / 报错"）：先查版本。若用户装的是旧版，说明"这可能是某版已修的问题"，而不是直接下结论。
+3. **文档提到但 CLI 不认**：某个选项 / 行为文档里有、但命令报 `unrecognized arguments` ⇒ 这是版本落后的铁证，先建议升级。
+
+**红线**：
+
+- **不要静默升级用户的包**（会改环境，必须先说明升到哪个版本、征得同意）；
+- **不要在没确认版本时断言"这是已知问题"**；
+- 给用户的话里**不要出现命令行 / 参数名**（命令你自己执行，用户听到的是"能升级到新版吗"这种人话）。
+
+### 怎么查（都是只读，不改环境）
+
+1. **他现在装的是哪一版**：`mpltweak --version`（`-V` 同义）。这个命令 **0.1.15 才有** —— 如果它报"命令不存在"，本身就是一条信息（说明装的是更早的版本）。
+2. **最新版是哪一版**：`pip index versions mpltweak`（只读）；没有这条命令的 pip 就看 `https://pypi.org/pypi/mpltweak/json` 的 `info.version`。
+3. **他装的是旧版** ⇒ 先说清"你可能遇到的是**某版已经修掉**的问题"，指向仓库 `CHANGELOG.md` 里那个版本的条目（那里只写用户能感知到什么）；**征得同意后**再升级：`pip install -U mpltweak`（要开窗拖图的用 `pip install -U "mpltweak[qt]"`）。升级后用 `mpltweak --version` 复核一次，再让他重试原来的操作，并明确问一句"现在还复现吗"。
+4. **他已经是最新版** ⇒ 别急着说"那就是 bug"。先回头查已知边界：`apply --diff` 只是**计划预览**（真写回时验证失败仍会回滚）、开了 `constrained_layout` / `tight_layout` 的图**写回轴位置会被默认拦下**、脚本在无头环境跑不通时会回滚、含"原位写不了"的字段时会多跑一遍脚本（看起来像"变慢了"）—— 这些都在 `docs/troubleshooting.md` 与 `docs/boundaries.md` 里。确实与文档不符，再让用户带着**版本号 + `--json` 输出**去提 issue。
 
 ## 三种用法，先判断该走哪个
 
@@ -251,6 +274,17 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   `verify` 写回后验证 / `finalize` 收尾）；`next_step` 给一句可直接照着做的下一步。**它们是建议不是
   保证**（脚本自己有语法错时 `--force` 也救不回来）；**判定结果仍只看 `ok` / `error_code` / 退出码**。
   成功载荷**没有**这两个键，`files[]` 条目里也没有 `stage`（逐文件原因照旧看 `files[].reason`）。
+  **唯一例外（0.1.16 起）**：写回**已落盘**、只有收尾那一步降级时，`ok` 仍是 `true`、`rc=0`，
+  顶层会带 `stage: "finalize"` + `next_step`（典型：刷参数文件 mtime 失败，逐文件归因
+  `attribution: "mtime_sync_failed"`）。这一档**不是**写回失败 —— 别因为它去回滚或改脚本。
+
+- **`attribution` / `attribution_detail`**（逐文件；0.1.16 起有细分）：`attribution` 的值域 = 脚本侧三类
+  （`script_cannot_run` / `script_needs_args` / `script_needs_gui_or_headless_impossible`）+ `tool_bug`
+  + `mtime_sync_failed`。0.1.16 新增 **`attribution_detail: "generated_code_failed"`**（`attribution` 仍是
+  `tool_bug`）= **写回之后的代码跑不起来、而用户的原脚本本身能跑** ⇒ 是 mpltweak 生成的那几行有问题，
+  **不是用户脚本的问题**，别让人去改自己的脚本。它是**升级不是新分类**（分类器仍只产出脚本侧三类，判
+  `tool_bug` 只发生在 `apply` 层、只认 `verify_fail_kind` 为 `after_write_broken` / `anchors_all_failed`
+  的证据，**不从文案反推**）。
 
 - **`layers = {syntax, rerun, semantic}`**：三层各自"跑没跑"。`true` = 跑了，`null` / 缺键 = **没跑**。
   **只有 `semantic: true` 才算"布局真的落到目标图上"**；`verified: null` 表示**语义层没跑**（取不到图
@@ -277,11 +311,18 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   `live_equal` 实测一致 / `live_differs` 实测不同、真要写 / `unjudged` 判不了 ⇒ 保守拒绝）；
   **0.1.14 的 `--json` 还没带出这个键**，此时按"这次有没有 `--no-verify` / `--verify-fast`"分流：
   关了验证还拒 ⇒ `unjudged`，正常验证后仍拒 ⇒ `live_differs`。
+- **`diff` / `preview_sha256` / `preview_sha256_norm` / `preview_bytes`**（**只有 `--diff` 时**才非空）：
+  `diff` 逐行给 `{line, type, old, new}`（`line` 是**新文件**的行号；`type` = `inplace` 原位补参数 /
+  `insert_block` 插入调整块 / `replace` 其余），按 `line` 重放回原文就能在落盘前看到"改完什么样"；
+  `preview_sha256` = **真写盘后文件的 sha256**（唯一例外是调整块说明行的"生成于 <时间>"，预览与真写回
+  跨了分钟就只差这几个字符 ⇒ 要确定性对拍用 `preview_sha256_norm`）；`preview_bytes` = 将要写出的字节数。
+  **预览不重跑脚本** ⇒ "验证失败 → 自动回滚"这类由验证结果驱动的分支不在预览里。
 - **`reason`** 常见取值（都在集成树上实测过）：
 
   | 值 | 含义 | 你该做什么 |
   |---|---|---|
   | `ok` | 写回成功且验证通过 | 完事 |
+  | `preview` | 这次**只预览**（不带 `--write` 的 `apply`，或 `--diff`）：`applied: false`、**一个字节都没写**，属正常 | 确认差异后再跑 `--write`（`--diff` 下就是去掉 `--diff`） |
   | `no_change` | 参数与源码一致 → **一个字节都没改**（`applied: false` 属正常） | 不用做 |
   | `best_effort` | 写回成功，但有字段**没能原位落地**（已退块落地）；`--keep-unverified` 保留时也是它。⚠️ 若同一条目 `applied: false`，那这次是**一个字节都没写**（顶层会给 `rc=1 / ok=false / error_code="nothing_applied"`） | 看 `inplace_pending` / `warnings`；`applied:false` 时别当写好了 |
   | `fail` | **已回滚 / 拒绝写回**，原因在 `err`（语法被写坏、重跑不通、没有合规块锚点…） | 读 `err`，修脚本或重调 |

@@ -189,6 +189,24 @@ def test_messages_are_gbk_encodable():
                 tpl.encode('gbk')
             except UnicodeEncodeError as e:
                 bad.append('%s[%s]: %s' % (key, lang, e))
+    # 同族第二条：**代码里现拼**的终端文本也得在 GBK 码表内（不是只有消息模板会漏）。
+    # 0.1.16 发版前 docfix 实测：`apply --diff` 的空行标记用 U+2205 / U+2420，
+    # cp936 控制台上打到第一行 `insert_block` 就 UnicodeEncodeError，再被顶层兜成
+    # `internal_error` + "这是工具的 bug"（既崩又误归因）。
+    from mpltweak import apply as _apply
+    for arg in (None, '', '   ', '\t', 'x' * 200):
+        try:
+            _apply._clip_line(arg).encode('gbk')
+        except UnicodeEncodeError as e:
+            bad.append('apply._clip_line(%r): %s' % (arg, e))
+    for lang, pair in _apply._DIFF_BLANK_MARK.items():
+        for tpl in pair:
+            if lang == 'en' and not tpl.isascii():
+                bad.append('apply._DIFF_BLANK_MARK[en]: 不是纯 ASCII %r' % tpl)
+            try:
+                tpl.encode('gbk')
+            except UnicodeEncodeError as e:
+                bad.append('apply._DIFF_BLANK_MARK[%s]: %s' % (lang, e))
     assert not bad, (
         '这些消息模板不能编成 GBK，会在 cp936 终端上把命令变成 rc=1 + '
         'UnicodeEncodeError：\n  ' + '\n  '.join(bad))
@@ -1705,7 +1723,59 @@ def test_auto_nav_banners_exist_and_cover_the_file():
 
 
 # =====================================================================
-# 语料差分入口（E1 / 0.1.14）：语料本体与 GIF/图片刻意留在仓外（体积），所以只钉**入口**
+# F8（0.1.16）：类内 / 函数内小节（`    # ==== §8.1 标题 ====`）必须进索引
+#
+# 为什么要单独一条：`--check` 的判据是"索引块 == 现算的索引块"。万一 `_sections`
+# 静默退回空列表，**生成与校验会一起退化成"都没有小节"**，那条新鲜性断言仍然绿 ——
+# 这正是"测试通过 ≠ 承诺成立"。本用例直接拿**源码里的横幅**去对索引块，退化当场红。
+# 反向验证：monkeypatch `_sections` 返回 [] ⇒ 本用例的判据必须不成立（见 §2）。
+# =====================================================================
+_IDX_SECT_RE = re.compile(r'^#\s+(?P<sec>§\d+\.\d+)\s+\S')
+_BANNER_SECT_RE = re.compile(r'^[ \t]+# ==== (?P<sec>§\d+\.\d+)\s+')
+
+
+def _sections_indexed_ok(gen_nav, path):
+    """``(ok, detail)``：该文件源码里的每个类内小节横幅是否都在索引块里（编号一致）。"""
+    lines = gen_nav._read_lines(path)
+    want = [m.group('sec') for m in map(_BANNER_SECT_RE.match, lines) if m]
+    span = gen_nav.find_block(lines)
+    if span is None:
+        return False, '没有索引块'
+    got = []
+    for ln in lines[span[0]:span[1] + 1]:
+        m = _IDX_SECT_RE.match(ln)
+        if m:
+            got.append(m.group('sec'))
+    return sorted(want) == sorted(got), '源码 %d 条 / 索引 %d 条，缺 %s' % (
+        len(want), len(got), sorted(set(want) - set(got))[:5])
+
+
+def test_auto_nav_indexes_class_inner_sections(tmp_path, monkeypatch):
+    """§1 真模块：类内小节横幅与索引块条目**一一对应**（toolbox 21 / messages 28 …）。"""
+    gen_nav = _gen_nav_module()
+    bad = []
+    for rel in gen_nav.DEFAULT_MODULES:
+        ok, detail = _sections_indexed_ok(gen_nav, os.path.join(ROOT, rel))
+        if not ok:
+            bad.append('%s：%s' % (rel, detail))
+    assert not bad, (
+        '以下模块的类内小节没进索引（跑 python tools/gen_nav.py --write）：\n%s'
+        % '\n'.join(bad))
+    # §2 【有牙】在**副本**上把识别关掉（`_sections` 恒返回 []）再重算索引块
+    # ⇒ 副本的索引里不该再有 §N.M 条目，上面那条判据对副本必须不成立。
+    # 为什么在副本上：判据读的是**盘上的索引块**，光 monkeypatch 不改文件是空转的
+    # （第一版这么写，§2 当场红 —— 正好证明这条牙齿不是自说自话）。
+    copy = tmp_path / 'toolbox_teeth.py'
+    copy.write_text(open(os.path.join(ROOT, 'src/mpltweak/toolbox.py'),
+                         encoding='utf-8').read(), encoding='utf-8')
+    monkeypatch.setattr(gen_nav, '_sections', lambda lines: [])
+    gen_nav.write_module(str(copy))
+    _ok_after, _d = _sections_indexed_ok(gen_nav, str(copy))
+    assert not _ok_after, ('把 `_sections` 关成空列表后副本判据仍成立 —— 新条目是手写进去的，'
+                           '不是生成器算的：%s' % _d)
+
+
+# =====================================================================
 #
 # 背景：16k 语料差分跑的 harness 一度只存在于会话临时目录（_corpus013/），仓库里没有
 # 入口 —— 下次做同类验证只能重新拼命令，口径（分母 / 解释器 / 参数 / 环境）也跟着重新猜。
@@ -1739,3 +1809,91 @@ def test_corpus_diff_entry_point_is_alive():
                                      % out2[-2000:])
     assert '语料根不存在' in out2, ('缺语料时没给出可照做的提示：\n%s'
                                     % out2[-2000:])
+
+
+# =====================================================================
+# 语料**证据骨架**（I1 / 0.1.16）：清单与校验脚本必须入仓，且不许写死绝对路径
+#
+# 0.1.15 只收了入口 tools/corpus_diff.py —— 仓库里能"跑差分"，却拿不出"上次跑的结果
+# 凭什么算数"：CLAIMS.json（12 条断言 + 证据 + 复跑命令）、MANIFEST.json（282 个产物的
+# 路径/字节/sha256）、verify_claims.py（把可机检的断言从分片重算一遍）这三份骨架当时
+# 还在仓外的会话临时目录里。语料本体 / 分片 / GIF 体积太大，**仍留在仓外**；只有这三份入仓。
+#
+# 这条牙齿钉四件事：① 三份骨架都在（缺一样即红）；② 内部结构没被改残（条目字段齐全、
+# MANIFEST 里确实记着 CLAIMS.json）；③ 校验脚本**不含盘符绝对路径**（写死就是把别人的
+# 机器搬进仓库 —— 仓外路径必须走 --work / MPLTWEAK_CORPUS_WORK）；④ 三条命令口径仍在：
+# `--list` rc=0、`--manifest-check` rc=0、缺证据时人话 + rc=1。
+# 反向验证：把 tools/corpus/CLAIMS.json 改名（或往 verify_claims.py 里塞一行盘符路径）
+# ⇒ 这条必红（原始输出见 _team014/infra16.md「牙齿反向」）。
+# =====================================================================
+CORPUS_DIR = os.path.join(ROOT, 'tools', 'corpus')
+#: 盘符绝对路径（`C:\` / `D:/`）。命中即视为"写死了别人的机器"
+_ABS_PATH_RE = re.compile(r'[A-Za-z]:[\\/]')
+
+
+def test_corpus_claim_skeleton_is_in_place_and_wired():
+    """语料证据骨架（CLAIMS / MANIFEST / 校验脚本）在仓内、结构完整、入口可用。"""
+    import json
+
+    paths = {name: os.path.join(CORPUS_DIR, name)
+             for name in ('CLAIMS.json', 'MANIFEST.json', 'verify_claims.py')}
+    missing = [n for n, p in sorted(paths.items()) if not os.path.isfile(p)]
+    assert not missing, (
+        '语料证据骨架缺件：%s —— tools/corpus/ 下这三份是 16k 语料差分跑的可审计部分'
+        '（语料本体与分片仍在仓外，骨架必须入仓）：%s' % (missing, CORPUS_DIR))
+
+    claims_doc = json.load(open(paths['CLAIMS.json'], encoding='utf-8'))
+    claims = claims_doc.get('claims') or []
+    assert len(claims) >= 10, (
+        'CLAIMS.json 只剩 %d 条断言 —— 它记录的是 12 条（C1…C12），被截断了？'
+        % len(claims))
+    for c in claims:
+        for key in ('id', 'claim', 'evidence', 'expected'):
+            assert c.get(key), ('CLAIMS.json 里 %r 这条缺 %r 字段'
+                                % (c.get('id'), key))
+
+    man = json.load(open(paths['MANIFEST.json'], encoding='utf-8'))
+    files = man.get('files') or []
+    assert files, 'MANIFEST.json 里没有 files 清单 —— 清单被改残了'
+    for row in files[:5]:
+        for key in ('path', 'bytes', 'sha256'):
+            assert key in row, ('MANIFEST.json 的条目缺 %r 字段：%r' % (key, row))
+    assert any(r.get('path') == 'CLAIMS.json' for r in files), (
+        'MANIFEST.json 没有记录 CLAIMS.json 的 sha256 —— 两份清单原本是一起生成的，'
+        '少了这条就没法自检')
+
+    text = open(paths['verify_claims.py'], encoding='utf-8').read()
+    hits = sorted(set(_ABS_PATH_RE.findall(text)))
+    assert not hits, (
+        'tools/corpus/verify_claims.py 里写死了盘符绝对路径（%r）—— 仓外证据目录必须'
+        '参数化：--work DIR 或环境变量 MPLTWEAK_CORPUS_WORK（与 corpus_diff.py 同口径）。'
+        % (hits,))
+
+    env = _pin_child_env(PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    script = paths['verify_claims.py']
+    r = subprocess.run([sys.executable, script, '--list'], cwd=ROOT, env=env,
+                       capture_output=True, timeout=180)
+    out = (r.stdout + r.stderr).decode('utf-8', 'replace')
+    assert r.returncode == 0, ('--list 不是 rc=0（%d）：\n%s'
+                               % (r.returncode, out[-2000:]))
+    assert 'C1-denominator' in out, ('--list 没列出断言（清单没接上？）：\n%s'
+                                     % out[-2000:])
+
+    r2 = subprocess.run([sys.executable, script, '--manifest-check'], cwd=ROOT,
+                        env=env, capture_output=True, timeout=180)
+    out2 = (r2.stdout + r2.stderr).decode('utf-8', 'replace')
+    assert r2.returncode == 0, ('--manifest-check 不是 rc=0（%d）—— 仓内 CLAIMS.json '
+                                '与 MANIFEST 记录的对不上：\n%s'
+                                % (r2.returncode, out2[-2000:]))
+    assert 'PASS' in out2, ('--manifest-check 没给出判定行：\n%s' % out2[-2000:])
+
+    missing_dir = os.path.join(ROOT, '_no_such_corpus_evidence_')
+    r3 = subprocess.run([sys.executable, script, '--work', missing_dir], cwd=ROOT,
+                        env=env, capture_output=True, timeout=180)
+    out3 = (r3.stdout + r3.stderr).decode('utf-8', 'replace')
+    assert r3.returncode == 1, ('缺证据时应 rc=1（实际 %d）：\n%s'
+                               % (r3.returncode, out3[-2000:]))
+    assert 'Traceback' not in out3, ('缺证据时抛栈了（应给人话）：\n%s'
+                                     % out3[-2000:])
+    assert '看不到这个目录' in out3, ('缺证据时没给出可照做的提示：\n%s'
+                                     % out3[-2000:])

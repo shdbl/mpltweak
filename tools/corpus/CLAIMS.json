@@ -1,0 +1,96 @@
+{
+  "_about": "t6 / §25.7 t100 全池差分跑：每条断言都能用 evidence 里的文件与 command 复跑指证。全部产物在 D:\\Agent\\deepseek\\_corpus013\\（仓外，仓库内零改动）。",
+  "task": "t6 [T6] — t100 全池差分跑：v0.1.12 已发版 vs 本工作树（§25.7）",
+  "attempt_id": "e7c0cfde-468d-4773-b3e7-50b6739d7547",
+  "run_window": {
+    "inplace": "2026-10-21 21:59:52 → 22:11:58 (wall 725.8s)",
+    "block": "2026-10-21 22:17:55 → 22:33:21 (wall 926.3s)",
+    "killed_first_try": "2026-10-21 19:18:59 → 19:19:48（会话重启，分片不完整；判据改为「行数足且末行可解析」后整波重跑）"
+  },
+  "claims": [
+    {
+      "id": "C1-denominator",
+      "claim": "语料分母 = 16,126 份 *.py（018 1,676 + big 8,482 + harness 5,968），两臂用同一份清单",
+      "evidence": ["meta/corpus_manifest.jsonl"],
+      "command": "(Get-Content D:\\Agent\\deepseek\\_corpus013\\meta\\corpus_manifest.jsonl).Count",
+      "expected": 16126
+    },
+    {
+      "id": "C2-armA-identity",
+      "claim": "A 臂 = git tag v0.1.12（commit 6538ae9a1b1f…，tree e8d3e877ba3c…）的 worktree 检出，18 个 .py 与 tag blob 逐字节一致",
+      "evidence": ["meta/arms.json", "armA/src/mpltweak/"],
+      "command": "git -C D:\\Agent\\deepseek\\mpltweak rev-parse v0.1.12^{commit} v0.1.12^{tree}",
+      "expected": "6538ae9a1b1fff4ba68a1276828565c80c8c6fff / e8d3e877ba3c65d43157ef7dedd30e147e2a1c62"
+    },
+    {
+      "id": "C3-armB-identity",
+      "claim": "B 臂 = 2026-10-21 19:18:43 冻结的 src 快照，含 T1(P0-1)+T9(三边界)；与现在的工作树相比 writeback.py 只差 1 行注释（导航行号 6342→6341），非空非注释代码行删 0 增 0；其余 15 个 src/mpltweak/*.py sha256 逐一相同",
+      "evidence": ["meta/arms.json"],
+      "command": "python harness/probe_shard_replay.py 的前提检查：对 armB/src/mpltweak/writeback.py 与 <repo>/src/mpltweak/writeback.py 做 difflib 逐行比对",
+      "expected": "6528 行 vs 6528 行；差异行 删1 增1；代码行 删0 增0"
+    },
+    {
+      "id": "C4-two-arms-complete",
+      "claim": "两臂 × 两个 style 各跑完 16,126 份，无缺行；64 作业/波次全部 rc=0",
+      "evidence": ["out/A/inplace/", "out/B/inplace/", "out/A/block/", "out/B/block/", "meta/logs/"],
+      "command": "python harness/aggregate.py（START=inplace|block）首行打印「清单 N / A 跑完 N / B 跑完 N」",
+      "expected": "16126 / 16126 / 16126"
+    },
+    {
+      "id": "C5-bad_params",
+      "claim": "bad_params：A 1,214 → B 170（净 −1,044，−86%）；两种 style 下完全同数",
+      "evidence": ["out/SUMMARY_inplace.md", "out/SUMMARY_block.md", "out/summary_inplace.json", "out/summary_block.json"],
+      "command": "$env:START='inplace'; python harness/aggregate.py ；$env:START='block'; python harness/aggregate.py",
+      "expected": "inplace A=1214 B=170；block A=1214 B=170"
+    },
+    {
+      "id": "C6-migration",
+      "claim": "inplace 波 A→B：bad_params→best_effort 1,054；best_effort→bad_params 19；bad_params→ok 5；bad_params→EXC:AttributeError 4；合计变 1,082 / 一致 15,044",
+      "evidence": ["out/SUMMARY_inplace.md#3", "out/summary_inplace.json"],
+      "command": "$env:START='inplace'; python harness/aggregate.py",
+      "expected": "1054 / 19 / 5 / 4；1082 / 15044"
+    },
+    {
+      "id": "C7-which-family",
+      "claim": "离开 bad_params 的 1,063 份：按 A 用的那个 dpi 值写在哪一侧拆 = 只在出图侧 990 / 两侧都对不上（A 收了任意调用）16 / 两侧都有 42 / 只在建图侧 15；按 B 为什么放过拆 = 判出画布侧无 dpi（退回 100）1,012 / 判不出⇒主动放行+warning 44 / 判出别的 dpi 3 / 放行后撞既有 AttributeError 4。「只在建图侧」124 份里 109 份 B 仍拒、15 份判不出放行；「判出同一 dpi 却放过」= 0 份",
+      "evidence": ["out/REVERSE_inplace.md#交叉表", "out/summary_inplace.json"],
+      "command": "$env:STYLE='inplace'; python harness/probe_xtab.py > out/REVERSE_inplace.md",
+      "expected": "out_only 992（981 判出100/2 判不出/3 别的dpi/2 仍拒/4 异常）；neither 16；both 82（40 仍拒）；fig_only 124（109 仍拒 + 15 判不出）；四行合计 1,214"
+    },
+    {
+      "id": "C8-new-rejects",
+      "claim": "反方向新增拒写：inplace 19 份（block 18 份），全部形态 = 建图侧 dpi=300/150 + 出图侧 savefig dpi=400…1000 的真成倍矛盾；A 因出图侧值顶替（6×/8×/10×）漏判，B 判对",
+      "evidence": ["out/REVERSE_inplace.md#新增拒写", "out/REVERSE_block.md#新增拒写"],
+      "command": "$env:STYLE='inplace'; python harness/probe_xtab.py",
+      "expected": "19 份，逐份列出 rel / fig 侧 dpi / out 侧 dpi"
+    },
+    {
+      "id": "C9-new-exc",
+      "claim": "4 份从 bad_params 变 EXC:AttributeError，均为既有的 _gap_specs_tick 缺陷（armA writeback.py:1417 / armB:1773 同一表达式），A 早退拒写把它掩蔽了",
+      "evidence": ["out/REVERSE_inplace.md#新增异常", "out/B/inplace/shard_*.jsonl（tb 字段）"],
+      "command": "$env:STYLE='inplace'; python harness/probe_xtab.py",
+      "expected": "19475447__fig3_dunes_constraints.py / 21469805__make_fig_matrix.py / 21470432__make_figure1_preview.py / 21473958__Fig10.py"
+    },
+    {
+      "id": "C10-nothing-else-moved",
+      "claim": "同 reason 的两臂写后 sha256 不一致：inplace 0 份；block 945 份但根因是生成块头的时间戳（非行为差）——抽 20 份同分钟背靠背跑 20/20 字节相同，整片复刻的全文 diff 只差时间戳那一行；两 style 的 changes 列表不一致均 0 份",
+      "evidence": ["out/SUMMARY_inplace.md#5", "out/SUMMARY_block.md#5", "harness/probe_final.py 输出", "harness/probe_shard_replay.py 输出"],
+      "command": "python harness/probe_final.py；python harness/probe_shard_replay.py",
+      "expected": "inplace byte_mismatch=0 changes_mismatch=0；block byte_mismatch=945 changes_mismatch=0；抽样 20/20 字节相同"
+    },
+    {
+      "id": "C11-existing-bug",
+      "claim": "存量缺陷（0.1.12 已发布即有、两臂同码同炸）：tick_params 不带 axis= 且未写 labelsize/fontsize/size 时 _gap_specs_tick 抛未捕获 AttributeError；inplace 波 A 34 / B 38 份",
+      "evidence": ["out/SUMMARY_inplace.md#2", "out/A/inplace/shard_*.jsonl（status=exc,tb）"],
+      "command": "(Select-String -Path 'D:\\Agent\\deepseek\\_corpus013\\out\\A\\inplace\\*.jsonl' -Pattern 'AttributeError').Count",
+      "expected": "A 侧 34 条 EXC:AttributeError（B 侧 38）"
+    },
+    {
+      "id": "C12-repo-untouched",
+      "claim": "仓库内零改动：产物目录 D:\\Agent\\deepseek\\_corpus013 在仓库之外（git 报 'outside repository at D:/Agent/deepseek/mpltweak'），t6 的全部写入只发生在该目录；未提交任何东西，也未写用户真实家目录（HOME/USERPROFILE 指向 _corpus013\\home）。仓库里 `git status --porcelain` 的 19 项是其它成员并发改动（docs/*、tools/*、src/mpltweak/{messages,toolbox,writeback}.py、tests/*），与 t6 无关",
+      "evidence": ["README.md#1", "meta/logs/", "meta/arms.json"],
+      "command": "git -C D:\\Agent\\deepseek\\mpltweak status --porcelain  # 2026-10-21 23:0x 快照：19 项，全部是别人的改动；git check-ignore -v D:\\Agent\\deepseek\\_corpus013 报 outside repository",
+      "expected": "19（全部为其它成员的 docs/tools/src/tests 改动；t6 无仓库内写入）"
+    }
+  ]
+}

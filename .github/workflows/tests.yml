@@ -75,6 +75,8 @@ jobs:
       #   msg_key_audit 3.0s / cli_fuzz 4.3s / verify_onepass 10.3s / sandbox 12.0s /
       #   apply_layout_conflict 29.0s  ⇒ 合计约 59s（实测 -k 全跑 65s / 10 passed）。
       #   verify_onepass + apply_layout_conflict 就是"写回类要在 3.9 上有证据"的落点。
+# 0.1.17：demo（示例体验）也上 3.9 —— 它只起子进程 + 复制文件 + 一次真写回，
+#   离屏（--no-window），本机约 25s；新用户的第一条命令不该只在最新版上验过。
       # 同批**刻意仍不加**：figure_matrix（CI 上 N=100 要 260~350s）、journey_wheel
       # （本机 3.9 上唯一没绿的，是"非 editable 安装"的环境问题，不拿它当 3.9 门槛）、
       # gui_smoke（要 ~100MB PyQt5，L2 已定只给 3.12）、test_suites（包装器，自己会跑全表）。
@@ -87,7 +89,7 @@ jobs:
           python -m pip install "pytest>=7.0"
           # 单行写完：别用 `\` 续行（YAML 块标量里那根反斜杠会原样留在字符串里，
           # tools/ci_suite_coverage.py 分词时会把它当成一个关键字）。
-          python -m pytest -q -k "docs or notation_discipline or tmpdir_discipline or msg_key_audit or cli_fuzz or verify_onepass or sandbox or apply_layout_conflict"
+          python -m pytest -q -k "docs or notation_discipline or tmpdir_discipline or msg_key_audit or cli_fuzz or verify_onepass or sandbox or apply_layout_conflict or demo"
 
       # 同一批套件再走一遍 pytest：拿到逐条用例的报告（GitHub 的失败摘要/重跑单条），
       # 外加工程卫生棘轮（宽兜底计数 / 消息 GBK 可编码）。只在最新版 python 上跑，

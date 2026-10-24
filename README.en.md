@@ -13,73 +13,251 @@
 
 [中文](https://github.com/shdbl/mpltweak/blob/main/README.md) | **English**
 
-Docs linked from this file (`docs/*.md`) are currently written in Chinese.
-
 </div>
 
-> **Driving this from an AI coding agent?** See [Using it with Agents](#using-it-with-agents): six steps you can hand to your agent.
+## What problem does it solve
 
-## What problem it solves
+When you lay out a multi-panel figure — several subplots side by side on one canvas — the pain is usually layout, not data: nudge one subplot and its neighbour's tick labels get covered; bump the font size and the legend lands on the curve. And every change costs a script re-run and another look at the PNG.
 
-When you lay out a multi-panel figure, the trouble is usually the layout rather than the data: move one subplot and the neighbouring axis label is covered; increase a font size a little and the legend overlaps a curve. And every change means re-running the script and looking at the figure again.
+**What mpltweak does**: you drag panels the way you drag pictures around in PowerPoint, and then it writes those few numbers back into your source. It only touches **style and position — it never invents content**. The text, the data and the marks remain entirely yours.
 
-**What mpltweak does**: you drag panels the way you arrange pictures in PowerPoint, and then those few numbers go back into your source code. It **only handles style and position; it does not invent content**: text, data and graphics are still decided by your code.
+**Zero intrusion**: it does not edit your code, does not add an `import`, and does not produce side files — the parameters you drag out live in `.tweak_params/fig1.json`. **Your `.py` changes only when you explicitly ask it to write back.**
 
-| Approach | Flow |
+| Way | Loop |
 |---|---|
-| **Traditional** | change a number → re-run the script → wait tens of seconds → look at the PNG → still wrong → change again |
-| **mpltweak** | open the window → drag into place → `mpltweak apply --write` → those numbers are back in the code |
+| **Traditional** | change a number → re-run the script → wait → look at the PNG → still wrong → change again |
+| **mpltweak** | open the window → drag into place → **have it write those numbers back into the code** |
 
-Demo:
+Demos:
 
 <table>
 <tr>
 <td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/01_drag_layout.gif" alt="Drag a panel with snapping guides"><br>
-<b>Drag + edge snapping</b><br><sub>A ghost preview and alignment guides appear while dragging; near an alignment position it snaps</sub></td>
-<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/02_multi_align.gif" alt="Multi-select align + distribute"><br>
-<b>Multi-select align / distribute</b><br><sub>Ctrl-click three panels → left align + vertical distribute</sub></td>
+<b>Drag + edge snapping</b><br><sub>a ghost preview and alignment guides while dragging; it snaps when you get close</sub></td>
+<td width="50%"><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/02_multi_align.gif" alt="Multi-select align and distribute"><br>
+<b>Multi-select align / distribute</b><br><sub>Ctrl-click three panels → align left + distribute vertically</sub></td>
 </tr>
 <tr>
-<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/03_fontsize.gif" alt="Change font size by hovering"><br>
-<b>Font size on hover</b><br><sub>Hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
+<td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/03_fontsize.gif" alt="Hover to change font size"><br>
+<b>Hover to change font size</b><br><sub>hover a title, axis label, tick label or legend and press <code>+</code> / <code>-</code></sub></td>
 <td><img src="https://cdn.jsdelivr.net/gh/shdbl/mpltweak@e9b34f0/docs/gifs/04_wireframe.gif" alt="cartopy wireframe mode"><br>
-<b>Wireframe mode for speed (space bar)</b><br><sub>Full redraw of a cartopy world map <b>494ms → 169ms</b>, so dragging keeps up</sub></td>
+<b>Wireframe mode (space)</b><br><sub>full redraw of a cartopy global map: <b>494 ms → 169 ms</b>, dragging stays smooth</sub></td>
 </tr>
 </table>
 
-> The full gesture set and key map (drag / multi-select, align / distribute, snapping, `Ctrl+F` margin trim, space-bar wireframe, font size on hover, legend snapping to 8 standard positions, colorbar length / thickness, **`Alt+click` to pick through stacked panels**, **`Tab` to cycle sibling elements**) are in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
 
-## Install
+## Two routes, pick one
 
-Every command below runs in a **terminal** — on Windows cmd / PowerShell, on macOS / Linux Terminal, and in PyCharm the bottom **Terminal** panel (**not** the Python Console / interactive interpreter).
+mpltweak ships a **manual (Skill) written for AI agents**: hand that manual to an agent that can read and write files on your machine and it will type every command for you. So there are two routes — **same tool, same Skill**; the only difference is *who types*:
 
-```bash
-pip install mpltweak            # core: describe / check / apply (mcp is an optional adapter layer, see "Using it with Agents")
-pip install "mpltweak[qt]"      # add this if you want to drag figures in a window (installs the PyQt5 backend)
+- **Route A: hand it to an Agent** (pick this if the command line is not your thing): you look at the figure and talk. ← **this one comes first**
+- **Route B: run the commands yourself**: a handful of commands, ten minutes to a working loop. → [jump to the end](#route-b-run-the-commands-yourself)
+
+## Route A: hand it to an Agent
+
+**You do not need to know the command line — hand the whole thing to an agent.**
+(**It has to be an agent that can read and write files on your machine**; one that only chats in a web page will not do.)
+
+**Copy the sentence below straight into the agent you are using** (Claude Code / Codex / Cursor / DeepSeek Harness — anything that can read and write files on your computer):
+
+> Please read https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md and follow it to install mpltweak; once it is installed, run the demo first so I can see the effect.
+
+### See it in two minutes (ask the Agent to run the demo)
+
+Not willing to gamble on your own script yet? Just say:
+
+> run mpltweak demo and show me
+
+It will install the dependencies, generate a **sample script** (a four-panel composite figure, plain matplotlib) and open the tweak window — drag things around, change font sizes, whatever you like. When you close the window it tells you **which things you changed** in plain words and shows you, line by line, **what the code would become**.
+
+If you like it, have it write the changes back into that **sample script**, re-run it, and show you the **before / after** figures.
+
+> Everything happens inside a `mpltweak-demo/` folder in the current directory — **it never touches a script of your own**.
+
+### Day-to-day flow with an Agent
+
+1. **Ask the Agent to draw the figure.** (**If you already have a plotting script and only want to fix the layout, skip to step 3 and tell it the script name, e.g. `fig1.py`.**)
+   *What you see*: the Agent pastes the finished figure back to you.
+2. **First confirm the content is right** (do not start on layout yet). Are the axes, labels and data what you meant? If not, say so now and let the Agent fix it.
+   *What you see*: the version whose content is final — from here on you are only adjusting *layout*, not *what is drawn*.
+3. **Say "I want to tweak it interactively".** It opens the tweak window by itself (you install nothing and type nothing).
+   *What you see*: a window pops up with your figure in it — drag and zoom with the mouse.
+4. **Make your changes in the window.** Drag panels, drag the legend, change font sizes, align, distribute (**press `?` in the window at any time for every key**).
+   *What you see*: a translucent preview while dragging; the change lands when you release.
+5. **The Agent tells you in plain words what it changed, and waits for your OK.** Something like "panel (a) moved a little to the right, the title font size went from 12 to 14".
+   **The code has not moved yet** — disagree and it keeps adjusting.
+   *What you see*: a plain-language list of changes plus one question: "write these into the code?"
+6. **You say yes; only then does the Agent write the changes back and re-run.** Compare the re-run against step 2 to be sure nothing broke.
+   *What you see*: the new figure plus which spots changed; keep iterating, or have it revert to the previous version.
+
+> **You never open a terminal and never memorise a command** — you look at figures and talk.
+
+```mermaid
+flowchart LR
+    A["① You tell the Agent what figure you want"]:::script --> B["② Agent writes the script + renders it"]:::win
+    B --> C{"③ You look: is the content right?"}:::check
+    C -->|no| B
+    C -->|yes| D["④ You ask for an interactive tweak<br/>Agent opens the tweak window"]:::win
+    D --> E["You drag things around<br/>(press ? for keys)"]:::win
+    E --> F{"⑤ Agent explains in plain words what changed"}:::check
+    F -->|not happy| E
+    F -->|happy| G["⑥ Agent writes back + re-runs"]:::win
+    G --> Z(["You look at the new figure — done"]):::ok
+
+    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
+    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
+    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
+    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
 ```
 
-To see which version you installed: **`mpltweak --version`** (`-V` works too) — prints one line and exits 0.
+**Keys in the window (`?` shows all of them at any time)**: drag / multi-select, align / distribute, snapping, `Ctrl+F` to trim margins, space for wireframe speed-up, hover text then `+` / `-` for font size, the 8 standard legend positions, colorbar length / thickness, **`Alt+click` to reach through stacked panels**, **`Tab` to cycle through siblings**. Full list in [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
 
-The second line is for **opening a window**: that needs a graphics backend (in plain words, the component set that lets a figure appear in a draggable window — PyQt5 recommended, about +150MB). Command-line-only use (`describe` / `check` / `apply`) does not need it. The official Python installers for Windows / macOS bundle `tkinter`, so `pip install mpltweak` alone usually opens a window; in that case it uses the **Tk backend (reduced interaction)**, which is neither an installation failure nor a broken install. With no graphics backend at all, opening the window exits with `rc=4` (exit code 4: "this machine currently has nothing that can draw a window") and prints which one to install.
+## How will it change your code? Three outcomes
 
-> Backend comparison table, per-platform installs, `mpltweak doctor` probing order and per-symptom handling of a failed window — [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
-> Which commands **execute** your script, and how exit codes are derived — [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
-> There are only four: **0 = fine / success; 1 = problem found (check); 2 = cannot run (script not found / the script itself fails / bad arguments — the same in every entry point); 4 = no usable graphics backend** (0.1.9's 3 is retired).
+For every script the outcome is knowable in advance, and there are only three:
 
-## 5-minute quick start
+| Case | What it does | Result |
+|---|---|---|
+| **The number is literally in your source**<br>(`fig.add_axes([0.08, 0.66, 0.30, 0.21])`) | **edits that one number in place**, inserts nothing | that line changes, nothing else moves |
+| **There is no editable number in the source**<br>(figures built by `plt.subplots()` / `GridSpec`) | **appends one self-contained snippet at the end of the file** — no `import`, none of your logic touched | a block marked `auto layout` appears at the end |
+| **It cannot prove which object to edit**<br>(`fig.axes[i]` / `plt.gca()` / axes built in a loop — only the runtime knows) | **writes nothing.** It will not guess an object that "is probably this one" | **your code stays byte-for-byte identical**; you get a locating note an **Agent can act on** (which symbol, change it to what) |
 
-> Or let an AI coding agent do it: see [Using it with Agents](#using-it-with-agents) (six steps to hand to your agent).
+### 1. Editable in place: the line itself changes
 
-`cd` into the folder that holds your script first:
-
-```bash
-cd your-folder          # ← replace with the folder that holds fig1.py (copy the whole line)
-```
-
-The example script `fig1.py` (ordinary matplotlib: **not one line to change**, no `import mpltweak`, no hooks):
+Before:
 
 ```python
-# fig1.py -- ordinary matplotlib, nothing added
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])
+ax1.set_title('(a)', fontsize=12)
+```
+
+After:
+
+```python
+fig = plt.figure(figsize=(10, 8))
+ax1 = fig.add_axes([0.06, 0.68, 0.32, 0.23])   # ← only these numbers change
+ax1.set_title('(a)', fontsize=15)              # ← the font size appended on the same line
+```
+
+**No lines added, nothing else touched.**
+
+### 2. Not editable in place: one snippet appended at the end
+
+Before (a `subplots` figure; the source holds no number you could edit directly):
+
+```python
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+axes[0].plot(np.arange(5), np.arange(5))
+axes[0].set_title('(a)')
+axes[1].plot(np.arange(5), np.arange(5) * 2)
+axes[1].set_title('(b)')
+fig.savefig('fig1.png', dpi=150)
+```
+
+After (the block below is real output, verbatim — only the timestamp follows the moment it was generated):
+
+```python
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+axes[0].plot(np.arange(5), np.arange(5))
+axes[0].set_title('(a)')
+axes[1].plot(np.arange(5), np.arange(5) * 2)
+axes[1].set_title('(b)')
+# ===== auto layout (generated) - do not edit inside =====
+# generated by mpltweak at <time> (fine to tweak - do not delete the two marker lines)
+# axis identity (when tweaking): ax0=grid[1, 2, 0, 0], ax1=grid[1, 2, 0, 1]
+axes[0].set_position([0.0800, 0.1500, 0.3800, 0.7500])
+axes[1].set_position([0.5477, 0.1100, 0.3523, 0.7700])
+axes[0].lines[0].set_linewidth(1.5)
+axes[0].lines[0].set_color('#1f77b4')
+axes[1].lines[0].set_linewidth(1.5)
+axes[1].lines[0].set_color('#1f77b4')
+# ===== end auto layout =====
+fig.savefig('fig1.png', dpi=150)
+```
+
+**Not a single line of your own code was rewritten**; if you dislike it, delete the block, or take it back with one command (next section).
+
+### 3. Unprovable: not written, and here is what to do
+
+Before (the axes are built in a loop, so only the runtime knows which axis `fig.axes[i]` is):
+
+```python
+fig = plt.figure(figsize=(8, 3))
+for i, name in enumerate(['a', 'b', 'c']):
+    fig.add_subplot(1, 3, i + 1).plot(np.arange(5), np.arange(5) * (i + 1))
+    fig.axes[i].set_title(name)
+fig.savefig('fig2.png', dpi=150)
+```
+
+What it gives you instead (real output, verbatim, last line shown):
+
+```text
+· kept as is: inside the block a target can only be located by a **statically provable variable name**; these fields have none
+  (no provable variable name, and the runtime index fig.axes[i] / plt.gcf() would write to a different axis or figure)
+  -> fail-closed, nothing written this time: ax0.lines, ax0.pos, ax1.lines, ax1.pos, ax2.lines, ax2.pos
+```
+
+Exit code `1`.
+
+**Not one byte of your code changed.** It is not a dead end: that message tells you **exactly which spot to change**. **If an Agent is driving, it reads that sentence and fixes the script itself, then comes back to tweak the figure — you neither copy nor relay anything.**
+
+## Is it reliable?
+
+**Four guards, from loose to tight:**
+
+1. **As long as you do not ask it to write back, your `.py` stays as it is.** Opening the window, dragging, closing — it only writes parameters into `.tweak_params/`; the code does not move.
+2. **You can look before it writes.** Have it show you line by line which lines it would touch and from what to what — look only, change nothing.
+3. **A real write-back backs up automatically**, and one command takes you back to the pre-write version.
+4. **Anything it cannot prove is left alone**, with the reason spelled out — better that this pass does nothing than a wrong object smuggled into your code.
+
+Every real write-back also passes **three checks**: **syntax** (does the edited script still parse) → **re-run** (does the script actually run again and still produce the figure) → **semantic** (are the positions and font sizes on the figure the ones you dragged). If any check fails it **rolls back automatically**, and you are holding the script you started with.
+
+Measured on **10,158** real scientific plotting scripts, **1,780** real runs and **13,000** random gestures: **zero cases of "said it changed, actually did not".**
+
+(The static-diff corpus is the wider set of **16,126** `.py` files = **10,158 third-party public plotting scripts** + **5,968 of this project's own scaffolding**; for "real user scripts" the denominator is the former only, and the two are never mixed.)
+
+The full sample denominators, criteria and per-family results are in [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md); unsupported scenarios and non-claims are in [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md).
+
+## Route B: run the commands yourself
+
+### Install
+
+```bash
+pip install mpltweak            # core: describe / check / apply
+pip install "mpltweak[qt]"      # add this if you want the window (installs the PyQt5 backend)
+```
+
+```bash
+mpltweak --version      # version
+```
+
+**Exit codes** (for scripting): `0` success / `1` the check found problems **or nothing was written this time** (including fail-closed refusals) / `2` cannot run (script missing, the script itself failed, bad parameters) / `4` no usable GUI backend. All four entry points agree.
+
+`[qt]` provides the PyQt5 backend; `describe` / `check` / `apply` do not need it. Without Qt it falls back to Tk (reduced interaction, the window says so); with no backend at all the window fails and explains why.
+
+> Backend comparison, per-platform installs, `mpltweak doctor` probe order and every open-the-window failure — [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md).
+> Which commands **execute** your script and how exit codes are computed — [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md).
+
+### Demo
+
+```bash
+mpltweak demo            # create ./mpltweak-demo/ and open the window; writes nothing
+mpltweak demo --write    # write back the sample script + re-run + produce before.png / after.png
+```
+
+On closing the window it prints the change list and a line-by-line diff; without `--write` the sample script stays byte-identical. An existing directory is reused, never overwritten.
+
+### Six steps
+
+```
+cd into your script directory
+```
+
+`fig1.py` (zero intrusion: no `import mpltweak`, no change to any existing code):
+
+```python
+# fig1.py —— ordinary matplotlib, nothing special
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -90,7 +268,7 @@ ax1 = fig.add_axes([0.08, 0.66, 0.30, 0.21])      # the position is these number
 ax1.plot(x, np.sin(6 * x))
 ax1.set_title('(a)')
 
-ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # hand-written numbers, usually uneven
+ax2 = fig.add_axes([0.11, 0.38, 0.30, 0.21])      # hand-written numbers, rarely aligned
 ax2.scatter(np.random.rand(60), np.random.rand(60), s=8)
 
 ax3 = fig.add_axes([0.05, 0.08, 0.30, 0.21])
@@ -99,91 +277,23 @@ ax3.hist(np.random.randn(300), bins=20)
 fig.savefig('fig1.png', dpi=150)
 ```
 
-**What it will do (up front)**: it will **run your script once** (in your own environment, with your own data; mpltweak itself does not go online and does not change your files), then show the figure in a window you can drag around. **Until you close the window, your `.py` has not changed by a single character** — whatever you drag lands in `.tweak_params/fig1.json` (a plain-text params file recording the positions and font sizes you dragged to).
-
-| Step | Command | What you will see |
+| Step | Command | What you see |
 |---|---|---|
-| **1 · Install** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | the core package plus whichever graphics library lets the figure open in a window; command-line-only use (`describe` / `check` / `apply`) skips the second line |
-| **2 · Open the window and drag** | `mpltweak fig1.py` | the layout window: **drag** panels to move them, drag **edges / corners** to resize, **hover text** and press `+` / `-` for font size, **space** for wireframe speed, **Ctrl+F** to trim margins; press **`?`** for the full key map |
-| **3 · Close the window** | —— | the script has **not changed by a single character**; the params land in `.tweak_params/fig1.json` (open the window again to keep adjusting). If you **really dragged something**, closing the window prints the next command for you to copy — nothing to memorise |
-| **4 · See what it intends to change** | `mpltweak apply fig1.py` | a per-axis list of positions and font sizes, plus whether it will **edit a number / insert a layout block / refuse**; read-only: it does not execute the script and writes no file |
-| **5 · Write back** | `mpltweak apply fig1.py --write` | **three stages: preview (read-only, does not run the script) → you decide → write back**; the write-back **backs the file up** (`.tweak_params/fig1.tweak.bak`), reports success in **one line**, and **one command undoes it** (`mpltweak revert fig1.py --write`) |
-| **6 · Re-run and look** | `python fig1.py` | the figure looks the way you dragged it; not happy? `mpltweak revert fig1.py --write` goes back to before the write-back (without `--write` it is a preview) |
+| **1 · install** | `pip install mpltweak`<br>`pip install "mpltweak[qt]"` | core package / plus the PyQt5 backend (only the latter can open the window) |
+| **2 · open and drag** | `mpltweak fig1.py` | the tweak window: **drag** a panel to move it, drag its **edges / corners** to resize, **hover text** and press `+` `-` for font size, **space** for wireframe speed-up, **Ctrl+F** to trim margins; press **`?`** for every key |
+| **3 · close** | —— | your script is **unchanged, character for character**; parameters land in `.tweak_params/fig1.json` (reopen to keep adjusting). If you really dragged something, closing prints the next command for you to copy |
+| **4 · preview** | `mpltweak apply fig1.py`<br>`mpltweak apply fig1.py --diff` | the first lists per-axis parameters plus the "edit in place / append block / refuse" verdict; the second gives a **line-by-line diff** (`{line,type,old,new}`) with `type ∈ inplace / insert_block / replace`. Neither **executes the script or writes a file**; the `--diff` `preview_sha256` equals the sha256 of the real written file (use `preview_sha256_norm` when minutes have passed). Add `--json` for machine-readable output |
+| **5 · write back** | `mpltweak apply fig1.py --write` | **atomic write** (temp file + rename) → backup to `.tweak_params/fig1.tweak.bak` → subprocess re-run verification → semantic comparison. Success prints one line; **idempotent** (re-applying the same parameters produces no new diff); undo with `mpltweak revert fig1.py --write` (without `--write` it is a preview) |
+| **6 · re-run and look** | `python fig1.py` | the figure is the one you dragged |
 
-**Writing back is deterministic.** AST parses your code into a syntax tree (it reads code structure, not text patterns), so it can pinpoint those numbers. Write-back takes one of two forms: **when the code holds literals, those numbers are edited directly** (cleanest, nothing inserted); **otherwise a self-contained layout block is appended at the end of the file** (adding one independent piece of code: no `import`, no change to your own logic). Both forms go through **three verification layers** (syntax / re-run / semantic: first check the syntax, then really run the script, then confirm the positions and font sizes on the figure match what you dragged), and if any layer does not pass the file is **rolled back by default** (back to how it was; `--keep-unverified` keeps the write-back, and then you must check it yourself).
+**Write-back is deterministic, not guesswork.** It is not a text-level regex substitution (that would mangle an unrelated `0.08`); it parses your script into an **AST (syntax tree)**, locates which call creates the figure and which `Constant` is the position, then binds the target object through variable names. The write is an **AST rewrite with source fidelity** (untouched lines stay byte-identical). **No LLM is involved**: same input, same parameters, same output, every time.
 
-**Built the figure with `plt.subplots()` / `GridSpec`?** The source often has no number you can edit directly, so it takes the "append a layout block" route — **provided the block's target objects can be identified statically** (a literal subscript such as `axes[0, 1]`): idioms that only resolve at run time (`fig.axes[i]`, `plt.gca()`, axes built in a loop) are **refused** with `rc=1` and your script untouched by a single byte (no block of uncertain effect is forced in). `mpltweak revert fig1.py --write` takes that block away again; the code you wrote is not rewritten.
+Two channels: **a literal in the source ⇒ edit the constant in place** (no node inserted); **otherwise insert a self-contained `auto layout` block before `savefig`/`show`**. Both channels pass the three checks (**parses → subprocess re-run → semantic comparison**), and any failure **rolls back by default**; the write lands **atomically** (temp file + rename), the backup sits in `.tweak_params/fig1.tweak.bak`, and it is **idempotent** (re-applying the same parameters produces no new diff). `--keep-unverified` keeps an unverified result.
 
-> Stuck? See [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (dragging does nothing / the panel snaps back / an error — each one is "symptom → the reason in one line → what to do").
+> Want machine-readable output: `--json` gives `files[].diff` (line by line `{line,type,old,new}`), `preview_sha256` (equal to the sha256 of the real written file), `stage` (which step it stopped at), `next_step`, `attribution`. Contract: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
-> **More detail**: the complete output sample of one real write-back, the per-field list under `-v`, the two single-command routes `--style inplace` / `--style block`, what a layout block looks like (the `auto layout` marker), and the params-file field table — [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) and [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
-
-## Is it reliable?
-
-We ran three kinds of tests: **static judgement** — take **10,158 public plotting scripts** (real research plotting code, unique by sha256) and decide for each whether this change can land **in place in the source**, without executing anything; **real re-runs** — actually run **1,780** of those scripts and check that they still produce a figure and that the positions and font sizes on it match the dragged params; **random operations against window interaction** — **13,000** off-screen operations actually run (every operation checked afterwards) and **6,000 gestures + 27 hard assertions** in real windows. The measured results (full version in [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md)):
-
-| Layer | What was tested | Result |
-|---|---|---|
-| Static corpus (**scripts not executed**) | **What it tests**: whether a change can land **in place in the source** (the target is found, only the target moves, the syntax is unchanged)<br>**Sample**: 10,158 scripts → of which **4,427 are plotting scripts** → **4,101 measurable sites** (of which **3,610 are reachable in place**) | **Landing back in place**: **97.8%** (3,531 / 3,610); **appending the code block instead**: **100%** (427 / 427 — source outside the block kept byte-for-byte · no run-time location · statically provable to hit the target); **the remaining 79 are classified one by one, five classes summing to 3,610**: **10 went through the block channel** (3 landed · 7 fell back to a block but did not land) · **37 rejected as invalid params** · **32 have no per-family entry in the original record** (a gap in the measurement pipeline's records, not a product behaviour such as "skipped"); broken promises **0**<br>**Evidence**: [per-script verdicts scan_full.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/verdicts/scan_full.jsonl) (re-compute with `python bench/tools/_cu_static_table.py`) |
-| Full re-run (**scripts really re-run**) | **What it tests**: after the write-back the script still runs, the figure still comes out, and positions / font sizes match the params<br>**Sample**: pool of **1,837** → **1,780 runnable candidates** (= 1,837 − 28 statically known to open a window − 29 statically known to need network / subprocesses) | **Written back and verified: 928**, the four laws (idempotent / reversible / syntax preserved / only the target moves) **928 / 928 each**; the other **852 are undetermined, not failures** (needs a window 317 · waits for input 464 · hit the 90 s timeout 71; 928 + 852 = 1,780); no-tamper across all 1,837: **0 broken promises**<br>**Evidence**: [per-script results.jsonl](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/results.jsonl) · [SUMMARY.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/corpus/SUMMARY.md) (re-run `python tests/test_corpus_invariants.py`) |
-| Window interaction (random ops + real windows) | **What it tests**: under random operations — **no crash / undo-redo round-trip consistency / legal geometry / landing matches the params**<br>**Sample**: off-screen **12 figure kinds × 1,000 ops** (13,000 ops actually run, invariants checked after every op); real windows **6 figure kinds × 1,000 = 6,000 gestures** | Off-screen: **invariant checks that must pass: 100%** (13,000 / 13,000); targeted operation assertions **100%** (356 / 356, with 47 more not applicable, each carrying a reason); real-window hard assertions **100%** (27 / 27); ALL PASS on both console encodings (UTF-8 / GBK)<br>**Evidence**: [off-screen matrix](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10/matrix) · [real-window NUMBERS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.10/bench/evidence/0.1.10/window/NUMBERS.md) (re-run `python tests/test_figure_matrix.py` / `python tests/test_real_window.py --backend qt`) |
-| Random syntax (no preset form) | **What it tests**: whether random / adversarial forms can **damage the source or reach outside the target**<br>**Sample**: a self-built generator (`tools/ast_fuzz_gen.py`, own grammar-tree builder) randomly assembles **valid** plotting scripts plus adversarial forms; **1,000 cases = 4 x 250 in parallel**, seed reproducible (`tests/test_ast_fuzz.py`) | Broken syntax **0**; out-of-range **0**; non-idempotent **0**; fourth outcome **0**; adversarial forms are always **safely refused** (0 bytes, syntax intact)<br>**Evidence**: [ASSERTIONS.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/ast_fuzz/ASSERTIONS.md) (four shard logs + the criteria) |
-| Command-line combinations (params x scripts) | **What it tests**: whether any combination of command x input x params file x option **crashes or lies**<br>**Sample**: **5,880 combinations** = 7 commands x 10 inputs x 6 params files x 14 options, **stratified sampling**, seed reproducible (`tests/test_cli_fuzz.py`) | No `Traceback`; every exit code is in the documented set (`0` / `1` / `2` / `4`); `--json` is always parseable<br>**Evidence**: [DENOMINATOR.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/cli_fuzz/DENOMINATOR.md) (how the denominator is derived + the N=240 raw output) |
-
-**"Broken promise"** = the tool says "written back / verified" while the bytes did not actually change, or verification never ran — **0** in this version. (On the static layer we really take public plotting scripts and decide where the edits land; the interaction layer is not judged by "looks right" but by checking no-crash / round-trip consistency / legal geometry / landing matches the params under random operations.) **Static network pre-screen criterion**: a URL literal counts as `net_risk` whenever it sits **in a call-argument position** (positional or keyword — e.g. `pd.read_table("https://…")`, `ax.add_wms(wms="http://…")`); recomputed under that criterion, the full re-run row's candidate pool is **1,770** (= 1,837 − 28 − 29 − 10) and written-back-and-verified is **925** — the **1,780 / 928** in the table are the figures recorded under the 0.1.10 criterion.
-
-**What 0.1.13 measured on the corpus**: the same corpus extended to **16,126 `.py` files** (including the **10,158 public plotting scripts** above) went through a two-version differential (same params, same interpreter, static judgement only) — rejections under the "params contradict each other" rule dropped from **1,214 to 170** (**−86%**), **1,006** of them being cases where "the `dpi=` of an output call was taken as the canvas dpi"; when the canvas dpi cannot be determined statically the tool now **passes the change and says so in `warnings`** (**166**, 1.03%) instead of refusing it, a further **19** (0.12%) are **newly caught in the opposite direction** (canvas-side vs output-call `dpi` genuinely off by a whole factor of 1.5x / 2x / 3x) and are already counted in the **170** above. Scope, criteria and how to re-check: the "拒写判据" section of [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md).
-
-> Full version (per-family pass tables, the block-channel criteria, both real-window log rounds, and "what the part below 100% actually is") — [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md).
-> **How to check every number**: the raw artefacts live in **two immutable tags** - [`evidence-0.1.10`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.10/bench/evidence/0.1.10) (per-script verdicts, operation logs and clickable line numbers for the **static corpus / full re-run / window interaction** rows) and [`evidence-0.1.11`](https://github.com/shdbl/mpltweak/tree/evidence-0.1.11/bench/evidence/0.1.11) (an **incremental package**: raw logs and criteria for the **1,000 random-syntax cases** and the **5,880 command-line combinations**; its scope is in [COVERAGE.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/COVERAGE.md), index [README.md](https://github.com/shdbl/mpltweak/blob/evidence-0.1.11/bench/evidence/0.1.11/README.md)). The per-number table of "artefact -> command -> reproducibility tier (anyone can re-run / needs the local corpus / machine-specific)" is in the "这些数字怎么来的（可复核）" section of [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) (Chinese).
-> What it **does not claim** (cases it does not apply to / what verification does not claim / where the corpus numbers come from) — [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md).
-
-## Using it with Agents
-
-**You do not need to know any command line — just hand this to an Agent.**
-(It has to be one that can read and write files on your machine directly; a plain web chat window cannot.)
-
-Send this link to the Agent you already use (Claude Code / Codex / Cursor / DeepSeek Harness — anything that can read and write files on your machine), and it will set itself up and do the tweaking for you:
-
-- **Operating manual for the Agent**: https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md
-  (Or ask it to open `skills/mpltweak/SKILL.md` in this repository, or paste that file's content to it.)
-
-### The recommended flow: six steps (just talk to your Agent)
-
-1. **Ask the Agent to draw the figure.** (If you already have a plotting script and only want to tune the layout, skip to step 3 and tell it the script name, e.g. `fig1.py`.)
-   *What you see*: the Agent shows you the figure it drew.
-2. **First check that the content is right** (do not start on the layout yet). Are the axes, labels and data what you meant? If not, say so now.
-   *What you see*: a finalised version of the content — from here on you are only tweaking layout, not what is drawn.
-3. **Tell the Agent "I want to tweak it interactively".** It opens the layout window itself (you install nothing and type no commands).
-   *What you see*: a window pops up with your figure in it, ready to drag and zoom.
-4. **You make the changes in the window.** Drag panels and legends, adjust font sizes, align, space evenly (press `?` in the window to bring up the full key legend at any time).
-   *What you see*: a translucent preview while dragging; the change lands when you let go.
-5. **The Agent tells you in plain words what it changed and waits for your confirmation.** For example: "panel (a) moved slightly to the right; title font size 12 → 14". At this point **nothing in your code has changed yet** — if you disagree, keep talking and it keeps adjusting.
-   *What you see*: a plain-language list of what changed + one question: "shall I write it into the code?"
-6. **Only after you say yes does the Agent write the change into the code, and then re-run it for you.** Compare the re-run against step 2 to make sure nothing was broken.
-   *What you see*: the new figure plus which spots changed; if you are not happy, keep tweaking, or ask it to undo the last write-back (`revert`).
-
-> **You never open a command line and never memorise a command** — you look at figures and talk.
-
-```mermaid
-flowchart LR
-    A["1. Tell the Agent<br/>what figure you want"]:::script --> B["2. The Agent writes the script<br/>and runs it"]:::win
-    B --> C{"3. You look: is the content right?"}:::check
-    C -->|no| B
-    C -->|yes| D["4. Say: tweak it interactively<br/>the Agent opens the layout window"]:::win
-    D --> E["You drag things in the window<br/>(press ? for the key legend)"]:::win
-    E --> F{"5. The Agent explains in plain words<br/>what it changed"}:::check
-    F -->|not happy| E
-    F -->|happy| G["6. The Agent writes it into the code<br/>and re-runs it"]:::win
-    G --> Z(["You look at the new figure - done"]):::ok
-
-    classDef script fill:#F7F8FA,stroke:#C9D1DB,stroke-width:1.4px,color:#16181D
-    classDef win fill:#2F6FEB,stroke:#2F6FEB,stroke-width:1.6px,color:#FFFFFF
-    classDef check fill:#F5F8FF,stroke:#2F6FEB,stroke-width:1.6px,color:#16181D
-    classDef ok fill:#EAF7EF,stroke:#2E9E5B,stroke-width:1.4px,color:#16181D
-```
-
-**Technical pointers (all in `docs/`)** — MCP (the optional adapter layer) and the JSON contract, **the three read → modify → write → check commands**, the table of the four subcommands with exit codes, the parameter signatures of the four MCP tools, **the ways humans and agents split the work**, and **the layout-engine conflicts to look at before touching the layout** — all of them: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
+> Stuck? See [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (dragged and nothing happened / dragged and it snapped back / an error — each entry is "symptom → one-line cause → what to do").
+> Full output samples, the `-v` change list, `--style inplace` / `--style block`, and the parameter field table — [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) and [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
 
 ## License
 
@@ -191,4 +301,4 @@ MIT
 
 ---
 
-**Full documentation:** keys and gestures [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · params-file field table [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · three verification layers, backups and `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · stuck [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · measured numbers [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · boundaries [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · execution boundaries and exit codes [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · manual for Agents [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) and [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · development and tests [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)
+**The long version:** keys and gestures [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · parameter field table [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · the three checks, backups and `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · stuck [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · measured numbers [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · boundaries [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · execution boundaries and exit codes [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · the manual for agents [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) and [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · development and tests [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)

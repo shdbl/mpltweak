@@ -418,8 +418,11 @@ def run_exit_matrix():
 # 三道：
 #   G1 隔离真生效（确定性）：用 _cli_env() 起子进程问 launch._mpltweak_home() 解析到
 #      哪儿，必须落在本套件的临时区内。把 _cli_env() 里那行隔离删掉 → 必须变红。
-#   G2 真实家目录零新增：整个 CLI 矩阵跑完，~/.mpltweak 不许出现任何新文件，且
-#      first_open_shown 必须不存在（这是用户**可感知**的那一条）。
+#   G2 真实家目录零新增、零变化：整个 CLI 矩阵跑完，~/.mpltweak 不许出现新文件，
+#      已有文件（含 first_open_shown）的 (大小, mtime) 也不许变。
+#      **不假设 first_open_shown 不存在**（S6 / t11）：只要用户真开过一次窗这个戳就在，
+#      旧断言 `not exists(...)` 于是成了"用过本工具的机器上必红"的恒红债。现在改成
+#      与**跑前快照**对比，并把"首次开窗会给提示"放到隔离区真验一遍（G3c）。
 #   G3 护栏有牙（安全版）：把 MPLTWEAK_HOME 摘掉、HOME/USERPROFILE 指向一个**假家
 #      目录**，真调一次 _emit_first_open_hint() —— 戳必须落在那个假家目录里。这证明
 #      "不隔离 ⇒ 写进用户家目录"这条因果是真的，而验证过程**不碰**真实家目录
@@ -436,6 +439,21 @@ def _real_home_listing():
         return sorted(os.listdir(_real_home_dir()))
     except OSError:
         return []
+
+
+def _home_entry(name):
+    """真实家目录里某个条目的 ``(大小, mtime_ns)``；不存在 → None（不假设它不存在）。"""
+    p = os.path.join(_real_home_dir(), name)
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def _real_home_snapshot():
+    """真实家目录的**跑前快照**：``{条目名: (大小, mtime_ns)}``（零写入，只 stat）。"""
+    return {n: _home_entry(n) for n in _real_home_listing()}
 
 
 _HOME_PROBE = (
@@ -484,10 +502,15 @@ def run_real_home_guards(home_before):
     after = _real_home_listing()
     new = sorted(set(after) - set(home_before))
     check('G2 跑完整套 CLI 矩阵后，真实 ~/.mpltweak 无任何新增文件', not new,
-          '新增=%s（跑前=%s / 跑后=%s）' % (new, home_before, after))
-    check('G2b 真实 ~/.mpltweak/first_open_shown 不存在',
-          not os.path.exists(os.path.join(real, 'first_open_shown')),
-          '跑后目录内容=%s' % after)
+          '新增=%s（跑前=%s / 跑后=%s）' % (new, sorted(home_before), after))
+    # G2b —— 不看"存不存在"，只看"变没变"：用过本工具的人机器上这个戳本来就在
+    # （S6 / t11 的恒红根因）。跑前快照 vs 跑后 stat，逐项相等才算干净。
+    changed = sorted(n for n in home_before if _home_entry(n) != home_before[n])
+    check('G2b 真实家目录里的条目（含 first_open_shown）与跑前**逐项一致**',
+          not changed,
+          '变化=%s（跑前 first_open_shown=%r / 跑后=%r）'
+          % (changed, home_before.get('first_open_shown'),
+             _home_entry('first_open_shown')))
 
     # G3 —— 护栏有牙（安全版：假家目录，绝不碰真实家目录）
     fake = os.path.join(_TMPROOT, 'fake_home')
@@ -507,9 +530,32 @@ def run_real_home_guards(home_before):
     check('G3 【有牙】摘掉 MPLTWEAK_HOME 后，戳真的落进（假）用户家目录',
           os.path.exists(fake_stamp),
           'rc=%s %s 戳=%r（期望 %r）' % (r3.returncode, shown, stamp, fake_stamp))
-    check('G3b 该探针没有把戳写进**真实**家目录',
-          not os.path.exists(os.path.join(real, 'first_open_shown')),
-          '真实目录内容=%s' % _real_home_listing())
+    check('G3b 该探针没有改动**真实**家目录（条目与跑前逐项一致）',
+          not [n for n in home_before if _home_entry(n) != home_before[n]],
+          '真实目录内容=%s / first_open_shown=%r'
+          % (_real_home_listing(), _home_entry('first_open_shown')))
+
+    # G3c —— **推荐口径 B**：把行为放到隔离区真验一遍（不假设真实家目录的状态）。
+    # `_cli_env()` 已经把 MPLTWEAK_HOME 指到 _TMPROOT 下 ⇒ 全新的一次"首次开窗"应该
+    # 给出提示并把戳落进隔离区，第二次不再提示。这才是这条债务真正要保的行为。
+    iso_home = os.path.join(_TMPROOT, 'iso_home')
+    shutil.rmtree(iso_home, ignore_errors=True)
+    env_iso = _cli_env()
+    env_iso['MPLTWEAK_HOME'] = iso_home
+    env_iso.pop('MPLTWEAK_NO_HINT', None)
+    probes = []
+    for _i in range(2):
+        r4 = subprocess.run([sys.executable, '-c', _TEETH_PROBE, src],
+                            capture_output=True, text=True, encoding='utf-8',
+                            errors='replace', env=env_iso, cwd=ROOT, timeout=300)
+        probes.append([l.strip() for l in (r4.stdout or '').splitlines() if l.strip()])
+    iso_stamp = os.path.join(iso_home, 'first_open_shown')
+    check('G3c 隔离区里：首次开窗给提示、戳落在隔离区、第二次不再提示',
+          os.path.exists(iso_stamp)
+          and (probes[0][1] if len(probes[0]) > 1 else '') == 'SHOWN=True'
+          and (probes[1][1] if len(probes[1]) > 1 else '') == 'SHOWN=False',
+          '戳=%r 第一次=%s 第二次=%s'
+          % (iso_stamp, probes[0][1:2], probes[1][1:2]))
 
 
 def _ui_literals(rel, extra=()):
@@ -1212,8 +1258,10 @@ def run_t5_help_overlay():
 
 def main():
     os.makedirs(_TMPROOT, exist_ok=True)
-    # t31：先给**真实**家目录拍快照（任何子进程起来之前），跑完再对比零新增。
-    _home_before = _real_home_listing()
+    # t31：先给**真实**家目录拍快照（任何子进程起来之前），跑完再对比零新增/零变化。
+    # S6（t11）：快照是 ``{名: (大小, mtime_ns)}``，不是"名字列表" —— 只看名字的话
+    # "戳本来就在、被改了一下"这种污染查不出来。
+    _home_before = _real_home_snapshot()
     print('launch._apply_saved 顶层非对象 JSON 守卫回归（0.1.10）')
     run_guards()
     print()
