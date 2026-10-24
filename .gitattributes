@@ -1,3 +1,9 @@
-﻿* text=auto eol=lf
+* text=auto eol=lf
 *.png binary
 *.gif binary
+# 语料证据骨架：MANIFEST.json 逐文件记了 sha256，工作树字节必须与仓库里的 blob 完全一致。
+# 否则 Windows 上 core.autocrlf=true 会把 JSON 转成 CRLF ⇒ sha 变化 ⇒
+# tests/test_hygiene.py 的 --manifest-check 断言失败（0.1.16 的 CI 就是这么红的）。
+# `-text` = 不做任何换行转换。
+tools/corpus/CLAIMS.json -text
+tools/corpus/MANIFEST.json -text
