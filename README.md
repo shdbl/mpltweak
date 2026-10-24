@@ -64,11 +64,7 @@ mpltweak 自带一份**给 AI 助手（Agent）看的手册（Skill）**：把�
 
 ### 先花两分钟看看效果（让 Agent 跑示例）
 
-不想拿自己的脚本冒险？跟 Agent 说一句：
-
-> 跑一下 mpltweak demo 给我看看
-
-它会装好依赖、生成一份**示例脚本**（四面板合成图，纯 matplotlib 写法）并打开调图窗口，你随便拖、随便改字号；关掉窗口后它会用人话告诉你**你改了哪几处**、并把**代码会变成什么样**逐行给你看。
+装好之后，让它先跑一次**示例**给你看：它生成一份**示例脚本**（四面板合成图，纯 matplotlib 写法）并打开调图窗口，你随便拖、随便改字号；关掉窗口它会用人话告诉你**你改了哪几处**、并把**代码会变成什么样**逐行给你看。
 
 觉得不错，就让它把改动写回那份**示例脚本**、重跑一遍，并给你看**改前 / 改后**两张图。
 
@@ -198,9 +194,7 @@ fig.savefig('fig2.png', dpi=150)
   → 按 fail-closed 处理，本次不写：ax0.lines、ax0.pos、ax1.lines、ax1.pos、ax2.lines、ax2.pos
 ```
 
-退出码 `1`。
-
-**代码一个字节都没变。** 这不是死路：那段话直接告诉你**改哪一处就能改**。**如果是 Agent 在替你操作，它看到这句话会自己把脚本改好、再回来接着调图 —— 你不用复制、不用转达。**
+**代码一个字节都没变。** 这不是死路：那段话直接告诉你该改哪一处。**Agent 看到它会自己把脚本改好，再回来接着调图** —— 你不用复制，也不用转达。
 
 ## 它可靠吗？
 
@@ -230,6 +224,7 @@ pip install "mpltweak[qt]"      # 要开窗拖图再加这个（装 PyQt5 图形
 
 ```bash
 mpltweak --version      # 版本
+mpltweak --check-update # 查 PyPI 有没有新版本（显式联网；默认任何命令都不联网）
 ```
 
 **退出码**（脚本里判断用）：`0` 成功 / `1` 检查发现问题 **或本次不写**（含 fail-closed 拒写）/ `2` 跑不起来（脚本找不到、脚本自身报错、参数非法）/ `4` 没有可用图形后端。四个入口口径一致。
@@ -301,4 +296,4 @@ MIT
 
 ---
 
-**要看完整版：** 键位与手势 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · 参数文件字段表 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · 三道验证与备份 / `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · 卡住了 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · 实测数字 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · 边界 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · 执行边界与退出码 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · 给 Agent 的手册 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) 与 [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · 开发与跑测试 [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)
+**要看完整版：** 键位与手势 [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · 参数文件字段表 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · `--json` 冻结核对契约 [docs/json-contract.md](https://github.com/shdbl/mpltweak/blob/main/docs/json-contract.md) · 三道验证与备份 / `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · 卡住了 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · 实测数字 [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · 边界 [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · 执行边界与退出码 [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · 给 Agent 的手册 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) 与 [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · 开发与跑测试 [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)

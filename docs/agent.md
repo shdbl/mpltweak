@@ -1,5 +1,8 @@
 # 给 AI / agent 的排版接口
 
+> **`--json` 的键名、类型、值域已冻结**（0.1.17 起）：逐条口径见 [json-contract.md](json-contract.md)。
+> 政策是**只加不改** —— 按机器分支请认那一页里的稳定枚举，别读中文文案。
+
 大模型能写出正确的绘图代码，但**排版数字基本靠猜** —— 它看不到那张图。
 
 mpltweak 把这部分从"猜"变成"写文件"：
@@ -45,6 +48,7 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
 | `mpltweak apply <脚本> --diff --json` | **写回前先看差异**（0.1.16，别名 `--preview-diff`，同一个开关）：引擎**照真写回的路跑**，只是把目标换成同目录的**影子副本**（跑完即删），所以内容与真写盘**同源**（含 `--style auto` 退块那次"重读源码"的语义）。`files[].diff` 逐行给出 `{line, type, old, new}`（`type` = `inplace` 原位补参数 / `insert_block` 插入调整块 / `replace` 替换）。这一档 `reason='preview'` / `applied=false` / `rc=0`（与只读预览同档，**不是**"已写回"），**脚本一个字节都不动、不造备份**。**它不重跑脚本**，所以边界是：真写盘时**验证失败**触发的回滚/换锚点重试不会体现在预览里 —— 那一档以真写回为准 |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突**默认就是 error 级问题**（`rule='layout_engine_conflict'`，0.1.14 起；`--strict` 只是兼容开关） |
+| `mpltweak --check-update [--json] [--lang zh\|en]` | 显式联网查 PyPI 最新版（0.1.17）。**默认任何命令都不联网，只有它联网**；只查不升、不写任何文件、默认 5 秒超时（`MPLTWEAK_UPDATE_TIMEOUT` 可调）。**查不到（断网 / 超时 / 被墙 / 载荷坏）也是 `rc=0`** —— 原因看 `--json` 的 `error`（`timeout` / `network` / `http` / `payload`），**别把它当失败去重试**；用法错误才是 `rc=2`（stderr，不产 JSON）。机器可读载荷的五个键见 [json-contract.md](json-contract.md) |
 
 **三个选项各自只属于一个子命令**（`--help` 里都列着，这里再点名一次：它们**不是**全局开关，给错了子命令是 `rc=2`）
 
@@ -90,7 +94,8 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 * `files[].layout_conflicts`（**恒存在**，数组）：脚本里**开着的布局引擎冲突点**（`constrained_layout` / `figure.autolayout`），每项一句人话并带脚本行号。**空数组 = 这份脚本没开引擎**，位置的写回不会被覆盖。非空要看同一条目的 `reason` 分流：`reason='layout_conflict'` ⇒ 这次要写轴位置、被默认拦下（`applied=false`、**这一份**没写盘、`rc=1`）；`reason` 是 `ok` / `best_effort` ⇒ 这次只动了非几何字段（字号 / 线宽 / cmap / 标题），或者你给了 `--force`，冲突仍在但没挡这次。**它只说明"脚本开着引擎"，不说明"这次写不写位置"**。
 * `files[].diff`（**恒存在**，数组；只有 `--diff` 时非空）：写回前预览的**行级差异**，每项 `{line, type, old, new}`。`line` 是**新文件**里的行号（1 基）；`old` 是原行（插入时 `null`）、`new` 是改后行（删除时 `null`）。`type` 三档：`inplace` = 一对一换行（原位补参数 / 改数字）、`insert_block` = 新增行落在自动生成的调整块里、`replace` = 其余（已有块被整体替换 / 行数变了）。**用它就能在落盘前复现"改完是什么样"**：把每项按 `line` 重放到原文即可（`old` 必须与原文同位置的整行一致，对不上就是口径错）。同组的三个键：`preview_sha256`（**影子副本最终内容**的严格字节指纹 —— 它就是真写盘后文件的 sha256，唯一例外是调整块说明行里的"生成于 <时间>"：预览与真写回是两次运行，跨了分钟就只差这几个字符）、`preview_sha256_norm`（把"生成于 <时间>"抹成 `<ts>` 之后再算，**跨分钟也稳定**，"预览 == 真写盘"的确定性对拍用它）、`preview_bytes`（将要写出的字节数）。**边界说清**：`--diff` **不重跑你的脚本**，所以"验证失败 → 自动回滚 / 换锚点重试"这类**由验证结果驱动**的分支不在预览里；那种情况下以真写回为准。
 * `files[].layout_why`（**判定依据**，稳定英文枚举，不进文案）：这条参数到底会不会改到轴位置 —— `no_pos` = 参数里没有位置类字段，不可能写位置；`proved_equal` = 静态证得出源码现值已等于目标位置，写了也是空改；`live_equal` = 重跑实测参数里的位置与现状一致，不用写；`live_differs` = 重跑实测确实不同，**这次真要写位置**（冲突下会被拒）；`unjudged` = 判不了（没开验证、脚本重跑不了、解析失败）⇒ 保守按"可能要写"处理。判据只有一处：`writeback.position_write_needed`（返回 `(True|False|None, why)`）。
-  **注意（0.1.14 现状）**：`--json` 载荷目前只带出 `layout_conflicts`，**还没有** `layout_why` 这个键；它此刻只体现在**人读输出**上 —— 判不了那一档会多一句「补充：本次没有跑（或跑不出）脚本重跑验证 → 无法确认参数里的位置是否已经与现状一致，按"可能要写"处理（保守拒绝）」。所以 `--json` 下要分「实测有差异」与「判不了」，按**这次有没有关掉重跑验证**判：带了 `--no-verify` / `--verify-fast`，或脚本本身跑不起来 ⇒ `unjudged`；正常跑过验证仍被拒 ⇒ `live_differs`。想让判定更准，就别关验证。
+  **注意**：`layout_why` 自 0.1.14 起就**在 `--json` 的每条 `files[]` 里**（值域与唯一出处见 [json-contract.md](json-contract.md)），不用再从"这次关没关验证"反推。人读输出只对 `unjudged` 那一档多打一句「补充：本次没有跑（或跑不出）脚本重跑验证 → 无法确认参数里的位置是否已经与现状一致，按"可能要写"处理（保守拒绝）」。想让判定更准，就别关验证。
+* `files[].refused_hint`（**恒存在**，string 或 `null`）：拒写时给你的**"照着改"指导**（0.1.17 起）。**目前只对"函数里建图"那两类拒写生成**，其余拒写是 `null` —— 它在人读输出里就是那段"把 `fig.savefig(...)` 挪出函数"之类的建议，机器侧**不要**拿它做分支判据（分支用 `reason` / `pending`）。
 * 顶层 `error_code`（**只在失败载荷上出现**；成功载荷没有这个键）：`file_not_found` / `no_params` / `mutually_exclusive_flags` / `layout_conflict` / **`nothing_applied`** / `bad_params` / `stale_params` / `no_axes` / `no_fig` / `writeback_failed` / `external_modified` / `internal_error`，兜底 `apply_failed`（出现 ok 清单之外的 `reason` = "新增 reason 忘登记"的信号）。**`nothing_applied`（0.1.14）** = 整批**一个字节都没写**而这次确实想写（典型：隐式建图 / `for` 里建图 / 函数里建图 / 类里 `self.ax` —— 引擎证不出目标变量名，按 fail-closed 保守拒写）：这一档 `ok=false`、`rc=1`，而 `files[].reason` 可能仍是 `best_effort`、`files[].applied=false` —— **旧版正是这里撒谎**（`ok=true` + `rc=0`，agent 当成"已写回"）。反面对照：`reason=no_change`（参数与源码本来就一致）仍是 `ok=true` / `rc=0` / 无 `error_code`，那不是失败。所以判"写没写"只看 `applied` / `changes` / `reason`，判"成没成"才看 `ok` / `rc` / `error_code`。其中 `internal_error` 是**工具自身**抛了未预期的异常（`attribution: tool_bug`，与你的脚本无关，源码已回滚零改动）—— 它不属于 `apply` 的逐文件 `reason` 值域，来自顶层异常兜底（`apply` / `check` / `describe` 三处都有，附带 `error` + 英文 `next_step`），所以 `--json` 下同样是 `ok: false`；顶层码取**第一个失败文件**，逐文件的细分原因照旧在 `files[].reason` / `files[].attribution` / `files[].err` 里 —— 有码就按码分支，别去读文案。
 
 （这三个键的口径全文在 `docs/verify.md` 的「机器可读通道」一节。）

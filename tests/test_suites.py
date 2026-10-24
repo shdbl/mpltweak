@@ -137,6 +137,20 @@ SUITES = [
     #     `_team014/shapes_reverse.py`。11 格 × 4 个子进程，约 45 秒。
     #     见 tests/test_shapes.py 文件头 ---
     ('test_shapes', {}),
+    # --- T2 挂入（0.1.17）：`--check-update` 的**显式联网**契约 —— 产品原则是
+    #     "默认任何命令都不联网"，只有这一个开关会查 PyPI。四条断言：
+    #     ① 静态棘轮（`update.py` 以外不许 import urllib/socket/http、不许出现
+    #        `urlopen(`）+ 运行期 `--version`/`--help`/`-V`/空参数 **零调用**，
+    #        而 `--check-update` 必须走那个唯一出口（对照项：防"零调用"假绿）；
+    #     ② 解析 / 比较三路（坏 JSON、非 UTF-8、`rc1`/`dev0` 一律"比不出"，
+    #        不许把 None 当版本号流进比较）；
+    #     ③ 失败四路（timeout / network / http / payload）全靠 monkeypatch 注入，
+    #        PyPI 地址一律换 `file://` 夹具 ⇒ **本套件零联网**；
+    #     ④ 语义：查不到 rc=0（不是命令失败）、用法错误 rc=2、`--json` 五键形状
+    #        固定 + `update_available` 三态（"不知道"是 null，不是 false）。
+    #     反向验证（把比较逻辑改坏 ⇒ 本套件必红）见仓外 `_team014/check_update/reverse.py`。
+    #     纯子进程 + 一次不可达地址超时，约 6 秒。见 tests/test_check_update.py 文件头 ---
+    ('test_check_update', {}),
     # --- S8 挂入（0.1.17）：`mpltweak demo` 的**离屏**验收 —— 示例随包 / 复用不覆盖 /
     #     默认零侵入 / --write 落盘 + before.png+after.png / first_demo 真值翻转。
     #     反向验证（把"复用不覆盖"改成覆盖 ⇒ §119② 必红）见仓外 _team014/demo_impl/。

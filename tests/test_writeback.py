@@ -9201,6 +9201,450 @@ check('§120④ 反向：关掉 FUNC_GUIDE ⇒ 指导消失（判据真在用）
       'pending=%r' % (_res120b.get('pending'),))
 shutil.rmtree(_D120, ignore_errors=True)
 
+# §121（0.1.17 / **兑现 0.1.15 的承诺**）刻度字号的分侧去重。
+#   0.1.15 只给 title/xlabel/ylabel 做了"块里别再写一遍原位已经写好的字号"，刻度字号
+#   当时明写"牵涉 x/y 两侧 axis= 判据，下一版统一"。这一节盯三件事：
+#     ① 分侧：源码只写了 x 侧 ⇒ 块里只补 y 侧；两侧都写了 ⇒ 块里一行都不写；
+#     ② 纪律：**证不出来就不去重** —— axis= 非字面量、同一侧两处字面量互相冲突 ⇒ 照写；
+#     ③ 落地：写回后脚本还能跑（rc=0），且没被漏写的字段真的落到了图上。
+_S121_HEAD = ('import matplotlib\n'
+              'matplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'fig, ax = plt.subplots(figsize=(6, 4))\n'
+              'ax.plot([1, 2, 3], label="a")\n')
+_S121_TAIL = 'fig.savefig("out.png")\n'
+
+
+def _pin_child_env(base=None, **overrides):
+    """起子进程前**最后一道闸**：硬钉 ``MPLBACKEND=Agg``（覆盖宿主投毒）。
+
+    与 tests/test_hygiene.py / test_docs.py 的同名闸门是**同一口径的另一份副本**：
+    宿主把 `MPLBACKEND` 设成 `Qt5Agg` 时，子进程里的建图/`plt.show()` 会真开窗抢焦点。
+    `test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered` 按 AST
+    逐个调用点检查"有没有经过闸门"，手搓 `dict(os.environ)` 不算 ⇒ 本文件新加的子进程
+    调用点必须走这里。
+    """
+    out = dict(os.environ if base is None else base)
+    out['MPLBACKEND'] = 'Agg'
+    out.update(overrides)
+    return out
+
+
+def _s121_run(body, axp, style='block', check_rc=True):
+    """造脚本 → 写回 → 返回 (临时目录, 块文本, 结果, 块里的 tick 行, 重跑 rc)。"""
+    import subprocess                                              # noqa: E402
+    d, s, p = _mk15('t121', _S121_HEAD + body + _S121_TAIL,
+                    {'version': 4, 'script': 'fig.py',
+                     'axes': [dict({'index': 0}, **axp)]})
+    r = writeback.writeback(s, _params.load(p), p, style=style, verify=False)
+    blk = r.get('block') or ''
+    rc = (subprocess.run([sys.executable, s], cwd=d, env=_pin_child_env(),
+                         capture_output=True).returncode if check_rc else None)
+    return (d, blk, r, [ln.strip() for ln in blk.splitlines()
+                        if 'tick_params(' in ln], rc)
+
+
+# 121① 源码只写 x 侧（=目标值），y 侧要改 ⇒ 块里只写 y 那一行
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "ax.tick_params(axis='x', labelsize=12)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'tick_fontsize_y': 14.0, 'grid': True})
+check('§121① 源码只写了 x 刻度字号 ⇒ 块里**只剩 y 那一行**（x 侧不重复写），rc=0',
+      _tick == ["ax.tick_params(axis='y', labelsize=14)"] and _rc == 0,
+      'tick=%r rc=%r reason=%r' % (_tick, _rc, _r.get('reason')))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121② 反过来：源码只写 y 侧 ⇒ 块里必须**仍然写 x**（这一行的漏写正是旧判据的坑）
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "ax.tick_params(axis='y', labelsize=12)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True})
+check('§121② 源码只写了 y 刻度字号 ⇒ 块里**必须写 x 那一行**（不许拿 y 的字面量'
+      '证明 x 等值——旧判据就是在这里漏写），rc=0',
+      _tick == ["ax.tick_params(axis='x', labelsize=12)"] and _rc == 0,
+      'tick=%r rc=%r reason=%r' % (_tick, _rc, _r.get('reason')))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121③ 两侧都写了 ⇒ 块里 tick 字号一行都没有（grid 仍要写，证明块本身还在）
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "ax.tick_params(axis='x', labelsize=12)\n"
+    "ax.tick_params(axis='y', labelsize=14)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'tick_fontsize_y': 14.0, 'grid': True})
+check('§121③ 两侧都写进源码且都等于目标 ⇒ 块里 tick 字号**0 行**、grid 照写，rc=0',
+      _tick == [] and 'ax.grid(True)' in _blk and _rc == 0,
+      'tick=%r has_grid=%r rc=%r' % (_tick, 'ax.grid(True)' in _blk, _rc))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121④ 不带 axis= 的 `tick_params(labelsize=)` 一次管两侧 ⇒ 两侧都算已写
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "ax.tick_params(labelsize=12)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True})
+check('§121④ 不带 axis 的 `tick_params(labelsize=12)` 管两侧 ⇒ 块里 0 行，rc=0',
+      _tick == [] and _rc == 0, 'tick=%r rc=%r' % (_tick, _rc))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121⑤ 纪律：`axis=` 不是字面量 ⇒ 说不清它改哪一侧 ⇒ **不许去重**（照写两行）
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "_side = 'x'\nax.tick_params(axis=_side, labelsize=12)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True})
+check('§121⑤ `axis=` 是变量（证不出哪一侧）⇒ 块里照写两侧（宁可冗余，不漏写）',
+      len(_tick) == 2 and _rc == 0, 'tick=%r rc=%r' % (_tick, _rc))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121⑥ 纪律：同一侧两处字面量互相冲突（后写的生效）⇒ 也不许去重
+_d, _blk, _r, _tick, _rc = _s121_run(
+    "ax.tick_params(axis='x', labelsize=12)\n"
+    "ax.tick_params(axis='x', labelsize=20)\nax.grid(False)\n",
+    {'tick_fontsize': 12.0, 'grid': True})
+check('§121⑥ 同一侧两处 `axis=\'x\'` 字面量冲突（12 / 20）⇒ 块里照写 x 那一行',
+      _tick == ["ax.tick_params(axis='x', labelsize=12)"] and _rc == 0,
+      'tick=%r rc=%r' % (_tick, _rc))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 121⑦ 承诺本体：**原位通道**已经把 labelsize=10 改成 12，只因 pos 落不了地退块 ——
+#       块里不许再把刚写好的刻度字号重写一遍（0.1.15 就是在这里留了尾巴）。
+_S121_AUTO = ('import matplotlib\nmatplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'fig, ax = plt.subplots(figsize=(6, 4))\n'
+              'ax.plot([1, 2, 3])\nax.tick_params(labelsize=10)\n'
+              'fig.savefig("out.png")\n')
+_d121, _s121, _p121 = _mk15('t121auto', _S121_AUTO,
+                            {'version': 4, 'script': 'fig.py',
+                             'axes': [{'index': 0, 'tick_fontsize': 12.0,
+                                       'pos': [0.2, 0.2, 0.6, 0.6]}]})
+_ri121 = writeback.writeback(_s121, _params.load(_p121), _p121, verify=False,
+                             style='inplace')
+_rb121 = writeback.writeback(_s121, _params.load(_p121), _p121, verify=False,
+                             style='block')
+_txt121 = read(_s121)
+check('§121⑦ 原位已把 labelsize=10 改成 12、退块后块里**不再重复写**刻度字号'
+      '（块里仍有 set_position，证明块确实插了）',
+      any('ax0.tick_fontsize' == c for c in (_ri121.get('changes') or []))
+      and 'tick_params(labelsize=12)' in _txt121
+      and 'tick_params(' not in (_rb121.get('block') or '')
+      and 'set_position(' in (_rb121.get('block') or ''),
+      'inplace=%r block=%r'
+      % (_ri121.get('changes'),
+         [ln.strip() for ln in (_rb121.get('block') or '').splitlines()
+          if 'tick_params(' in ln or 'set_position' in ln]))
+shutil.rmtree(_d121, ignore_errors=True)
+
+# 121⑧【有牙】把分侧判据换成恒 False（= 修前行为）⇒ 121①③④⑦ 的冗余行必须回来
+_o_tick_eq = writeback._tick_fontsize_literal_equal
+try:
+    writeback._tick_fontsize_literal_equal = lambda *a, **k: False
+    _dups = []
+    for _b, _ap in (
+            ("ax.tick_params(axis='x', labelsize=12)\nax.grid(False)\n",
+             {'tick_fontsize': 12.0, 'tick_fontsize_y': 14.0, 'grid': True}),
+            ("ax.tick_params(axis='x', labelsize=12)\n"
+             "ax.tick_params(axis='y', labelsize=14)\nax.grid(False)\n",
+             {'tick_fontsize': 12.0, 'tick_fontsize_y': 14.0, 'grid': True}),
+            ("ax.tick_params(labelsize=12)\nax.grid(False)\n",
+             {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True})):
+        _dd, _bb, _rr, _tt, _cc = _s121_run(_b, _ap, check_rc=False)
+        _dups.append(len(_tt))
+        shutil.rmtree(_dd, ignore_errors=True)
+    writeback._tick_fontsize_literal_equal = _o_tick_eq
+    _dd, _bb, _rr, _tt, _cc = _s121_run(
+        "ax.tick_params(labelsize=12)\nax.grid(False)\n",
+        {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True},
+        check_rc=False)
+    shutil.rmtree(_dd, ignore_errors=True)
+    writeback._tick_fontsize_literal_equal = lambda *a, **k: False
+    _dd, _bb2, _rr, _tt2, _cc = _s121_run(
+        "ax.tick_params(labelsize=12)\nax.grid(False)\n",
+        {'tick_fontsize': 12.0, 'tick_fontsize_y': 12.0, 'grid': True},
+        check_rc=False)
+    shutil.rmtree(_dd, ignore_errors=True)
+    check('§121⑧【有牙】判据换回恒 False ⇒ 冗余 tick 行立刻回来'
+          '（三个夹具各 2 行；plain 夹具从 0 行回到 2 行）',
+          _dups == [2, 2, 2] and len(_tt) == 0 and len(_tt2) == 2,
+          '无去重时行数=%r / 有去重 0 行→关掉后 %d 行'
+          % (_dups, len(_tt2)))
+finally:
+    writeback._tick_fontsize_literal_equal = _o_tick_eq
+
+# §122（0.1.17）legend / colorbar 的**块内写法体检**：块里写下的每一笔都要真的落到图上。
+#   做法：写回 → 子进程**重跑写好的脚本**（尾部追加读回探针）→ "读回值 == 请求值"。
+#   这一节顺带钉住体检发现的两件事：
+#     ① `loc` 与 `anchor` 并存时旧实现只写 loc（GUI 拖图例的结果被顶掉）—— **已修**；
+#     ② 只给 fontsize（没有 loc/anchor）块里写不出来 —— 保持**拒写**（pending + 警告），
+#        不许静默无效。
+_S122_LGD = ('import matplotlib\n'
+             'matplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n'
+             'fig, ax = plt.subplots(figsize=(6, 4))\n'
+             'ax.plot([1, 2, 3], label="a")\n'
+             'ax.legend(loc="upper right")\n'
+             'fig.savefig("out.png")\n')
+_S122_CB = ('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'import numpy as np\n'
+            'fig, ax = plt.subplots(figsize=(6, 4))\n'
+            'im = ax.imshow(np.arange(12).reshape(3, 4))\n'
+            'cb = fig.colorbar(im, ax=ax)\n'
+            'cb.set_label("value")\n'
+            'fig.savefig("out.png")\n')
+_S122_RB_LGD = ('import json as _j\n'
+                'out = {}\n'
+                'lg = ax.get_legend()\n'
+                'if lg is not None:\n'
+                '    out["loc"] = lg._get_loc()\n'
+                '    out["fs"] = lg.get_texts()[0].get_fontsize()\n'
+                '    _bb = getattr(lg.get_bbox_to_anchor(), "_bbox", None)\n'
+                '    out["anchor"] = ([round(_bb.x0, 4), round(_bb.y0, 4)]\n'
+                '                     if _bb is not None else None)\n'
+                'print("RB" + _j.dumps(out))\n')
+_S122_RB_CB = ('import json as _j\n'
+               'out = {"cbpos": [round(v, 4) for v in cb.ax.get_position().bounds],\n'
+               '       "cby": cb.ax.yaxis.label.get_fontsize(),\n'
+               '       "cbx": cb.ax.xaxis.label.get_fontsize()}\n'
+               'print("RB" + _j.dumps(out))\n')
+
+
+def _s122_probe(src, axs, tail):
+    """写回 → 尾部接读回探针 → 子进程重跑 → 返回 (目录, 块行, 读回 dict, rc, 输出)。"""
+    import subprocess                                              # noqa: E402
+    d, s, p = _mk15('t122', src,
+                    {'version': 4, 'script': 'fig.py', 'axes': axs})
+    r = writeback.writeback(s, _params.load(p), p, style='block', verify=False)
+    _txt = read(s)                 # 先读再开 'w'（开 'w' 会清空文件，读到的就是空的）
+    with open(s, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(_txt + tail)
+    cp = subprocess.run([sys.executable, s], cwd=d, env=_pin_child_env(),
+                        capture_output=True)
+    out = _decode_out(cp.stdout + cp.stderr)
+    rb = {}
+    for ln in out.splitlines():
+        if ln.startswith('RB'):
+            rb = json.loads(ln[2:])
+    return (d, [ln.strip() for ln in (r.get('block') or '').splitlines()],
+            rb, cp.returncode, out, r)
+
+
+def _s122_legend(lg):
+    return _s122_probe(_S122_LGD, [dict({'index': 0}, legend=lg)],
+                       _S122_RB_LGD)
+
+
+_d, _lines, _rb, _rc, _out, _r = _s122_legend({'loc': 'lower left'})
+check('§122① legend.loc：块里写 `ax.legend(loc=\'lower left\')`，重跑读回 loc=lower left',
+      _rc == 0 and _rb.get('loc') == 3
+      and any("ax.legend(loc='lower left')" in ln for ln in _lines),
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'legend' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_legend({'loc': 'lower left',
+                                             'fontsize': 14})
+check('§122② legend.fontsize（与 loc 同在）：读回 14.0，且 loc 没被顺手改掉',
+      _rc == 0 and _rb.get('loc') == 3 and _rb.get('fs') == 14.0,
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'legend' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_legend({'anchor': [0.2, 0.7]})
+check('§122③ legend.anchor：块里写 `bbox_to_anchor=(0.2, 0.7)`，读回锚点 == 请求值',
+      _rc == 0 and _rb.get('anchor') == [0.2, 0.7],
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'legend' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_legend({'loc': 'upper right',
+                                             'anchor': [0.35, 0.15]})
+check('§122④ loc 与 anchor **同时给**（GUI 拖图例就是这个形状）：两者都要读到，'
+      'anchor 不许被 loc 顶掉（0.1.17 修的"写了不生效"）',
+      _rc == 0 and _rb.get('loc') == 1 and _rb.get('anchor') == [0.35, 0.15],
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'legend' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_legend({'fontsize': 14})
+check('§122⑤ 只给 legend.fontsize（没有 loc/anchor）⇒ **拒写**：块里没有 legend 行，'
+      '但必须有 pending + 警告（宁可明说，不许静默无效）',
+      _rc == 0 and not any('.legend(' in ln for ln in _lines)
+      and 'ax0.legend' in (_r.get('pending') or [])
+      and bool(_r.get('warnings')),
+      'pending=%r warnings=%r 块行=%r'
+      % (_r.get('pending'), (_r.get('warnings') or [])[:1],
+         [l for l in _lines if 'legend' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 122⑥~⑧ colorbar：位置（= 位置 / 长度 / 厚度 的 4 元组）与标签字号
+_CB_POS = [0.86, 0.2, 0.03, 0.6]
+_d, _lines, _rb, _rc, _out, _r = _s122_probe(
+    _S122_CB, [{'index': 0}, {'index': 1, 'is_colorbar': True, 'pos': _CB_POS}],
+    _S122_RB_CB)
+check('§122⑥ colorbar.pos：块里 set_position + 先卸 locator/box_aspect，'
+      '重跑读回几何 == 请求的 4 元组',
+      _rc == 0 and _rb.get('cbpos') == _CB_POS
+      and 'cb.ax.set_axes_locator(None)' in _lines
+      and 'cb.ax.set_box_aspect(None)' in _lines,
+      'rc=%r 读回 pos=%r 请求=%r 块行=%r'
+      % (_rc, _rb.get('cbpos'), _CB_POS, [l for l in _lines if 'cb.' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_probe(
+    _S122_CB, [{'index': 0}, {'index': 1, 'is_colorbar': True,
+                              'label_fontsize_y': 13.0}], _S122_RB_CB)
+check('§122⑦ colorbar 长边标签字号 label_fontsize_y：块里写 '
+      '`cb.ax.yaxis.label.set_fontsize(13)`，读回 13.0',
+      _rc == 0 and _rb.get('cby') == 13.0,
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'cb.' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+_d, _lines, _rb, _rc, _out, _r = _s122_probe(
+    _S122_CB, [{'index': 0}, {'index': 1, 'is_colorbar': True,
+                              'label_fontsize': 15.0}], _S122_RB_CB)
+check('§122⑧ colorbar 短边标签字号 label_fontsize：块里写 '
+      '`cb.ax.xaxis.label.set_fontsize(15)`，读回 15.0',
+      _rc == 0 and _rb.get('cbx') == 15.0,
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'cb.' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 122⑨ 位置 + 字号一起给（真实拖动后的形状）：三笔都要落到图上，互不打架
+_d, _lines, _rb, _rc, _out, _r = _s122_probe(
+    _S122_CB, [{'index': 0}, {'index': 1, 'is_colorbar': True, 'pos': _CB_POS,
+                              'label_fontsize_y': 11.0}], _S122_RB_CB)
+check('§122⑨ colorbar 的 pos 与标签字号同时给 ⇒ 两者都生效（读回各自 == 请求值）',
+      _rc == 0 and _rb.get('cbpos') == _CB_POS and _rb.get('cby') == 11.0,
+      'rc=%r 读回=%r 块行=%r' % (_rc, _rb, [l for l in _lines if 'cb.' in l]))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 122⑩ loc + anchor 那行加了 bbox_to_anchor 之后仍必须**幂等**（两遍写回一字节不变）
+_d122, _s122, _p122 = _mk15(
+    't122idem', _S122_LGD,
+    {'version': 4, 'script': 'fig.py',
+     'axes': [{'index': 0,
+               'legend': {'loc': 'upper right', 'anchor': [0.35, 0.15],
+                          'fontsize': 12}}]})
+_r122a = writeback.writeback(_s122, _params.load(_p122), _p122,
+                             style='block', verify=False)
+_t122a = read(_s122)
+_r122b = writeback.writeback(_s122, _params.load(_p122), _p122,
+                             style='block', verify=False)
+check('§122⑩ 幂等：loc + anchor + fontsize 写回后再跑一次 ⇒ applied=False、'
+      '块不重复、字节不变',
+      _r122a.get('applied') is True and _r122b.get('applied') is False
+      and read(_s122) == _t122a and _t122a.count('.legend(') == 2,
+      'r1=%r r2=%r legend 行数=%d'
+      % (_r122a.get('applied'), _r122b.get('reason'),
+         _t122a.count('.legend(')))
+shutil.rmtree(_d122, ignore_errors=True)
+
+# §123（0.1.17 / t3）**循环里只"使用"轴**不该让整张图不可证。
+#   现场：`fig, ((a1, a2), (b1, b2)) = plt.subplots(2, 2)` 干净版能写回；同一脚本里加
+#   `for k, ax in enumerate([a1, a2, b1, b2]): ax.plot(...)` 就整份 fail-closed
+#   （理由"证不出变量名"）。根因：`_IMPLICIT_CREATORS`（plot/imshow/hist…）是**pyplot 级**
+#   隐式建轴语义，旧代码不看接收者 ⇒ `ax.plot(...)` 被当成"建轴调用"，而
+#   `_axes_binding_entries` 有一条"建轴调用不许在循环里" ⇒ 整图不可证。
+#   现在：接收者由 import 绑定的才算"可能建轴的模块调用"（`plt.plot` 仍算）。
+#   底线不变：循环里真的**建轴**（`ax = fig.add_subplot(...)`）或**重新赋值**轴名、
+#   条件建图 —— 仍然拒写。
+_S123_SUB = ('fig, ((a1, a2), (b1, b2)) = plt.subplots(2, 2, figsize=(8, 6))\n')
+_S123_POS = {'a1': [0.05, 0.55, 0.38, 0.38], 'a2': [0.55, 0.55, 0.38, 0.38],
+             'b1': [0.05, 0.05, 0.38, 0.38], 'b2': [0.55, 0.05, 0.38, 0.38]}
+_S123_RB = ('import json as _j\n'
+            'print("RB" + _j.dumps({nm: [round(v, 4) for v in ax.get_position().bounds]\n'
+            '                       for nm, ax in (("a1", a1), ("a2", a2),\n'
+            '                                      ("b1", b1), ("b2", b2))}))\n')
+
+
+def _s123_run(body, with_rb=False):
+    """造 2x2 元组解包脚本 → 写回 →（可选）重跑读回 → (目录, 结果, 块行, 读回, rc)。"""
+    import subprocess                                              # noqa: E402
+    _axs = [dict({'index': _k}, pos=_v)
+            for _k, _v in enumerate(_S123_POS.values())]
+    d, s, p = _mk15('t123',
+                    'import matplotlib\nmatplotlib.use("Agg")\n'
+                    'import matplotlib.pyplot as plt\n'
+                    + body +
+                    'plt.tight_layout()\nfig.savefig("out.png")\n',
+                    {'version': 4, 'script': 'fig.py', 'fig_index': 0,
+                     'n_figs': 1, 'axes': _axs})
+    r = writeback.writeback(s, _params.load(p), p, style='block', verify=False)
+    _txt = read(s)
+    if with_rb:
+        with open(s, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(_txt + _S123_RB)
+    cp = subprocess.run([sys.executable, s], cwd=d, env=_pin_child_env(),
+                        capture_output=True)
+    rb = {}
+    for ln in _decode_out(cp.stdout + cp.stderr).splitlines():
+        if ln.startswith('RB'):
+            rb = json.loads(ln[2:])
+    return (d, r, [ln.strip() for ln in (r.get('block') or '').splitlines()
+                   if 'set_position' in ln], rb, cp.returncode)
+
+
+# 123① 只读循环（本项目最常见的写法）：4 条轴都要写、都要落到对的位置上
+_d, _r, _pos_lines, _rb, _rc = _s123_run(
+    _S123_SUB + 'for k, ax in enumerate([a1, a2, b1, b2]):\n'
+                '    ax.plot([1, 2], [k, k + 1])\n', with_rb=True)
+check('§123① 只读循环（`for k, ax in enumerate([a1, a2, b1, b2]): ax.plot(...)`）'
+      '⇒ 4 条轴照旧可写、块里用各自名字寻址，重跑 rc=0 且读回位置 == 请求值',
+      _r.get('applied') is True and len(_pos_lines) == 4 and _rc == 0
+      and _rb == _S123_POS,
+      'applied=%r reason=%r 块行=%r 读回=%r rc=%r'
+      % (_r.get('applied'), _r.get('reason'), _pos_lines, _rb, _rc))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 123② 同一根因的另一形态：`for ax in fig.axes: ax.plot(...)`
+_d, _r, _pos_lines, _rb, _rc = _s123_run(
+    _S123_SUB + 'for ax in fig.axes:\n    ax.plot([1, 2], [1, 2])\n', with_rb=True)
+check('§123② `for ax in fig.axes: ax.plot(...)` 同样可写（4 行、读回对、rc=0）',
+      _r.get('applied') is True and len(_pos_lines) == 4 and _rc == 0
+      and _rb == _S123_POS,
+      'applied=%r pending=%r 读回=%r' % (_r.get('applied'), _r.get('pending'), _rb))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 123③ 底线：循环里**真的重新赋值**轴名 ⇒ 那一根拒写（其余照写）
+_d, _r, _pos_lines, _rb, _rc = _s123_run(
+    _S123_SUB + 'for ax in (a2, b1, b2):\n    a1 = ax\n', with_rb=True)
+check('§123③ 循环里 `a1 = ax`（真的重新赋值）⇒ a1 的 pos 进 pending 拒写，'
+      '另外三根照写（fail-closed 只针对证不出的那根）',
+      'ax0.pos' in (_r.get('pending') or []) and len(_pos_lines) == 3
+      and _rc == 0,
+      'pending=%r 块行=%r' % (_r.get('pending'), _pos_lines))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 123④ 底线：循环里**建轴**（`ax = fig.add_subplot(...)`）⇒ 轴数/顺序不可数 ⇒ 全拒写
+_d, _r, _pos_lines, _rb, _rc = _s123_run(
+    _S123_SUB + 'for k, ax in enumerate([a1, a2, b1, b2]):\n'
+                '    ax = fig.add_subplot(2, 2, k + 1)\n')
+check('§123④ 循环里真的**建轴**（fig.add_subplot）⇒ 4 条轴全部拒写（这条不许放宽）',
+      _r.get('applied') is False and _pos_lines == []
+      and len(_r.get('pending') or []) == 4,
+      'applied=%r pending=%r' % (_r.get('applied'), _r.get('pending')))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 123⑤ 底线：**条件建图**（解包在 `if:` 里）⇒ 名字不在模块层直接赋值 ⇒ 全拒写
+_d, _r, _pos_lines, _rb, _rc = _s123_run(
+    'flag = True\n'
+    'if flag:\n'
+    '    fig, ((a1, a2), (b1, b2)) = plt.subplots(2, 2, figsize=(8, 6))\n'
+    'for ax in (a1, a2, b1, b2):\n    ax.set_title("t")\n')
+check('§123⑤ 条件建图（`if flag:` 里才 subplots）⇒ 全拒写（名字不在模块层直接赋一次）',
+      _r.get('applied') is False and _pos_lines == []
+      and len(_r.get('pending') or []) == 4,
+      'applied=%r pending=%r' % (_r.get('applied'), _r.get('pending')))
+shutil.rmtree(_d, ignore_errors=True)
+
+# 123⑥【有牙】把放宽的判据换回"凡隐式建轴名都算建轴"（= 修前行为）⇒ ①② 立刻回到拒写
+_o_mod_call = writeback._implicit_creator_is_module_call
+try:
+    writeback._implicit_creator_is_module_call = lambda *a, **k: True
+    _d, _r, _pos_lines, _rb, _rc = _s123_run(
+        _S123_SUB + 'for k, ax in enumerate([a1, a2, b1, b2]):\n'
+                    '    ax.plot([1, 2], [k, k + 1])\n', with_rb=True)
+    _dup_lines = len(_pos_lines)
+    _dup_pending = len(_r.get('pending') or [])
+    _dup_applied = _r.get('applied')
+    shutil.rmtree(_d, ignore_errors=True)
+    check('§123⑥【有牙】判据换回"`ax.plot` 也算建轴"（= 修前）⇒ 只读循环立刻整份拒写'
+          '（块 0 行、4 条轴进 pending）',
+          _dup_applied is False and _dup_lines == 0 and _dup_pending == 4,
+          'applied=%r 块行数=%d pending=%d'
+          % (_dup_applied, _dup_lines, _dup_pending))
+finally:
+    writeback._implicit_creator_is_module_call = _o_mod_call
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 
 sys.exit(1 if fail else 0)

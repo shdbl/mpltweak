@@ -105,6 +105,7 @@ mpltweak doctor
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
 | `mpltweak doctor` | 环境自检（后端 / Qt 绑定 / matplotlib 版本） |
 | `mpltweak --version` | 打印一行版本号（`-V` 同义，`rc=0`）；只认第一个位置参数，`mpltweak x.py --version` 会透传 |
+| `mpltweak --check-update [--json]` | 问 PyPI 有没有新版本（**唯一联网的命令**，其余命令一律不联网）。只查不升、不写文件。**查不到也是 `rc=0`**（断网 / 超时 / 被墙 / 载荷坏 ⇒ `--json` 的 `error` 给原因码），别当失败重试；`update_available` 是**三态**，`null` = 查不到或比不出（只有 `true` 才表示"PyPI 更新"）。用法错误才 `rc=2` |
 
 其他选项（**按子命令分列 —— 选项不是全局通用的**）：
 - **`apply`**：`--timeout 秒`（**默认 300**，就是它在子进程里重跑脚本做验证的等待上限；脚本很慢就调大）、`--python 解释器`、`--style auto|inplace|block`、`--force`、`--snippet`、`--json`、`--diff`（别名 `--preview-diff`：写回前逐行 diff，不落盘）、`--dry-run`、`--all-figs`、`--keep-unverified`、`--no-verify` / `--no-semantic` / `--verify-fast`、`--strict` / `--allow-layout-conflict`、`-v`。

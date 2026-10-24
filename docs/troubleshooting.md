@@ -15,7 +15,7 @@
 1. 先跑 `mpltweak apply <脚本>`（只读预览：不执行脚本、不写文件），看逐轴清单 —— 能原位改的会列出数字，要插调整块的会说明，写不了的连同原因一起列出来。
 2. 被拒绝时代码**一个字节都不动**，并打印一段**可粘贴片段**（也可以显式 `mpltweak apply <脚本> --snippet` 拿这份片段）；把片段里的 `<ax>` / `<fig>` 换成你自己的变量名贴进脚本即可。
 3. 想让下次能自动落地：给它一个**名字** —— `fig, ax = plt.subplots(...)` 比 `plt.subplot(...)` 裸调更好定位（片段末尾也会这么提示）。
-4. **网格图（`plt.subplots()`）另有一个坑**：`axes[0, 0]` 这类**字面量元素索引**能落地；但 `for ax in axes.ravel()` 或 `ax0, ax1 = axes.ravel()` 这种**解包 / 循环**用法会被 fail-closed 拒绝（宁可不写也不猜）—— 改成对容器直接下标（`axes[0, 0]`）的写法，或手动贴 `--snippet` 给的片段。实测：这两种用法都是 `applied=false`、不写盘（两条路与两个最小示例见 [params.md 的「原位改数字，还是插入调整块」](params.md#原位改数字还是插入调整块)，写回输出样张见 [verify.md](verify.md#一次真实写回完整输出样张)）。
+4. **网格图（`plt.subplots()`）的写法差别**：`axes[0, 0]` 这种**字面量元素索引**一定能落地；`ax0, ax1 = axes.ravel()`（解包成名字）和 `for ax in axes.ravel(): ax.plot(...)`（循环里只**用**已有的轴）**现在也能写** —— 前者按名字逐根落位（`ax0.set_position(...)`），后者用 `axes[0, 0]` 这类字面量定位（0.1.17 实测：两种写法都 `applied=true`、块 12 / 20 行、写回后脚本重跑 `rc=0`）。**仍然拒写的是"循环里新建轴"**（`for i in range(2): fig.add_subplot(...)`，或 `plt.subplots(...)` 写在循环里）和 `fig.axes[i]` / `plt.gca()` 这类**运行期定位** —— 那一档 `applied=false`、`pending` 非空、代码一个字节不动（实测 2 轴全进 `pending`），改用字面量下标或贴 `--snippet` 给的片段。（两条路与两个最小示例见 [params.md 的「原位改数字，还是插入调整块」](params.md#原位改数字还是插入调整块)，写回输出样张见 [verify.md](verify.md#一次真实写回完整输出样张)）。
 
 > 完全没弹窗、或开窗报错，是另一回事：先跑 `mpltweak doctor`，逐条见 [interaction.md](interaction.md) 的「如果没反应」。
 > 细节：逐字段判据见 [params.md](params.md)，"写回被整体拒绝"的硬约束见 [verify.md](verify.md)。

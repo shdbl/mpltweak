@@ -107,8 +107,8 @@ axes[1, 1].title.set_fontsize(11)
 > （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
 > `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
 > （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
-> （`writeback.py:5931 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:5842 # _block_targets`，
-> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:5358 # _axes_binding_entries`）；
+> （`writeback.py:6072 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:5983 # _block_targets`，
+> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:5489 # _axes_binding_entries`）；
 > "轴身份"注释里恒为中文。
 > 你实际拿到的数字与轴数会跟着你的布局变。
 
@@ -215,6 +215,17 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 与 `label_fontsize_y` 同款：`tick_fontsize` 管 x 刻度、`tick_fontsize_y` 管 y 刻度。源码里本来就有
 `tick_params(axis='y', labelsize=…)` 时**各改各的**（原位）；只有一个 `labelsize=`（一次管两边）时两个
 字段一起**退到调整块**（块里分两行写 `axis='x'` / `axis='y'`）。**没写 `tick_fontsize_y` 时 y 一个字节都不动**（零兼容）。字段已进 `mpltweak schema`。
+
+**0.1.17 起，调整块里的刻度字号是"按侧"算的**（此前块里会把两侧都写一遍，连原位刚改好的那一侧也重写）：
+判据要**证得出"这一侧源码里已经等于目标值"**才省掉那一行 —— `axis='x'` / `axis='y'` 各管一侧、没写 `axis`
+的口径是"一次管两侧"；`axis=` 写成变量、同一侧前后两个不同的字面量、或者带 `**kw` 一律**证不出** ⇒
+**宁可多写一行也不漏写**。三种常见形状（都能重跑，见 `tests/test_writeback.py` 的 §121）：
+
+- 源码 `tick_params(axis='x', labelsize=12)`，请求 x=12 / y=14 ⇒ 块里**只有 y 那一行**；
+- 源码 `tick_params(axis='y', labelsize=12)`，请求 x=12 / y=12 ⇒ 块里**只有 x 那一行**（旧判据在这里会
+  **一行都不写** ⇒ 漏写，0.1.17 修的就是这一条）；
+- 两侧都写了、或者一个 `labelsize=` 管两侧且值一致 ⇒ 块里**一行都没有**（只剩别的字段）。
+
 实测（`audit_018/promo/t32_probe.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）：`describe` 采到 `tick_fontsize=10.0 / tick_fontsize_y=11.0`；
 把 `tick_fontsize_y` 改成 14 → `inplace_changes=["ax0.tick_fontsize_y"]`，源码
 `ax.tick_params(axis="y", labelsize=11)` 原位变成 `labelsize=14`（x 那行不动）。

@@ -62,13 +62,9 @@ mpltweak ships a **manual (Skill) written for AI agents**: hand that manual to a
 
 > Please read https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md and follow it to install mpltweak; once it is installed, run the demo first so I can see the effect.
 
-### See it in two minutes (ask the Agent to run the demo)
+### See it in two minutes (the Agent runs the demo)
 
-Not willing to gamble on your own script yet? Just say:
-
-> run mpltweak demo and show me
-
-It will install the dependencies, generate a **sample script** (a four-panel composite figure, plain matplotlib) and open the tweak window — drag things around, change font sizes, whatever you like. When you close the window it tells you **which things you changed** in plain words and shows you, line by line, **what the code would become**.
+Once it is installed, ask it to run the **demo** first: it generates a **sample script** (a four-panel composite figure, plain matplotlib) and opens the tweak window — drag things around, change font sizes, whatever you like. When you close the window it tells you **which things you changed** in plain words and shows you, line by line, **what the code would become**.
 
 If you like it, have it write the changes back into that **sample script**, re-run it, and show you the **before / after** figures.
 
@@ -198,9 +194,7 @@ What it gives you instead (real output, verbatim, last line shown):
   -> fail-closed, nothing written this time: ax0.lines, ax0.pos, ax1.lines, ax1.pos, ax2.lines, ax2.pos
 ```
 
-Exit code `1`.
-
-**Not one byte of your code changed.** It is not a dead end: that message tells you **exactly which spot to change**. **If an Agent is driving, it reads that sentence and fixes the script itself, then comes back to tweak the figure — you neither copy nor relay anything.**
+**Not one byte of your code changed.** It is not a dead end: that message tells you exactly which spot to change. **The Agent reads it, fixes the script itself, and comes back to tweak the figure** — you neither copy nor relay anything.
 
 ## Is it reliable?
 
@@ -230,6 +224,7 @@ pip install "mpltweak[qt]"      # add this if you want the window (installs the 
 
 ```bash
 mpltweak --version      # version
+mpltweak --check-update # ask PyPI whether a newer release exists (opt-in network; every other command stays offline)
 ```
 
 **Exit codes** (for scripting): `0` success / `1` the check found problems **or nothing was written this time** (including fail-closed refusals) / `2` cannot run (script missing, the script itself failed, bad parameters) / `4` no usable GUI backend. All four entry points agree.
@@ -301,4 +296,4 @@ MIT
 
 ---
 
-**The long version:** keys and gestures [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · parameter field table [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · the three checks, backups and `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · stuck [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · measured numbers [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · boundaries [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · execution boundaries and exit codes [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · the manual for agents [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) and [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · development and tests [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)
+**The long version:** keys and gestures [docs/interaction.md](https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md) · parameter field table [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md) · frozen `--json` contract [docs/json-contract.md](https://github.com/shdbl/mpltweak/blob/main/docs/json-contract.md) · the three checks, backups and `revert` [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) · stuck [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) · measured numbers [docs/reliability.md](https://github.com/shdbl/mpltweak/blob/main/docs/reliability.md) · boundaries [docs/boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/boundaries.md) · execution boundaries and exit codes [docs/exec-boundaries.md](https://github.com/shdbl/mpltweak/blob/main/docs/exec-boundaries.md) · the manual for agents [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md) and [skills/mpltweak/SKILL.md](https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md) · development and tests [docs/dev.md](https://github.com/shdbl/mpltweak/blob/main/docs/dev.md)

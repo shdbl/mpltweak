@@ -28,6 +28,7 @@ def _usage(out):
         '  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n'
         '  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n'
         '  mpltweak --version                              打印版本号后退出（rc=0）\n'
+        '  mpltweak --check-update                         查 PyPI 最新版（显式联网；查不到不算失败）\n'
         '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
         '  mpltweak revert <script.py> [--write]           回退到上次写回之前\n'
         '  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n'
@@ -51,6 +52,9 @@ def _usage(out):
         '/ tool_bug / mtime_sync_failed）与 `next_step` 区分，agent 可据此自动分支。\n'
         '注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n'
         '      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n'
+        '注意：**默认任何命令都不联网**；唯一会联网的是 --check-update（你敲了才查）。\n'
+        '      它查不到（断网 / 超时 / 被墙）时仍 rc=0 —— 那不是命令失败；也不自动升级、\n'
+        '      不写任何文件。\n'
         '\n'
         '交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n'
         '      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n'
@@ -88,6 +92,34 @@ def _version_text():
     return 'mpltweak %s' % __version__
 
 
+def _leading_top_flags(argv):
+    """扫 ``mpltweak`` **开头那一段**顶层开关 → ``([(名字, 值或 None)], 停在第几个)``。
+
+    为什么需要它（0.1.17）：``--check-update`` 是**顶层**开关，但
+    ``mpltweak fig.py --check-update`` 里的那个属于**用户脚本**——脚本参数我们不许抢
+    （与 ``--version`` 只认第一个位置参数同一条纪律）。所以只看"第一个不是开关的
+    token"之前的那一段。
+
+    ``--lang`` **带值**，值必须一起吃掉：否则 ``mpltweak --check-update --lang en``
+    里的 ``en`` 会被当成脚本名（于是变成"查版本 + 一个叫 en 的脚本"）。
+    ``--`` 之后一律是位置参数（脚本参数分隔符），扫描就地停。
+    """
+    flags = []
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == '--' or not tok.startswith('-'):
+            break
+        if tok == '--lang':
+            value = argv[i + 1] if i + 1 < len(argv) else None
+            flags.append((tok, value))
+            i += 2 if value is not None else 1
+            continue
+        flags.append((tok, None))
+        i += 1
+    return flags, i
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
@@ -97,9 +129,18 @@ def main(argv=None):
     if cmd in ('-h', '--help', 'help'):
         _usage(sys.stdout)
         return 0
+    # 0.1.17：`mpltweak --check-update`（**显式**联网查 PyPI 最新版）。
+    # 放在 --version 之前，`--version --check-update` 两件事都能看到；只看开头那段
+    # 顶层开关，所以 `mpltweak fig.py --check-update` 里的那个仍透传给用户脚本。
+    _tflags, _stop = _leading_top_flags(argv)
+    if any(name == '--check-update' for name, _v in _tflags):
+        from .update import main as update_main
+        return update_main(_tflags, argv[_stop:])
     if cmd in ('-V', '--version'):
         # 只认**第一个**位置参数：`mpltweak fig.py --version` 是用户脚本自己的参数，
         # 由默认分支透传给 launch（脚本的参数我们不许抢）。
+        # 注意：`--version --check-update` 已经在上面的 --check-update 分支里被接住了
+        # （那个分支自己会先印版本号），所以这里的"只认第一个"不影响两者同用。
         sys.stdout.write(_version_text() + '\n')
         return 0
     if cmd == 'apply':

@@ -49,12 +49,14 @@ python tests/test_check.py        # layout health check
 python tests/test_mcp.py          # MCP server (skips itself if `mcp` isn't installed)
 ```
 
-**The authoritative list of suites is `SUITES` in `tests/test_suites.py`** (26 entries today; two
+**The authoritative list of suites is `SUITES` in `tests/test_suites.py`** (27 entries today; two
 more are deliberately excluded — see its `SUITES_EXCLUDED` and header docstring). That list is also
 what the 3.12 legs' `pytest -q` collects, and **every** `tests/test_*.py` must appear on at least one
 matrix leg's list — that is machine-checked, see *CI coverage* below.
-The two newest suites are `tests/test_shapes.py` (420 lines, **72 assertions**, ~50 s) and
-`tests/test_demo.py` (147 lines, offscreen `mpltweak demo` acceptance, §119 — it never opens a window).
+The two newest suites are `tests/test_check_update.py` (526 lines, 79 checks, **zero network**: it
+drives `mpltweak --check-update` through a `file://` fixture and keeps two control ratchets on the
+"only this one command touches the network" boundary) and `tests/test_demo.py`
+(147 lines, offscreen `mpltweak demo` acceptance, §119 — it never opens a window).
 `test_shapes.py`
 builds one figure per layout shape (subplots / `subplots(2, 2)` / unpacked tuples / mosaic / gridspec /
 loop / pure `plt.*`) and asserts, per shape and per field, that the write-back either lands
@@ -64,7 +66,7 @@ The bar for a PR is a green **`pytest -q`** (all registered suites + the hygiene
 
 ### The pytest route (optional locally, but this is what CI trusts)
 
-`tests/test_suites.py` wraps **every suite in `SUITES`** — 26 today, not just the seven above — one
+`tests/test_suites.py` wraps **every suite in `SUITES`** — 27 today, not just the seven above — one
 test case per suite, so CI reports, single-suite selection and IDE integration all work.
 `pyproject.toml` pins `python_files = ["test_suites.py", "test_hygiene.py"]`, so plain `pytest -q`
 collects exactly those two wrappers and the suites themselves run as subprocesses:
@@ -210,7 +212,7 @@ list is not a gap):
   evidence — it fails locally for an unrelated non-editable-install reason), `test_gui_smoke`
   (~100 MB of PyQt5; 3.12 only) and `test_suites` (the wrapper that runs the whole table).
 
-So of the 31 `tests/test_*.py` files, **29 are named by at least one leg**; the other two are
+So of the 32 `tests/test_*.py` files, **30 are named by at least one leg**; the other two are
 `SUITES_EXCLUDED` (`test_real_window`, `test_corpus_invariants`).
 
 Coverage is therefore *assigned*, not automatic — a new suite can be silently on no leg at all
@@ -257,7 +259,7 @@ after 0.1.9 is exercised on 3.12 only — **except** the eight suites the 3.9 sm
 Closing that means adding those suites to the loop or dropping the 3.12-only guard — a
 release-pipeline change that multiplies CI time, so it is recorded here rather than changed
 silently. `python tools/ci_suite_coverage.py -v` prints the histogram; today it reads
-"8 legs: 7 / 4 legs: 9 / 2 legs: 13" (the 3.9 legs carry 16 suites, the 3.12 legs carry all 29).
+"8 legs: 7 / 4 legs: 9 / 2 legs: 14" (the 3.9 legs carry 16 suites, the 3.12 legs carry all 30).
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose

@@ -48,6 +48,7 @@
 - §4.21 writeback 生成的文案（B4 + 原 t9）—— ``wb_*``（会进 stdout/stderr 或写进用户源码）
 - §4.22 params 校验文案（t55）—— ``pv_*``（校验逻辑一行没动，只搬文案）
 - §4.23 参数文件自身损坏（t56）—— ``apply_params_unreadable``（归 bad_params，**不是**工具 bug）
+- §4.26 显式联网查 PyPI（0.1.17）—— ``update_*``（只有 ``--check-update`` 会联网；查不到仍 rc=0）
 
 **口径**（这一段是原来就在的，别改）：
 
@@ -1774,6 +1775,69 @@ MESSAGES = {
               'the function only draw (pass fig/axes in as arguments).\n'
               'Then re-run `mpltweak apply <script> --write`.',
     },
+    # ==== §4.26 显式联网查 PyPI（--check-update / 0.1.17） ====
+    # 口径：只有这个开关会联网；查不到（断网 / 超时 / 被墙）**不算命令失败**（rc=0），
+    # 因为它是"顺带问一句"的辅助动作，不是闸门。用法错误才是 rc=2。
+    # 末尾那句「不影响你用」是刻意的：中文用户遇到网络报错第一反应是"我是不是弄坏了"。
+    # 原因码（timeout / network / http / payload）是**稳定英文**，不翻译 —— 它同时出现在
+    # --json 的 error 字段里，agent 要按它分支；翻译只放在括号里的 gloss 上。
+    'update_usage': {
+        'zh': '用法: mpltweak --check-update [--version] [--json] [--lang zh|en]\n'
+              '  显式联网查 PyPI 上的最新版本（**只有这个开关会联网**，其它命令一律不联网）。\n'
+              '  只查不升：不自动 pip install、不写任何文件。查不到（断网 / 超时 / 被墙）\n'
+              '  仍 rc=0（这不是命令失败）；多给参数这类用法错误才是 rc=2。',
+        'en': 'usage: mpltweak --check-update [--version] [--json] [--lang zh|en]\n'
+              '  explicitly query PyPI for the latest version (this is the ONLY flag that\n'
+              '  goes online; every other command stays offline).\n'
+              '  check only: it never runs pip install and never writes a file. A failed\n'
+              '  lookup (offline / timeout / blocked) is still rc=0 (that is not a command\n'
+              '  failure); a usage error (extra arguments) is rc=2.',
+    },
+    'update_is_latest': {
+        'zh': '[OK] 已是最新：当前 %(current)s，PyPI 上也是 %(latest)s',
+        'en': '[OK] up to date: current %(current)s, PyPI also has %(latest)s',
+    },
+    'update_newer': {
+        'zh': '[新版本] PyPI 上有 %(latest)s，你当前是 %(current)s。升级：%(cmd)s',
+        'en': '[new version] PyPI has %(latest)s, you have %(current)s. upgrade: %(cmd)s',
+    },
+    'update_older': {
+        'zh': '[OK] 本地 %(current)s 比 PyPI 的 %(latest)s 更新（开发版 / 预发布），'
+              '不用升级',
+        'en': '[OK] local %(current)s is newer than PyPI %(latest)s '
+              '(dev build / pre-release); nothing to upgrade',
+    },
+    'update_unknown': {
+        'zh': '[?] 版本号带后缀（本地 %(current)s / PyPI %(latest)s），这次比不出新旧'
+              ' —— 不猜',
+        'en': '[?] a version carries a suffix (local %(current)s / PyPI %(latest)s), '
+              'so they cannot be ordered - not guessing',
+    },
+    'update_failed': {
+        'zh': '[X] 查不到最新版本：%(reason)s —— %(gloss)s（%(detail)s）',
+        'en': '[X] cannot read the latest version: %(reason)s - %(gloss)s (%(detail)s)',
+    },
+    'update_failed_hint': {
+        'zh': '  不影响本地使用：本地命令都不联网，这次只是没查到。手动看：%(url)s',
+        'en': '  nothing local is affected: local commands stay offline, this lookup '
+              'just failed. Check manually: %(url)s',
+    },
+    'update_reason_timeout': {
+        'zh': '超时（默认 5 秒：被墙 / 网络很慢 / DNS 卡住）',
+        'en': 'timed out (5s default: blocked / slow network / stuck DNS)',
+    },
+    'update_reason_network': {
+        'zh': '连不上 PyPI（没网 / DNS 失败 / TLS 被拦）',
+        'en': 'cannot reach PyPI (offline / DNS failure / TLS blocked)',
+    },
+    'update_reason_http': {
+        'zh': 'PyPI 返回了错误码',
+        'en': 'PyPI returned an HTTP error',
+    },
+    'update_reason_payload': {
+        'zh': 'PyPI 的返回读不懂（格式变了？）',
+        'en': 'cannot parse the PyPI response (format change?)',
+    },
 }
 
 
@@ -2319,7 +2383,7 @@ UI_ZH_TO_EN = {
     '只做环境自检（后端/绑定/版本/光标），不跑脚本': 'environment self-check only (backend / bindings / version / cursor); does not run the script',
     '不开窗，只验证能抓图并存参数': 'no window: only verify that figures can be captured and params saved',
     '打印全部交互日志（缩放开始 axN <手柄> 等），排查用': 'print the full interaction log (resize start axN <handle>, ...) for debugging',
-    'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n\n用法：\n  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n  mpltweak --version                              打印版本号后退出（rc=0）\n  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n  mpltweak revert <script.py> [--write]           回退到上次写回之前\n  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n  mpltweak schema [--compact]                     参数 JSON Schema\n  mpltweak mcp                                    启动 MCP server\n  mpltweak doctor                                 环境自检\n\n退出码（0.1.11 起统一为 0 / 1 / 2 / 4）：0 = 没问题 / 成功；1 = 发现问题（check）；\n  2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数非法 / 工具自身异常）；\n  4 = 没有可用图形后端。\n  （0.1.9 的退出码 3 已退役：常量保留，但不再由任何路径产生。）\n同为退出码 2，**"脚本侧失败"与"工具自身 bug"分开报**（0.1.10 起，只改文案）：\n  · 脚本侧：文件不存在 / 参数文件不合法（bad_params）/ 你的脚本自己报错\n    （缺依赖 / 缺数据 / 需要命令行参数 / 无头环境要开窗口）；\n  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed）与 `next_step` 区分，agent 可据此自动分支。\n注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n\n交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n': 'mpltweak - tweak matplotlib layout like moving shapes in a slide editor (zero intrusion into your script)\n\nusage:\n  mpltweak <script.py> [--fig N] [--params X]     open the interactive window\n  mpltweak launch <script.py> [--fig N]           same (explicit subcommand)\n  mpltweak --version                              print the version and exit (rc=0)\n  mpltweak apply <script.py> [--write] [--json]   apply (preview by default)\n  mpltweak revert <script.py> [--write]           undo the last write-back\n  mpltweak demo [--write]                         try the bundled example (copy + window + comparison images)\n  mpltweak describe <script.py> [--lang zh|en]    export the layout without a window\n  mpltweak check <script.py> [--json]             layout check (runs your script)\n  mpltweak check <script.py> --static             AST + layout engine only\n  mpltweak schema [--compact]                     params JSON Schema\n  mpltweak mcp                                    start the MCP server\n  mpltweak doctor                                 environment self-check\n\nexit codes (unified to 0 / 1 / 2 / 4 as of 0.1.11): 0 = fine / success; 1 = problems found (check);\n  2 = cannot run (script not found / your script raised / bad params / internal error);\n  4 = no usable GUI backend.\n  (exit code 3 from 0.1.9 is retired: the constant stays, but no path returns it.)\nFor the same exit code 2, "your script failed" and "the tool itself has a bug" are reported separately (since 0.1.10; wording only):\n  - script side: missing file / invalid params file (bad_params) / your script raised\n    (missing dependency / missing data / needs command-line arguments / needs a window in a headless env);\n  - tool side: internal_error - this tool raised an unexpected exception; unrelated to your script.\nBoth print one "attribution" line plus a copy-pasteable next step; with `--json` the\n`attribution` field (script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed) and `next_step` let an agent branch automatically.\nNote: describe / check / apply DO execute your script (in a separate process, Agg headless);\n      side effects (writing files / network / cache) really happen; --static is the only\n      option that never executes it.\n\ninteraction: drag a panel to move / PPT-style resize (Shift keeps the ratio, Alt centers) /\n      Ctrl+click multi-select / align and distribute / snapping / Ctrl+F trim margins /\n      hover +/- to change font size / arrow keys move a panel /\n      space toggles line mode / Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo / ? shows the keys\n',
+    'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n\n用法：\n  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n  mpltweak --version                              打印版本号后退出（rc=0）\n  mpltweak --check-update                         查 PyPI 最新版（显式联网；查不到不算失败）\n  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n  mpltweak revert <script.py> [--write]           回退到上次写回之前\n  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n  mpltweak check <script.py> --static             只做 AST + 布局引擎扫描\n  mpltweak schema [--compact]                     参数 JSON Schema\n  mpltweak mcp                                    启动 MCP server\n  mpltweak doctor                                 环境自检\n\n退出码（0.1.11 起统一为 0 / 1 / 2 / 4）：0 = 没问题 / 成功；1 = 发现问题（check）；\n  2 = 跑不起来（脚本找不到 / 脚本自己报错 / 参数非法 / 工具自身异常）；\n  4 = 没有可用图形后端。\n  （0.1.9 的退出码 3 已退役：常量保留，但不再由任何路径产生。）\n同为退出码 2，**"脚本侧失败"与"工具自身 bug"分开报**（0.1.10 起，只改文案）：\n  · 脚本侧：文件不存在 / 参数文件不合法（bad_params）/ 你的脚本自己报错\n    （缺依赖 / 缺数据 / 需要命令行参数 / 无头环境要开窗口）；\n  · 工具侧：internal_error —— 本工具自己抛了未预期的异常，与你的脚本无关。\n两类都印一行「归因」+ 一句可照抄的**下一步**；`--json` 下用 `attribution` 字段\n（script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed）与 `next_step` 区分，agent 可据此自动分支。\n注意：describe / check / apply 会**执行你的脚本**（在独立子进程里，Agg 无头后端），\n      脚本的副作用（写文件 / 联网 / 缓存）都会真实发生；--static 是唯一不执行的选择。\n注意：**默认任何命令都不联网**；唯一会联网的是 --check-update（你敲了才查）。\n      它查不到（断网 / 超时 / 被墙）时仍 rc=0 —— 那不是命令失败；也不自动升级、\n      不写任何文件。\n\n交互：拖面板移动 / PPT式缩放（Shift 等比、Alt 中心）/ Ctrl+点击多选 /\n      对齐均分 / 吸附 / Ctrl+F 裁白边 / 悬停±字号 / 方向键移动面板 /\n      空格线条模式 / Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做 / ? 看键位\n': 'mpltweak - tweak matplotlib layout like moving shapes in a slide editor (zero intrusion into your script)\n\nusage:\n  mpltweak <script.py> [--fig N] [--params X]     open the interactive window\n  mpltweak launch <script.py> [--fig N]           same (explicit subcommand)\n  mpltweak --version                              print the version and exit (rc=0)\n  mpltweak --check-update                         check PyPI for the latest version (explicit network; a failed lookup is not a failure)\n  mpltweak apply <script.py> [--write] [--json]   apply (preview by default)\n  mpltweak revert <script.py> [--write]           undo the last write-back\n  mpltweak demo [--write]                         try the bundled example (copy + window + comparison images)\n  mpltweak describe <script.py> [--lang zh|en]    export the layout without a window\n  mpltweak check <script.py> [--json]             layout check (runs your script)\n  mpltweak check <script.py> --static             AST + layout engine only\n  mpltweak schema [--compact]                     params JSON Schema\n  mpltweak mcp                                    start the MCP server\n  mpltweak doctor                                 environment self-check\n\nexit codes (unified to 0 / 1 / 2 / 4 as of 0.1.11): 0 = fine / success; 1 = problems found (check);\n  2 = cannot run (script not found / your script raised / bad params / internal error);\n  4 = no usable GUI backend.\n  (exit code 3 from 0.1.9 is retired: the constant stays, but no path returns it.)\nFor the same exit code 2, "your script failed" and "the tool itself has a bug" are reported separately (since 0.1.10; wording only):\n  - script side: missing file / invalid params file (bad_params) / your script raised\n    (missing dependency / missing data / needs command-line arguments / needs a window in a headless env);\n  - tool side: internal_error - this tool raised an unexpected exception; unrelated to your script.\nBoth print one "attribution" line plus a copy-pasteable next step; with `--json` the\n`attribution` field (script_cannot_run / script_needs_args / script_needs_gui_or_headless_impossible\n/ tool_bug / mtime_sync_failed) and `next_step` let an agent branch automatically.\nNote: describe / check / apply DO execute your script (in a separate process, Agg headless);\n      side effects (writing files / network / cache) really happen; --static is the only\n      option that never executes it.\nNote: **no command goes online by default**; the only one that does is --check-update (it\n      checks only when you ask). A failed lookup (offline / timeout / blocked) is still rc=0 -\n      that is not a command failure; and it never upgrades and never writes a file.\n\ninteraction: drag a panel to move / PPT-style resize (Shift keeps the ratio, Alt centers) /\n      Ctrl+click multi-select / align and distribute / snapping / Ctrl+F trim margins /\n      hover +/- to change font size / arrow keys move a panel /\n      space toggles line mode / Ctrl+Z undo, Ctrl+Y or Ctrl+Shift+Z redo / ? shows the keys\n',
 
     '[mpltweak] 模式=重图（ghost+blit）全量重绘=%s 吸附=%s 导出=%s':
         '[mpltweak] mode=full redraw (ghost+blit) full-redraw=%s snap=%s '
@@ -2475,60 +2539,61 @@ UI_ZH_TO_EN.update({
 # （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**（1-based）。
 # 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
-# §1 文件头：两层输出与 GBK 硬约束（行 2-70，0 个顶层函数）
+# §1 文件头：两层输出与 GBK 硬约束（行 2-71，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 语言状态与退出码常量（行 71-105，0 个顶层函数）
+# §2 语言状态与退出码常量（行 72-106，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §3 语言探测：detect_lang / set_lang / current_lang（行 106-153，3 个顶层函数）
-#     detect_lang                                    108
-#     set_lang                                       139
-#     current_lang                                   147
-# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 154-1779，0 个顶层函数）
+# §3 语言探测：detect_lang / set_lang / current_lang（行 107-154，3 个顶层函数）
+#     detect_lang                                    109
+#     set_lang                                       140
+#     current_lang                                   148
+# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 155-1843，0 个顶层函数）
 #     （本分区没有顶层函数）
-#         §4.1 apply 写回结果                            162
-#         §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了          264
-#         §4.3 跨组约定键（T7/T11，键名无下划线）                  454
-#         §4.4 launch                                535
-#         §4.5 布局引擎冲突（constrained_layout / autolayout）   570
-#         §4.6 写进用户脚本里的文案（哨兵行除外）                     596
-#         §4.7 通用                                    602
-#         §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时）   615
-#         §4.9 check：几何规则（CH-12）                     630
-#         §4.10 check：文字渲染尺寸                         697
-#         §4.11 check：参数校验 / 人读输出 / --static（A4）     741
-#         §4.12 MCP（机器可读通道，一律稳定英文）                   819
-#         §4.13 窗口后端（回退到 Tk 必须告知）                    828
-#         §4.14 首次开窗（每个用户只打一次）                       835
-#         §4.15 launch 关窗后的下一步                       858
-#         §4.16 schema（CH-9）                         869
-#         §4.17 可重跑预检（0.1.10 pre-flight）             877
-#         §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论）   938
-#         §4.19 apply 人读输出（B4 / t33）                1007
-#         §4.20 落地提示与"验了哪几层"（T15 / T23）             1189
-#         §4.21 writeback 生成的文案（B4 + 原 t9）          1240
-#         §4.22 params 校验文案（t55）                    1514
-#         §4.23 参数文件自身损坏（t56）                       1679
-#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1691
-#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1757
-# §5 取词：t / code / t_en（行 1780-1819，3 个顶层函数）
-#     t                                             1782
-#     code                                          1798
-#     t_en                                          1803
-# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1820-1997，5 个顶层函数）
-#     _finite                                       1822
-#     emit_json                                     1841
-#     shell_path                                    1903
-#     fail_json                                     1912
-#     guard_json_main                               1941
-# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 1998-2194，1 个顶层函数）
-#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2023
-#     t_wb                                          2182
-# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2195-2376，0 个顶层函数）
+#         §4.1 apply 写回结果                            163
+#         §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了          265
+#         §4.3 跨组约定键（T7/T11，键名无下划线）                  455
+#         §4.4 launch                                536
+#         §4.5 布局引擎冲突（constrained_layout / autolayout）   571
+#         §4.6 写进用户脚本里的文案（哨兵行除外）                     597
+#         §4.7 通用                                    603
+#         §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时）   616
+#         §4.9 check：几何规则（CH-12）                     631
+#         §4.10 check：文字渲染尺寸                         698
+#         §4.11 check：参数校验 / 人读输出 / --static（A4）     742
+#         §4.12 MCP（机器可读通道，一律稳定英文）                   820
+#         §4.13 窗口后端（回退到 Tk 必须告知）                    829
+#         §4.14 首次开窗（每个用户只打一次）                       836
+#         §4.15 launch 关窗后的下一步                       859
+#         §4.16 schema（CH-9）                         870
+#         §4.17 可重跑预检（0.1.10 pre-flight）             878
+#         §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论）   939
+#         §4.19 apply 人读输出（B4 / t33）                1008
+#         §4.20 落地提示与"验了哪几层"（T15 / T23）             1190
+#         §4.21 writeback 生成的文案（B4 + 原 t9）          1241
+#         §4.22 params 校验文案（t55）                    1515
+#         §4.23 参数文件自身损坏（t56）                       1680
+#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1692
+#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1758
+#         §4.26 显式联网查 PyPI（--check-update / 0.1.17）  1778
+# §5 取词：t / code / t_en（行 1844-1883，3 个顶层函数）
+#     t                                             1846
+#     code                                          1862
+#     t_en                                          1867
+# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1884-2061，5 个顶层函数）
+#     _finite                                       1886
+#     emit_json                                     1905
+#     shell_path                                    1967
+#     fail_json                                     1976
+#     guard_json_main                               2005
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2062-2258，1 个顶层函数）
+#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2087
+#     t_wb                                          2246
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2259-2440，0 个顶层函数）
 #     （本分区没有顶层函数）
-#         §8.1 doctor 的列标签与括注                       2216
-#         §8.2 launch 的运行时人读输出                      2242
-#         §8.3 describe：写盘那一行                       2312
-#         §8.4 toolbox：启动横幅那 2 行                    2314
-# §9 查表函数 t_ui 与运行期追加的两块 update（行 2377-2471，1 个顶层函数）
-#     t_ui                                          2379
+#         §8.1 doctor 的列标签与括注                       2280
+#         §8.2 launch 的运行时人读输出                      2306
+#         §8.3 describe：写盘那一行                       2376
+#         §8.4 toolbox：启动横幅那 2 行                    2378
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2441-2535，1 个顶层函数）
+#     t_ui                                          2443
 # --- END AUTO NAV ---

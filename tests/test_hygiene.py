@@ -132,6 +132,12 @@ BASELINE = {
     'describe.py': 0,
     'mcp_server.py': 0,
     'cli.py': 0,
+    # update.py（0.1.17 新增）：登记 **0** 处宽兜底 —— 它是整棵树里唯一发网络请求
+    # 的模块，而"连不上的每一种姿势"都已经被**具名**异常接住（HTTPError / URLError /
+    # socket.timeout / OSError / ValueError 各一路，见 `update.query`），解析失败走
+    # 自定义 `PayloadError`。所以这里不该出现 `except Exception`；真需要它的时候，
+    # 先想清楚"为什么这几种具名异常还不够"。
+    'update.py': 0,
     '__init__.py': 0,
     '__main__.py': 0,
 }
