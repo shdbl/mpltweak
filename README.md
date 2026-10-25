@@ -60,7 +60,7 @@ mpltweak 自带一份**给 AI 助手（Agent）看的手册（Skill）**：把�
 
 **把下面这句话直接复制给你正在用的 Agent**（Claude Code / Codex / Cursor / DeepSeek Harness 等，只要它能读写你电脑上的文件）：
 
-> 请读一下 https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md ，然后按里面的说明把 mpltweak 装好；装好之后先跑一下示例给我看效果。
+> 请帮我装一下 https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md 这个 skill，然后按里面的说明把 mpltweak 装好；装好之后先跑一下示例给我看效果。
 
 ### 先花两分钟看看效果（让 Agent 跑示例）
 
@@ -116,7 +116,7 @@ flowchart LR
 |---|---|---|
 | **源码里明写着这个数字**<br>（`fig.add_axes([0.08, 0.66, 0.30, 0.21])`） | **原位改那一个数**，不插任何东西 | 代码里那一行变了，别处一个字不动 |
 | **源码里没有能改的数字**<br>（`plt.subplots()` / `GridSpec` 画的图） | **在文件末尾追加一小段自包含代码**，不加 `import`、不动你原有逻辑 | 代码末尾多出一个带 `auto layout` 标记的块 |
-| **它证明不了该改哪一个**<br>（`fig.axes[i]` / `plt.gca()` / 循环里建轴 —— 运行时才知道指向谁） | **不写**。它不会猜一个"大概是这张"的对象 | **代码一个字节都不变**；并给出一条**能让 Agent 照着动手**的定位说明（改哪个符号、改成什么） |
+| **它证明不了该改哪一个**<br>（**号牌不稳时它不猜**：循环里建轴、建轴点与参数条数对不上、载体名不是恰好一次模块层调用；**函数里建图本身已经能写**） | **不写**。它不会猜一个"大概是这张"的对象 | **代码一个字节都不变**；并给出一条**能让 Agent 照着动手**的定位说明（改哪个符号、改成什么）。完整判据表（作用域 × 建轴方式 → 能不能写）见 [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) |
 
 ### 1. 能原位改的：直接改那一行
 

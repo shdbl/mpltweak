@@ -190,10 +190,11 @@ hand-written, only the line numbers come from the tool.
 A **leg** is one cell of the workflow matrix (`ubuntu-latest` / `windows-latest` × Python
 3.9 / 3.10 / 3.11 / 3.12 = 8 legs), and the legs do **not** all run the same list of suites.
 The split is deliberate — **3.9 is the key leg** (minimum supported interpreter, so it is the one
-that must carry evidence for the write-back/CLI surfaces), and **3.10 / 3.11 are interpreter
-sentinels** (a small list is enough there: they only have to prove the package imports, the CLI
-starts and the core flows run on that interpreter — they are not a regression net, and their short
-list is not a gap):
+that must carry evidence for the write-back/CLI surfaces), **3.12 is the ceiling** (everything in
+`SUITES`, plus the newest matplotlib and the only PyQt5 install), and **3.10 / 3.11 are
+interpreter sentinels** whose short list is a decision, not an oversight — the one exception being
+`test_shapes` on 3.10, because that leg is the only one that gets matplotlib 3.10.x
+(measured: see *Why the mid-legs stay short* below):
 
 - the plain-script loop runs the **seven legacy suites** on all 8 legs;
 - the 3.12 legs additionally run `pytest -q`, i.e. **every suite in `SUITES`** plus the hygiene
@@ -207,13 +208,77 @@ list is not a gap):
   CLI/write-back suites, so "the minimum supported interpreter can actually write back" has
   evidence. All eight are subprocess-only, window-free and need no new dependency; measured on
   Python 3.9.25 + matplotlib 3.9.4: 3.0 / 4.3 / 10.3 / 12.0 / 29.0 s (whole `-k` run: 10 passed,
-  65 s), i.e. **+~59 s on each 3.9 leg only**. Deliberately still *not* on 3.9: `test_figure_matrix`
-  (N=100 would cost 260–350 s on CI), `test_journey_wheel` (the one suite with no green 3.9
-  evidence — it fails locally for an unrelated non-editable-install reason), `test_gui_smoke`
-  (~100 MB of PyQt5; 3.12 only) and `test_suites` (the wrapper that runs the whole table).
+  65 s), i.e. **+~59 s on each 3.9 leg only** (0.1.17 added `demo` on top). Deliberately still
+  *not* on 3.9: `test_figure_matrix` (N=100 would cost 260–350 s on CI), `test_journey_wheel`
+  (it cannot go green in a nested-venv setup — see the matrix note below), `test_gui_smoke`
+  (~100 MB of PyQt5; 3.12 only) and `test_suites` (the wrapper that runs the whole table);
+- the 3.10 legs additionally run `pytest -q -k "shapes"` (+55.2 s, measured — see below). The
+  3.11 legs run nothing extra: their matplotlib is the same one 3.12 gets, so they have no axis
+  of their own to cover.
 
 So of the 32 `tests/test_*.py` files, **30 are named by at least one leg**; the other two are
 `SUITES_EXCLUDED` (`test_real_window`, `test_corpus_invariants`).
+
+#### Why the mid-legs stay short (measured, 0.1.18)
+
+For this package the axis that moves is not only the interpreter — it is **the matplotlib that
+`pip install matplotlib` happens to resolve to on each leg**. Measured on this machine, leg by leg:
+
+| leg | interpreter | matplotlib |
+|---|---|---|
+| 3.9 | 3.9.25 | 3.9.4 |
+| 3.10 | 3.10.20 | 3.10.9 |
+| 3.11 | 3.11.15 | 3.11.2 |
+| 3.12 | 3.12.13 | 3.11.2 |
+
+So the eight legs carry **three** matplotlib lines, and **3.11 shares its matplotlib with 3.12** —
+which is exactly why it has nothing of its own to prove. Interpreter-wise the risk is monotone:
+3.9 is the floor (code that only parses on 3.10+ shows up there the moment it is imported) and 3.12
+is the ceiling, so a mid-leg earns extra suites only through the matplotlib it happens to get.
+
+Cost of copying the 3.9 smoke step verbatim onto both mid-legs — measured one suite at a time on
+uv-built 3.10.20 / 3.11.15 venvs, CI-shaped (`matplotlib` + `numpy` + `pytest`, `pip install -e .
+--no-deps`), on a frozen tree so that concurrent edits in `src/` could not skew the numbers:
+
+| suite | 3.10 | 3.11 |
+|---|---:|---:|
+| `test_docs` | 13.9 | 16.5 |
+| `test_notation_discipline` | 4.3 | 4.5 |
+| `test_tmpdir_discipline` | 1.5 | 1.8 |
+| `test_msg_key_audit` | 3.9 | 4.4 |
+| `test_cli_fuzz` | 6.9 | 7.7 |
+| `test_verify_onepass` | 12.6 | 18.1 |
+| `test_sandbox` | 15.4 | 19.8 |
+| `test_apply_layout_conflict` | 39.1 | 50.8 |
+| `test_demo` | 13.8 | 15.2 |
+| **whole `-k` run** | **111.9 s** | **122.1 s** |
+
+That is **+111.9 s on each 3.10 leg and +122.1 s on each 3.11 leg** (four legs) for a set that
+duplicates the 3.9 legs eight times out of nine. Not done. Instead **3.10 gets exactly one suite**,
+chosen by the criterion *"it can turn red when only the matplotlib line changes, and no other leg
+covers that line"*:
+
+- `test_shapes` — 10 common axis-construction styles, each through `describe` → `apply --write` →
+  re-run in a subprocess. This is the suite that hid 0.1.16's tuple-unpacking bug, and the main
+  judge for axis addressing (L3). Measured `pytest -q -k "shapes"` on 3.10.20 + matplotlib 3.10.9:
+  **2 passed, 103 deselected, 55.18 s** (wall clock 55.8 s) ⇒ ~1.9 billed minutes per CI run for
+  the two 3.10 legs, no wall-clock growth (legs run in parallel).
+
+Candidates measured on 3.10 and **rejected** for a mid-leg (none of them is
+matplotlib-version-sensitive; the first two are covered on 3.12 anyway):
+`test_launch` 32.2 s, `test_ast_fuzz` 27.5 s, `test_property_writeback` 12.3 s,
+`test_silent2` 8.1 s, `test_check_update` 4.3 s.
+
+**The rule for adding anything else to a mid-leg: it must be able to fail there and cannot fail on
+3.9 / 3.12.** If a future leg gets a matplotlib line of its own (e.g. 3.11 diverging from 3.12),
+give it the same treatment as 3.10 rather than copying the whole smoke set.
+
+Honest residual gap: a suite that only ever runs on 3.12 could in principle use a 3.10+ API and
+break the advertised 3.9 floor without any leg noticing. The cheap close is a static gate —
+`ast.parse(src, feature_version=(3, 9))` over `src/**`, `tools/**` and `tests/**` (measured today:
+72 files, 0 failures, well under a second, and it would ride on the 3.12 legs' `pytest -q` at zero
+CI cost). It is recorded in `_team014/debts18.md` as the next step instead of being smuggled in
+with a release.
 
 Coverage is therefore *assigned*, not automatic — a new suite can be silently on no leg at all
 (that is exactly how `test_launch` used to sit at "3.12 only" without anyone noticing). So
@@ -255,11 +320,13 @@ Two rules come with it:
 
 **Still a known gap (kept as a TODO, not hidden): the check is "at least one leg", not "every leg".**
 The plain-script loop still runs only the seven legacy suites on every leg, so everything added
-after 0.1.9 is exercised on 3.12 only — **except** the eight suites the 3.9 smoke picks up.
-Closing that means adding those suites to the loop or dropping the 3.12-only guard — a
-release-pipeline change that multiplies CI time, so it is recorded here rather than changed
-silently. `python tools/ci_suite_coverage.py -v` prints the histogram; today it reads
-"8 legs: 7 / 4 legs: 9 / 2 legs: 14" (the 3.9 legs carry 16 suites, the 3.12 legs carry all 30).
+after 0.1.9 is exercised on 3.12 only — **except** the nine suites the 3.9 smoke picks up and the
+one suite the 3.10 legs now carry (`test_shapes`, for the matplotlib-3.10 axis — see *Why the
+mid-legs stay short* above). Closing that completely means adding those suites to the loop or
+dropping the 3.12-only guard — a release-pipeline change that multiplies CI time, so it is recorded
+here rather than changed silently. `python tools/ci_suite_coverage.py -v` prints the histogram;
+today (0.1.18) it reads "8 legs: 7 / 4 legs: 10 / 2 legs: 13" — the 3.9 legs carry 16 suites, the
+3.10 legs carry 8, the 3.11 legs 7, and the 3.12 legs all 30.
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose

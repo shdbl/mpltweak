@@ -64,6 +64,14 @@ from . import messages as _msg
 POS_TOL = 2e-3        # 位置容差（figure 比例，参数存 4 位小数）
 FS_TOL = 0.51         # 字号容差（磅）
 CLIM_REL_TOL = 0.01   # clim 容差（相对量程）
+LW_TOL = 1e-3         # 线宽容差（磅）：0.5 与 2.5 必须分清，1e-3 级噪声判等
+
+# T10（0.1.18）：图元级字段（lines / legend）的比对**开关**。默认开；
+# False＝回到 0.1.17"写了但没验"的口径 —— **只给反向验证用**（tests §T10 的牙齿
+# 就是靠它红），不是产品开关。xscale/yscale 不设开关：把对数轴改成线性属于
+# "整张图含义变了"，没有"先关掉"的正当场景。
+COMPARE_ARTIST = True
+
 TEXT_BOX_LIMIT = 600  # 文字盒条数上限（超多刻度的图别把状态 JSON 撑爆）
 
 # ---------------------------------------------------------------------------
@@ -1189,6 +1197,58 @@ def _r(v):
 
 # ==== §4 语义层：参数与实测逐项比对 ====
 
+# ==== T10（0.1.18）：图元字段的**键名双拼法** + 逐条比对 ====
+#
+# 现场（外部评审静态分析 + 本机实测确认）：`compare()` 只比 pos/clim/cmap/spines/
+# xlim/ylim/cell。**lines 与 legend 一个字段都不比**，xscale/yscale 也不比 ——
+# 而采集侧（`_artist_state` / `_state`）与写回侧（块里的 `lines[0].set_linewidth` /
+# `legend(loc=)` / `set_xscale`）都支持它们。于是"写进去了但没验"：线宽线色、图例位置、
+# 对数轴被改成线性，全都报"目标达成"。
+#
+# 另一个必须记住的坑（F2）：**实测侧的键名带下划线**（`_cmap` / `_lines` / `_legend`），
+# 只有 describe 出口才映射成 `cmap` / `lines` / `legend`。所以比对侧必须**两种拼法都认**；
+# 0.1.18 第一版只读 `'cmap'` ⇒ `a.get('cmap')` 恒 None ⇒ 那段是**死代码**
+# （手搭字典的用例能过、真采集永远不触发）。这里统一走 `_act()`，与
+# `writeback._pv_live_field`（writeback.py:4201）同一套拼法。
+_ACTUAL_ALIAS = {
+    'cmap': ('cmap', '_cmap'),
+    'lines': ('lines', '_lines'),
+    'legend': ('legend', '_legend'),
+}
+
+
+def _act(axis_state, key):
+    """从**实测状态**里取字段：两种拼法都认（`cmap` / `_cmap`），都没有给 None。"""
+    for k in _ACTUAL_ALIAS.get(key, (key,)):
+        if k in (axis_state or {}):
+            return axis_state[k]
+    return None
+
+
+def _same_line_color(c1, c2):
+    """线色比较：都是 `#rrggbb` 就直接比字符串；能归一就先归一（大小写/`red` vs `#ff0000`）。"""
+    if c1 is None or c2 is None:
+        return True                      # 取不到的不判（调用方负责记 unjudged）
+    if str(c1) == str(c2):
+        return True
+    try:
+        import matplotlib.colors as mcolors
+        return (mcolors.to_hex(str(c1), keep_alpha=False)
+                == mcolors.to_hex(str(c2), keep_alpha=False))
+    except (ValueError, TypeError):
+        return str(c1) == str(c2)
+
+
+def _legend_expected_loc(exp):
+    """参数里的图例位置能不能**确定地**比对（'best' 交给 matplotlib 现算 ⇒ 判不了）。"""
+    loc = (exp or {}).get('loc')
+    if loc is None:
+        return None
+    if isinstance(loc, str) and loc.strip().lower() == 'best':
+        return None
+    return loc
+
+
 def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             pos_tol: float = POS_TOL,
             fields_by_axis: Optional[Dict[int, set]] = None,
@@ -1264,16 +1324,148 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                 and bool(e['grid']) != bool(a.get('grid')):
             bad.append('ax%d grid %s≠%s' % (i, e['grid'], a.get('grid')))
         if fields is None or 'spines' in fields:
+            _asp = a.get('spines') or {}
             for k, v in (e.get('spines') or {}).items():
-                if k in (a.get('spines') or {}) and bool(v) != bool(a['spines'][k]):
-                    bad.append('ax%d spines[%s] %s≠%s' % (i, k, v, a['spines'][k]))
+                if k not in _asp:
+                    # F1：实测没采到这条 spine（老版本状态/取不到）⇒ 显式"没判"
+                    if unjudged is not None:
+                        unjudged.append('ax%d.spines[%s]' % (i, k))
+                    continue
+                if bool(v) != bool(_asp[k]):
+                    bad.append('ax%d spines[%s] %s≠%s' % (i, k, v, _asp[k]))
+        # T8（0.1.18）：**cmap 也要逐轴比**。0.1.17 的现场（t7 顺带发现）：
+        # 块把两根轴的 mappable 弄串（`im0.set_cmap('viridis')` 紧跟
+        # `im0.set_cmap('magma')`，后者的对象本该是另一根轴的 im1）⇒ im0 的 cmap
+        # 被改错，而比对层**根本不看 cmap** ⇒ rc=0 静默。这里补上，与 clim 同一档。
+        if fields is None or 'cmap' in fields:
+            # F2（T10）：实测侧的键是 `_cmap`（describe 才映射成 cmap）——两种拼法都认，
+            # 否则这段永远是死代码（手搭字典的用例能过、真采集一次都不触发）。
+            ec_nm, ac_nm = e.get('cmap', e.get('_cmap')), _act(a, 'cmap')
+            if ec_nm and ac_nm and str(ec_nm) != str(ac_nm):
+                bad.append('ax%d cmap %s≠%s（mappable 身份可能错位）'
+                           % (i, ec_nm, ac_nm))
+            elif ec_nm and not ac_nm and unjudged is not None:
+                # F1：参数要 cmap、实测这根轴上没有 mappable ⇒ 显式记"没判"，不静默放行
+                unjudged.append('ax%d.cmap' % i)
         if fields is None or 'clim' in fields:
             ec, ac = e.get('clim'), a.get('clim')
+            if ec and not ac and unjudged is not None:
+                # F1/F7：参数要 clim、实测这根轴上没有（采集侧 `_clim_of` 只对
+                # colorbar 轴给值，见 T10 报告"F7 的处置"）⇒ 显式"没判"，不静默放行。
+                unjudged.append('ax%d.clim' % i)
             if ec and ac:
                 span = abs(float(ec[1]) - float(ec[0])) or 1.0
                 if (abs(float(ec[0]) - float(ac[0])) > CLIM_REL_TOL * span
                         or abs(float(ec[1]) - float(ac[1])) > CLIM_REL_TOL * span):
                     bad.append('ax%d clim %s≠%s' % (i, _r(ec), _r(ac)))
+        # ---- T10：lines 逐条比对（linewidth / color / linestyle / alpha）----
+        # 采集侧 `_lines_state` 给的是 `[{index, linewidth, color}]`（color 归一成
+        # '#rrggbb'）；参数侧 describe 写的是同名键。**逐条按 index 对**，缺一条就记
+        # unjudged（采不到≠不一致，见 F1 口径）。
+        if COMPARE_ARTIST and (fields is None or 'lines' in fields):
+            elines = e.get('lines', e.get('_lines'))
+            if isinstance(elines, list) and elines:
+                alines = _act(a, 'lines')
+                amap = {}
+                if isinstance(alines, list):
+                    for it in alines:
+                        if isinstance(it, dict) and isinstance(it.get('index'), int):
+                            amap[it['index']] = it
+                for it in elines:
+                    if not isinstance(it, dict):
+                        continue
+                    li = it.get('index', 0)
+                    av = amap.get(li)
+                    if av is None:
+                        if unjudged is not None:
+                            unjudged.append('ax%d.lines[%s]' % (i, li))
+                        continue
+                    _ew, _aw = it.get('linewidth'), av.get('linewidth')
+                    if _ew is not None and _aw is not None:
+                        try:
+                            if abs(float(_ew) - float(_aw)) > LW_TOL:
+                                bad.append('ax%d lines[%s] linewidth %s≠%s'
+                                           % (i, li, _ew, _aw))
+                        except (TypeError, ValueError):
+                            pass
+                    _ec, _ac = it.get('color'), av.get('color')
+                    if _ec is not None and _ac is not None \
+                            and not _same_line_color(_ec, _ac):
+                        bad.append('ax%d lines[%s] color %s≠%s'
+                                   % (i, li, _ec, _ac))
+                    for _k in ('linestyle', 'alpha'):
+                        _ev, _av2 = it.get(_k), av.get(_k)
+                        if _ev is None:
+                            continue
+                        if _av2 is None:
+                            if unjudged is not None:
+                                unjudged.append('ax%d.lines[%s].%s' % (i, li, _k))
+                            continue
+                        if _k == 'alpha':
+                            try:
+                                if abs(float(_ev) - float(_av2)) > 1e-6:
+                                    bad.append('ax%d lines[%s] alpha %s≠%s'
+                                               % (i, li, _ev, _av2))
+                            except (TypeError, ValueError):
+                                pass
+                        elif str(_ev) != str(_av2):
+                            bad.append('ax%d lines[%s] %s %s≠%s'
+                                       % (i, li, _k, _ev, _av2))
+        # ---- T10：legend 比对（loc / fontsize）----
+        # `anchor` **不采**（`_legend_state` 的 docstring 写清了：GUI 的 anchor 是"用户
+        # 拖到哪"的会话状态，verify 无从得知）⇒ 参数里带 anchor 时只能进 unjudged，
+        # **绝不进 bad**（采不到≠不一致）。
+        if COMPARE_ARTIST and (fields is None or 'legend' in fields):
+            eleg = e.get('legend', e.get('_legend'))
+            if isinstance(eleg, dict) and eleg:
+                aleg = _act(a, 'legend')
+                if not isinstance(aleg, dict) or not aleg:
+                    if unjudged is not None:
+                        unjudged.append('ax%d.legend' % i)
+                else:
+                    _efs, _afs = eleg.get('fontsize'), aleg.get('fontsize')
+                    if _efs is not None:
+                        if _afs is None:
+                            if unjudged is not None:
+                                unjudged.append('ax%d.legend.fontsize' % i)
+                        else:
+                            try:
+                                if abs(float(_efs) - float(_afs)) > FS_TOL:
+                                    bad.append('ax%d legend fontsize %s≠%s'
+                                               % (i, _efs, _afs))
+                            except (TypeError, ValueError):
+                                pass
+                    _eloc = _legend_expected_loc(eleg)
+                    if eleg.get('loc') is not None and _eloc is None:
+                        # `loc='best'`（或类型怪）⇒ matplotlib 到 draw 时才定位置，
+                        # 静态/实测都没法同一口径比 —— 记"没判"，别假装通过。
+                        if unjudged is not None:
+                            unjudged.append('ax%d.legend.loc' % i)
+                    if _eloc is not None:
+                        _aloc = aleg.get('loc')
+                        if _aloc is None:
+                            if unjudged is not None:
+                                unjudged.append('ax%d.legend.loc' % i)
+                        elif str(_eloc) != str(_aloc):
+                            bad.append('ax%d legend loc %r≠%r'
+                                       % (i, _eloc, _aloc))
+                    if eleg.get('anchor') is not None and unjudged is not None:
+                        # 实测侧不采 anchor（口径见 `_legend_state`）⇒ 如实记"没判"
+                        unjudged.append('ax%d.legend.anchor' % i)
+        # ---- T10：xscale / yscale（log↔linear 被静默放行的那一类）----
+        for key in ('xscale', 'yscale'):
+            if fields is not None and key not in fields:
+                continue
+            ev_s, av_s = e.get(key), _act(a, key)
+            if ev_s is None:
+                continue
+            if av_s is None:
+                if unjudged is not None:
+                    unjudged.append('ax%d.%s' % (i, key))
+                continue
+            if str(ev_s) != str(av_s):
+                bad.append('ax%d %s %s≠%s（轴尺度变了：对数↔线性会改变整张图的含义）'
+                           % (i, key, ev_s, av_s))
         # 轴范围：容差按**量程的相对量**给（范围可能很大，如时间轴 1e9），
         # 与 clim 同一口径；只在参数里有值时比对（autoscale 的轴压根不记）。
         # 网格身份：调整块按下标（fig.axes[i]）寻址，脚本一变（加个 colorbar、
@@ -1297,13 +1489,49 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             if fields is not None and key not in fields:
                 continue
             ex, ac2 = e.get(key), a.get(key)
-            if not (isinstance(ex, (list, tuple)) and len(ex) == 2
-                    and isinstance(ac2, (list, tuple)) and len(ac2) == 2):
+            if not (isinstance(ex, (list, tuple)) and len(ex) == 2):
+                continue
+            if not (isinstance(ac2, (list, tuple)) and len(ac2) == 2):
+                # F1：参数要这个范围、实测没采到（例如 autoscale 还开着 / 取值失败）
+                # ⇒ 显式记"没判"。**不许静默 continue**：那正是"没比却说通过"。
+                if unjudged is not None:
+                    unjudged.append('ax%d.%s' % (i, key))
                 continue
             _span = abs(float(ex[1]) - float(ex[0])) or 1.0
             if (abs(float(ex[0]) - float(ac2[0])) > CLIM_REL_TOL * _span
                     or abs(float(ex[1]) - float(ac2[1])) > CLIM_REL_TOL * _span):
                 bad.append('ax%d %s %s≠%s' % (i, key, _r(ex), _r(ac2)))
+    # T8（0.1.18）：**轴身份错位**的指名道姓 —— 上面那些 "ax3 位置 X≠Y" 只说值不对，
+    # 说不出"值跑到隔壁那根去了"。而错位正是最严重的一类（评审现场：ax3 拿到 ax2 的
+    # 矩形与经纬度范围，rc=0 静默）。判据：实测第 k 根的值**恰好等于参数里第 j 根**
+    # （j≠k）的期望值 ⇒ 这是错位，不是"值没落地"，照实点名。
+    # 只查**可比的数值族**（pos / xlim / ylim / clim），且只在两边都取得到时判。
+    _exps = [(x.get('index'), x) for x in (expected or [])
+             if isinstance(x.get('index'), int)]
+    for _k, _e in _exps:
+        if not isinstance(_k, int) or _k >= len(actual or []):
+            continue
+        _a = actual[_k] or {}
+        for _f in ('pos', 'xlim', 'ylim', 'clim'):
+            _ev = _e.get(_f)
+            _av = _a.get(_f)
+            if not (isinstance(_ev, (list, tuple)) and len(_ev) == len(_av or ())
+                    and isinstance(_av, (list, tuple))):
+                continue
+            if all(abs(float(x) - float(y)) <= POS_TOL
+                   for x, y in zip(_ev, _av)):
+                continue                      # 自己就是对的
+            for _j, _ej in _exps:
+                if _j == _k:
+                    continue
+                _w = _ej.get(_f)
+                if not (isinstance(_w, (list, tuple)) and len(_w) == len(_av)):
+                    continue
+                if all(abs(float(x) - float(y)) <= POS_TOL
+                       for x, y in zip(_w, _av)):
+                    bad.append('ax%d 的 %s 落在 ax%d 身上（轴身份错位：'
+                               '写回把值写给了另一根轴）' % (_k, _f, _j))
+                    break
     return bad
 
 
@@ -1464,7 +1692,12 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
             # 标注来源，别让人误读成"脚本跑完后的状态不对"
             bad += ['磁盘上那张图（最后一次 savefig）%s' % x for x in _sbad]
         if bad:
-            return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
+            _bj = '; '.join(bad[:4])
+            if len(bad) > 4:
+                # 截断必须**如实**：只打前 4 条是为了消息别太长，但"还有几处"要说出来
+                # （否则人以为只有 4 处不一致）。
+                _bj += ' …（另有 %d 处不一致未展开）' % (len(bad) - 4)
+            return False, (_bj + (' | ' + _uj if _uj else ''))
         return True, _uj
     python = python or sys.executable
     # t36（REV1-2）：**默认路径自己建的文件自己清；调用方显式给的由调用方清**。
@@ -1514,7 +1747,12 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
     bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
                               figsize_edited=figsize_edited)
     if bad:
-        return False, ('; '.join(bad[:4]) + (' | ' + _uj if _uj else ''))
+        _bj = '; '.join(bad[:4])
+        if len(bad) > 4:
+            # 截断必须**如实**：只打前 4 条是为了消息别太长，但"还有几处"要说出来
+            # （否则人以为只有 4 处不一致）。
+            _bj += ' …（另有 %d 处不一致未展开）' % (len(bad) - 4)
+        return False, (_bj + (' | ' + _uj if _uj else ''))
     return True, _uj
 
 
@@ -1652,43 +1890,46 @@ if __name__ == '__main__':
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头：三层验证与判定口径（行 2-61，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 口径：容差表、失败归因四类与错误识别（行 62-266，2 个顶层函数）
-#     _script_static_evidence                        130
-#     classify_verify_failure                        219
-# §3 采集层：把图跑出来并抓状态（行 267-1189，26 个顶层函数）
-#     _ax_identity                                   269
-#     _collect_texts                                 304
-#     _line_width                                    407
-#     _line_color                                    421
-#     _lines_state                                   461
-#     _legend_state                                  477
-#     _artist_state                                  535
-#     _state                                         567
-#     _fd_to_stderr                                  671
-#     _fd_restore                                    687
-#     _snapshot_process_state                        715
-#     _restore_process_state                         722
-#     _FigureRegistry                                770
-#     _Session                                       805
-#     _capture_figures                               816
-#     _collect_session                               858
-#     _exec_script                                   905
-#     _states_of_all_figs                            952
-#     _state_of_one_fig                              971
-#     collect_all                                   1025
-#     collect                                       1053
-#     _isolated_timeout                             1090
-#     _child_env                                    1102
-#     collect_isolated                              1113
-#     _unlink                                       1171
-#     _r                                            1178
-# §4 语义层：参数与实测逐项比对（行 1190-1338，2 个顶层函数）
-#     compare                                       1192
-#     _compare_state                                1310
-# §5 重跑层：一遍跑到底与分层验证（行 1339-1520，2 个顶层函数）
-#     verify_once                                   1341
-#     verify_semantic                               1430
-# §6 子进程驱动：把图状态 dump 成 JSON（行 1521-1646，2 个顶层函数）
-#     _int_or_none                                  1528
-#     main                                          1535
+# §2 口径：容差表、失败归因四类与错误识别（行 62-274，2 个顶层函数）
+#     _script_static_evidence                        138
+#     classify_verify_failure                        227
+# §3 采集层：把图跑出来并抓状态（行 275-1197，26 个顶层函数）
+#     _ax_identity                                   277
+#     _collect_texts                                 312
+#     _line_width                                    415
+#     _line_color                                    429
+#     _lines_state                                   469
+#     _legend_state                                  485
+#     _artist_state                                  543
+#     _state                                         575
+#     _fd_to_stderr                                  679
+#     _fd_restore                                    695
+#     _snapshot_process_state                        723
+#     _restore_process_state                         730
+#     _FigureRegistry                                778
+#     _Session                                       813
+#     _capture_figures                               824
+#     _collect_session                               866
+#     _exec_script                                   913
+#     _states_of_all_figs                            960
+#     _state_of_one_fig                              979
+#     collect_all                                   1033
+#     collect                                       1061
+#     _isolated_timeout                             1098
+#     _child_env                                    1110
+#     collect_isolated                              1121
+#     _unlink                                       1179
+#     _r                                            1186
+# §4 语义层：参数与实测逐项比对（行 1198-1566，5 个顶层函数）
+#     _act                                          1220
+#     _same_line_color                              1228
+#     _legend_expected_loc                          1242
+#     compare                                       1252
+#     _compare_state                                1538
+# §5 重跑层：一遍跑到底与分层验证（行 1567-1758，2 个顶层函数）
+#     verify_once                                   1569
+#     verify_semantic                               1658
+# §6 子进程驱动：把图状态 dump 成 JSON（行 1759-1884，2 个顶层函数）
+#     _int_or_none                                  1766
+#     main                                          1773
 # --- END AUTO NAV ---

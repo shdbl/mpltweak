@@ -156,6 +156,28 @@ SUITES = [
     #     反向验证（把"复用不覆盖"改成覆盖 ⇒ §119② 必红）见仓外 _team014/demo_impl/。
     #     纯子进程 + 一次真写回验证重跑，约 25 秒。见 tests/test_demo.py 文件头 ---
     ('test_demo', {}),
+    # --- 0.1.18 挂入：往返恒等（describe → apply → describe 必须相等）+ 幂等。
+    #     9 个夹具覆盖 subplots / add_axes / colorbar(ax= 与 cax=) / inset / mosaic / gridspec / 循环 / 函数封装；
+    #     每条夹具预先声明 should_write / should_refuse（未声明不得算通过）；
+    #     反向验证（块里 +1e-3 ⇒ 必红）见 _team014/roundtrip.md §3。
+    #     纯子进程 + 真写回，约 92 秒。见 tests/test_roundtrip.py 文件头 ---
+    ('test_roundtrip', {}),
+    # --- 0.1.18 挂入：恶劣形状矩阵（刻意让数量/顺序/名字对不上）。
+    #     8 建轴方式 × 6 特殊轴 × 3 命名 = 144 组，默认抽样 56 组（确定性：mixed 命名全覆盖）；
+    #     每组预先声明 should_write / should_refuse，rc=0 必须身份级写对，rc=0 但写错即红。
+    #     重套件：56 组约 69 秒（4 条用例合计 78 秒）；MPLTWEAK_SHAPE_MATRIX=full 跑全量约 8 分钟。
+    #     反向验证（关掉身份判据 ⇒ 必红）见 _team014/shape_matrix.md §5。
+    ('test_shape_matrix', {}),
+    # --- 0.1.18 挂入：五条边界：脏参数/多图切换/插入点语法安全/--diff 与实际一致/旧参数兼容；22 条，约 81 秒 ---
+    ('test_boundaries', {}),
+    # --- 0.1.18 挂入：非常规轴形态（3D / polar / cartopy GeoAxes）的写回与提示质量；缺 cartopy 时自动 SKIP 不红；29 条，约 66 秒 ---
+    ('test_exotic_axes', {}),
+    # --- 0.1.18 挂入：回滚字节级：revert / 自动回滚后必须 sha256 逐字节复原（LF/CRLF/BOM 三形态） ---
+    ('test_revert_bytes', {}),
+    # --- 0.1.18 挂入：t19 九条发现的失败优先回归：当前 xfail，修好一条摘一条；禁止手搭 actual 结构 ---
+    ('test_xreview_regressions', {}),
+    # --- 0.1.18 挂入：语料身份级回归：抽样真跑并验「写对没」（三栏 ok/refused/WRONG，WRONG 必须 0）；默认 skip，需 MPLTWEAK_CORPUS_WORK 指向语料根 ---
+    ('test_corpus_identity', {}),
 ]
 
 # 刻意不挂进 pytest 的两个（理由见文件头 docstring）：

@@ -33,8 +33,10 @@ import ast
 import glob
 import os
 import re
+import shutil
 import subprocess
 import sys
+import unicodedata
 
 import pytest
 
@@ -1903,3 +1905,504 @@ def test_corpus_claim_skeleton_is_in_place_and_wired():
                                      % out3[-2000:])
     assert '看不到这个目录' in out3, ('缺证据时没给出可照做的提示：\n%s'
                                      % out3[-2000:])
+# =====================================================================
+# 配置文件的**隐形字符**哨兵 + 「树在变就不许开跑」闸门（T3 / 0.1.18）
+#
+# 0.1.16 的 CI 红在一处**看不见**的地方：`.gitattributes` 的第一个字节是 UTF-8 BOM
+# （EF BB BF）。准确因果（实测口径，别写成"BOM 一定让规则失效"）：
+#
+#   0.1.16 的 CI（Windows runner 上那个 git 版本）**不剥 BOM** ⇒ 第一条
+#   `* text=auto eol=lf` 没生效 ⇒ 语料证据 JSON 被转成 CRLF ⇒ sha256 与
+#   `MANIFEST.json` 对不上 ⇒ CI 红。**本机 git 2.53 会自己剥掉行首 BOM**（BOM 后面那条
+#   `eol` 规则照样生效）⇒ 这个机制在本地复现不出来。
+#
+# 也就是说：**同一份文件，两个 git 版本两种结果 —— 机制依 git 版本而定**。所以下面的
+# 哨兵只做**静态字节检查**（首字节 BOM / 行内 Cf·Cc 隐形字符），不拿 git 的行为当安全带。
+#
+# 隐形字符最坏的地方就在这里：**文件在、内容看着对，配置的可解析性却变得不可靠**。所以
+# 下面不测"文件存不存在"，只测两件有牙的事：
+#
+#   ① 首字节不是 BOM（UTF-8 / UTF-16 / UTF-32 五种 BOM 全认），且 `.gitattributes` 的
+#      规则行里不含任何隐形字符（Unicode 类别 Cf/Cc）；
+#   ② `.gitattributes` 的每条规则**真的能被 git 用上** —— 由 pattern 造一个样本路径，
+#      用 `git check-attr` 问 git"这个属性在这个路径上是什么"，必须等于规则声明的值；
+#      规则死掉时 git 回答 `unspecified`（或者干脆拒绝这个属性名）⇒ 红。
+#
+# 口径要说清：**①和②抓的不是同一类事**。①是跟 git 版本无关的静态那一刀；②钉的是另一件
+# 事——属性名写残 / 行被 git 拒绝时，人眼看着完全正常，只有问 git 才现形（本机 git 2.53
+# 对行首 BOM 是**宽容**的，所以 BOM 这一洞只由 ① 负责，别指望 ② 兜）。
+#
+# 反向验证不靠一次性手工：`test_config_bom_sentinel_has_teeth` 常驻，在临时树里
+# 给配置加 BOM、在临时 git 仓里给 `.gitattributes` 加 BOM、再给属性名塞一个零宽空格
+# ⇒ 两条判据都必须红（手工那次的反向输出见 `_team014/infra_guard.md`）。
+#
+# 后半段（第三节）钉「树在变就不许开跑」：今晚两次事故——V1 两臂跑在两版树上、
+# 真窗口撞上引擎改动——的共同点是**树动了结果就无效，而跑完那一刻看不出来**。
+# `tools/guard_tree_stable.py` 就是那个闸门；这里钉住它"真的会红"而不是"存在的"。
+# =====================================================================
+#: 必须"首字节不是 BOM"的配置文件（相对仓库根）
+CONFIG_FILES = ('.gitattributes', '.gitignore', 'pyproject.toml', 'MANIFEST.in')
+#: 同上，按 glob 收的（CI 工作流：新增一个 yml 就自动纳入，不需要再改名单）
+CONFIG_GLOBS = ('.github/workflows/*.yml', '.github/workflows/*.yaml')
+#: 五种 BOM 的字节（**长前缀在前**：UTF-32 LE 的 FF FE 00 00 以 FF FE 开头，
+#: 先认短的会把 UTF-32 误报成 UTF-16，虽然都算红、但人话就说不清了）
+BOM_BYTES = ((b'\x00\x00\xfe\xff', 'UTF-32 BE'), (b'\xff\xfe\x00\x00', 'UTF-32 LE'),
+             (b'\xef\xbb\xbf', 'UTF-8'), (b'\xfe\xff', 'UTF-16 BE'),
+             (b'\xff\xfe', 'UTF-16 LE'))
+#: 配置首字节哨兵的**扫面**（相对仓库根、`/` 分隔）—— 反向验证复用同一个函数
+TREE_GUARD = os.path.join(ROOT, 'tools', 'guard_tree_stable.py')
+#: 闸门在文档里的落点（"两臂 / 真窗口 / 矩阵必须用它包起来"写在这里）
+TREE_GUARD_DOC = os.path.join(ROOT, 'docs', 'dev.md')
+
+
+def _rel_posix(root, path):
+    return os.path.relpath(path, root).replace('\\', '/')
+
+
+def _config_targets(root):
+    """→ 配置文件名清单（相对 `root`，`/` 分隔；含 glob 收进来的工作流）。"""
+    out = [n.replace('\\', '/') for n in CONFIG_FILES]
+    for pattern in CONFIG_GLOBS:
+        for hit in sorted(glob.glob(os.path.join(root, pattern))):
+            out.append(_rel_posix(root, hit))
+    return out
+
+
+def _bom_name(raw):
+    """→ 命中的 BOM 名字（没命中 → None）。"""
+    for mark, name in BOM_BYTES:
+        if raw.startswith(mark):
+            return name
+    return None
+
+
+def _config_bom_problems(root):
+    """扫配置首字节 → 问题清单（空 = 干净）。
+
+    **缺文件也算问题**：名单上的文件被改名/删掉，哨兵就变成"扫了个寂寞"——
+    那种静默与 BOM 一样坏。
+    """
+    problems = []
+    targets = _config_targets(root)
+    if not any(t.startswith('.github/workflows/') for t in targets):
+        problems.append('没扫到任何 CI 工作流（.github/workflows/*.yml）—— '
+                        '名单里的 glob 挂了，哨兵会静默地什么都看不见')
+    for rel in targets:
+        path = os.path.join(root, rel.replace('/', os.sep))
+        if not os.path.isfile(path):
+            problems.append('%s 不存在 —— 名单上的配置文件缺件，哨兵扫不到它' % rel)
+            continue
+        with open(path, 'rb') as f:
+            raw = f.read(4)
+        name = _bom_name(raw)
+        if name:
+            problems.append(
+                '%s 开头是 %s BOM（首字节 %s）—— 隐形字符躲在文件头，人眼看不见、'
+                '解析器却要按字面吃下去（0.1.16 的 CI 红就是 `.gitattributes` 首字节'
+                '带了 BOM）。存成「UTF-8 无 BOM」即可' % (rel, name, raw[:3].hex(' ')))
+    return problems
+
+
+def _invisible_in(text):
+    """→ 这行里的隐形字符（`U+XXXX` 列表，空 = 干净）。
+
+    判据是 Unicode 类别而不是一张手工名单：`Cf`（格式字符：BOM / 零宽空格 / BOM 变体）
+    与 `Cc`（控制字符）都在 git 眼里是 pattern 的**字面字节**，而人眼看不见它们。
+    `\\t`/空格是 gitattributes 的正当分隔符，排除在外。
+    """
+    bad = []
+    for ch in text:
+        if ch in ('\t', ' '):
+            continue
+        if unicodedata.category(ch) in ('Cf', 'Cc'):
+            bad.append('U+%04X' % ord(ch))
+    return sorted(set(bad))
+
+
+def _gitattributes_rules(path):
+    """解析 `.gitattributes` → `(rules, problems)`。
+
+    `rules` 里每条是 `(行号, pattern, [属性声明…])`；`problems` 是静态可见的残废
+    （pattern 里有隐形字符 / 只有 pattern 没有属性 / 不是 UTF-8）。
+
+    **不 strip 行首空白**：git 不 strip，` *.png binary` 在 git 眼里 pattern 是
+    `' *.png'`（前导空格是 pattern 的一部分，一条路径都匹配不上）。这里跟 git 一致，
+    否则这条判据会在"人看着对、git 眼里死"的行上闭眼。
+    """
+    problems = []
+    rules = []
+    with open(path, 'rb') as f:
+        raw = f.read()
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        return [], ['%s 不是合法 UTF-8（%s）—— git 会按字节读，规则对不对已经说不清了'
+                    % (_rel_posix(os.path.dirname(path), path), exc)]
+    for lineno, line in enumerate(text.splitlines(), 1):
+        body = line.strip()
+        if not body or body.startswith('#'):
+            continue
+        invis = _invisible_in(line)
+        if invis:
+            problems.append(
+                '第 %d 行含隐形字符 %s：%r —— git 把它们当 pattern/属性的字面部分，'
+                '规则在人眼里是对的、在解析器眼里未必（0.1.16 的 BOM 就是这一类：'
+                '那个 git 版本不剥 BOM ⇒ `* text=auto eol=lf` 未生效 ⇒ JSON 转 CRLF ⇒ '
+                'sha256 与 MANIFEST 不符；本机 git 2.53 会剥 ⇒ 本地复现不出，'
+                '故哨兵只静态查字节）'
+                % (lineno, '/'.join(invis), line[:40]))
+        fields = line.split()
+        if len(fields) < 2:
+            problems.append('第 %d 行只有 pattern 没有属性：%r —— 这行什么也没声明'
+                            % (lineno, body[:40]))
+            continue
+        # 有隐形字符的行**照样**收进 rules：静态判据已经红了，但"生效判据"也该同时红
+        # （两道牙各自独立，不许只靠一道）。
+        rules.append((lineno, fields[0], fields[1:]))
+    return rules, problems
+
+
+def _pattern_sample(pattern):
+    """由 pattern 造一个**它应该匹配**的样本路径（用来把规则拿去问 git）。
+
+    只处理 `.gitattributes` 里真会出现的写法：`*` / `?` / `**` / `[…]`。
+
+    两个细节是这条判据的承重部分：
+    * 造样本前先把**隐形字符与空白剔掉**：真实路径不会以 U+FEFF 开头，也不会带前导
+      空格。把 `\\ufeff*` 原样变成一个以 U+FEFF 开头的样本，等于**替坏规则造了一个
+      它恰好能匹配的路径**，判据就瞎了 —— 剔掉之后 `\\ufeff*` 的样本回到 `sample`，
+      git 会回答 `unspecified`，规则失效当场现形。
+    * 造样本不是"猜 git 的语义"，而是"把规则放到一个'它就是作者本意'的前提下必然
+      命中的路径上"。
+    """
+    sample = ''.join(ch for ch in pattern
+                     if ch not in (' ', '\t') and _invisible_in(ch) == [])
+    sample = sample.lstrip('/')
+    sample = sample.replace('**', 'x')
+    sample = re.sub(r'\[[^\]]*\]', 'x', sample)
+    sample = sample.replace('*', 'sample').replace('?', 'x')
+    return sample or 'sample'
+
+
+def _attr_expectation(token):
+    """把一条属性声明翻成 `(属性名, git 该回答什么)`。
+
+    `-text` → unset / `!text` → unspecified / `text=auto` → auto / `text` → set。
+    """
+    if token.startswith('-'):
+        return token[1:], 'unset'
+    if token.startswith('!'):
+        return token[1:], 'unspecified'
+    if '=' in token:
+        name, value = token.split('=', 1)
+        return name, value
+    return token, 'set'
+
+
+def _run_git(repo, args):
+    """在 `repo` 里跑一条 git 命令 → `(rc, stdout, stderr)`（stdout/stderr 已解码）。
+
+    `-c core.attributesFile=` 把**用户全局**的 attributes 文件摘掉：这道哨兵要复现的是
+    "仓库自己的规则生效没有"，不能被某台机器上的全局配置带偏。
+    """
+    env = _pin_child_env(PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    proc = subprocess.run(['git', '-c', 'core.attributesFile='] + list(args),
+                          cwd=repo, capture_output=True, timeout=180, env=env)
+    return (proc.returncode, proc.stdout.decode('utf-8', 'replace'),
+            proc.stderr.decode('utf-8', 'replace'))
+
+
+def _git_available():
+    try:
+        return _run_git(ROOT, ['--version'])[0] == 0
+    except OSError:
+        return False
+
+
+def _gitattributes_effectiveness_problems(root, rules):
+    """每条规则**真的生效**没有 → 问题清单（空 = 全部生效）。
+
+    做法：pattern → 样本路径 → `git check-attr <属性> -- <样本>`。git 回答的值必须等于
+    规则声明的值；`unspecified` 表示"这条规则在这个路径上根本不存在"，也就是死了。
+    """
+    asks = []
+    for lineno, pattern, attrs in rules:
+        sample = _pattern_sample(pattern)
+        for token in attrs:
+            name, expect = _attr_expectation(token)
+            asks.append((lineno, pattern, sample, name, expect))
+    if not asks:
+        return []
+    names = sorted({a[3] for a in asks})
+    samples = sorted({a[2] for a in asks})
+    rc, out, err = _run_git(root, ['check-attr'] + names + ['--'] + samples)
+    if rc != 0:
+        return ['`git check-attr` 自己报错（rc=%d）：%s —— .gitattributes 到了 git '
+                '都解析不了的地步' % (rc, (err or out).strip()[:400])]
+    answer = {}
+    for line in out.splitlines():
+        parts = line.split(': ', 2)
+        if len(parts) != 3:
+            continue
+        answer[(parts[0], parts[1])] = parts[2].strip()
+    problems = []
+    for lineno, pattern, sample, name, expect in asks:
+        got = answer.get((sample, name))
+        if got == expect:
+            continue
+        problems.append(
+            '第 %d 行规则 %r 没生效：把属性 %r 问在样本路径 %r 上，git 回答 %r，'
+            '规则声明的是 %r —— 这条规则是死的（项目里"文件在、看着对、规则已死"的'
+            '前例是 0.1.16 那条 `* text=auto eol=lf`）'
+            % (lineno, pattern, name, sample, got, expect))
+    return problems
+
+
+def test_config_files_carry_no_invisible_bom():
+    """.gitattributes 的首字节不许是 BOM（0.1.16 那次 CI 红的入口：那个 git 版本不剥 BOM）。"""
+    problems = _config_bom_problems(ROOT)
+    assert not problems, '配置里出现隐形字符：\n  %s' % '\n  '.join(problems)
+    # 名单本身也要有牙：扫不到工作流就说明这份哨兵是空的
+    workflows = [t for t in _config_targets(ROOT)
+                 if t.startswith('.github/workflows/')]
+    assert len(workflows) >= 2, (
+        '只扫到 %d 个 CI 工作流（%r）—— 名单里的 glob 挂了，BOM 哨兵会静默地'
+        '什么都看不见' % (len(workflows), workflows))
+
+
+def test_gitattributes_rules_are_really_in_effect():
+    """.gitattributes 的每条规则都要被 git 真的应用（不只是"文件在、看着对"）。
+
+    这条是 0.1.16 那个洞的正面判据：BOM 时代的文件**通过**了"文件存在""有 `*` 行"
+    这类断言，却一条规则都没生效。这里问的是 git 本人。
+    """
+    path = os.path.join(ROOT, '.gitattributes')
+    assert os.path.isfile(path), '.gitattributes 不见了：CRLF 归一 / 语料 sha256 全靠它'
+    rules, problems = _gitattributes_rules(path)
+    assert not problems, '.gitattributes 有残废行：\n  %s' % '\n  '.join(problems)
+    assert rules, '.gitattributes 里没有一条非注释规则 —— 文件在但什么也没声明'
+    if not _git_available():
+        pytest.skip('这台机器没有可用的 git：`git check-attr` 是这条判据的唯一依据，'
+                    '跳过而不是假装通过')
+    problems = _gitattributes_effectiveness_problems(ROOT, rules)
+    assert not problems, '有规则没生效：\n  %s' % '\n  '.join(problems)
+
+
+def test_config_bom_sentinel_has_teeth(tmp_path):
+    """**反向验证**（常驻）：给配置加 BOM ⇒ 哨兵必红；规则失效 ⇒ 生效判据必红。
+
+    只测正向的哨兵最容易变成"永远绿"：配置一直都干净，它就再也不会红一次，
+    等哪天真出 BOM 时才发现判据早就写歪了。这里天天用假 BOM 敲一遍。
+    """
+    tmp = str(tmp_path)
+    # ① 真配置原样复制到临时树 ⇒ 必须干净（证明后面报的红是 BOM 造成的，不是别的）
+    for rel in _config_targets(ROOT):
+        src = os.path.join(ROOT, rel.replace('/', os.sep))
+        dst = os.path.join(tmp, rel.replace('/', os.sep))
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(src, 'rb') as f:
+            raw = f.read()
+        with open(dst, 'wb') as f:
+            f.write(raw)
+    assert not _config_bom_problems(tmp), '原样复制的配置就已经报红了 —— 反向验证的'
+    '前提不成立，先修哨兵'
+
+    # ② 给 .gitignore 加一个 UTF-8 BOM ⇒ 必须报红，且点名那个文件
+    ignore = os.path.join(tmp, '.gitignore')
+    with open(ignore, 'rb') as f:
+        raw = f.read()
+    with open(ignore, 'wb') as f:
+        f.write(b'\xef\xbb\xbf' + raw)
+    bad = _config_bom_problems(tmp)
+    assert bad, '给 .gitignore 加了 BOM，哨兵居然没红 —— 这条判据是死的'
+    assert any('.gitignore' in msg for msg in bad), (
+        '报红了但没点名 .gitignore：%r' % (bad,))
+
+    # ③ 规则层面（临时 git 仓）：两道判据各敲一次
+    if not _git_available():
+        pytest.skip('没有可用的 git，跳过"规则失效是否被抓住"那一段（前两段已通过）')
+    repo = os.path.join(tmp, 'gattr')
+    os.makedirs(repo, exist_ok=True)
+    assert _run_git(repo, ['init', '-q'])[0] == 0, '临时仓 git init 失败，无法验证'
+    with open(os.path.join(ROOT, '.gitattributes'), 'rb') as f:
+        clean = f.read()
+    attr = os.path.join(repo, '.gitattributes')
+    with open(attr, 'wb') as f:
+        f.write(clean)
+    rules, problems = _gitattributes_rules(attr)
+    assert not problems and not _gitattributes_effectiveness_problems(repo, rules), (
+        '干净副本在临时仓里就不通过 —— 哨兵口径有问题')
+
+    # ③-a 行首 BOM ⇒ **静态判据**必须红（点名 U+FEFF）。
+    # 注意口径：这里**不**要求"生效判据"也红 —— 实测本机 git 2.53 会自己剥掉
+    # `.gitattributes` 行首的 UTF-8 BOM（BOM 后面那条 eol 规则照样生效），也就是说
+    # "git 会不会兜底"是**跟 git 版本走**的。BOM 这条洞只能靠静态查字节来钉，
+    # 不许拿 git 的宽容当安全带。
+    with open(attr, 'wb') as f:
+        f.write(b'\xef\xbb\xbf' + clean)
+    rules_bad, statics = _gitattributes_rules(attr)
+    assert statics and any('U+FEFF' in msg for msg in statics), (
+        'BOM 放在行首，静态解析居然没报出来：%r' % (statics,))
+    assert any('.gitattributes' in msg and 'BOM' in msg
+               for msg in _config_bom_problems(repo)), (
+        'BOM 放在 .gitattributes 行首，首字节哨兵居然没红')
+
+    # ③-b 生效判据自己也要有牙：把属性名里塞一个零宽空格（人眼看不出、git 不认）
+    # ⇒ 生效判据必红（git 会直接报 not a valid attribute name）。
+    with open(attr, 'wb') as f:
+        f.write(b'* text=auto eol=lf\n*.gif bin\xe2\x80\x8bary\n')
+    rules_zw, statics_zw = _gitattributes_rules(attr)
+    assert statics_zw and any('U+200B' in msg for msg in statics_zw), (
+        '属性名里塞了零宽空格，静态解析居然没报出来：%r' % (statics_zw,))
+    dead = _gitattributes_effectiveness_problems(repo, rules_zw)
+    assert dead, ('属性名里塞了零宽空格（人眼看着是 `binary`），git 已经解析不了这条规则，'
+                  '生效判据居然没红 —— 那条判据是死的')
+
+
+def test_tree_guard_tool_wraps_commands_and_catches_drift(tmp_path):
+    """`tools/guard_tree_stable.py`：树不动 ⇒ 透传；中途改文件 ⇒ 专用 rc=97。
+
+    这条钉的是"闸门真的会红"，不是"文件存在"。三件事一次跑完：
+    ① 静止树 ⇒ 命令 rc 原样透传（0 和 3 各试一次）；
+    ② 跑动中改文件 ⇒ rc=97 + 人话「树在跑动期间改过」；
+    ③ `--verify` 比对不上 ⇒ rc=1；没记录 ⇒ rc=2（人话，不抛栈）。
+    """
+    assert os.path.isfile(TREE_GUARD), (
+        '闸门不见了：tools/guard_tree_stable.py —— 两臂 / 真窗口 / 矩阵没有它就只能'
+        '靠"事后回忆这次改没改代码"')
+    env = _pin_child_env(PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+    tmp = str(tmp_path)
+    for name, body in (('engine.py', 'A = 1\n'), ('plot.py', 'B = 2\n')):
+        with open(os.path.join(tmp, name), 'w', encoding='utf-8', newline='\n') as f:
+            f.write(body)
+    touch = os.path.join(tmp, 'touch_tree.py')
+    with open(touch, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('import io, os, sys\n'
+                'io.open(os.path.join(sys.argv[1], "engine.py"), "a",\n'
+                '        encoding="utf-8", newline="\\n").write("# mid-run edit\\n")\n')
+
+    def guard(*args):
+        proc = subprocess.run([sys.executable, TREE_GUARD, '--repo', tmp] + list(args),
+                              cwd=ROOT, env=env, capture_output=True, timeout=180)
+        return (proc.returncode,
+                (proc.stdout + proc.stderr).decode('utf-8', 'replace'))
+
+    # --help 必须把三个动作都摆出来（名字改掉就等于偷偷换了用法）
+    rc, out = guard('--help')
+    assert rc == 0, '--help 不是 rc=0（%d）：\n%s' % (rc, out[-1500:])
+    for flag in ('--record', '--verify', '--wrap'):
+        assert flag in out, '--help 里看不到 %s：\n%s' % (flag, out[-1500:])
+
+    # ① 静止树：rc 原样透传
+    rc, out = guard('--wrap', '--', sys.executable, '-c', 'print("no touch")')
+    assert rc == 0, '静止树上 --wrap 不是 rc=0（%d）：\n%s' % (rc, out[-1500:])
+    assert '没变' in out, '静止树上没给出"树没变"的判定行：\n%s' % out[-1500:]
+    rc, out = guard('--wrap', '--', sys.executable, '-c', 'raise SystemExit(3)')
+    assert rc == 3, ('命令 rc=3，闸门应原样透传 3（实际 %d）：\n%s' % (rc, out[-1500:]))
+
+    # ①-b 默认形态（不写 --state）也要能跑：`--wrap` 把指纹放进**系统临时目录**，
+    # 那个目录很可能在另一个盘上（本机：仓在 D:、`%TEMP%` 在 C:）。0.1.18 就在这里
+    # 崩过一次 —— `os.path.relpath` 跨盘抛 ValueError，闸门在建闸门那一步就死，
+    # 命令压根没跑。这条钉住"默认形态能用"。
+    rc, out = guard('--wrap', '--', sys.executable, '-c', 'print("no state")')
+    assert rc == 0 and '没变' in out, (
+        '不写 --state 的默认形态应照常 rc=0：\n%s' % out[-1500:])
+    assert 'Traceback' not in out, '默认形态抛栈了：\n%s' % out[-1500:]
+
+    # ①-c 指纹文件在**另一个盘**上（跨盘 relpath 的正面用例；单盘机器自动跳过）
+    repo_drive = os.path.splitdrive(os.path.abspath(tmp))[0].lower()
+    cross_dir = None
+    for drive in ('C:', 'D:', 'E:', 'F:'):
+        if drive.lower() == repo_drive or not os.path.isdir(drive + os.sep):
+            continue
+        probe = os.path.join(drive + os.sep, '.guard_t3_probe')
+        try:
+            os.makedirs(probe, exist_ok=True)
+        except OSError:
+            continue
+        cross_dir = probe
+        break
+    if cross_dir is not None:
+        cross_state = os.path.join(cross_dir, 'fp.json')
+        try:
+            rc, out = guard('--record', '--state', cross_state)
+            assert rc == 0, '指纹写在另一个盘上，--record 崩了（%d）：\n%s' % (rc, out[-1500:])
+            rc, out = guard('--verify', '--state', cross_state)
+            assert rc == 0, '指纹在另一个盘上，--verify 崩了（%d）：\n%s' % (rc, out[-1500:])
+            assert 'Traceback' not in out, '跨盘 --verify 抛栈了：\n%s' % out[-1500:]
+        finally:
+            shutil.rmtree(cross_dir, ignore_errors=True)
+
+    # ② 跑动中改文件
+    rc, out = guard('--wrap', '--', sys.executable, touch, tmp)
+    assert rc == 97, ('跑动中改了文件，应是专用退出码 97（实际 %d）：\n%s'
+                      % (rc, out[-1500:]))
+    assert '树在跑动期间改过' in out, '没给出人话「树在跑动期间改过」：\n%s' % out[-1500:]
+    assert 'engine.py' in out, '没点名被改的文件：\n%s' % out[-1500:]
+
+    # ③ --verify：记一次 → 改一次 → 必须 rc=1；没记录 ⇒ rc=2
+    # 先说默认位置这件事：`--record` 不写 --state 时**不许往仓库里放文件**（默认落 %TEMP%）。
+    # 谁跑一次 --record 就在工作区里多一个文件，是最容易被"gitignore 了所以没事"糊过去的那种脏。
+    rc, out = guard('--record')
+    assert rc == 0, '不带 --state 的 --record 不是 rc=0（%d）：\n%s' % (rc, out[-1500:])
+    for stray in ('.tree_fingerprint.json', '.guard_tree_fp.json'):
+        assert not os.path.exists(os.path.join(tmp, stray)), (
+            '--record 默认把状态文件写进了被盯的树（%s）—— 默认位置必须在仓库外（%TEMP%%），'
+            '否则每跑一次 --record 就污染一次工作区' % stray)
+    default_state = None
+    for line in out.splitlines():
+        if '状态文件' in line:
+            default_state = line.split('：')[-1].strip()
+    assert default_state, '--record 没打印状态文件位置，人就没法用 --verify 对上它：\n%s' % out
+    assert not os.path.abspath(default_state).startswith(
+        os.path.abspath(tmp) + os.sep), (
+        '默认状态文件落在了被盯的树里面（%s）—— 必须在仓库外' % default_state)
+    assert os.path.isfile(default_state), '默认状态文件压根没写出来：%s' % default_state
+    # 默认位置还必须**稳定**：另起一个进程 --verify 要能读到同一份
+    rc, out = guard('--verify')
+    assert rc == 0, ('不带 --state 的 --verify 读不到刚记的默认指纹（%d）：\n%s'
+                     % (rc, out[-1500:]))
+
+    rc, out = guard('--record', '--state', os.path.join(tmp, '.fp.json'))
+    assert rc == 0, '--record 不是 rc=0（%d）：\n%s' % (rc, out[-1500:])
+    rc, out = guard('--verify', '--state', os.path.join(tmp, '.fp.json'))
+    assert rc == 0, '刚记完就 --verify 却红了（%d）：\n%s' % (rc, out[-1500:])
+    with open(os.path.join(tmp, 'plot.py'), 'a', encoding='utf-8', newline='\n') as f:
+        f.write('# after record\n')
+    rc, out = guard('--verify', '--state', os.path.join(tmp, '.fp.json'))
+    assert rc == 1, '--verify 比对不一致时应 rc=1（实际 %d）：\n%s' % (rc, out[-1500:])
+    assert '本次结果无效' in out, '--verify 没给出"本次结果无效"：\n%s' % out[-1500:]
+    rc, out = guard('--verify', '--state', os.path.join(tmp, 'no_such_state.json'))
+    assert rc == 2, '没记过指纹时应 rc=2（实际 %d）：\n%s' % (rc, out[-1500:])
+    assert 'Traceback' not in out, '没记过指纹时抛栈了（应给人话）：\n%s' % out[-1500:]
+
+
+def test_tree_guard_is_documented_and_prints_gbk_safe_text():
+    """闸门要被文档点名（不然没人会用）；工具的中文又不许在 GBK 控制台上炸。
+
+    两条都是"用起来才会发现"的坑：
+    * 没写进文档 ⇒ 下一次两臂还是靠人记着"这次别改代码"，闸门等于没装；
+    * 工具自己打印中文 ⇒ 中文 Windows 上 stdout 是 cp936，一个 GBK 编不了的字符
+      （0.1.17 的 `--help` 里那个 `⇒` 就是这么炸的）能让 `--wrap` 在建闸门那一步
+      就崩掉，命令压根没跑。
+    """
+    assert os.path.isfile(TREE_GUARD_DOC), '开发文档不见了：docs/dev.md'
+    with open(TREE_GUARD_DOC, encoding='utf-8') as f:
+        doc = f.read()
+    assert 'guard_tree_stable' in doc, (
+        'docs/dev.md 里没有点名 tools/guard_tree_stable.py —— '
+        '"两臂 / 真窗口 / 矩阵必须用它包起来"这条约定就没落地')
+    assert '--wrap' in doc, '文档里没写 `--wrap` 用法（那是最常用的形态）'
+
+    with open(TREE_GUARD, encoding='utf-8') as f:
+        src = f.read()
+    bad = []
+    for ch in sorted(set(src)):
+        try:
+            ch.encode('gbk')
+        except UnicodeEncodeError:
+            bad.append('U+%04X %s' % (ord(ch), ch.encode('unicode_escape').decode()))
+    assert not bad, (
+        'tools/guard_tree_stable.py 里有 GBK 编不了的字符（%s）—— 中文 Windows 的 '
+        'stdout 是 cp936，它会在打印那一步抛 UnicodeEncodeError，闸门自己先崩'
+        % ', '.join(bad))

@@ -47,6 +47,32 @@ CI 的 8 条腿（4 个解释器 × 2 个系统）只有在**推上去之后**�
 * 每个语言臂跑前/跑后各记一次「树身证」（`src` + `tests` + `tools` 下 `*.py` 的
   文件数 / 总字节 / 总行数 / 逐文件 sha256）。**臂内树身动了 = 有人并发改树**，
   这时 passed/failed 不能归因给解释器，工具会把该臂标成 `drifted` 并在结论里说出来。
+
+## 「已知环境副作用」与「真失败」必须分开（0.1.18 加）
+
+矩阵 venv 用 `uv venv --python 3.X` 建 -> **base 解释器是 uv 自带的标准 CPython**，
+这台 base 上没有 matplotlib（matplotlib 只装在矩阵 venv 里）。而 `test_journey_wheel`
+把 wheel 装进 `python -m venv --system-site-packages` 的**子 venv** 里再真跑 CLI ——
+`--system-site-packages` 继承的是 **base** 的 site-packages，不是矩阵 venv 的
+-> 子 venv 里 `import matplotlib` 必然 `ModuleNotFoundError` -> `check` / `describe`
+`rc=2`（`collect_failed`）-> 该套件在这个矩阵里**结构上不可能绿**，而同一棵树在
+conda 里直跑 ALL PASS。
+
+这不是产品失败（真实用户 `pip install mpltweak` 会带进 matplotlib），也不是"可以
+静默跳过的噪音" —— 它是一条**可测的环境事实**，所以这里做成三件事：
+
+1. **预检**（`probe_child_venv_deps`）：每台解释器建一个一次性的
+   `--system-site-packages` 子 venv，问它"能不能 import matplotlib" ——
+   这是**可测的事实**，不是靠失败文本猜；
+2. **分类**（`classify_arm`）：只当「失败行**只有** journey_wheel」**且**「预检确认
+   子 venv 里没有 matplotlib」两条同时成立时，才把该臂记成 `known_env`；
+   别的套件红、或预检说 matplotlib 在，一律照旧算**红**；
+3. **显式呈现**：汇总表多一列「分类」（`ok` / `known_env` / `red`），结论里单列
+   「已知环境副作用（不计红）」一节并说出**是哪台 base 解释器、缺什么**；
+   `summary.json` 也有 `known_env` 字段。套件照跑、失败行照打印，一个字都不藏。
+
+`--strict-known-env` 可把这类副作用重新当红（给"我要在能用 matplotlib 的 base 上
+较真跑一遍"的场合用；默认关闭，否则每次矩阵都注定红一条，结论没人看）。
 """
 
 import argparse
@@ -291,12 +317,115 @@ def probe_versions(py_exe, repo, env):
     return {'python': parts[0], 'matplotlib': parts[1]}
 
 
+# ---------------------------------------------------------------- 已知环境副作用
+#: 需要"子 venv 里能 import matplotlib"的那一个套件（见模块 docstring 的对应一节）。
+JOURNEY_SUITE = 'test_journey_wheel'
+#: 预检用的子 venv 名字（在矩阵根目录下，`--clean` 一并删）
+CHILD_PROBE_DIR = 'probe-child-venv'
+#: 预检里"子 venv 有没有 matplotlib"的探针代码：只打印事实，不判红
+_CHILD_PROBE_CODE = (
+    "import sys\n"
+    "print('base_prefix=' + sys.base_prefix)\n"
+    "try:\n"
+    "    import matplotlib\n"
+    "    print('matplotlib=%s' % matplotlib.__version__)\n"
+    "except Exception as e:\n"
+    "    print('matplotlib=MISSING:%s: %s' % (type(e).__name__, e))\n"
+)
+#: 失败行里用来判"是不是这个套件"的键
+_JOURNEY_FAIL_KEY = 'test_suite[%s]' % JOURNEY_SUITE
+
+
+def probe_child_venv_deps(py_exe, repo, root, env):
+    """预检：从**这台 venv 的 python** 建 `--system-site-packages` 子 venv，能不能 import matplotlib。
+
+    为什么必须预检（而不是事后从失败文本猜）：`test_journey_wheel` 的失败签名
+    （`collect_failed` / `ModuleNotFoundError: No module named 'matplotlib'`）在下面两种
+    情形里**一模一样** ——
+      (a) 环境口径问题：矩阵 venv 的 base 是 uv 自带 python，那里没有 matplotlib；
+      (b) 真问题：产品 / 打包坏了，哪怕 matplotlib 在也跑不通。
+    能把两者分开的只有一条**可测的事实**：这台 python 的子 venv 到底有没有 matplotlib。
+    量它，不要猜它。
+
+    产物落在 `<root>/probe-child-venv/`（**仓外**，`--clean` 会一起删）。建一次即可
+    （每台解释器一份），所以成本约 3~6 秒/解释器。
+    """
+    probe_root = os.path.join(root, CHILD_PROBE_DIR)
+    exe = venv_python(probe_root)
+    log = os.path.join(root, 'logs', 'probe-child-venv.log')
+    if not os.path.isfile(exe):
+        rc, secs = run_streaming([py_exe, '-m', 'venv', '--system-site-packages', probe_root],
+                                 repo, env, log)
+        if rc != 0 or not os.path.isfile(exe):
+            # 探不出来就不猜：返回 None，调用方保持"照旧算红"的行为（人去看日志）
+            _say('  [env ] 子 venv 建不起来（rc=%d，%.1fs）-> 不做环境分类，红就是红' % (rc, secs))
+            return None
+    try:
+        r = subprocess.run([exe, '-c', _CHILD_PROBE_CODE], cwd=repo, env=env,
+                           capture_output=True, text=True, encoding='utf-8',
+                           errors='replace')
+    except OSError as e:
+        _say('  [env ] 子 venv 探针起不来（%s）-> 不做环境分类，红就是红' % e)
+        return None
+    out = (r.stdout or '') + (r.stderr or '')
+    base = ''
+    mpl = ''
+    for ln in out.splitlines():
+        if ln.startswith('base_prefix='):
+            base = ln.split('=', 1)[1].strip()
+        elif ln.startswith('matplotlib='):
+            mpl = ln.split('=', 1)[1].strip()
+    ok = r.returncode == 0 and mpl and not mpl.startswith('MISSING')
+    detail = ('子 venv（--system-site-packages）能 import matplotlib %s' % mpl if ok
+              else '子 venv（--system-site-packages）里 %s（base=%s）'
+                   % (mpl.replace('MISSING:', '') or '（探针没输出）', base or '?'))
+    _say('  [env ] %s' % detail)
+    return {'ok': ok, 'detail': detail, 'base': base, 'matplotlib': mpl}
+
+
+def classify_arm(arm, probe, strict=False):
+    """把「已知环境副作用」与「真失败」分开 → (kind, 一句话理由)。
+
+    `kind ∈ {'ok', 'red', 'known_env'}`。**两条判据同时成立**才允许记 `known_env`：
+
+      1. 该臂的失败行里**只有** journey_wheel 这一条套件（别的套件红 -> 真红，
+         哪怕环境确实缺 matplotlib：那说明还有别的问题要人看）；
+      2. 预检证据说明**这台解释器的子 venv 里没有 matplotlib** -> 该套件结构上不可能绿。
+
+    预检拿不到（`probe is None`，例如子 venv 建不起来）-> **不猜**，保持红。
+    `strict=True`（`--strict-known-env`）-> 一律保持红，把选择权交回人。
+    """
+    if arm.get('rc') is None:
+        return 'red', '未跑（venv / 安装就失败了）'
+    if arm.get('rc') == 0:
+        return 'ok', ''
+    if arm.get('drifted'):
+        return 'red', '臂内树身变了 —— 结果不能归因给解释器'
+    fails = list(arm.get('failures') or [])
+    only_journey = bool(fails) and all(_JOURNEY_FAIL_KEY in f for f in fails)
+    if strict:
+        return 'red', '--strict-known-env：不承认环境副作用'
+    if not only_journey:
+        return 'red', '失败行里不止 %s（或没有失败行）' % JOURNEY_SUITE
+    if probe is None:
+        return 'red', '预检拿不到（这台解释器的子 venv 建不起来）-> 不猜，保持红'
+    if probe.get('ok'):
+        return 'red', ('预检说子 venv 里能 import matplotlib %s -> 这条红不能归给环境'
+                       % probe.get('matplotlib'))
+    return 'known_env', ('%s 要求「子 venv 里能 import matplotlib」，而本矩阵 venv 的 base '
+                         '解释器（%s）没有它 -> 该套件结构上不可能绿'
+                         % (JOURNEY_SUITE, probe.get('base') or '?'))
+
+
+
 def run_arm(py_exe, py, lang, repo, root, fast_only=False):
     """一个语言臂：清临时目录 → 树身证 → pytest -q → 树身证 → 计数。"""
     arm = {'python_req': py, 'lang': lang, 'log': None, 'rc': None,
            'seconds': None, 'counts': {}, 'last': '', 'failures': [],
            'drifted': False, 'only_before': [], 'only_after': [], 'changed': [],
-           'fp_before': None, 'fp_after': None}
+           'fp_before': None, 'fp_after': None,
+           # 分类由 main() 里的 classify_arm 填（ok / red / known_env + 一句话理由）
+           'kind': None, 'kind_why': ''}
     env = dict(os.environ)
     env.update({'MPLBACKEND': 'Agg', 'MPLTWEAK_LANG': lang,
                 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1',
@@ -341,28 +470,35 @@ def plan_lines(pythons, langs, root, extra_cmd=''):
             out.append('    - MPLTWEAK_LANG=%-2s pytest -q   -> logs/%s-%s.log'
                        % (lang, py, lang))
     out.append('每臂前清：%s' % os.path.join(tempfile.gettempdir(), SANDBOX_TMP_NAME))
+    out.append('每台解释器先预检子 venv 依赖：%s/（缺 matplotlib -> %s 记 known_env，'
+               '不计红）' % (os.path.join(root, CHILD_PROBE_DIR), JOURNEY_SUITE))
     if extra_cmd:
         out.append(extra_cmd)
     return out
 
 
 def render_summary(arms):
-    """人读汇总表（passed/skipped/failed + 耗时）。"""
-    head = '| 解释器 | 语言 | rc | passed | skipped | failed | 耗时(s) | 树身 |'
-    sep = '|---|---|---:|---:|---:|---:|---:|---|'
+    """人读汇总表（passed/skipped/failed + 耗时 + **分类**）。
+
+    「分类」列是与「rc」并列的证据，不是替代：rc 永远是 pytest 的真实退出码，
+    `known_env` 只说明"这条红是环境口径决定的、与本棵树的产品行为无关"。
+    """
+    head = '| 解释器 | 语言 | rc | passed | skipped | failed | 耗时(s) | 树身 | 分类 |'
+    sep = '|---|---|---:|---:|---:|---:|---:|---|---|'
     lines = [head, sep]
     for a in arms:
         c = a['counts']
         state = 'drifted' if a['drifted'] else 'stable'
         if a['rc'] is None:
-            lines.append('| %s | %s | - | - | - | - | - | 未跑 |'
+            lines.append('| %s | %s | - | - | - | - | - | 未跑 | red |'
                          % (a['python_req'], a['lang']))
             continue
-        lines.append('| %s | %s | %d | %s | %s | %s | %.1f | %s |'
+        lines.append('| %s | %s | %d | %s | %s | %s | %.1f | %s | %s |'
                      % (a['python_req'], a['lang'], a['rc'],
                         c.get('passed', '-'), c.get('skipped', '-'),
                         c.get('failed', '-'),
-                        a['seconds'] or 0.0, state))
+                        a['seconds'] or 0.0, state,
+                        a.get('kind') or ('ok' if a['rc'] == 0 else 'red')))
     return lines
 
 
@@ -383,6 +519,10 @@ def main(argv=None):
                          'MPLTWEAK_MATRIX_ROOT）')
     ap.add_argument('--repo', default=ROOT, help='被测仓库（默认本仓库）')
     ap.add_argument('--uv', default=None, help='uv 可执行文件路径（默认自动找）')
+    ap.add_argument('--strict-known-env', action='store_true',
+                    dest='strict_known_env',
+                    help='不承认「已知环境副作用」（如矩阵 venv 的 base 里没有 '
+                         'matplotlib -> journey_wheel 必红）：这类臂照旧算红')
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument('--list', action='store_true', help='只打印将要跑的臂（默认动作）')
     mode.add_argument('--dry-run', action='store_true', help='只打印将要执行的命令')
@@ -461,6 +601,7 @@ def main(argv=None):
                PYTHONUTF8='1', QT_QPA_PLATFORM='offscreen')
     arms = []
     bad = []
+    known_env = []
     t_all = time.time()
     for py in pythons:
         _say('=' * 66)
@@ -471,22 +612,32 @@ def main(argv=None):
             bad.append('%s：venv / 安装失败（rc=%d）' % (py, rc))
             for lang in langs:
                 arms.append({'python_req': py, 'lang': lang, 'rc': None,
-                             'counts': {}, 'seconds': None, 'drifted': False})
+                             'counts': {}, 'seconds': None, 'drifted': False,
+                             'kind': 'red', 'kind_why': 'venv / 安装失败'})
             continue
         ver = probe_versions(exe, repo, env)
         if ver:
             _say('  [ver] python %s / matplotlib %s'
                  % (ver['python'], ver['matplotlib']))
+        # 每台解释器探一次子 venv 的依赖（见模块 docstring 的「已知环境副作用」一节）
+        probe = probe_child_venv_deps(exe, repo, root, env)
         for lang in langs:
             arm = run_arm(exe, py, lang, repo, root)
             arm['ver'] = ver
+            arm['probe'] = probe
+            kind, why = classify_arm(arm, probe, strict=args.strict_known_env)
+            arm['kind'] = kind
+            arm['kind_why'] = why
             arms.append(arm)
-            if arm['rc'] != 0:
-                bad.append('%s / %s：pytest rc=%d（%s）'
-                           % (py, lang, arm['rc'], arm['last'] or '末行读不到'))
             if arm['drifted']:
                 bad.append('%s / %s：臂内树身变了，结果不能归因给解释器'
                            % (py, lang))
+            elif kind == 'known_env':
+                known_env.append('%s / %s：%s' % (py, lang, why))
+                _say('  [cls] 已知环境副作用（不计红）：%s' % why)
+            elif kind != 'ok':
+                bad.append('%s / %s：pytest rc=%d（%s）—— %s'
+                           % (py, lang, arm['rc'], arm['last'] or '末行读不到', why))
         _say('')
 
     _say('=' * 66)
@@ -501,7 +652,7 @@ def main(argv=None):
     summary = {'repo': repo, 'root': root, 'uv': uv, 'extras': args.extras,
                'pythons': pythons, 'langs': langs,
                'started_at': time.strftime('%Y-%m-%d %H:%M:%S'),
-               'arms': arms, 'bad': bad}
+               'arms': arms, 'bad': bad, 'known_env': known_env}
     out_json = os.path.join(root, 'summary.json')
     with io.open(out_json, 'w', encoding='utf-8') as f:
         f.write(json.dumps(summary, ensure_ascii=False, indent=1))
@@ -512,6 +663,14 @@ def main(argv=None):
     _say('      %s' % out_md)
     _say('      %s' % os.path.join(root, 'logs') + '（每臂一份原始日志）')
     _say('')
+    if known_env:
+        _say('已知环境副作用（**不计红**；套件照跑、失败行在各自日志里，'
+             '不是静默跳过）：')
+        for k in known_env:
+            _say('  - ' + k)
+        _say('  重新当红跑一遍：加 --strict-known-env；'
+             '换一台 base 里带 matplotlib 的解释器做矩阵就不会出现这条。')
+        _say('')
     if bad:
         _say('结论：**红 / 不可归因**（%d 条）——' % len(bad))
         for b in bad:
@@ -519,6 +678,10 @@ def main(argv=None):
         _say('  先看对应日志尾巴；红在某个套件上的话，单独跑它：'
              'python -m pytest -q -k <套件名>')
         return 1
+    if known_env:
+        _say('结论：每臂**除已知环境副作用外**都绿（分类见上表「分类」列；'
+             'skipped 通常是没装 mcp / 平台不支持）。')
+        return 0
     _say('结论：每臂都绿（passed/skipped 见上表；skipped 通常是没装 mcp / 平台不支持）。')
     return 0
 

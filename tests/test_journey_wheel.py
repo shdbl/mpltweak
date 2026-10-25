@@ -42,6 +42,22 @@ inScope**）。照本项目"宁可登记例外、不软化判据"的规矩：台
 
 ⇒ **权威用法 = 发布期在冻结树上跑**（t43/V4 收官门那种静止状态）。
 
+**已知环境缺口：在 `tools/preflight_matrix.py` 的 venv 里必红（0.1.18 记录）**
+--------------------------------------------------------------------------
+矩阵 venv 用 `uv venv --python 3.X` 建 ⇒ **base 解释器是 uv 自带的标准 CPython，那里没有
+matplotlib**（matplotlib 只装在矩阵 venv 里）。本套件的子 venv 是
+`python -m venv --system-site-packages` 建的，它继承的是 **base** 的 site-packages、
+**不是**矩阵 venv 的 ⇒ 子 venv 里 `import matplotlib` 失败 ⇒ `check` / `describe` 全链
+`collect_failed`（rc=2）⇒ 本套件在这个矩阵里**结构上不可能绿**；同一棵树在 conda 里直跑
+是 ALL PASS。
+
+这不是产品缺陷（真实用户 `pip install mpltweak` 会带进 matplotlib），也不是可以静默跳过的
+噪音 ⇒ **判据放在矩阵工具那一侧**：`tools/preflight_matrix.py` 会预检"这台 python 的
+`--system-site-packages` 子 venv 到底能不能 import matplotlib"，只在这个事实成立、且失败行
+**只有本套件**时，把该臂显式标成 `known_env`（结论里单列、不计红；套件照跑、失败行照打印）。
+本文件这边只负责一件事：**环境不满足时不许崩**（缺参数时各处 JSON 访问要用
+`_json_or_empty` / `_files0`，否则 `IndexError` 会把整个失败列表连着汇总行一起吞掉）。
+
 跑法：``python tests/test_journey_wheel.py``（约 27 秒；已登记进 test_suites.py 的 SUITES）
 """
 
@@ -208,6 +224,30 @@ def tree_fingerprint():
 
 def _ascii_bad(s):
     return sorted({c for c in s if ord(c) > 127})
+
+
+def _json_or_empty(text):
+    """把 CLI 的 stdout 解析成 dict；拿不到就给 `{}`（**这一层不许抛**）。
+
+    为什么要有：这个套件在"环境不满足"时会**连着红**（describe 拿不到参数 ⇒
+    apply 没有 `files` ⇒ `<venv> ... rc=2`）。旧写法 `json.loads(...)['files'][0]`
+    在这种情形下直接 `JSONDecodeError` / `IndexError` ⇒ `main()` 崩在半路，
+    后面所有断言与末尾那句 `FAILED: N 项` 汇总全丢，看起来像"套件自己坏了"，
+    而不是"这台机器上子 venv 缺 matplotlib"。宁可少测一条，也不能把失败列表吞掉。
+    """
+    try:
+        v = json.loads(text)
+    except Exception:                                              # noqa: BLE001
+        return {}
+    return v if isinstance(v, dict) else {}
+
+
+def _files0(js):
+    """取 JSON 里的第一条 `files[]`；没有就给空 dict（同上，不抛）。"""
+    if not isinstance(js, dict):
+        return {}
+    files = js.get('files') or []
+    return files[0] if files else {}
 
 
 # 全套件的 en 非 ASCII 采集（按 `命令/流` 精确登记；最后统一判一次）
@@ -406,16 +446,13 @@ def journey_commands(wd, vpy, exe, lang='en'):
     # 机器可读通道另测：`--json` 时结果走 stdout、过程信息走 stderr（SKILL.md:96）
     r = cli('apply', script, '--json')
     results['apply-json'] = r
-    try:
-        aj = json.loads(r.stdout)
-    except Exception:                                              # noqa: BLE001
-        aj = None
+    aj = _json_or_empty(r.stdout)
+    aj0 = _files0(aj)
     check('⑤ apply --json：rc=0、reason=preview、changes 为空（stdout 里不混过程信息）',
-          r.returncode == 0 and isinstance(aj, dict)
-          and aj['files'][0]['reason'] == 'preview'
-          and aj['files'][0]['changes'] == [],
-          'rc=%s reason=%s' % (r.returncode,
-                               (aj or {}).get('files', [{}])[0].get('reason')))
+          r.returncode == 0 and bool(aj)
+          and aj0.get('reason') == 'preview' and aj0.get('changes') == [],
+          'rc=%s keys=%s reason=%s'
+          % (r.returncode, sorted(aj) or None, aj0.get('reason')))
 
     r = cli('revert', script)
     results['revert'] = r
@@ -437,17 +474,27 @@ def invariants(wd, vpy, exe, script, pf, d):
     def cli(*args):
         return _run([exe] + list(args), wd, env)
 
+    # 前置条件：这一组不变量全部建立在"describe 拿到了参数"上。
+    # 拿不到时（最典型：这台机器的子 venv 里没有 matplotlib ⇒ 全链 collect_failed）
+    # **记一条显式 FAIL 然后返回**，不许 `d['axes'][0]` 抛出去 —— 抛出去会把后面
+    # 所有断言与末尾的 `FAILED: N 项` 汇总一起吞掉（判据变成"套件自己坏了"）。
+    if not isinstance(d, dict) or not d.get('axes'):
+        check('⑥ 前置条件：describe 拿到了参数（否则"改参数再写回"这组不变量无法执行）',
+              False, 'describe 的结果=%r' % (d if not isinstance(d, dict) else sorted(d)))
+        return
+
     # ---- 零改动不变量（附录 B #5）----
     before = _sha(script)
     r1 = cli('apply', script, '--json')
     r2 = cli('apply', script, '--json')
-    j1 = json.loads(r1.stdout)
+    j1 = _json_or_empty(r1.stdout)
+    j10 = _files0(j1)
     check('⑥ 零改动①：describe → apply（不写）⇒ reason=preview / changes=[] / 字节不动',
-          r1.returncode == 0 and j1['files'][0]['reason'] == 'preview'
-          and j1['files'][0]['changes'] == [] and _sha(script) == before,
-          'reason=%s 字节变了吗=%s' % (j1['files'][0]['reason'], _sha(script) != before))
-    check('⑥ 零改动②：同样的 apply 两次 ⇒ JSON 逐字段相同（幂等）', j1 == json.loads(r2.stdout),
-          '')
+          r1.returncode == 0 and j10.get('reason') == 'preview'
+          and j10.get('changes') == [] and _sha(script) == before,
+          'reason=%s 字节变了吗=%s' % (j10.get('reason'), _sha(script) != before))
+    check('⑥ 零改动②：同样的 apply 两次 ⇒ JSON 逐字段相同（幂等）',
+          bool(j1) and j1 == _json_or_empty(r2.stdout), '')
 
     # ---- 写回不变量：只允许预期字段变化 ----
     copy = os.path.join(wd, 'fig2.py')
@@ -457,12 +504,13 @@ def invariants(wd, vpy, exe, script, pf, d):
 
     # 先证明"参数与源码一致时 --write 也不动字节"（= no_change 的真实语义）
     r = cli('apply', copy, '--write', '--json')
-    jw = json.loads(r.stdout)
+    jw = _json_or_empty(r.stdout)
+    jw0 = _files0(jw)
     check('⑥ 写回①：参数与源码一致时 apply --write ⇒ reason=no_change 且一个字节不动',
-          r.returncode == 0 and jw['files'][0]['reason'] == 'no_change'
-          and jw['files'][0]['applied'] is False
+          r.returncode == 0 and jw0.get('reason') == 'no_change'
+          and jw0.get('applied') is False
           and open(copy, 'rb').read() == src_before,
-          'reason=%s applied=%s' % (jw['files'][0]['reason'], jw['files'][0]['applied']))
+          'reason=%s applied=%s' % (jw0.get('reason'), jw0.get('applied')))
 
     # 再把参数改成"真的不同"，看它改的是不是**只有预期字段**
     d2 = json.loads(json.dumps(d))
@@ -472,8 +520,8 @@ def invariants(wd, vpy, exe, script, pf, d):
     with open(mod, 'w', encoding='utf-8') as f:
         json.dump(d2, f, ensure_ascii=False)
     r = cli('apply', copy, '--params', mod, '--write', '--json')
-    jw = json.loads(r.stdout)
-    fl = jw['files'][0]
+    jw = _json_or_empty(r.stdout)
+    fl = _files0(jw)
     src_after = open(copy, 'rb').read()
     bl = src_before.decode('utf-8').splitlines()
     al = src_after.decode('utf-8').splitlines()
@@ -482,11 +530,12 @@ def invariants(wd, vpy, exe, script, pf, d):
                      for i in range(max(len(bl), len(al)))
                      if (bl[i] if i < len(bl) else None) != (al[i] if i < len(al) else None)]
     check('⑥ 写回②：reason=ok、changes 恰好是预期字段、备份与验证都记了',
-          r.returncode == 0 and fl['reason'] == 'ok' and fl['applied'] is True
-          and sorted(fl['changes']) == ['ax0.pos', 'figsize']
-          and fl['backup'] and fl['verified'] is True,
+          r.returncode == 0 and fl.get('reason') == 'ok' and fl.get('applied') is True
+          and sorted(fl.get('changes') or []) == ['ax0.pos', 'figsize']
+          and fl.get('backup') and fl.get('verified') is True,
           'reason=%s changes=%s backup=%s verified=%s'
-          % (fl['reason'], fl['changes'], bool(fl['backup']), fl['verified']))
+          % (fl.get('reason'), fl.get('changes'), bool(fl.get('backup')),
+             fl.get('verified')))
     # **不拿"有变化"当判据**：逐行比对，只许那两行变，且新值就是喂进去的值
     ok_lines = (len(changed_lines) == 2
                 and all(ln == 5 or ln == 6 for ln, _a, _b in changed_lines)
@@ -502,9 +551,10 @@ def invariants(wd, vpy, exe, script, pf, d):
           'rc=%s 逐字节相同=%s' % (r.returncode, back))
 
     # ---- describe 幂等（JSON 逐字段）----
-    a = json.loads(cli('describe', script).stdout)
-    b = json.loads(cli('describe', script).stdout)
-    check('⑥ describe 两次 ⇒ JSON 逐字段相同（幂等）', a == b, '')
+    a = _json_or_empty(cli('describe', script).stdout)
+    b = _json_or_empty(cli('describe', script).stdout)
+    check('⑥ describe 两次 ⇒ JSON 逐字段相同（幂等）', bool(a) and a == b,
+          'keys=%s' % (sorted(a) or None))
 
 
 # ---------------------------------------------------------------- ⑦ P2-8
@@ -542,19 +592,23 @@ def teeth(wd, vpy, exe):
           '原文档命中=%s' % ('--json' in text))
 
     # teeth② 零改动判据不是恒绿：参数真的不同时 changes 必须非空
-    d = json.loads(_run([vpy, '-m', 'mpltweak', 'describe',
-                         os.path.join(wd, 'fig1.py')], wd, env).stdout)
-    d['axes'][0]['pos'] = [0.3, 0.3, 0.4, 0.4]
+    d = _json_or_empty(_run([vpy, '-m', 'mpltweak', 'describe',
+                             os.path.join(wd, 'fig1.py')], wd, env).stdout)
     m = os.path.join(wd, '.tweak_params', 'fig1_teeth.json')
-    with open(m, 'w', encoding='utf-8') as f:
-        json.dump(d, f, ensure_ascii=False)
     c = os.path.join(wd, 'fig_teeth.py')
-    shutil.copyfile(os.path.join(wd, 'fig1.py'), c)
-    shutil.copyfile(m, os.path.join(wd, '.tweak_params', 'fig_teeth.json'))
-    r = _run([exe, 'apply', c, '--write', '--json'], wd, env)
-    ch = json.loads(r.stdout)['files'][0]['changes']
-    check('teeth② 「零改动」判据不是恒绿：参数真不同时 changes 非空', bool(ch),
-          'changes=%s' % ch)
+    if not d.get('axes'):
+        check('teeth② 「零改动」判据不是恒绿：参数真不同时 changes 非空', False,
+              'describe 拿不到参数（axes 为空），这条牙齿无法验证')
+    else:
+        d['axes'][0]['pos'] = [0.3, 0.3, 0.4, 0.4]
+        with open(m, 'w', encoding='utf-8') as f:
+            json.dump(d, f, ensure_ascii=False)
+        shutil.copyfile(os.path.join(wd, 'fig1.py'), c)
+        shutil.copyfile(m, os.path.join(wd, '.tweak_params', 'fig_teeth.json'))
+        r = _run([exe, 'apply', c, '--write', '--json'], wd, env)
+        ch = _files0(_json_or_empty(r.stdout)).get('changes')
+        check('teeth② 「零改动」判据不是恒绿：参数真不同时 changes 非空', bool(ch),
+              'changes=%s' % ch)
 
     # teeth③ provenance 判据有区分力：editable 安装处 import 到的**确实**是仓库源码
     r = _run([sys.executable, '-c', 'import mpltweak; print(mpltweak.__file__)'],

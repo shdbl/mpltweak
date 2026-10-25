@@ -670,6 +670,51 @@ class Runner:
         return rec
 
 
+def _preflight_delivery(backend, timeout):
+    """跑一次投递前置探针（独立子进程）→ ``(ok, why, data)``。
+
+    独立进程的理由与所有场景一致：真窗口 + pyplot 会污染进程状态，探针也不例外；
+    而且探针**崩了/挂住**时不能把父进程一起带走。
+    """
+    cfg = dict(CFG_DEFAULT['drag'])
+    cmd = [sys.executable, HERE, '--preflight', '--backend', backend,
+           '--emit-json', '--cfg', json.dumps(cfg)]
+    env = dict(os.environ)
+    env.pop('MPLBACKEND', None)
+    pp = env.get('PYTHONPATH') or ''
+    env['PYTHONPATH'] = SRC + (os.pathsep + pp if pp else '')
+    env['MPLTWEAK_LANG'] = 'zh'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    out, err, rc, timed_out = _run_proc(cmd, env, min(timeout, 180))
+    data = None
+    for line in out.splitlines():
+        if line.startswith(MARK):
+            try:
+                data = json.loads(line[len(MARK):])
+            except ValueError:
+                pass
+    if timed_out:
+        return False, '探针超时（%ss 内没交回结果）—— 本环境起不了真窗口' % min(timeout, 180), data
+    if data is None:
+        return False, ('探针没交回结果（rc=%s）—— 真窗口环境不可用。尾部输出：%s'
+                       % (rc, _tail(err or out, 4))), data
+    if data.get('error'):
+        return False, ('探针自己报错：%s —— 真窗口环境不可用' % data['error']), data
+    if not data.get('delivery'):
+        parts = ['本环境投递不到鼠标事件' if int(data.get('motion') or 0) < 1
+                 else '本环境投递不到按键事件（鼠标能动）']
+        parts.append('实测收到 motion=%s / key=%s（期望各 ≥1）'
+                     % (data.get('motion'), data.get('key')))
+        if data.get('active') is False:
+            parts.append('而且窗口没拿到焦点（isActiveWindow=False）—— '
+                         '没有桌面前台/会话时就是这样，事件会被系统丢掉')
+        if data.get('forced_undeliverable'):
+            parts.append('（这次是 MPLTWEAK_RW_FORCE_UNDELIVERABLE=1 人为制造的环境）')
+        return False, '；'.join(parts), data
+    return True, '投递正常（motion=%s / key=%s，active=%s）' % (
+        data.get('motion'), data.get('key'), data.get('active')), data
+
+
 def _tail(text, n=12):
     lines = [l for l in (text or '').splitlines() if l.strip()]
     return ' ⏎ '.join(lines[-n:])
@@ -687,12 +732,20 @@ def _log_lines(rec, pat):
 # ===========================================================================
 # 子进程侧：真窗口驱动（事件投递，不移动真实光标）
 # ===========================================================================
+# 鼠标移动怎么投递：True = `QApplication.postEvent(QMouseEvent(MouseMove))`，
+# False = 0.1.17 及以前的 `QTest.mouseMove`（**本机实测发 0 个 motion 事件**）。
+# 留开关只为"修复前后同机对比"与反向验证（tests/test_real_window.py --preflight）。
+MOVE_VIA_POST = True
+
+
 class QtDriver:
     def __init__(self, fig):
         from matplotlib.backends import qt_compat
         self.QtCore = qt_compat.QtCore
+        self.QtGui = getattr(qt_compat, 'QtGui', None)      # postEvent 要用 QMouseEvent
         QtWidgets = qt_compat.QtWidgets
         self.qt_api = qt_compat.QT_API
+        self._btn_down = False                              # 拖拽中：buttons 要如实
         mod = __import__(self.qt_api + '.QtTest', fromlist=['QTest'])
         self.QTest = mod.QTest
         self.app = (QtWidgets.QApplication.instance()
@@ -745,14 +798,52 @@ class QtDriver:
         return m
 
     def press(self, fig, x, y, mods=()):
+        self._btn_down = True
         self.QTest.mousePress(fig.canvas, self._lbtn, self._mods(mods), self._pt(fig, x, y))
 
+    def _motion_event(self, fig, pt, mods):
+        """造一个 MouseMove 事件（Qt5 / Qt6 构造签名不同，逐档降级，不猜）。"""
+        Qt, QtCore, QtGui = self.QtCore.Qt, self.QtCore, self.QtGui
+        btn = Qt.LeftButton if self._btn_down else Qt.NoButton
+        glob = self.QtCore.QPointF(self.window(fig).mapToGlobal(pt))
+        local = self.QtCore.QPointF(pt)
+        try:
+            return QtGui.QMouseEvent(QtCore.QEvent.MouseMove, local, glob,
+                                     btn, btn, self._mods(mods))
+        except TypeError:
+            pass
+        # Qt6/PySide6：多一个 source 参数；再不行退回 QPoint 版
+        try:
+            return QtGui.QMouseEvent(QtCore.QEvent.MouseMove, local, glob,
+                                     btn, btn, self._mods(mods),
+                                     QtGui.QMouseEvent.MouseEventSource)
+        except (TypeError, AttributeError):
+            pass
+        return QtGui.QMouseEvent(QtCore.QEvent.MouseMove, pt, pt, btn, btn,
+                                 self._mods(mods))
+
     def move(self, fig, x, y, mods=()):
-        # 注：mouseMove 报 NoButton；产品 _on_motion 不依赖 event.buttons，
-        # 所以真拖拽能成立（已实测过）。
-        self.QTest.mouseMove(fig.canvas, self._pt(fig, x, y))
+        """投递一次鼠标移动。
+
+        **为什么不用 `QTest.mouseMove`**（0.1.18 本机实测，冻结 HEAD 树）：
+        它在这台机 / 这个 Qt 版本上发出 **0 个 motion 事件**（产品收不到 ⇒ 拖拽、
+        框选、吸附、撤销全部假红，整套真窗口套件 90 分钟里 7 条 FAIL 有 5 条出自这里）；
+        改走 `QApplication.postEvent(canvas, QMouseEvent(MouseMove, …))` 能把驱动发出的
+        每一次移动都送到（`drag` 场景 8 步插值 + 2 次落点重复 = **10 发 10 收**），
+        位移精确到 −0.0800 / −0.1100（请求 −0.08 / −0.11）。前后对比见
+        `_team014/rw_delivery.md`（含探针只发 2 次时 `motion=2` 的对照读数）。
+
+        注意：`postEvent` 与 `QTest` 一样**不移动系统光标**（内部只走 Qt 事件队列），
+        所以"不劫持真实鼠标"的约定不变。
+        """
+        pt = self._pt(fig, x, y)
+        if not MOVE_VIA_POST:
+            self.QTest.mouseMove(fig.canvas, pt)     # 旧路（只用于前后对比/反向验证）
+            return
+        self.app.postEvent(fig.canvas, self._motion_event(fig, pt, mods))
 
     def release(self, fig, x, y, mods=()):
+        self._btn_down = False
         self.QTest.mouseRelease(fig.canvas, self._lbtn, self._mods(mods), self._pt(fig, x, y))
 
     def key(self, fig, combo):
@@ -2231,6 +2322,66 @@ def _sc_hoverkeys(ns, mpl, ctx, tmp):
     return {'done': True, 'backend': mpl.get_backend(), 'dpr': 1.0}
 
 
+def _sc_probe(ns, mpl, ctx, tmp):
+    """投递前置探针：**开跑前**先确认这台机真的能把事件送进窗口。
+
+    为什么非要这一条：0.1.17 那一版真窗口套件在本机跑了 90 分钟、红了 7 条，其中 5 条
+    的根因是"`QTest.mouseMove` 一个 motion 事件都没送出去"——**环境/投递问题被当成了产品
+    缺陷**。90 分钟假红的代价太大，所以开跑前先花 2 秒问三个问题：
+
+      1. 鼠标**移动**收得到吗（`motion_notify_event` 计数 ≥1）？
+      2. 按键收得到吗（`key_press_event` 计数 ≥1）？
+      3. 窗口拿到焦点了吗（`isActiveWindow()`）？
+
+    收不到就往回交 `delivery: false` + 一句人话，父进程据此 **skip**（不是硬跑）。
+    `MPLTWEAK_RW_FORCE_UNDELIVERABLE=1` 时本探针**故意不投**，用来演示"环境投递不到"
+    这条分支（反向验证，见 `_team014/rw_delivery.md`）。
+    """
+    forced = bool(os.environ.get('MPLTWEAK_RW_FORCE_UNDELIVERABLE'))
+    fig = _new_fig(ns, mpl)
+    ax = fig.add_subplot(111)
+    ax.plot([0, 1], [1, 0])
+    drv = _driver(ns, fig)
+    drv.harden(fig)
+    try:                                  # 探针不走 Tweak，自己把窗口显示出来
+        drv.show_window(fig)
+    except AttributeError:
+        try:
+            fig.canvas.manager.window.show()
+        except Exception:
+            pass
+    drv.pump(400)
+    got = {'motion': 0, 'key': 0}
+
+    def _on_motion(ev):
+        got['motion'] += 1
+
+    def _on_key(ev):
+        got['key'] += 1
+
+    fig.canvas.mpl_connect('motion_notify_event', _on_motion)
+    fig.canvas.mpl_connect('key_press_event', _on_key)
+    W, H = fig.canvas.get_width_height()
+    if not forced:
+        drv.move(fig, 0.30 * W, 0.40 * H)
+        drv.pump(60)
+        drv.move(fig, 0.62 * W, 0.48 * H)
+        drv.pump(60)
+        drv.key(fig, 'x')
+        drv.pump(150)
+    try:
+        active = bool(drv.active(fig))
+    except Exception:
+        active = None
+    return {
+        'delivery': bool(got['motion'] >= 1 and got['key'] >= 1),
+        'motion': got['motion'], 'key': got['key'], 'active': active,
+        'forced_undeliverable': forced, 'via_post': bool(MOVE_VIA_POST),
+        'backend': mpl.get_backend(), 'canvas': [W, H],
+        'needs_window': True,
+    }
+
+
 def _sc_tkwin(ns, mpl, ctx, tmp):
     """C⑦：Tk 真窗口 + event_generate 真拖拽。"""
     fig = _new_fig(ns, mpl)
@@ -2267,6 +2418,9 @@ def _sc_tkwin(ns, mpl, ctx, tmp):
 
 
 _CHILD_FUNCS = {
+    # 投递前置探针**不是**一个"场景"（不进 SCENARIOS、不出断言行），只是开跑前的自检；
+    # 台账那边要求 `set(SCENARIOS) == set(_CHILD_FUNCS)`，所以下面台账口径里把它排除。
+    'preflight': _sc_probe,
     'monkey': _sc_monkey,
     # ⑫~⑯ 五种新图形（t22）：同一个函数按 cfg['kind'] 造图 + 补测
     'figs_grid4x4': _sc_figs,
@@ -3266,7 +3420,8 @@ def _ledger_audit():
     else:
         notes.append('台账：%d 条硬断言「声明 ↔ rep.check 实现」一一对应' % len(declared))
     scen_ids = set(s[0] for s in SCENARIOS)
-    if scen_ids != set(_CHILD_FUNCS):
+    # `preflight` 是开跑前的投递自检，不是报告里的场景 ⇒ 台账口径里排除它
+    if scen_ids != set(_CHILD_FUNCS) - {'preflight'}:
         problems.append('SCENARIOS 与 _CHILD_FUNCS 不一致：%s vs %s'
                         % (sorted(scen_ids), sorted(_CHILD_FUNCS)))
     else:
@@ -3893,6 +4048,9 @@ def main(argv=None):
     ap.add_argument('--selftest', action='store_true',
                     help='断言机器自检（合成数据）：不开窗、不 import pyplot，'
                          '验证谓词接对了且不恒真')
+    ap.add_argument('--preflight', action='store_true',
+                    help='内部：投递前置探针（真开一个窗口，发 1 次鼠标移动 + 1 次按键，'
+                         '数收到几次）。父进程据此决定"能不能跑"，收不到就 skip')
     ap.add_argument('--scenario', choices=sorted(_CHILD_FUNCS),
                     help='内部：只跑一个场景并输出 @@RW@@ JSON')
     ap.add_argument('--cfg', default=None, help='内部：场景配置 JSON')
@@ -3910,6 +4068,11 @@ def main(argv=None):
 
     if ns.selftest:                      # ---- 断言机器自检（不开窗）----
         return selftest()
+
+    if ns.preflight:                     # ---- 投递前置探针（子进程）----
+        ns.cfg = json.loads(ns.cfg) if ns.cfg else dict(CFG_DEFAULT['drag'])
+        ns.scenario = 'preflight'
+        return _child_main(ns)
 
     if ns.scenario:                      # ---- 子进程模式 ----
         ns.cfg = json.loads(ns.cfg) if ns.cfg else CFG_DEFAULT.get(ns.scenario, {})
@@ -3940,13 +4103,45 @@ def main(argv=None):
         % ('?' if _nload < 0 else _nload, _lms))
     say('打扰控制: figure.raise_window=False + raise_()/activateWindow() no-op '
         '+ WA_ShowWithoutActivating（仅测试进程内 patch，不动 src/）')
+
+    # ---- 投递前置探针（0.1.18 / t2）：先确认"事件真的送得进去"，再决定跑不跑 ----
+    # 代价 2 秒，买的是"不会白跑 90 分钟再红 5 条其实是环境问题"。
+    _skip_qt = False
+    if 'qt' in backends:
+        _ok, _why, _pdata = _preflight_delivery('qt', ns.timeout)
+        say('投递自检（Qt）：%s —— %s' % ('通过' if _ok else '**不通过**', _why))
+        if _ok and _pdata is not None and _pdata.get('active') is False:
+            # 投递正常但窗口没前台焦点：本机实测**不影响**事件投递（motion 收到了），
+            # 只是如实记一笔 —— 将来若出现"投递正常但手势不生效"，先看这一行。
+            say('  （注：窗口没有前台焦点 isActiveWindow=False，但事件照样收得到；'
+                '本条只作记录，不影响判定）')
+        if not _ok:
+            _skip_qt = True
+            say('')
+            say('[跳过] Qt 真窗口场景**这次不跑**：%s。' % _why)
+            say('       这不是被测产品的问题 —— 是**投递层**不可用（QTest/postEvent 都'
+                '送不进去）。先在能弹窗的桌面会话里跑一次，或检查：')
+            say('       ① 是否在无桌面的服务/会话里跑（RDP 断开、CI 无头机）；')
+            say('       ② 控制台是否被别的窗口全屏独占；')
+            say('       ③ 本文件的驱动开关 MOVE_VIA_POST 是否被人为关掉。')
+            say('       想看"探针本身对不对"：设 MPLTWEAK_RW_FORCE_UNDELIVERABLE=1 '
+                '重跑，应当出现同一句跳过。')
+            if 'tk' not in backends:
+                say('')
+                say('结论：本次 **SKIP**（rc=0，不是失败）。')
+                return 0
     say('')
 
     total_fail = 0
     total_rows = 0
     reports = {}
+    ran = []                     # **真的跑了**的后端（跳过的不进汇总，否则关键表会 KeyError）
     t_run0 = time.time()
     for bk in backends:
+        if bk == 'qt' and _skip_qt:
+            say('-' * 78)
+            say('后端 qt —— **跳过**（投递自检不通过，见上）')
+            continue
         say('-' * 78)
         say('后端 %s' % bk)
         say('-' * 78)
@@ -3962,6 +4157,7 @@ def main(argv=None):
             say(traceback.format_exc()[-1500:])
             rep.check('X0', 'X', '断言装配未抛异常', False, '%s: %s' % (type(e).__name__, e))
         reports[bk] = rep
+        ran.append(bk)
         say('')
         say('  子进程启动次数: %d（每场景一个进程、跑完即退 → 不留 GUI 进程；'
             '超时会 taskkill /T）' % runner.spawns)
@@ -3977,13 +4173,13 @@ def main(argv=None):
     say('汇总')
     say('=' * 78)
     say('  断言逐条：')
-    for bk in backends:
+    for bk in ran:
         rep = reports[bk]
         for r in rep.rows:
             say('    [%s] %-3s %-4s %s' % ('PASS' if r['ok'] else 'FAIL', r['id'], bk, r['desc']))
     say('  硬断言: %d 条，失败 %d 条' % (total_rows, total_fail))
-    n_soft = sum(len(reports[b].softs) for b in backends)
-    _pinned = [(bk, r) for bk in backends for r in reports[bk].rows if r.get('pinned')]
+    n_soft = sum(len(reports[b].softs) for b in ran)
+    _pinned = [(bk, r) for bk in ran for r in reports[bk].rows if r.get('pinned')]
     if _pinned:
         say('  已知缺陷 pin: %d 条（预期 FAIL、**不计失败**；缺陷修好会立刻报红要求移除）'
             % len(_pinned))
@@ -3992,7 +4188,7 @@ def main(argv=None):
             say('    [PIN] %s  %s  —  %s' % (r['id'], bk, p.get('title')))
             say('          缺陷编号=%s ｜ 移除条件: %s' % (p.get('task'), p.get('remove_when')))
     say('  软检查: %d 条（只警告，不判失败）' % n_soft)
-    for bk in backends:
+    for bk in ran:
         for s in reports[bk].softs:
             say('    [%s] %-4s %s — %s' % ('WARN' if s['warn'] else 'OK', bk,
                                            s['label'], s['detail']))
@@ -4000,7 +4196,7 @@ def main(argv=None):
     say('  本次运行总墙钟: %.1f s = %.1f min（含全部子进程；逐场景耗时另见各 A 层明细）'
         % (time.time() - t_run0, (time.time() - t_run0) / 60.0))
     say('  运行环境（来自本次真实运行）：')
-    for bk in backends:
+    for bk in ran:
         f = reports[bk].facts
         if f:
             say('    %-4s py=%s mpl=%s 后端=%s(%s) 平台=%s 屏幕=%s 可用区=%s '

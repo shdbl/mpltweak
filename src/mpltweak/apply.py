@@ -526,23 +526,17 @@ def _all_params_files(script, override=None):
 # 顶层 error_code 取**第一个失败文件**的码（多文件批次里"有一份没成"就是没成）。
 # 成功载荷**不加**这个键 —— 既有键名/语义、退出码、stdout/stderr 分流一字不变。
 # ---------------------------------------------------------------------------
-_OK_REASONS = ('ok', 'best_effort', 'no_change', 'preview')
-_FAIL_ERROR_CODE = {
-    'bad_params': 'bad_params',
-    'stale': 'stale_params',
-    'no_axes': 'no_axes',
-    'no_fig': 'no_fig',
-    'fail': 'writeback_failed',
-    'external_modified': 'external_modified',
-    # D1（0.1.14）：布局引擎冲突下"这次要写轴位置"被默认拒绝 —— 与 --strict 那份
-    # 拒绝共用同一个码（同一件事：写了不生效），agent 只需认这一个。
-    'layout_conflict': 'layout_conflict',
-    # J1（0.1.14，REV1-1 收口）：整批零改动的码，值域登记在这一张表里 —— 它由
-    # `_nothing_applied()` 判、在 `--json` 那处 emit 时直接给（见 main 的 `_nothing`），
-    # 不经过 "reason 不在 _OK_REASONS 里" 那条路径；登记在这里是为了**值域有唯一出处**，
-    # 将来若真有 reason='nothing_applied' 的条目也能映射到同一个码。
-    'nothing_applied': 'nothing_applied',
-}
+# ---------------------------------------------------------------------------
+# t16（0.1.18）：三张表**不再各写一份字面量** —— 唯一出处是 `messages.REASONS`
+# （reason → kind / error_code / stage 一张表，见那里的长注释）。这里只做派生：
+#   * `_OK_REASONS`  = 成功档（ok / best_effort / no_change / preview）
+#   * `_FAIL_ERROR_CODE` = reason → 顶层 error_code
+#   * `_FAIL_STAGE` = reason → 顶层 stage
+# 新增一个 reason 只改 messages.REASONS 一处；漏登记会被 `_failure_code` 的
+# `apply_failed` 兜底码照出来（那正是"忘了登记"的信号）。
+# ---------------------------------------------------------------------------
+_OK_REASONS = _msg.REASONS_OK
+_FAIL_ERROR_CODE = dict(_msg.REASON_ERROR_CODE)
 
 
 def _failure_code(results):
@@ -569,15 +563,7 @@ def _failure_code(results):
 # —— 写回已落盘但刷新参数文件 mtime 失败 —— 成功载荷也带 `stage=finalize` + `next_step`
 # （`ok` 仍为 true；见下面的 `_finalize_stage` / `_finalize_next_step`）。
 # ---------------------------------------------------------------------------
-_FAIL_STAGE = {
-    'bad_params': 'params',
-    'stale': 'preflight',
-    'no_axes': 'preflight',
-    'no_fig': 'preflight',
-    'layout_conflict': 'preflight',
-    'fail': 'writeback',            # 重跑验证失败会再细分到 verify，见下
-    'external_modified': 'verify',
-}
+_FAIL_STAGE = dict(_msg.REASON_STAGE)
 
 
 def _failure_stage(results):
@@ -636,6 +622,10 @@ def _failure_next_step(results, script):
         return 'mpltweak describe %s --all-figs' % _cmd
     if _reason == 'no_fig':
         return 'mpltweak apply %s --snippet' % _cmd
+    if _reason == _msg.REASON_REFUSED:
+        # t16：拒写**不是**"写回坏了"，别再让人去 check --static 查病因 —— 病因是
+        # "这些字段按 AST 定位不了"，出路是拿片段手改（与 needs_block_hint / T70 同一条路）。
+        return 'mpltweak apply %s --snippet' % _cmd
     if _reason == 'external_modified':
         # 用户保存完了就能原命令重跑（参数此刻仍与代码一致，不需要 --force）
         return 'mpltweak apply %s --write' % _cmd
@@ -644,20 +634,133 @@ def _failure_next_step(results, script):
 
 # J1（0.1.14，独立验证 P1 报的 F1）：`ok=true + applied=false + rc=0` 但**脚本一字节
 # 没改** —— 只看 `ok`/`rc` 的 agent 会当成"已写回"。实测形态：隐式建图 / `for` 里建图 /
-# 函数里建图 / 类里 `self.ax`（fail-closed 保守拒写）⇒ `reason='best_effort'`、
-# `applied=false`、`changes=[]`、盘上字节不变、rc=0。
+# 函数里建图 / 类里 `self.ax`（fail-closed 保守拒写）。
 # 判据只认"**这次确实想写**却**一处都没落地**"：
 #   * `no_change` **不算**（参数与源码本来就一致 = 正常成功，不是失败）；
 #   * dry-run 不算（预览本来就不落盘，另有 `dry_run` 字段）；
 #   * 部分落地（applied=true）不算（那是真·best_effort）。
+# t16（0.1.18）：这类"想写却零落地"的条目，`files[].reason` 已改成 **`refused`**
+# （见 `_normalize_reason`）—— 判据这边因此要把它一起算进"尝试过写"，否则整批的
+# ok / error_code 会从"零改动"退回"看起来成功"。
 # ---------------------------------------------------------------------------
 def _nothing_applied(results):
     """整批**零改动**且确实尝试过写 ⇒ True（理由见上一条注释）。"""
     rows = [r for _p, r in results or []]
     if not rows:
         return False
-    tried = [r for r in rows if r.get('reason') in ('ok', 'best_effort')]
+    tried = [r for r in rows
+             if r.get('reason') in (_msg.REASON_OK, _msg.REASON_BEST_EFFORT,
+                                    _msg.REASON_REFUSED)]
     return bool(tried) and not any(r.get('applied') for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# t16（0.1.18）：**拒写要有自己的 reason**。
+#
+# 0.1.17 之前 `reason=best_effort` 同时盖着两种结局：
+#   * `applied=true`（写了一部分：add_axes 手写、colorbar cax=）；
+#   * `applied=false`（**一个字节都没写**：循环建轴、函数封装多次调用）。
+# 只看 `reason` 的消费方（agent / 脚本）分不出"写了一部分"和"什么都没写" ——
+# 这正是文档里那句「best_effort ≠ 被拒」的现场反例：它当时**同时**意味着被拒。
+#
+# 修法只做**重命名**，不动任何判定：结果事实（applied 真假）本来就在，缺的只是名字。
+# 判据刻意只看 `applied`，不看 pending/changes/warnings —— 那些是"为什么没落地"的解释，
+# 不是"落没落地"的事实；用它们判会和写回引擎的内部口径分叉。
+# `no_change` 不动：参数与源码本来一致是**正常成功**，不是拒写。
+# ---------------------------------------------------------------------------
+def _normalize_reason(res):
+    """把"想写却一个字节没写"的 `best_effort` 改判成 `refused`（就地改 + 返回）。
+
+    幂等：`refused` 再进来还是 `refused`；`ok`/`no_change`/`preview`/失败档一律不碰。
+    """
+    if res.get('reason') == _msg.REASON_BEST_EFFORT and not res.get('applied'):
+        res['reason'] = _msg.REASON_REFUSED
+    return res
+
+
+# ---------------------------------------------------------------------------
+# t16 / t15-F2：`fig_index` 不是整数 ⇒ `bad_params`（t15-F1 的 `pos: null` 曾按"非法值"
+# 处理，**已被船长裁决推翻**：`null` = "未请求这个字段"，等同该键不存在 —— 见
+# `_has_requested_fields` 的说明）。
+#
+# F2 的两种旧行为都实测过（0.1.18 改前，四种非整数值 `1.5 / '0' / null / true` 全部
+# rc=0 + 写盘）：单图时静默退回 0 照写；某些形态还会错报 `no_fig`（用户以为脚本里没有
+# 这张图）。
+#
+# 为什么放在 apply 侧而不是 `params.validate_errors`：`params.py` 的校验器**不认**这条
+# （它只判结构/类型），而本任务的文件面只有 apply/messages/tests —— 在这里合并进同一条
+# `_errs` 通道，走的还是既有的 bad_params 出口（rc=2、`not_written` 人读行、
+# `error_code=bad_params`），**不新增出口、不改退出码**。
+# ---------------------------------------------------------------------------
+def _raw_params(path):
+    """磁盘上的**原文**结构（`params.load` 之前的样子）；读不到/不是对象 ⇒ None。
+
+    为什么要单独读一遍（本轮踩出来的坑，值得写下来）：`params.load()` 会把**每个已知
+    字段补成 None** —— 实测 `{"version":4,"script":"fig.py","axes":[{"index":0,"grid":true}]}`
+    读进来 axes[0] 有 18 个键、`pos` 是 `None`。
+
+    所以"用户到底写了哪些字段"只能看**原文**：
+      * 拿 load 之后的对象判（例如"有没有可落的字段"），会把**每一份最小参数**都判反
+        （engine 的 §T7 夹具 35 条 + `test_writeback` 的 60d/64b/64c 都栽在这上面）；
+      * `null` 的口径（船长裁决 F6）：**`null` = "未请求这个字段"**，等同该键不存在 ——
+        不写、不报错、不 pending。它不是非法值：`describe` 从不产出 null，
+        而手写"只想改标题字号"的最小参数时，其余字段本来就该留空。
+    """
+    try:
+        _text, _enc = params.read_text(path)
+        _obj = json.loads(_text)
+    except (OSError, ValueError):
+        # 读不到 / 解不出来：那是 `params.load` 那条路的事（它会报 bad_params），
+        # 这里不重复报、更不许把 I/O 故障说成"参数语义非法"。
+        return None
+    return _obj if isinstance(_obj, dict) else None
+
+
+def _has_requested_fields(raw):
+    """这份参数**原文**里有没有"已请求"的字段（非 null / 非空容器）⇒ bool。
+
+    判据刻意**通用**（不抄写回引擎的字段清单 —— 那会分叉）：除 `index` 之外，
+    任何轴字段只要有非空值就算"请求了"；顶层 `figsize_in` / `figsize_px` 同理。
+    用途只有一个：把"这份参数没有任何要改的字段"与 `no_change`（"要求了、但值本来
+    就一样"）分开 —— 前者说成后者是**谎报**（见 `apply_no_fields` 的说明）。
+    """
+    if not isinstance(raw, dict):
+        return False
+    for _k in ('figsize_in', 'figsize_px'):
+        if raw.get(_k) is not None:
+            return True
+    _axes = raw.get('axes')
+    if not isinstance(_axes, list):
+        return False
+    for _ax in _axes:
+        if not isinstance(_ax, dict):
+            continue
+        for _f, _v in _ax.items():
+            if _f == 'index':
+                continue
+            if _v is None or _v == {} or _v == []:
+                continue
+            return True
+    return False
+
+
+def _extra_param_errors(path):
+    """参数层"语义非法"检查 ⇒ 返回一组**点名到字段**的错误串（空列表 = 没问题）。
+
+    判据落在**磁盘原文**上（见 `_raw_params`），只查一件事：
+    `fig_index` **写了**但不是整数（点名收到的值，`repr` 保留类型感：`'0'` vs `0`）。
+    `null` 不在这里：那是"未请求"，不是非法值（船长裁决 F6，见 `_raw_params` 说明）。
+    """
+    raw = _raw_params(path)
+    if raw is None:
+        return []
+    errs = []
+    if 'fig_index' in raw:
+        _k = raw['fig_index']
+        # `bool` 是 `int` 的子类 —— `True` 会被当成图 1，必须显式排除（同 isinstance 陷阱）
+        if not isinstance(_k, int) or isinstance(_k, bool):
+            errs.append(_msg.t('apply_params_bad_fig_index', got=repr(_k)))
+    return errs
 
 
 # ---------------------------------------------------------------------------
@@ -786,9 +889,10 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
     `_finalize_next_step` 供给 —— 那是唯一会让**成功载荷**带上 stage 的情形。
     """
     sys.stdout = stdout_ref
+    # t16：成功档判据的**唯一出处**是 `messages.REASONS_OK`（别在这里再写一份元组：
+    # 0.1.17 之前这行与 `_OK_REASONS` 各写一份，加 `refused` 时就会漏改一处）。
     _ok = (not [r for _, r in results
-                if r['reason'] not in ('ok', 'best_effort', 'no_change',
-                                       'preview')]) if ok is None else ok
+                if r['reason'] not in _OK_REASONS]) if ok is None else ok
     # REV1-1（t35）：**零改动**这件事在这里统一兜底，别只靠调用点传 ok/error_code ——
     # 判据只有 `_nothing_applied()` 一处（"确实想写、却一处都没落地"）；dry-run 不算
     # （预览本来就不落盘，另有 dry_run 字段）。漏传的调用点也因此不会退回"看起来成功"。
@@ -1266,15 +1370,38 @@ def main(argv=None):
         # `pos[3]`、`int(nan)` 各自炸成 internal_error（连只读预览都崩），
         # 而这里的校验明明已经看出来了。
         _errs = params.validate_errors(data)
+        if isinstance(_errs, str):              # 同上：顶层非对象分支返回 str
+            _errs = [_errs]
+        # t16 / t15-F1、t15-F2：`params.validate_errors` **不认**的两类"JSON 合法、语义
+        # 非法"的值（**明文写了** `pos: null` / 非整数 `fig_index`）并进同一条通道 ——
+        # 出口、rc、人读行、error_code 全部复用 bad_params 那套，不新增路径。
+        # 判据只看**磁盘原文**（`_raw_params`）：load 之后每个字段都被补成 None，
+        # 拿它判会把"没写 pos"的最小参数全部误伤。
+        _errs = list(_errs) + _extra_param_errors(p)
         if _errs:
-            if isinstance(_errs, str):          # 同上：顶层非对象分支返回 str
-                _errs = [_errs]
             _emit_err(*[_msg.t('apply_params_errors', msg=_e) for _e in _errs],
                       # T68：拒写就是拒写 —— 人读那行也必须是"未写回"+ 原因码，
                       # 不许出现"已写回"。
                       _msg.t('not_written', reason='bad_params', script=script))
             results.append((p, {'reason': 'bad_params',
                                 'err': '; '.join(_errs), 'changes': [],
+                                'style': args.style}))
+            continue
+
+        # t16（船长裁决 F6 的第三行）：整份参数**一个有效字段都没有** ⇒ 明说，别复用
+        # `no_change` 那句"参数与原代码一致，无需改动" —— 那是两件事（见 apply_no_fields）。
+        # 判据看**原文**：load 之后每个字段都被补成 None，拿它判会永远"没有字段"。
+        # 范围刻意只盖"`axes` 声明了、但每根轴的字段全是 null/没写"这一种：
+        # **连 axes 都没有的壳参数**仍走写回引擎原有的 no_axes/bad_params 档（那是
+        # "这份参数说不清要改哪张图"，rc≠0 —— 与这里 rc=0 是两码事，
+        # `tests/test_boundaries.py` 的 missing_axes 就钉着这条）。
+        # 走 `print`（stdout）而不是 `_emit_err`：rc 仍是 0、没失败，stderr 必须保持空。
+        _raw_p = _raw_params(p)
+        if (isinstance(_raw_p, dict) and isinstance(_raw_p.get('axes'), list)
+                and _raw_p['axes'] and not _has_requested_fields(_raw_p)):
+            print(_msg.t('apply_no_fields'))
+            results.append((p, {'reason': _msg.REASON_NO_FIELDS,
+                                'changes': [], 'applied': False,
                                 'style': args.style}))
             continue
 
@@ -1466,7 +1593,8 @@ def main(argv=None):
         # 内容**不是**在这里另算的：引擎刚在影子副本上跑完了与真写回**完全相同**的
         # 决策链（含 auto 退块的第二次调用 —— 它会重读影子，所以块内不会多写一行）。
         if args.diff:
-            if res.get('reason') in ('ok', 'best_effort', 'no_change'):
+            if res.get('reason') in (_msg.REASON_OK, _msg.REASON_BEST_EFFORT,
+                                     _msg.REASON_NO_CHANGE):
                 # `params.read_text` 返回 `(text, encoding)` —— 原文与编码都拿到手
                 _old, _oldenc = params.read_text(_sabs)
                 _new, _enc = (_shnew if _shnew else (_old, _oldenc))
@@ -1490,16 +1618,25 @@ def main(argv=None):
                 # 盘上**没有**备份（预览不复制；`_make_backup` 只报了路径）——
                 # 不许把一条指向不存在文件的路径当"备份"交给 agent / 用户。
                 res['backup'] = None
-        if _conflicts and res.get('reason') in ('ok', 'best_effort', 'preview'):
+        if _conflicts and res.get('reason') in (_msg.REASON_OK,
+                                                _msg.REASON_BEST_EFFORT,
+                                                _msg.REASON_PREVIEW):
             # 只在**这次确实落地/确实有计划**时才提示（no_change / fail / no_fig 不提示，
             # 否则是跟当前动作无关的噪音）。
             # 注意别用 `res['changes']` 判：**块模式**的 changes 是空的（它插的是块，
             # 不是逐字段原位替换），而"块 + 布局引擎"恰恰是最该提示的组合 ——
             # 2026-10-10 端到端冒烟发现漏提示，这里按 reason 判。
             res['layout_conflicts'] = _conflicts
+        # t16（0.1.18）：落定 reason 的**最后一步**。必须在这之后才 append / 打印 / 算
+        # rc —— 否则 `files[].reason` 说 best_effort、人读行按 refused 说，两处打架。
+        # 放在这里也保证"写回引擎内部口径"不被改动（writeback.py 仍报它自己的值，
+        # CLI 契约层负责把它翻译成消费方能分支的三种 kind）。
+        res = _normalize_reason(res)
         results.append((p, res))
-        # E7：`best_effort` 同时覆盖"改到一部分"和"一处都没改"两种情形 ——
+        # E7：`best_effort` 曾经同时覆盖"改到一部分"和"一处都没改"两种情形 ——
         # 一处都没落地时绝不能打印"[OK] 已原位写回"（脚本一个字节都没动）。
+        # t16 起后者有自己的名字 `refused`，所以这条分支要把它一起接住（否则拒写的
+        # 人读行会掉到"失败档"分支，说得比事实更重或无话可说）。
         _applied = bool(res.get('applied')) and not args.dry_run
         if args.diff and res.get('reason') == 'preview':
             # F1：预览分支排在最前 —— 它一张"已写回"的嘴都不许张（脚本没动）。
@@ -1508,7 +1645,8 @@ def main(argv=None):
             _print_preview_diff(script, res, verbose=_verbose)
             for w in res.get('warnings', []):
                 print(_msg.t('kept_as_is', msg=w))
-        elif res['reason'] in ('ok', 'best_effort'):
+        elif res['reason'] in (_msg.REASON_OK, _msg.REASON_BEST_EFFORT,
+                               _msg.REASON_REFUSED):
             if res.get('style') == 'inplace':
                 ch = res.get('changes') or []
                 if args.dry_run:
@@ -1537,6 +1675,9 @@ def main(argv=None):
                     # 如实报"未写回"+ 原因码；没能落地的字段由下面的 needs_block 提示列出。
                     _emit_err(_msg.t('not_written', reason=res['reason'],
                                      script=script))
+                    if res['reason'] == _msg.REASON_REFUSED:
+                        _emit_err(_msg.t('refused_note',
+                                         n=len(res.get('pending') or [])))
                     # T70 第 4 条：拒绝时**直接**给可复制的骨架（不要求 --snippet）
                     if res.get('pending') or res.get('warnings'):
                         _print_snippet_fields(data, res.get('pending'), res,
@@ -1565,6 +1706,9 @@ def main(argv=None):
                     # 路径）⇒ 如实报"未写回"+ 原因码。
                     _emit_err(_msg.t('not_written', reason=res['reason'],
                                      script=script))
+                    if res['reason'] == _msg.REASON_REFUSED:
+                        _emit_err(_msg.t('refused_note',
+                                         n=len(res.get('pending') or [])))
                     # T70 第 4 条：拒绝时**直接**给可复制的骨架
                     if res.get('pending'):
                         _print_snippet_fields(data, res.get('pending'), res,
@@ -1746,8 +1890,10 @@ def main(argv=None):
         # 参数文件硬错误（error 级）→ 与写回路径同一档：rc=2（输入/用法错误）
         return 2 if any(r['reason'] == 'bad_params' for _, r in results) else 0
 
+    # t16：`bad` 的判据改成 **kind != success**（唯一出处 messages.REASONS），
+    # 于是 `refused` 天然算"没成"（多文件总结里不再把它数进"成功份数"）。
     bad = [r for _, r in results
-           if r['reason'] not in ('ok', 'best_effort', 'no_change')]
+           if _msg.reason_kind(r['reason']) != _msg.REASON_SUCCESS]
     # T15：显式 --style inplace 时，"有字段必须靠调整块才能落地"= 这次请求没有完全兑现
     # → rc=1（agent 不该从 rc=0 推断"都改好了"）。auto 模式不受影响：needs_block 会让
     # apply 自动退块，字段照样落地（见 _auto_should_fallback）。
@@ -1760,7 +1906,9 @@ def main(argv=None):
     _nothing = _nothing_applied(results) and not args.dry_run
     if _nothing:
         for _p, _r in results:
-            if not _r.get('applied') and _r.get('reason') in ('ok', 'best_effort'):
+            if not _r.get('applied') and _r.get('reason') in (
+                    _msg.REASON_OK, _msg.REASON_BEST_EFFORT,
+                    _msg.REASON_REFUSED):
                 _emit_err(_msg.t('nothing_applied',
                                  script=os.path.basename(_p)))
     # 参数文件非法 → rc=2（"输入/用法错误"，与 --strict 拒绝、缺参数文件同一档），
@@ -1825,30 +1973,34 @@ if __name__ == '__main__':
 #     _success_tail                                  446
 # §5 参数文件收集与失败错误码（行 467-504，1 个顶层函数）
 #     _all_params_files                              469
-# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-908，12 个顶层函数）
-#     _failure_code                                  548
-#     _failure_stage                                 583
-#     _failure_next_step                             602
-#     _nothing_applied                               654
-#     _mtime_next_step                               679
-#     _clip_line                                     692
-#     _diff_kind_label                               701
-#     _print_preview_diff                            715
-#     _finalize_stage                                737
-#     _finalize_next_step                            749
-#     _print_finalize_attribution                    757
-#     _emit_json                                     769
-# §7 验证失败归因与下一步（attribution / next_step）（行 909-1014，4 个顶层函数）
-#     _classify_verify_failure                       937
-#     _is_rerun_failure                              971
-#     _print_attribution                             986
-#     _next_step_cmd                                1004
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1015-1799，1 个顶层函数）
-#     main                                          1017
-#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1019
-#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1121
-#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1193
-#         §8.4 逐份参数文件：校验与拒写                         1230
-#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1373
-#         §8.6 收尾：mtime 同步与人读 / --json 输出           1700
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-1012，16 个顶层函数）
+#     _failure_code                                  542
+#     _failure_stage                                 569
+#     _failure_next_step                             588
+#     _nothing_applied                               646
+#     _normalize_reason                              671
+#     _raw_params                                    695
+#     _has_requested_fields                          719
+#     _extra_param_errors                            747
+#     _mtime_next_step                               782
+#     _clip_line                                     795
+#     _diff_kind_label                               804
+#     _print_preview_diff                            818
+#     _finalize_stage                                840
+#     _finalize_next_step                            852
+#     _print_finalize_attribution                    860
+#     _emit_json                                     872
+# §7 验证失败归因与下一步（attribution / next_step）（行 1013-1118，4 个顶层函数）
+#     _classify_verify_failure                      1041
+#     _is_rerun_failure                             1075
+#     _print_attribution                            1090
+#     _next_step_cmd                                1108
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1119-1947，1 个顶层函数）
+#     main                                          1121
+#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1123
+#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1225
+#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1297
+#         §8.4 逐份参数文件：校验与拒写                         1334
+#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1500
+#         §8.6 收尾：mtime 同步与人读 / --json 输出           1844
 # --- END AUTO NAV ---

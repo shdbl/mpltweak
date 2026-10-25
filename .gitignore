@@ -13,6 +13,9 @@ dist/
 tests/test_*.json
 tests/*.png
 out.png
+# 树身指纹（tools/guard_tree_stable.py 的记录；本机一次性状态，不入库）
+.tree_fingerprint.json
+.guard_tree_*.json
 
 # 文档/演示产物（GIF 与封面图入库，运行产物不入库）
 docs/examples/*.png

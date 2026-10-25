@@ -161,6 +161,16 @@ FA_MULTI_RETURN = 'func_multi_return'
 FA_CALLED_MANY = 'func_called_many'
 FA_METHOD = 'func_method'
 
+# ---- L3（0.1.18）：**位置身份寻址**（`<fig>.axes[k]`）这条路自己的开关 ----------
+# 为什么要有这条路：语料里"结构上写不了"的 16 份有 10 份是**画图代码封装在函数里**
+# —— 图在函数内建、模块级没有 fig/axes 这样的名字，旧判据一律 fail-closed。位置身份
+# （`fig.axes` 的创建顺序号）能给这种形态发一个"号牌"：`fig.axes[k]` / `_the.axes[k]`。
+# 与三档名字寻址（array / element / single）**共存**：名字证得出就写名字（原路径一字
+# 不动）；只有名字证不出时才发号牌，而且**号必须稳**（判据见 `_pos_identity_verdict`）。
+# 关掉它（`POS_IDENTITY = False`）等价于 0.1.17 的拒绝行为 —— 只用于**反向验证**，
+# 不是产品开关（产品里不暴露 CLI/env）。
+POS_IDENTITY = True
+
 
 
 FIG_FACTORIES = ('figure', 'subplots', 'subplot_mosaic')
@@ -2016,6 +2026,222 @@ def _figure_axes_for_index(tree, fig_index):
     return out
 
 
+# ==== T8（0.1.18）轴身份：**按 fig.axes 序号对齐**的建轴点清单 ====
+#
+# 现场（发布版 0.1.17，外部评审逐字复现，最严重的一类"悄悄改坏图"）：
+#
+#   ax1      = fig.add_axes([...])              # fig.axes[0]
+#   ax_inset = fig.add_axes([...])              # fig.axes[1]  ← 名字不是 ax<数字>
+#   cax1     = fig.add_axes([...])              # fig.axes[2]
+#   ax2      = fig.add_axes([...])              # fig.axes[3]
+#   cax2     = fig.add_axes([...])              # fig.axes[4]
+#   ax3      = fig.add_axes([...])              # fig.axes[5]
+#
+# 旧实现把"非 colorbar 轴"过滤出来**重新编号**，再拿参数里的 index 去索引那张表：
+#   axes_calls（去掉 cax）= [ax1, ax_inset, ax2, ax3]
+#   参数 index=3（describe 时的 fig.axes[3] = ax2）⇒ axes_calls[3] = **ax3**
+# ⇒ 把 ax2 的矩形写进 `ax3 = fig.add_axes([...])`，rc=0，还打印 semantic check passed。
+#
+# 病根是**两套编号**：describe/collect 侧按 `fig.axes`（运行期真实顺序）编号，
+# 写回侧按"过滤+重编号"定位。只要源码里有一根名字不规整的轴（`ax_inset`）、或有一根
+# 解析器看不见的轴（`getattr(fig, "add_axes")(...)` / 库内部建轴 / 建图函数被多次调用），
+# 两套编号就错位，而且**值比对也抓不到**（验证层比的是"我改的那根现在是不是这个值"，
+# 改错那根也自洽）。
+#
+# 修法：一张图只有**一张号牌表** —— 按源码顺序枚举**每一个真的会建轴**的调用，展开
+# `subplots` / mosaic 的 N 根，`colorbar(cax=...)` 不重复计数；条数必须等于参数里的
+# 轴条数（= describe 的 fig.axes 条数），否则 fail-closed 拒写。编号即 `fig.axes` 序号。
+
+# 这些调用会**新增**一根（或 N 根）轴，且能在静态枚举里数清
+_SPINE_ONE = ('add_axes', 'add_subplot', 'subplot')
+# 会让轴的**条数或顺序**说不清的来源：一律拒写（与 _EXTRA_AXES_ATTRS 同一份名单）。
+# 注意：`_EXTRA_AXES_ATTRS` 定义在本文件中更靠后的位置，所以这里**不许**在模块层
+# 直接引用它（import 时会 NameError）；需要时用这个函数取。
+def _spine_bad_names():
+    # `colorbar` 不在名单里：带 `cax=` 的不新增轴、不带的由下面单独按位置计数（条数可数）；
+    # `subplot_mosaic` 由 `_axis_fig_spine` 自己判（拼图键→轴序说不清）。
+    return tuple(a for a in _EXTRA_AXES_ATTRS
+                 if a not in ('subplot_mosaic', 'colorbar'))
+
+
+def _axis_fig_spine(tree, fig_index):
+    """按源码顺序列出这张图的**每一个建轴点** → ``(items, bad)``。
+
+    ``items``：``[(k, name_or_None, kind, lineno)]``，``k`` 就是 ``fig.axes`` 序号。
+    ``bad``：``(why, lineno)`` —— 出现"条数/顺序说不清"的来源时给出原因，调用方拒写。
+
+    认得的形态（与 collect 侧同口径）：
+      * ``ax = fig.add_axes([...])`` / ``fig.add_subplot(...)`` / ``plt.subplot(...)``
+        → 各 1 根（没接名字也算：``name=None``）；
+      * ``fig, axes = plt.subplots(r, c)`` / ``axs = fig.subplots(r, c)``
+        → ``r*c`` 根（形状是字面量才算，否则 `bad`）；
+      * ``fig.colorbar(m)``（**不带** ``cax=``）→ 追加 1 根；
+      * ``fig.colorbar(m, cax=cax)`` → **不**新增（cax 自己那条 add_axes 已经计过）。
+    认不出的形态（`getattr(fig, "add_axes")`、`ax.inset_axes`、`twinx` …）不会进
+    ``items`` —— 于是条数与参数对不上，gate 会拒写。这正是我们要的：**看不见就当没有，
+    随后按"轴数不符"拒写**，绝不按猜测编号。
+    """
+    items = []
+    bad = None
+    fi = fig_index if isinstance(fig_index, int) else 0
+    lo, hi = _fig_span(tree, fi, figure_only=True)
+    if not (isinstance(fi, int) and fi >= 0):
+        return [], ('fig_index', 0)
+    _imported = _imported_module_names(tree)
+    # colorbar 的 cax（`fig.colorbar(m, cax=cax)`）不新增轴
+    cax_names = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'colorbar'):
+            for kw in node.keywords:
+                if kw.arg == 'cax' and isinstance(kw.value, ast.Name):
+                    cax_names.add(kw.value.id)
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        leaf = _call_leaf(node)
+        ln = getattr(node, 'lineno', 0)
+        if not (lo <= ln < hi):
+            continue
+        if leaf in _spine_bad_names():
+            bad = (leaf, ln)
+            continue
+        if leaf == 'subplot_mosaic':
+            bad = (leaf, ln)                    # 拼图布局：键→轴序不可静态枚举
+            continue
+        if leaf in ('colorbar',):
+            continue                            # 下面单独按"有没有 cax"计数
+        if leaf in ('subplots', 'subplot'):
+            if leaf == 'subplot':
+                found.append((ln, getattr(node, 'col_offset', 0), 1,
+                              _assign_name_of_call(tree, node), 'subplot'))
+                continue
+            shape = _grid_size(node)
+            if shape is None:
+                bad = ('subplots_shape', ln)
+                continue
+            n = max(1, shape[0]) * max(1, shape[1])
+            found.append((ln, getattr(node, 'col_offset', 0), n,
+                          _assign_name_of_call(tree, node), 'subplots'))
+            continue
+        if leaf in ('add_axes', 'add_subplot'):
+            found.append((ln, getattr(node, 'col_offset', 0), 1,
+                          _assign_name_of_call(tree, node), leaf))
+            continue
+        # 其余（inset_axes/twinx/…/add_axes 的等价变形）不认 —— 交给条数 gate
+    # `plt.subplots` 全文件只有一次时 `_fig_span` 的分界会把它自己算进去：用
+    # `_fig_call_node` 再核一遍"这是本图那次"，避免多图脚本里串图。
+    fc = _fig_call_node(tree, fi)
+    if fc is not None:
+        found = [x for x in found
+                 if not (x[4] in ('subplots', 'subplot') and x[0] < lo)]
+    if not found:
+        # **纯 pyplot**（SFA 那一档）：一行显式建轴都没有，轴是 `plt.plot(...)` /
+        # `plt.imshow(...)` **隐式**建出来的 —— 只有**第一次**那种调用会建轴，后面
+        # 都落在同一根上（`gca`）。这里就把它记成 1 个建轴点，别让闸门把这一档全拒了。
+        _imp = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)):
+                continue
+            if node.func.attr not in _IMPLICIT_CREATORS:
+                continue
+            if not _implicit_creator_is_module_call(node, _imported):
+                continue
+            ln = getattr(node, 'lineno', 0)
+            if not (lo <= ln < hi):
+                continue
+            if _imp is None or ln < _imp:
+                _imp = ln
+        if _imp is not None:
+            found.append((_imp, 0, 1, None, 'implicit'))
+    found.sort(key=lambda x: (x[0], x[1]))
+    k = 0
+    for ln, _col, n, nm, kind in found:
+        for j in range(n):
+            items.append((k, nm if n == 1 else None, kind, ln))
+            k += 1
+    # `fig.colorbar(m)`（不带 cax）在**它所在的位置**追加一根轴：按行号插进序列
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'colorbar'):
+            continue
+        ln = getattr(node, 'lineno', 0)
+        if not (lo <= ln < hi):
+            continue
+        if any(kw.arg == 'cax' for kw in node.keywords):
+            continue                            # 复用已有 cax，不新增
+        pos = len([x for x in items if x[3] <= ln])
+        items.insert(pos, (0, None, 'colorbar', ln))
+    for idx, it in enumerate(items):
+        items[idx] = (idx, it[1], it[2], it[3])
+    return items, bad
+
+
+def _assign_name_of_call(tree, call):
+    """这个调用被赋给了一个**纯名字**吗（`ax = ...` / `ax = plt.subplot(...)`）→ 名字/None。
+
+    与 `_call_assign_name` 的区别：那个只认"值是调用的 Assign"，这里额外要求目标是
+    `ast.Name`（元组解包 `fig, ax = plt.subplots(...)` 的 ax 由别处处理）。
+    """
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and n.value is call:
+            for t in n.targets:
+                if isinstance(t, ast.Name):
+                    return t.id
+            return None
+        if isinstance(n, ast.AnnAssign) and n.value is call:
+            if isinstance(n.target, ast.Name):
+                return n.target.id
+            return None
+    return None
+
+
+def _line_in_cond(tree, lineno):
+    """该行上的建轴调用是不是在 `if`/`try` 分支里（同一口 subs 里认条件的那个 helper）。"""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node, 'lineno', None) == lineno:
+            if _pos_cond_scope(tree, node) is not None:
+                return True
+    return False
+
+
+def _axis_identity_gate(tree, fig_index, data):
+    """T8 闸门：这张图的**建轴点清单**与参数里的轴条数对得上吗 → ``(ok, why, line)``。
+
+    对得上 ⇒ 可以按 `fig.axes` 序号寻址（`spine[k]` 就是 describe 的第 k 根轴）。
+    对不上 ⇒ fail-closed：**看不见的轴一律不猜**（`getattr(fig,"add_axes")(...)`、
+    库内部建轴、建图函数被调用多次都会让运行期比静态多出轴）。
+    ``why`` ∈ ``count`` / ``bad`` / ``shape``。
+    """
+    items, bad = _axis_fig_spine(tree, fig_index)
+    if bad is not None:
+        return False, 'bad', bad[1]
+    # 参数可以是**稀疏**的（只给 index=2）：所以不能要求"条数相等"，只要求
+    # "我要动的那几号都在清单里"。`k` 的语义就是 `fig.axes` 序号。
+    want = [a.get('index') for a in _axis_items(data)
+            if isinstance(a.get('index'), int)]
+    if want and max(want) >= len(items):
+        return False, 'count', (items[-1][3] if items else 0)
+    # 建轴点在**函数**里、而那个函数被调用多次时：静态 1 个点 = 运行期 N 根轴，
+    # 改那一个字面量等于**同时改 N 根**（"建图封装成函数被多次调用"的现场）。
+    for _ln in sorted({it[3] for it in items}):
+        _sc = _node_scope(tree, _ln)
+        if _sc is tree:
+            continue
+        _sites = _func_call_sites(tree, getattr(_sc, 'name', ''))
+        if len(_sites) == 1:
+            continue
+        # 例外：这条建轴调用**在条件分支里**（`if make_cbar: cbar_ax = fig.add_axes(...)`
+        # 的现场）—— 那时"静态 1 个点"未必等于"运行期 N 根"，而改这个字面量仍然只改
+        # 一行，不会一改全改。真正危险的是"无条件建轴 + 函数被多次调用"。
+        if _line_in_cond(tree, _ln):
+            continue
+        return False, 'multi', _ln
+    return True, '', 0
+
+
 # ==== §10 原位写回：apply_inplace ====
 
 def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
@@ -2172,6 +2398,31 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
     _fi = data.get('fig_index')
     axes_calls = _figure_axes_for_index(tree, _fi if isinstance(_fi, int) else 0)
     var_for: Dict[int, str] = {}
+    # T8（0.1.18）：先过**轴身份**闸门 —— 建轴点清单必须与参数里的轴条数一致。
+    # 不一致（`ax_inset` 这种非常规名、`getattr(fig,"add_axes")` 隐形轴、建图函数被
+    # 调用多次）时**整个原位路径一个字都不写**：宁可不改，也绝不把 A 轴的矩形写进 B 轴的
+    # 创建调用（0.1.17 实测：ax2 的矩形写进 `ax3 = fig.add_axes([...])`，rc=0）。
+    _t8_ok, _t8_why, _t8_ln = ((True, '', 0) if not AXIS_IDENTITY else
+                               _axis_identity_gate(
+                                   tree, _fi if isinstance(_fi, int) else 0, data))
+    if not _t8_ok:
+        for _a8 in axes:
+            _i8 = _a8.get('index')
+            if not isinstance(_i8, int):
+                continue
+            for _f8 in ('pos', 'title_fontsize', 'label_fontsize',
+                        'label_fontsize_y', 'tick_fontsize', 'tick_fontsize_y',
+                        'grid', 'xlim', 'ylim', 'clim', 'cmap', 'spines',
+                        'lines', 'legend'):
+                if _a8.get(_f8) is not None:
+                    skipped.append((_i8, _f8 + _msg.t('wb_t8_axis_gate'), _a8[_f8]))
+        if notes is not None:
+            notes.append(_msg.t('wb_t8_axis_gate_note', why=_t8_why,
+                                line=str(_t8_ln or 0),
+                                n_src=str(len(_axis_fig_spine(
+                                    tree, _fi if isinstance(_fi, int) else 0)[0])),
+                                n_par=str(len(axes))))
+        return src, covered, skipped
     # T57-稀疏轴（t2 fuzz high）：**按轴序号 index 直接索引** —— index 的语义就是
     # "第 index 个非 colorbar 轴创建调用"（与 collect 侧一致，见 _figure_axes_for_index）。
     # 旧实现把「参数里的非 colorbar 轴（按参数出现序）」与 axes_calls **按位置 zip**：
@@ -2179,11 +2430,24 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
     # （ax0）→ var_for[1] 错绑 ax0 → 原位写回改错轴（t2 实测：第一次错写 ax0 被语义
     # 回滚，第二次又被块"掩盖" → ax0 被改坏 + 幂等破功）。越界 / 负 / 非 int 一律
     # 不登记 var_for（fail-closed）→ nm=None → 进 skipped → 退块，不崩不静默写错。
+    # T8（0.1.18）：**号牌表只有一张** —— 按 `fig.axes` 序号（= 源码建轴顺序）对齐。
+    # 旧实现拿"去掉 cax 后重新编号"的 axes_calls 去索引参数 index，只要中间夹一根
+    # 非常规名或 colorbar 槽轴，整体就错一位（评审现场：参数 index=3 是 ax2，
+    # axes_calls[3] 却是 ax3 ⇒ 把 ax2 的矩形写进 ax3 的创建调用）。
+    _spine, _spine_bad = _axis_fig_spine(tree, _fi if isinstance(_fi, int) else 0)
+    _spine_nm = ({it[0]: it[1] for it in _spine} if AXIS_IDENTITY else {})
     for _a in axes:
         if _a.get('is_colorbar'):
             continue
         _ai = _a.get('index')
-        if isinstance(_ai, int) and 0 <= _ai < len(axes_calls):
+        if not isinstance(_ai, int):
+            continue
+        _nm8 = _spine_nm.get(_ai)
+        if isinstance(_nm8, str) and _nm8.isidentifier():
+            var_for[_ai] = _nm8
+        elif 0 <= _ai < len(axes_calls):
+            # 兜底：spine 里这一格没名字（例如 `fig.add_axes(...)` 没接变量）时，
+            # 沿用老的 axes_calls（它只用于"有没有名字"的判断，量已经对不上了）。
             var_for[_ai] = axes_calls[_ai][0]
     # T41（blocker）：同一张图里**同一个变量名被赋值 ≥2 次**（`ax = fig.add_subplot(2,1,k)`
     # 写两遍）时，第 2 个及以后的轴**无法原位定位** —— `_find_call` 只取"本图区间内
@@ -2323,11 +2587,32 @@ def apply_inplace(src, tree, data, idx_map=None, overlaps=None, notes=None):
         nm = var_for.get(i)
         _w_lo, _w_hi = _win_for.get(i, (_scope_lo, _scope_hi))
         pos = a.get('pos')
+        # T10（0.1.18）：**长宽比锁定的轴（imshow / cartopy 地图）不写 pos** ——
+        # 它们的位置由 matplotlib 按比例现算（源码字面量与运行期值天生不同，
+        # 改了也不是它呈现的几何）。与块路径 `_needed_block_fields`、以及
+        # `verify.compare()` 的"锁定轴不比 pos"三处同口径 —— 这条是 t8 收尾时发现的
+        # "恒等 apply 仍改一次源码"的根因。
+        # 放在 colorbar / 宿主两条分支**之后**：那两条的既有文案与行为一个字不动。
+        _t10_locked = bool(a.get('aspect_locked')) or \
+            (a.get('aspect') not in (None, 'auto'))
         # ② 轴位置：add_axes 的 [x0,y0,w,h]（colorbar 轴 / add_subplot 网格轴改不了）
         if pos and a.get('is_colorbar'):
             skipped.append((i, 'pos', pos))
         elif pos and nm is not None and nm in host_names:
             skipped.append((i, _msg.t_wb('pos（该轴是 colorbar 的宿主，位置由 colorbar 决定，保持原样；拖 colorbar 轴可调，或 --style block）') , pos))
+        elif pos and _t10_locked:
+            # 锁定轴：**不写、不进 pending**（它不是"写不了"，而是"没有要写的"：
+            # 位置由 matplotlib 按数据比例现算，set_position 不生效）。
+            # 但**不许静默**（船长 0.1.18 要求）：留一句人话说明"为什么没动它"，
+            # 否则用户拖了半天以为工具没反应。文案走 messages.py 的键
+            # `wb_aspect_locked_pos`（zh/en 成对；键未注册时 `_msg.t` 会原样回键名，
+            # §47 E4 有一条断言专门钉"键名不许漏到用户眼前"）。
+            # 锁定轴**不写、不进 pending**（它不是"写不了"，而是"没有要写的"：
+            # 位置由 matplotlib 按数据比例现算）。人话在 `writeback()` 的块路径那一侧
+            # 统一发（差异过滤之后、只对"真要改"的才发）——这里只留 notes，
+            # 免得"恒等 apply"也被算成 needs_block（§T7④ / §T10⑦ 钉的就是这件事）。
+            if notes is not None:
+                notes.append(_msg.t('wb_aspect_locked_pos'))
         elif pos and nm is not None:
             lst = addaxes.get(nm)
             # 字面量判定要认带符号写法（-0.01 → UnaryOp）：见 _is_num_literal
@@ -4802,6 +5087,150 @@ def _needed_block_fields(tree, data, src, fig_index):
     return out
 
 
+# ==== T7（0.1.18）：块只写**有差异**的字段（修 diff 脏）====
+#
+# 现场（发布版 v0.1.17 就能复现，不是本版引入）：4 面板 + 2 colorbar，**只改一根轴的
+# 位置**（x 与 w 各 −0.02），块里却生成了 35 行代码：另外 3 根轴的 set_position、
+# 每条线的 set_linewidth(1.5)/set_color('#1f77b4')、colorbar 的 xlim/ylim/4 个 spines、
+# clim/cmap —— 用户一样都没碰。
+#
+# 根因一句话：`_needed_block_fields` 问的是"**源码里能不能证明**这个字段等于参数值"，
+# 证不出就写；但**「证不出」不等于「用户改过」** —— 而 describe 导出的是**全量状态**，
+# 于是"没碰过的字段"全部落到"证不出"这一侧。
+#
+# 修法：写块之前先算一次**基线** —— 把去掉旧块之后的当前源码跑一遍（复用 describe 的纯
+# 采集路径 `verify.collect_isolated` + `describe._to_params`），得到"现在这份脚本本来就
+# 产出什么"。然后逐字段比：**基线 == 参数 ⇒ 这个字段没变、不写**；不等才写。
+#
+# 两条纪律：
+#   * 只**减**不增：基线只用来把字段从 needed 里摘掉，永远不因此多写一行；
+#   * 基线**取不到就不动**（脚本跑不通/超时/采集失败）⇒ 回 0.1.17 的老行为（宁脏不漏），
+#     并如实留一句 warning —— 不许把"没算成"当成"没变化"。
+DELTA_ONLY = True                 # 反向验证用（关掉 ⇒ 回到"证不出就写"的旧口径）
+# T8（0.1.18）轴身份：True = 按 `fig.axes` 序号对齐的建轴点清单（spine）寻址；
+# False = 0.1.17 的"过滤 cax 后重编号"（**已证明会错位**，只给反向验证用）。
+AXIS_IDENTITY = True
+
+_DELTA_REL = 1e-9                 # 浮点相对容差（见 `_num_close` 的说明）
+
+
+def _num_close(a, b, rel=None):
+    """两个数是否**实质相同**（相对容差）。
+
+    口径：``abs(a-b) <= rel * max(1.0, |a|, |b|)``，``rel`` 默认 1e-9。三条都验过：
+      * 排版值 0.3523 vs 0.3524 ⇒ 差 1e-4 ⇒ **判为变了**（这是本版能否用的分水岭：
+        若用绝对 1e-6 或四舍五入到 3 位就会把真实改动吃掉）；
+      * 屏噪 0.1234567890 vs 0.1234567891 ⇒ 差 1e-10 ⇒ **判为没变**（1e-12 级同理）；
+      * 0 / -0.0 / 整数 12 与 12.0 ⇒ 判为相同（字号常是 int，describe 给 float）。
+    用 `max(1.0, ...)` 而不是纯相对：值接近 0 时纯相对容差会把任何差都判成"变了"。
+    """
+    rel = _DELTA_REL if rel is None else rel
+    if a == b:
+        return True
+    try:
+        return abs(float(a) - float(b)) <= rel * max(1.0, abs(float(a)),
+                                                    abs(float(b)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _val_same(a, b):
+    """两个参数值是否**实质相同**（浮点按相对容差，结构逐层比）。
+
+    刻意手写而不是 `a == b`：pos 是 float 列表、spines 是 dict、lines 是 dict 列表，
+    浮点必须走容差；而 bool 要**先于** int 判（`True == 1` 会把"grid 从 True 改成 1"
+    判成没变 —— 虽然现实里不会这么写，但判据别留这种暗门）。
+    """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return _num_close(a, b)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(_val_same(x, y) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        if set(a) != set(b):
+            return False
+        return all(_val_same(a[k], b[k]) for k in a)
+    return a == b
+
+
+def _axes_by_index(pdata):
+    """``{轴序号: 轴参数}``（参数文件结构；index 不是 int 的丢掉）。"""
+    out: Dict[int, Dict[str, Any]] = {}
+    for a in _axis_items(pdata or {}):
+        i = a.get('index')
+        if isinstance(i, int):
+            out[i] = a
+    return out
+
+
+def _needed_minus_baseline(needed, data, base):
+    """T7：把**当前脚本本来就是那个值**的字段从 ``needed`` 里摘掉。
+
+    返回 ``(needed2, dropped)``，``dropped`` 形如 ``['ax1.pos', 'ax2.spines']``（给
+    ``--json`` / 报告取证用）。基线与参数**同构**（都来自 `describe._to_params`），
+    所以按 ``index`` 对上、按字段名对值即可。
+    """
+    tgt = _axes_by_index(data)
+    bse = _axes_by_index(base)
+    out: Dict[int, set] = {}
+    dropped: List[str] = []
+    for i, fs in needed.items():
+        b = bse.get(i)
+        if b is None:                 # 基线里没有这条轴（轴数变了）⇒ 不敢摘
+            out[i] = set(fs)
+            continue
+        t = tgt.get(i) or {}
+        keep = set()
+        for f in fs:
+            if f in b and _val_same(t.get(f), b.get(f)):
+                dropped.append('ax%d.%s' % (i, f))
+            else:
+                keep.add(f)
+        if keep:
+            out[i] = keep
+    return out, dropped
+
+
+def _figsize_same_as_baseline(data, base):
+    """T7：画布尺寸是不是"脚本本来就是这么大"（是 ⇒ 块里不用再写 set_size_inches）。"""
+    a, b = (data or {}).get('figsize_in'), (base or {}).get('figsize_in')
+    return bool(a) and bool(b) and _val_same(a, b)
+
+
+def _baseline_params(script, src_clean, enc=None, python=None, fig_index=None,
+                     timeout=None):
+    """T7：跑一遍**去掉旧块**的当前源码，拿到基线参数 → ``(params|None, err)``。
+
+    **为什么另起子进程**（任务书要求的交代）：基线必须与 describe 同一条**纯采集**路径，
+    而那条路径的边界就是进程边界（`verify.collect_isolated` 的 docstring 讲得很清楚：
+    脚本能注册 atexit、起线程、monkeypatch 模块，进程内清理只能覆盖已知那几项）。所以
+    这里复用同一个接口，代价 = **一次脚本重跑**（块路径总计：基线 1 次 + 写回后验证 1 次）。
+
+    **为什么临时文件放在脚本同目录**：`verify._collect_session` 会 `chdir` 到脚本所在
+    目录再执行 ⇒ 脚本里的相对路径按脚本目录解析。放同目录，基线看到的输入才与真跑一致
+    （放系统临时目录会让"读同目录 csv/nc"的脚本在基线里直接失败）。用完即删。
+    """
+    from . import describe as _describe
+    d = os.path.dirname(os.path.abspath(script))
+    fd, tmp = tempfile.mkstemp(prefix='.tweak_base_', suffix='.py', dir=d)
+    try:
+        with os.fdopen(fd, 'w', encoding=enc or 'utf-8', newline='') as f:
+            f.write(src_clean)
+        state, err = _verify.collect_isolated(tmp, fig_index=fig_index,
+                                              python=python, timeout=timeout)
+        if state is None:
+            return None, err
+        return _describe._to_params(state, script), ''
+    except (OSError, ValueError, TypeError) as e:     # noqa: BLE001
+        return None, '%s: %s' % (type(e).__name__, e)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
 def _block_unexpressed_fields(block, data, fig_var, needed=None, targets=None):
     """返回块里**没有对应写法**的目标字段清单（形如 ``ax0.xscale``）。
 
@@ -5149,6 +5578,29 @@ def _func_return_anchor(tree, fig_var, fig_index=None):
         return None, FA_METHOD, info     # c) 目标是方法（self.ax）
     rets = _own_returns(scope)
     body = getattr(scope, 'body', []) or []
+    # a0) L3（0.1.18）：**函数里建图 + 函数里自己存图 + 不返回图**（`def plot_it(): ...;
+    #     fig.savefig(...)`，模块层只有 `plot_it()`）。这是语料里最多的一类"函数内建图"，
+    #     过去被上面 a) 那条按 `FA_MULTI_RETURN` 拒掉（reason 名不副实：根本没有 return）。
+    #     锚点下沉到那条 savefig 之前 —— 与"块必须在存图之前"同一条纪律；号牌能否用由
+    #     `_pos_identity_verdict` 另判（这里只管位置，不管寻址）。
+    if not rets:
+        outs = [n for n in _own_output_calls(scope)
+                if getattr(n, 'lineno', 0) > getattr(scope, 'lineno', 0)]
+        if not outs:
+            return None, FA_MULTI_RETURN, info   # 既不返回也不存图：旧口径原样
+        sites0 = _func_call_sites(tree, scope.name)
+        info['n'] = len(sites0)
+        if len(sites0) != 1:
+            return None, FA_CALLED_MANY, info
+        site0 = sites0[0]
+        if find_enclosing_loop(tree, site0) is not None \
+                or _comprehension_scope(tree, site0) is not None \
+                or _node_scope(tree, site0.lineno) is not tree:
+            return None, None, info
+        info['inner_save'] = True
+        # 取**最早**那条存图（块落在它之前，后面所有存图都能看到改动）
+        return ('before', _stmt_node(min(outs, key=lambda n: n.lineno),
+                                     parents)), None, info
     # a) ≥2 条 return / 提前 return（那条唯一的 return 必须是函数体最后一条语句）
     if len(rets) != 1 or not body or body[-1] is not rets[0]:
         return None, FA_MULTI_RETURN, info
@@ -5655,6 +6107,231 @@ def _axes_binding_entries(tree, fig_index, fig_var=None, info=None):
     return entries, True, suspect
 
 
+# ==== §L3（0.1.18）位置身份寻址：`<fig>.axes[k]` 的**号稳不稳** ====
+#
+# 背景（本版要解的现场）：语料里 16 份"结构上写不了"有 10 份是"画图代码封装在函数里"
+# —— `def plot_it(): fig, axes = ...; ...` 之后模块级只有 `plot_it()` / `_the = plot_it()`，
+# 名字寻址（`ax` / `axs[0,1]`）证不出来 ⇒ 全线 fail-closed。位置身份给这种形态发号牌：
+# 运行期第 k 条轴 = 建图顺序第 k 次建轴 ⇒ 块里写 `<fig>.axes[k]`。
+#
+# 号牌的前提是**号稳**：静态枚举的顺序与运行期 fig.axes 的顺序必须逐一对应。判据见
+# `_pos_identity_verdict`。与 T70 的老结论不冲突：那条"块里不要写 fig.axes[i]"针对的
+# 是**运行期下标 + 没证明**（cax/inset/twin 会把下标顶掉）；这里先用 ⑤⑥ 把"建了哪些轴、
+# 按什么顺序"证明干净，再用②拿**真跑出来的参数条数**交叉核对。
+
+_POS_COND_TYPES = (ast.If, ast.IfExp, ast.Try) + (
+    (ast.TryStar,) if hasattr(ast, 'TryStar') else ())
+
+# `colorbar` **不**在这里：它建几条轴静态可数（`_axes_binding_entries` 已按 +1 计入），
+# 而 inset / twin / secondary / mosaic / make_axes_locatable 这些"额外建轴来源"的条数或
+# 顺序说不清（T70-B 条件③ 同一份名单，少一个 `colorbar` 而已）。
+_POS_EXTRA_ATTRS = tuple(a for a in _EXTRA_AXES_ATTRS if a != 'colorbar')
+
+
+def _pos_cond_scope(tree, node):
+    """node 的最近**条件执行**上下文（if / try 的某条分支）→ 那条语句，否则 None。
+
+    与 `find_enclosing_loop`（循环）/ `_comprehension_scope`（推导式）**分工而不重复**：
+    三条各管一种"执行次数/是否执行静态不可证"的情形，谁都不另立第二套判据。
+    """
+    parents = _parent_map(tree)
+    cur = parents.get(id(node))
+    for _ in range(64):                       # 深度上限，防意外环
+        if cur is None or isinstance(cur, _SCOPE_TYPES):
+            return None
+        if isinstance(cur, _POS_COND_TYPES):
+            return cur
+        cur = parents.get(id(cur))
+    return None
+
+
+def _pos_identity_verdict(tree, fig_index, data, positions, entries=None,
+                          enum_ok=None, suspect=None, fig_receiver=None):
+    """L3：``<fig>.axes[k]`` 里那个 **k 稳不稳** → ``(ok, why, line)``。
+
+    ``ok=True`` 才许发号牌；判据逐条（缺一条就 fail-closed，绝不去猜）：
+
+      ① **每条建轴调用都是直线执行一次**：不在循环 / 推导式 / if·try 分支里（分支会让
+         "第 k 条是谁"变成运行期才有的事）—— 先查这条：它是**根因**，枚举失败往往只是
+         它的后果；
+      ② **没有 `add_axes`**（手工轴属"动态增删"，位置由用户数据决定），也没有
+         inset / twin / secondary / mosaic 这类额外建轴来源（`colorbar` 除外，见上）；
+      ③ **静态枚举完整**：`_axes_binding_entries` 的 ``ok=True`` 且 ``suspect is None``
+         （拼图布局读不出 / `subplots` 形状不是字面量 ⇒ 它自己已经 ok=False）；
+      ④ **与运行期条数对齐**：参数文件是**真跑出来的**（describe 时读的就是那张图），
+         所以"静态数出 n 条轴"必须等于"参数里记了 n 条轴" —— 不等 ⇒ 号一定漂；
+      ⑤ **建轴调用与块锚点同作用域**（跨作用域时"这一次执行"证不出来）；
+         **例外**（``fig_receiver`` 非 None，即"图在函数里建、模块层名字接住返回值"
+         那条链）：建轴全都在**那一个函数**里，锚点全在**模块层**且在**调用那行之后**
+         —— 这时"号"仍然稳（图在调用时建好、之后不再建），所以放行；两条判据都要求
+         **全量**成立，不是"随便跨作用域就行"；
+      ⑥ **锚点在所有建轴之后**（在那之前 `fig.axes[k]` 还不存在 / 条数不够）。
+
+    ``why`` ∈ ``off / enumerate / suspect / count / loop / cond / repeat / add_axes /
+    extra_axes / scope / anchor``；``line`` = 出问题那一行（0 = 与具体行无关）。
+    """
+    if not POS_IDENTITY:
+        return False, 'off', 0
+    lo, hi = _fig_span(tree, fig_index, figure_only=True)
+    if entries is None or enum_ok is None:
+        entries, enum_ok, suspect = _axes_binding_entries(tree, fig_index, None)
+    # ⑤ 所有候选锚点必须同一个作用域（A1/L3 的互斥不变量，同一口径）
+    if not positions or len({id(sc) for sc, _ln in positions}) != 1:
+        return False, 'scope', 0
+    anchor_scope, anchor_ln = positions[0][0], max(ln for _sc, ln in positions)
+    # ⑤b "函数里建图、模块层名字接住返回值"那条链：建轴在函数里、锚点在模块层，
+    #     靠"调用那一行"把两边对上（这条例外见 docstring ⑤ 的说明）。
+    _call_scope, _site_ln = None, 0
+    if fig_receiver:
+        if anchor_scope is not tree:
+            return False, 'scope', anchor_ln
+        _fc = _fig_call_node(tree, fig_index)
+        _call_scope = _node_scope(tree, getattr(_fc, 'lineno', 0)) if _fc else None
+        _sites = _func_call_sites(tree, getattr(_call_scope, 'name', '')) \
+            if _call_scope is not None else []
+        if len(_sites) != 1:
+            return False, 'scope', anchor_ln
+        _site_ln = _sites[0].lineno
+    _imported = _imported_module_names(tree)
+    last_create = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        attr = node.func.attr
+        if attr not in _AXES_CREATORS and attr not in _IMPLICIT_CREATORS:
+            continue
+        if attr in _IMPLICIT_CREATORS \
+                and not _implicit_creator_is_module_call(node, _imported):
+            continue                      # t3：`ax.plot(...)` 画在已有的轴上，不建轴
+        ln = getattr(node, 'lineno', None)
+        if ln is None or not (lo <= ln < hi):
+            continue
+        if attr == 'colorbar' and any(kw.arg == 'cax' for kw in node.keywords):
+            continue                      # cax 由它内部那条 add_axes 建（下面会拒）
+        last_create = max(last_create, ln)
+        if attr == 'add_axes':
+            return False, 'add_axes', ln
+        if attr in _POS_EXTRA_ATTRS:
+            return False, 'extra_axes', ln
+        _loop = find_enclosing_loop(tree, node)
+        if _loop is not None:
+            return False, 'loop', ln
+        if _comprehension_scope(tree, node) is not None:
+            return False, 'repeat', ln
+        _cond = _pos_cond_scope(tree, node)
+        if _cond is not None:
+            return False, 'cond', getattr(_cond, 'lineno', ln)
+        _nsc = _node_scope(tree, ln)
+        if fig_receiver:
+            if _nsc is not _call_scope:
+                return False, 'scope', ln    # 这条链只认"那个函数里建的轴"
+        elif _nsc is not anchor_scope:
+            return False, 'scope', ln
+    # ① **静态枚举完整**（放在结构扫描之后：循环/条件建轴时枚举也数不清，但**根因**
+    #    是那条建轴调用的执行次数/时机 —— 报根因比报"数不清"有用得多；相反的情形
+    #    （形状不是字面量、拼图读不出）没有结构可指，才落到 enumerate/suspect）
+    if not enum_ok:
+        return False, 'enumerate', lo
+    if suspect is not None:
+        return False, 'suspect', suspect
+    if not entries:
+        return False, 'enumerate', lo
+    # ② 与运行期条数交叉核对（参数是真跑出来的 ⇒ 这是最硬的一条旁证）
+    if len(_axis_items(data)) != len(entries):
+        return False, 'count', 0
+    # ⑥ 锚点在所有建轴之后
+    _last = max(last_create, _site_ln)
+    if anchor_ln <= _last:
+        return False, 'anchor', anchor_ln
+    return True, '', 0
+
+
+def _caller_fig_name(tree, positions, fig_call):
+    """L3：模块层那个**接住函数返回的 figure** 的名字（`_the = plot_it()`）→ 名字 / None。
+
+    这是"函数内建图"最要紧的一块：图在函数里建，模块级名字（`_the`）引擎以前**不认识**
+    它是 figure ⇒ 号牌没有载体 ⇒ 整份拒写。这里把"模块层名字 → 函数 → 函数自己那次建图
+    调用"这条链证明出来（每条都要求唯一，缺一条返回 None，不猜）：
+
+      ① 建图调用在**函数**里（模块层的图另有 `_fig_nm` 那条老路）；
+      ② 该函数**自己**只有一条 `return`，且返回的就是这次建图的接收名（`return f`）；
+      ③ 那个接收名在函数里**只被直接赋过一次**（`f, axes = plt.subplots(...)` 的 `f`）；
+      ④ 该函数在模块层**恰好一次**调用、且不在循环 / 推导式 / 别的函数里；
+      ⑤ 调用点被赋给一个纯名字，并且它在**每个候选锚点**上都仍绑着这个对象
+         （复用 `_name_still_bound`，与名字寻址同一套判据）。
+
+    返回的名字是**模块层**作用域里的名字；调用方负责把它和 `.axes[k]` 拼起来。多图脚本
+    也成立（每张图各自一条链），这正是"函数封装 + 多面板"语料需要的。
+    """
+    if fig_call is None or getattr(fig_call, 'lineno', None) is None:
+        return None
+    scope0 = _node_scope(tree, fig_call.lineno)
+    if not isinstance(scope0, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if find_enclosing_loop(tree, fig_call) is not None:
+        return None                       # 循环里建图：一次迭代一张，号无意义
+    if _comprehension_scope(tree, fig_call) is not None:
+        return None
+    figvar = _call_assign_name(tree, fig_call)
+    if not (isinstance(figvar, str) and figvar.isidentifier()):
+        return None
+    if len(_direct_assign_linenos(scope0, figvar)) != 1:
+        return None                       # 接收名被重新赋过 ⇒ 说不清返回的是哪只
+    rets = _own_returns(scope0)
+    if len(rets) != 1:
+        return None
+    body = getattr(scope0, 'body', []) or []
+    if not body or body[-1] is not rets[0]:
+        return None                       # 提前 return / 多条 return：不是这条链
+    val = rets[0].value
+    if not (isinstance(val, ast.Name) and val.id == figvar):
+        return None
+    sites = _func_call_sites(tree, scope0.name)
+    if len(sites) != 1:
+        return None
+    site = sites[0]
+    if find_enclosing_loop(tree, site) is not None \
+            or _comprehension_scope(tree, site) is not None \
+            or _node_scope(tree, site.lineno) is not tree:
+        return None                       # 调用点不在模块层直线执行
+    name = _call_assign_name(tree, site)
+    if not (isinstance(name, str) and name.isidentifier()):
+        return None                       # `plot_it()` 裸调：没有名字可发号牌
+    if not _name_still_bound(tree, site.lineno, name, positions):
+        return None
+    return name
+
+
+def _pos_why_text(why, line):
+    """L3 拒写的人读原因（zh/en 都在 messages.MESSAGES 里）。
+
+    ⚠ 每个 key 都**字面量**写在 ``_msg.t()`` 里 —— 不要改成查表 `t(_MAP[why])`：
+    动态键在 t95 的消息键扫描里算"未解析调用点"，那条棘轮只减不增。
+    """
+    _ln = str(line or 0)
+    if why == 'loop':
+        return _msg.t('wb_pos_why_loop', line=_ln)
+    if why == 'cond':
+        return _msg.t('wb_pos_why_cond', line=_ln)
+    if why == 'repeat':
+        return _msg.t('wb_pos_why_repeat', line=_ln)
+    if why == 'add_axes':
+        return _msg.t('wb_pos_why_add_axes', line=_ln)
+    if why == 'extra_axes':
+        return _msg.t('wb_pos_why_extra_axes', line=_ln)
+    if why == 'enumerate':
+        return _msg.t('wb_pos_why_enumerate', line=_ln)
+    if why == 'suspect':
+        return _msg.t('wb_pos_why_suspect', line=_ln)
+    if why == 'count':
+        return _msg.t('wb_pos_why_count', line=_ln)
+    if why == 'scope':
+        return _msg.t('wb_pos_why_scope', line=_ln)
+    if why == 'anchor':
+        return _msg.t('wb_pos_why_anchor', line=_ln)
+    return _msg.t('wb_pos_why_nofig', line=_ln)
+
+
 def _call_sig(node):
     """调用的"槽位签名"（去掉 lineno 的字面参数），用来判 `plt.subplot` 是不是复用。"""
     return [ast.dump(a) for a in node.args] + \
@@ -5687,16 +6364,23 @@ def _anchor_positions(tree, src, data, anchor):
     return uniq
 
 
-def _prune_refused(data, unexpressed):
+def _prune_refused(data, unexpressed, dropped=None):
     """把"块表达不了/目标证不出"的字段从**语义比对目标**里摘掉。
 
     只影响语义层的比对目标，不影响 pending/warnings 的如实报告（见 §T70）：
     `ax%d.<字段>` 摘字段、`figsize` 摘画布尺寸、`fig.pos` 只是"块里没有 set_position"
     的标记（不是某个轴的字段），忽略。
+
+    ``dropped``（T7，0.1.18）：**差异过滤**摘掉的那些字段（`['ax1.pos', …]`）。它们
+    在算基线那一刻就等于参数值（= 调用方没要求改它），所以语义层同样不该为它们负责。
+    反例正是必须这样处理的现场：`constrained_layout=True` 的图上只改标题字号 ⇒ 布局
+    引擎重排 ⇒ 没被要求的 pos 从 0.8674 漂到 0.855；不摘掉它，这一格会被判"目标值
+    没达标"而回滚，用户连字号都改不成（0.1.17 只是靠"顺手写了一条 set_position"把
+    这件事盖住了）。
     """
     drop: Dict[int, set] = {}
     figsize = False
-    for it in unexpressed or ():
+    for it in list(unexpressed or ()) + list(dropped or ()):
         m = re.match(r'ax(\d+)\.([A-Za-z_]+)$', it)
         if m:
             drop.setdefault(int(m.group(1)), set()).add(m.group(2))
@@ -6026,6 +6710,41 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None,
     _num_expr = None
     if _fig_nm is None and not _gcf_ok:
         _num_expr = _numbered_fig_expr(tree, positions, _fig_node)
+    # ---- L3（0.1.18）：位置身份（`<fig>.axes[k]`）兜底通道 ----------------------
+    # 只在**名字寻址证不出**时才用（④ 不抢原路）：契约 = 先名字，再 T70-B/T74 的
+    # `.axes[k]`，最后才轮到它。载体（figure 表达式）依次尝试：可证的 fig 名字、
+    # `plt.gcf()`、`plt.figure(<n>)`、以及**模块层接住函数返回值的名字**（`_the`）。
+    _pos_fig = None
+    _pos_recv = None
+    _pos_ok, _pos_why, _pos_ln = False, 'nofig', 0
+    if POS_IDENTITY:
+        _pos_fig = _fig_nm or ('plt.gcf()' if _gcf_ok else None) or _num_expr
+        if _pos_fig is None:
+            # 最后一档载体：模块层**接住函数返回值**的名字（`_the = plot_it()`）——
+            # 这一档与上面三档是"互斥的载体选择"，不是"再来一次寻址"：先老路、后新路。
+            _pos_recv = _caller_fig_name(tree, positions, _fig_node)
+            _pos_fig = _pos_recv
+        if _pos_fig:
+            _pos_ok, _pos_why, _pos_ln = _pos_identity_verdict(
+                tree, fig_index, data, positions, entries=entries, enum_ok=ok,
+                suspect=suspect, fig_receiver=_pos_recv)
+    # 函数内锚点（0.1.18 新增的锚点位置：函数里建图 + 函数里自己存图 / A1 的 `return fig`）
+    # —— T70-B 的"本文件只有一次建图、位置直线执行"当初是按**模块层**脚本证的：那时建轴
+    # 调用必然也全在模块层。锚点一旦落进函数，同一条结论就不再覆盖"轴是在循环/条件分支/
+    # add_axes 里建的"这些情形（它们会让运行期顺序与静态枚举不一致 ⇒ 写到别的轴）。
+    # 所以函数内锚点改由**位置身份**放行：块里写出来的字面可能一模一样，但门槛是"号稳"，
+    # 不是"只建一次图"。模块层锚点一个字节都不动（老口径原样）。
+    _fn_anchor = any(_node_scope(tree, ln) is not tree for _sc, ln in positions)
+    _gcf_axes_ok = _gcf_ok and (not _fn_anchor or _pos_ok)
+    if info is not None:
+        # `pos_fig`：块注释要不要说"号稳"这条理由 —— 只在**函数内锚点**时改口径（那时
+        # T70-B 的"本文件只有一次建图"不再是承重的那条证明）；模块层锚点一个字节不变。
+        info['pos_fig'] = _pos_fig if (_pos_ok and _fn_anchor) else None
+        info['pos_carrier'] = _pos_fig
+        info['pos_ok'] = _pos_ok
+        info['pos_why'] = None if _pos_ok else _pos_why
+        info['pos_line'] = _pos_ln
+        info['pos_tried'] = bool(_pos_fig)
     for a in items:
         i = a.get('index')
         if not isinstance(i, int):
@@ -6044,14 +6763,24 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None,
             scope0 = _node_scope(tree, bln)
             if _name_still_bound(scope0, bln, root, positions):
                 axes_expr[i] = expr
+            elif _pos_ok and i < len(entries) \
+                    and scope0 is not positions[0][0]:
+                # L3：名字**喊不到**（轴名字绑在函数里、块落在模块层）⇒ 发号牌。
+                # ⚠ 只补"跨作用域"这一种；同作用域里名字被重绑（`a1 = ax` 之类脚本自己的
+                # 动态用法）维持 0.1.17 的 fail-closed 口径 —— 那种情形下"喊名字"失败的
+                # 原因是作者的用法，替它换成位置下标属于**替用户改主意**，不是补能力。
+                axes_expr[i] = '%s.axes[%d]' % (_pos_fig, i)
             continue
         # ② T70-B 纯 pyplot 单图可证子集：`<figure>.axes[k]` / `plt.gcf().axes[k]`
-        if _gcf_ok:
+        if _gcf_axes_ok:
             axes_expr[i] = '%s.axes[%d]' % (_fig_nm or 'plt.gcf()', i)
         elif _num_expr:
             # T74：`plt.figure(<n>).axes[k]` —— n 静态可枚举（`_numbered_fig_expr`），
             # `.axes[k]` 的顺序与条数由 `_axes_binding_entries` 的完全枚举保证。
             axes_expr[i] = '%s.axes[%d]' % (_num_expr, i)
+        elif _pos_ok and i < len(entries):
+            # L3：匿名轴（`fig.add_subplot(2, 2, 1)` 没接名字）+ 号稳 ⇒ 位置身份
+            axes_expr[i] = '%s.axes[%d]' % (_pos_fig, i)
     for a in items:
         i = a.get('index')
         if not isinstance(i, int) or i in axes_expr:
@@ -6064,6 +6793,9 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None,
         fig_expr = 'plt.gcf()'
     if fig_expr is None and _num_expr:
         fig_expr = _num_expr                 # T74：figure 级也走编号可证（如 set_size_inches）
+    if fig_expr is None and _pos_ok:
+        # L3：`_the.set_size_inches(...)` —— 同一个"模块层接住函数返回值"的证明
+        fig_expr = _pos_fig
     return axes_expr, fig_expr, refused
 
 
@@ -6072,7 +6804,7 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None,
 def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
                  mappable_map=None, tag=None, multi_fig=False, needed=None,
                  targets=None, fig_target=None, figsize_runtime=False,
-                 fig_implicit=False):
+                 fig_implicit=False, fig_posident=False, posident_n=None):
     """从参数数据生成纯 matplotlib 调整块文本。返回 (text, warnings)。
 
     ``needed``（T35）：``{轴序号: {字段}}`` —— **只有这些字段才写进块**。
@@ -6086,6 +6818,11 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
     时为 True —— 块里的 `set_size_inches(<运行期值>)` 会在运行时把那份**动态配置覆盖掉**。
     这里**只加一句块注释**说清这件事（提示由调用方 `_figsize_source_dynamic` 判，不另算
     第二遍尺寸；也不新增第二条 figsize 计算路径）。
+
+    ``fig_posident`` / ``posident_n``（0.1.18 / L3）：块里的 `.axes[k]` 是不是**位置身份**
+    那条通道给的（`fig.axes` 的创建顺序已证明稳定），以及那条通道数出来的轴条数。
+    只影响**块注释说真话**：`fig_posident=True` 时不能照抄"本文件只有一次建图"——那是
+    T70-B 那条路的理由，而这里的理由是"号稳"（①..⑥ 见 `_pos_identity_verdict`）。
     """
     axes = _axis_items(data)
     warnings: List[str] = []
@@ -6118,6 +6855,12 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
             # 不能照抄"本文件只有一次建图"（源码里根本没有建图那一行）。
             out.append(_msg.t('wb_block_anchor_implicit',
                               fig=fig_target or 'plt.gcf()'))
+        elif fig_posident:
+            # L3（0.0.18）：这一档的号牌是**位置身份**证明过的（建轴顺序与运行期一致、
+            # 无循环/条件/add_axes，且条数与真跑出来的参数一致）—— 注释必须说清
+            # "号凭什么稳"，不能照抄"本文件只有一次建图"（那是另一条路的理由）。
+            out.append(_msg.t('wb_block_anchor_posident',
+                              fig=fig_target or 'plt.gcf()', n=posident_n or 0))
         else:
             out.append(_msg.t('wb_block_anchor_single',
                               fig=fig_target or 'plt.gcf()'))
@@ -6566,10 +7309,44 @@ def position_write_needed(script, data, params_path, python=None, timeout=300,
     except (OSError, SyntaxError, ValueError):
         return None, 'unjudged'
     fig_index = data.get('fig_index') if isinstance(data.get('fig_index'), int) else 0
-    needed = _needed_block_fields(tree, data, src, fig_index)
+    # T7（0.1.18）：判据必须与**块路径**同源，这里补两件事：
+    #   ① 去掉**已存在的调整块**再静态判（块里可能已经把这些字段设成目标值了）；
+    #   ② 再走一遍**差异过滤**（把"脚本本来就是这个位置"的字段摘掉）。
+    # 不补的现场（0.1.18 实测）：`constrained_layout=True` 的图上只改标题字号 ⇒ 第一次
+    # apply 写块成功、块里只有字号行；第二次 apply 时布局已重排（pos 0.8674 → 0.855），
+    # 于是这个函数判成 `live_differs` ⇒ 整条命令被 D1 拒绝（reason=layout_conflict），
+    # 而实际上**一个位置字段都不会写**（本该是 no_change）。判据分叉正是这个项目反复
+    # 栽的坑，所以这里复用 writeback 里那两段，不另写一套。
+    _fi = data.get('fig_index')
+    _nf = data.get('n_figs')
+    _tag = (_msg.t('wb_block_tag', n=_fi + 1)
+            if isinstance(_fi, int) and isinstance(_nf, int) and _nf > 1
+            else None)
+    src_nb, tree_nb = src, tree
+    try:
+        _span = _existing_span(src.splitlines(keepends=True),
+                               _meta_path(params_path), _tag)
+    except (OSError, ValueError, KeyError):
+        _span = None
+    if _span:
+        _ls = src.splitlines(keepends=True)
+        _cand = ''.join(_ls[:_span[0] - 1] + _ls[_span[1]:])
+        try:
+            tree_nb = ast.parse(_cand)
+            src_nb = _cand
+        except SyntaxError:
+            src_nb, tree_nb = src, tree
+    needed = _needed_block_fields(tree_nb, data, src_nb, fig_index)
     still = [i for i in axes if 'pos' in (needed.get(i) or ())]
     if not still:
         return False, 'proved_equal'
+    if DELTA_ONLY and not fast_check:
+        _base, _berr = _baseline_params(script, src_nb, _enc, python, fig_index,
+                                        timeout)
+        if _base is not None:
+            needed, _dropped = _needed_minus_baseline(needed, data, _base)
+            if not [i for i in axes if 'pos' in (needed.get(i) or ())]:
+                return False, 'proved_equal'
     if not verify or fast_check:
         return None, 'unjudged'
     out_path = os.path.join(os.path.dirname(os.path.abspath(params_path)),
@@ -6810,6 +7587,56 @@ def writeback(script, data, params_path, verify=True, python=None,
     _needed_b = _needed_block_fields(_tree_nb, data, _src_nb,
                                      data.get('fig_index')
                                      if isinstance(data.get('fig_index'), int) else 0)
+    # ---- T7（0.1.18）：只写**真的不同**的字段 -------------------------------
+    # 上面那一步只回答"源码里能不能**证明**它等于参数值"；证不出（绝大多数没碰过的
+    # 字段都属于这类）就照写 —— 于是"改一根轴"变成 35 行脏 diff。这里补一次**基线**：
+    # 把去掉旧块后的当前源码跑一遍（纯采集，与 describe 同一条路），逐字段比，
+    # 相等就摘掉。基线取不到（脚本跑不通/超时）⇒ 不动 needed，回 0.1.17 老口径。
+    _delta_dropped: List[str] = []
+    _delta_base: Dict[str, Any] = {}
+    # **什么时候才允许算基线**：基线 = 把当前源码再跑一遍，所以只在"这条命令本来就会
+    # 跑你的脚本"的档位做 —— `--no-verify`（verify=False）、`--verify-fast`
+    # （fast_check）、`--no-semantic`（semantic=False）三档的**文档承诺就是"不跑脚本"**
+    # （tests §91 用标记文件钉着），多跑一次就违约。
+    # `--diff` 预览是**例外**：它跑的是同目录**影子副本**（`preview_begin()` 那段），本来
+    # 就"照真写回的路跑"，而预览必须与真写的结果一致（否则"预览 35 行、真写 1 行"）——
+    # 所以预览态（`_PREVIEW`）也放行；它跑的也是影子，不碰用户的文件。
+    _delta_allowed = (not fast_check) and bool(
+        _PREVIEW or (verify and semantic))
+    if DELTA_ONLY and _needed_b and _delta_allowed:
+        _bpar, _bperr = _baseline_params(
+            script, _src_nb, _src_enc, python,
+            _fig_idx_b if isinstance(_fig_idx_b, int) else None,
+            timeout)
+        if _bpar is None:
+            _delta_base['skipped'] = 'baseline_unavailable'
+            pre_warnings.append(_msg.t('wb_delta_no_baseline', err=_bperr or ''))
+        else:
+            _needed_b, _delta_dropped = _needed_minus_baseline(_needed_b, data,
+                                                               _bpar)
+            _delta_base['dropped'] = len(_delta_dropped)
+            if _figsize_same_as_baseline(data, _bpar):
+                # 画布尺寸也是"脚本本来就这么大" ⇒ 块里不必再写 set_size_inches
+                figsize_in_block = None
+    # ---- T10（0.1.18）：锁定轴（imshow / 地图）的 pos 不写，但要**说一句** ----
+    # 与 `apply_inplace`、`verify.compare()` 三处同口径。判据用差异过滤之后的
+    # `_needed_b`：只有"用户真的要改它"（= 过滤没摘掉）时才提醒，恒等 apply 不吵。
+    _t10_locked_hit = []
+    for _i10, _fs10 in list(_needed_b.items()):
+        if 'pos' not in _fs10:
+            continue
+        _a10 = next((x for x in _axis_items(data) if x.get('index') == _i10), None)
+        if _a10 is None:
+            continue
+        if bool(_a10.get('aspect_locked')) or \
+                (_a10.get('aspect') not in (None, 'auto')):
+            _t10_locked_hit.append(_i10)
+            _fs10.discard('pos')
+            if not _fs10:
+                _needed_b.pop(_i10, None)
+    if _t10_locked_hit:
+        # 不写、不进 pending，但必须留一句人话（文案键 `wb_aspect_locked_pos`）
+        pre_warnings.append(_msg.t('wb_aspect_locked_pos'))
     # A1：记下"**本来**要写哪些字段"（下面 `_refused` 清理会动 `_needed_b`）——
     # 拒绝判据要问的是"这次到底有没有东西要落地"，不是清理后的残留。
     _needed_b0 = {k: set(v) for k, v in _needed_b.items()}
@@ -6878,6 +7705,16 @@ def writeback(script, data, params_path, verify=True, python=None,
                 why=_msg.t('wb_addr_why_unpack') if _awhy == 'single_axis_from_unpack'
                 else (_msg.t('wb_addr_why_single') if _awhy == 'single_axis'
                       else _msg.t('wb_addr_why_unknown'))))
+        # L3（0.1.18）：位置身份那条路**试过了但号不稳** ⇒ 点名是哪一条不稳（循环建轴 /
+        # 条件建轴 / 中途 add_axes / 条数对不上 …）。不点名的话，人只知道"证不出"，
+        # 看不出"离能写只差什么"—— 而本版这一档的原则正是"拒写必须说清原因"。
+        # 文案同理写成字面量分支（理由见上面 SFA 那段）。
+        if _tinfo.get('pos_tried') and _tinfo.get('pos_why'):
+            pre_warnings.append(_msg.t(
+                'wb_block_refused_posident',
+                why=_pos_why_text(str(_tinfo.get('pos_why')),
+                                  _tinfo.get('pos_line')),
+                line=str(_tinfo.get('pos_line') or 0)))
     # ---- A1（0.1.12）：函数封装 `return fig` 的三种**不可证**形态 → 拒写块 ----------
     # 放在 `_block_targets` 之后：pending 里既要**点名原因**（`fig.<reason>` 令牌），
     # 也要照旧列出真正没落地的字段（apply 的"手动落实片段"按字段渲染，少了它人就没有
@@ -6950,7 +7787,9 @@ def writeback(script, data, params_path, verify=True, python=None,
                                    multi_fig=(n_fig > 1), needed=_needed_b,
                                    targets=_targets, fig_target=_fig_target,
                                    figsize_runtime=_fs_runtime,
-                                   fig_implicit=bool(_tinfo.get('implicit')))
+                                   fig_implicit=bool(_tinfo.get('implicit')),
+                                   fig_posident=bool(_tinfo.get('pos_fig')),
+                                   posident_n=len(_axis_items(data)))
     warnings = pre_warnings + warnings
     # ---- T18 自检：块表达不了的目标字段 -------------------------------------
     # 每个 pending 字段都必须能在块行里找到对应写法；找不到就不能报
@@ -6965,6 +7804,11 @@ def writeback(script, data, params_path, verify=True, python=None,
     if _unexpressed:
         warnings.append(_msg.t_wb('这些字段调整块表达不了、本次**没能落地**：%s（可手动改，或把参数收敛到块能写的字段）') 
                         % '、'.join(_unexpressed))
+
+    if _delta_dropped or _delta_base:
+        # T7：把差异过滤的结果如实带进结论（agent / 报告要能取证"省了什么"）
+        res['delta_dropped'] = list(_delta_dropped)
+        res['delta'] = dict(_delta_base)
 
     def _mark_unexpressed(res0):
         """把"块表达不了"如实写进结论（只在成功/无改动路径上生效）。"""
@@ -7164,7 +8008,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                 # 单遍拿不到状态时 `_verify_script` 自己回退两遍并打印原因。
                 _vp = _verify_script(
                     script,
-                    _prune_refused(data, _unexpressed) if semantic else data,
+                    _prune_refused(data, _unexpressed, _delta_dropped) if semantic else data,
                     python, timeout, semantic=bool(semantic),
                     fields_by_axis=None,
                     figsize_edited=bool(figsize_in_block or data.get('figsize_in')),
@@ -7209,7 +8053,7 @@ def writeback(script, data, params_path, verify=True, python=None,
                             # T70：语义层只对**真正写进去的**目标负责（证不出/块表达
                             # 不了的字段已进 pending，见 _prune_refused 的说明）。
                             sok, sdetail = _verify.verify_semantic(
-                                script, _prune_refused(data, _unexpressed),
+                                script, _prune_refused(data, _unexpressed, _delta_dropped),
                                 python, timeout,
                                 figsize_edited=bool(figsize_in_block
                                                     or data.get('figsize_in')),
@@ -7371,209 +8215,224 @@ def writeback(script, data, params_path, verify=True, python=None,
 # （tests/test_hygiene.py 有一条同判据的用例）。行号 = 该 def / 小节的**定义行**（1-based）。
 # 索引块固定放在文件末尾：它自己不占用任何函数之前的行，重算不会挤动行号。
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
-# §1 文件头、结果码与常量表（行 95-226，0 个顶层函数）
+# §1 文件头、结果码与常量表（行 95-236，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 参数取值与字面量、脚本基本定位（行 227-389，12 个顶层函数）
-#     _num                                           229
-#     _fmt_pos                                       244
-#     _label_fontsizes                               251
-#     _tick_fontsizes                                265
-#     _axis_items                                    275
-#     _is_num_literal                                287
-#     _lit_num                                       304
-#     _is_registered_cmap                            319
-#     _iter_assign_names                             331
-#     find_fig_var                                   339
-#     find_anchor                                    358
-#     find_savefigs                                  374
-# §3 AST 基础工具与「坏参数」越界判据（行 390-511，5 个顶层函数）
-#     _parent_map                                    392
-#     _stmt_node                                     401
-#     _has_pyplot_plt                                426
-#     _axis_index_beyond                             447
-#     _fig_index_beyond                              481
-# §4 figure dpi 静态推断与 figsize 交叉校验（行 512-844，15 个顶层函数）
-#     _call_leaf                                     514
-#     _num_const                                     525
-#     _dpi_parents                                   538
-#     _dpi_in_control_flow                           547
-#     _fig_var_names_for_dpi                         557
-#     _dpi_kw_state                                  578
-#     _dpi_vote_call                                 588
-#     _dpi_vote_assign                               635
-#     _script_dpi_vote                               660
-#     _script_dpi                                    726
-#     _script_dpi_unknown_why                        751
-#     _figsize_pair                                  762
-#     _figsize_skip_note                             774
-#     _with_fs_note                                  793
-#     _figsize_inconsistent                          808
-# §5 脚本结构：figure / 轴 / 循环与变量映射（行 845-1166，8 个顶层函数）
-#     count_figures                                  847
-#     find_mappable_names                            870
-#     _subplots_single_axes                          890
-#     axis_var_index                                 922
-#     mappable_by_axis                              1031
-#     _comprehension_scope                          1078
-#     find_enclosing_loop                           1097
-#     loop_guard                                    1115
-# §6 figsize 原位替换与「已经是对的」静态证明（行 1167-1483，13 个顶层函数）
-#     _line_starts                                  1169
-#     _offset                                       1177
-#     _seq_lit_nums                                 1194
-#     _num_close                                    1210
-#     _fmt_figsize                                  1219
-#     _fig_call_node                                1231
-#     _call_assign_name                             1250
-#     _fig_aliases                                  1268
-#     _later_size_override                          1287
-#     _fig_call_count                               1348
-#     _rebound_between                              1355
-#     figsize_already_ok                            1375
-#     edit_figsize                                  1438
-# §7 调用定位（找 set_title / tick_params 等）（行 1484-1601，3 个顶层函数）
-#     _find_call                                    1486
-#     _find_tick_call_for_axis                      1510
-#     _find_tick_axis_call                          1559
-# §8 缺参补全（A2）：给已有的调用补参数（行 1602-1931，13 个顶层函数）
-#     _find_calls                                   1629
-#     _call_carries                                 1649
-#     _call_has_dstar                               1654
-#     _gap_why                                      1659
-#     _owning_body                                  1665
-#     _gap_pick_last                                1686
-#     _text_fontsize_calls                          1702
-#     _gap_specs                                    1736
-#     _gap_specs_grid                               1756
-#     _gap_specs_text                               1784
-#     _gap_specs_pyplot                             1820
-#     _gap_specs_tick                               1846
-#     _gap_append_point                             1896
-# §9 图区间与建轴枚举（行 1932-2018，3 个顶层函数）
-#     _is_axes_on_existing_figure                   1934
-#     _fig_span                                     1947
-#     _figure_axes_for_index                        1980
-# §10 原位写回：apply_inplace（行 2019-2646，1 个顶层函数）
-#     apply_inplace                                 2021
-# §11 「已经是这个值」的静态证明（行 2647-3281，19 个顶层函数）
-#     _is_rcparams_receiver                         2663
-#     _is_style_receiver                            2671
-#     _style_or_rc_write                            2677
-#     _kw_font_conflict                             2711
-#     _font_size_from_dictlike                      2730
-#     _default_proof_blocked                        2741
-#     _bool_literal_eq                              2805
-#     _first_str_literal                            2816
-#     _default_pt                                   2823
-#     _use_matplotlib_default                       2839
-#     _cmap_literal_equal                           2885
-#     _legend_literal_equal                         2912
-#     _tick_axis_side                               2937
-#     _tick_fontsize_literal_equal                  2956
-#     _proved_equal                                 3003
-#     _pyplot_text_equal                            3093
-#     _pyplot_tick_equal                            3114
-#     _pos_literal_equal                            3137
-#     _seq4_nums                                    3273
-# §12 备份（固定名 / pid 副本 / 裁剪）（行 3282-3420，6 个顶层函数）
-#     _backup_dir                                   3284
-#     _backup_path                                  3295
-#     _backup_path_legacy                           3314
-#     _prune_backups                                3324
-#     _long_path                                    3362
-#     _make_backup                                  3385
-# §13 并发锁与原子写（行 3421-3727，10 个顶层函数）
-#     _pid_alive                                    3423
-#     _lock_holder                                  3454
-#     script_lock                                   3463
-#     preview_shadow_path                           3525
-#     preview_begin                                 3536
-#     preview_end                                   3542
-#     preview_fingerprint                           3549
-#     preview_diff                                  3566
-#     _atomic_write                                 3621
-#     _rollback_note                                3666
-# §14 外部改动检测（落盘前的指纹校验）（行 3728-3795，5 个顶层函数）
-#     _sha256_text                                  3730
-#     _disk_fingerprint                             3737
-#     _external_result                              3750
-#     _check_external_edit                          3771
-#     _guard_external_edit                          3786
-# §15 语义比对：参数值 vs 实测值（行 3796-4122，8 个顶层函数）
-#     _scale_literal                                3798
-#     _bare_field                                   3819
-#     _pending_fields                               3825
-#     _legend_differs                               3846
-#     _lines_differ                                 3867
-#     _pv_live_field                                3888
-#     _unlink_probe                                 4018
-#     _pending_vs_live                              4032
-# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4123-4550，2 个顶层函数）
-#     _figsize_from_source                          4125
-#     _writeback_inplace                            4180
-# §17 调整块：字段需求与「块表达不了」清单（行 4551-4873，9 个顶层函数）
-#     _dup_names_in_fig_assign                      4571
-#     _dup_name_set                                 4596
-#     _drop_dup_var_names                           4604
-#     _grid_size                                    4631
-#     _runtime_axes_count                           4652
-#     _pos_block_target_ok                          4701
-#     _text_axis_name                               4723
-#     _needed_block_fields                          4741
-#     _block_unexpressed_fields                     4805
-# §18 调整块：mappable 引用、作用域与锚点下沉（行 4874-5721，30 个顶层函数）
-#     _mappable_ref                                 4876
-#     _node_scope                                   4944
-#     _direct_assign_linenos                        4958
-#     _rebound_before                               4970
-#     _name_still_bound                             5009
-#     _func_anchor_text                             5045
-#     _walk_own                                     5063
-#     _own_returns                                  5074
-#     _own_output_calls                             5081
-#     _is_method_scope                              5090
-#     _func_call_sites                              5103
-#     _func_return_anchor                           5116
-#     _figsize_source_dynamic                       5178
-#     _assign_names_of                              5194
-#     _assign_target_of                             5205
-#     _unpacked_axis_names                          5213
-#     _inline_cax_of                                5252
-#     _mosaic_keys                                  5270
-#     _grid_squeeze                                 5316
-#     _subscript_verdict                            5326
-#     _grid_element                                 5375
-#     _fig_receiver_names                           5384
-#     _ravel_receiver                               5409
-#     _unpack_axis_names                            5421
-#     _imported_module_names                        5456
-#     _implicit_creator_is_module_call              5469
-#     _axes_binding_entries                         5489
-#     _call_sig                                     5658
-#     _anchor_positions                             5663
-#     _prune_refused                                5690
-# §19 调整块：pyplot 定位可证与目标表达式表（行 5722-6069，6 个顶层函数）
-#     _gcf_provable                                 5724
-#     _plt_bound_as_plt                             5761
-#     _implicit_gcf_verdict                         5782
-#     _single_figure_attribution                    5851
-#     _numbered_fig_expr                            5898
-#     _block_targets                                5983
-# §20 调整块生成：render_block（行 6070-6258，1 个顶层函数）
-#     render_block                                  6072
-# §21 调整块插入 / 替换（幂等与缩进）（行 6259-6404，7 个顶层函数）
-#     _unclosed_block_lines                         6261
-#     _meta_path                                    6281
-#     _block_spans                                  6287
-#     _existing_span                                6299
-#     _reindent                                     6329
-#     _norm_ts                                      6340
-#     insert_or_replace                             6346
-# §22 验证：无头重跑与一遍式验证（行 6405-6602，4 个顶层函数）
-#     verify_run                                    6407
-#     _verify_script                                6439
-#     _position_axes                                6527
-#     position_write_needed                         6539
-# §23 写回入口：writeback（行 6603-7367，1 个顶层函数）
-#     writeback                                     6605
+# §2 参数取值与字面量、脚本基本定位（行 237-399，12 个顶层函数）
+#     _num                                           239
+#     _fmt_pos                                       254
+#     _label_fontsizes                               261
+#     _tick_fontsizes                                275
+#     _axis_items                                    285
+#     _is_num_literal                                297
+#     _lit_num                                       314
+#     _is_registered_cmap                            329
+#     _iter_assign_names                             341
+#     find_fig_var                                   349
+#     find_anchor                                    368
+#     find_savefigs                                  384
+# §3 AST 基础工具与「坏参数」越界判据（行 400-521，5 个顶层函数）
+#     _parent_map                                    402
+#     _stmt_node                                     411
+#     _has_pyplot_plt                                436
+#     _axis_index_beyond                             457
+#     _fig_index_beyond                              491
+# §4 figure dpi 静态推断与 figsize 交叉校验（行 522-854，15 个顶层函数）
+#     _call_leaf                                     524
+#     _num_const                                     535
+#     _dpi_parents                                   548
+#     _dpi_in_control_flow                           557
+#     _fig_var_names_for_dpi                         567
+#     _dpi_kw_state                                  588
+#     _dpi_vote_call                                 598
+#     _dpi_vote_assign                               645
+#     _script_dpi_vote                               670
+#     _script_dpi                                    736
+#     _script_dpi_unknown_why                        761
+#     _figsize_pair                                  772
+#     _figsize_skip_note                             784
+#     _with_fs_note                                  803
+#     _figsize_inconsistent                          818
+# §5 脚本结构：figure / 轴 / 循环与变量映射（行 855-1176，8 个顶层函数）
+#     count_figures                                  857
+#     find_mappable_names                            880
+#     _subplots_single_axes                          900
+#     axis_var_index                                 932
+#     mappable_by_axis                              1041
+#     _comprehension_scope                          1088
+#     find_enclosing_loop                           1107
+#     loop_guard                                    1125
+# §6 figsize 原位替换与「已经是对的」静态证明（行 1177-1493，13 个顶层函数）
+#     _line_starts                                  1179
+#     _offset                                       1187
+#     _seq_lit_nums                                 1204
+#     _num_close                                    1220
+#     _fmt_figsize                                  1229
+#     _fig_call_node                                1241
+#     _call_assign_name                             1260
+#     _fig_aliases                                  1278
+#     _later_size_override                          1297
+#     _fig_call_count                               1358
+#     _rebound_between                              1365
+#     figsize_already_ok                            1385
+#     edit_figsize                                  1448
+# §7 调用定位（找 set_title / tick_params 等）（行 1494-1611，3 个顶层函数）
+#     _find_call                                    1496
+#     _find_tick_call_for_axis                      1520
+#     _find_tick_axis_call                          1569
+# §8 缺参补全（A2）：给已有的调用补参数（行 1612-1941，13 个顶层函数）
+#     _find_calls                                   1639
+#     _call_carries                                 1659
+#     _call_has_dstar                               1664
+#     _gap_why                                      1669
+#     _owning_body                                  1675
+#     _gap_pick_last                                1696
+#     _text_fontsize_calls                          1712
+#     _gap_specs                                    1746
+#     _gap_specs_grid                               1766
+#     _gap_specs_text                               1794
+#     _gap_specs_pyplot                             1830
+#     _gap_specs_tick                               1856
+#     _gap_append_point                             1906
+# §9 图区间与建轴枚举（行 1942-2244，8 个顶层函数）
+#     _is_axes_on_existing_figure                   1944
+#     _fig_span                                     1957
+#     _figure_axes_for_index                        1990
+#     _spine_bad_names                              2060
+#     _axis_fig_spine                               2067
+#     _assign_name_of_call                          2182
+#     _line_in_cond                                 2201
+#     _axis_identity_gate                           2210
+# §10 原位写回：apply_inplace（行 2245-2931，1 个顶层函数）
+#     apply_inplace                                 2247
+# §11 「已经是这个值」的静态证明（行 2932-3566，19 个顶层函数）
+#     _is_rcparams_receiver                         2948
+#     _is_style_receiver                            2956
+#     _style_or_rc_write                            2962
+#     _kw_font_conflict                             2996
+#     _font_size_from_dictlike                      3015
+#     _default_proof_blocked                        3026
+#     _bool_literal_eq                              3090
+#     _first_str_literal                            3101
+#     _default_pt                                   3108
+#     _use_matplotlib_default                       3124
+#     _cmap_literal_equal                           3170
+#     _legend_literal_equal                         3197
+#     _tick_axis_side                               3222
+#     _tick_fontsize_literal_equal                  3241
+#     _proved_equal                                 3288
+#     _pyplot_text_equal                            3378
+#     _pyplot_tick_equal                            3399
+#     _pos_literal_equal                            3422
+#     _seq4_nums                                    3558
+# §12 备份（固定名 / pid 副本 / 裁剪）（行 3567-3705，6 个顶层函数）
+#     _backup_dir                                   3569
+#     _backup_path                                  3580
+#     _backup_path_legacy                           3599
+#     _prune_backups                                3609
+#     _long_path                                    3647
+#     _make_backup                                  3670
+# §13 并发锁与原子写（行 3706-4012，10 个顶层函数）
+#     _pid_alive                                    3708
+#     _lock_holder                                  3739
+#     script_lock                                   3748
+#     preview_shadow_path                           3810
+#     preview_begin                                 3821
+#     preview_end                                   3827
+#     preview_fingerprint                           3834
+#     preview_diff                                  3851
+#     _atomic_write                                 3906
+#     _rollback_note                                3951
+# §14 外部改动检测（落盘前的指纹校验）（行 4013-4080，5 个顶层函数）
+#     _sha256_text                                  4015
+#     _disk_fingerprint                             4022
+#     _external_result                              4035
+#     _check_external_edit                          4056
+#     _guard_external_edit                          4071
+# §15 语义比对：参数值 vs 实测值（行 4081-4407，8 个顶层函数）
+#     _scale_literal                                4083
+#     _bare_field                                   4104
+#     _pending_fields                               4110
+#     _legend_differs                               4131
+#     _lines_differ                                 4152
+#     _pv_live_field                                4173
+#     _unlink_probe                                 4303
+#     _pending_vs_live                              4317
+# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4408-4835，2 个顶层函数）
+#     _figsize_from_source                          4410
+#     _writeback_inplace                            4465
+# §17 调整块：字段需求与「块表达不了」清单（行 4836-5302，15 个顶层函数）
+#     _dup_names_in_fig_assign                      4856
+#     _dup_name_set                                 4881
+#     _drop_dup_var_names                           4889
+#     _grid_size                                    4916
+#     _runtime_axes_count                           4937
+#     _pos_block_target_ok                          4986
+#     _text_axis_name                               5008
+#     _needed_block_fields                          5026
+#     _num_close                                    5117
+#     _val_same                                     5137
+#     _axes_by_index                                5157
+#     _needed_minus_baseline                        5167
+#     _figsize_same_as_baseline                     5195
+#     _baseline_params                              5201
+#     _block_unexpressed_fields                     5234
+# §18 调整块：mappable 引用、作用域与锚点下沉（行 5303-6405，34 个顶层函数）
+#     _mappable_ref                                 5305
+#     _node_scope                                   5373
+#     _direct_assign_linenos                        5387
+#     _rebound_before                               5399
+#     _name_still_bound                             5438
+#     _func_anchor_text                             5474
+#     _walk_own                                     5492
+#     _own_returns                                  5503
+#     _own_output_calls                             5510
+#     _is_method_scope                              5519
+#     _func_call_sites                              5532
+#     _func_return_anchor                           5545
+#     _figsize_source_dynamic                       5630
+#     _assign_names_of                              5646
+#     _assign_target_of                             5657
+#     _unpacked_axis_names                          5665
+#     _inline_cax_of                                5704
+#     _mosaic_keys                                  5722
+#     _grid_squeeze                                 5768
+#     _subscript_verdict                            5778
+#     _grid_element                                 5827
+#     _fig_receiver_names                           5836
+#     _ravel_receiver                               5861
+#     _unpack_axis_names                            5873
+#     _imported_module_names                        5908
+#     _implicit_creator_is_module_call              5921
+#     _axes_binding_entries                         5941
+#     _pos_cond_scope                               6131
+#     _pos_identity_verdict                         6148
+#     _caller_fig_name                              6249
+#     _pos_why_text                                 6305
+#     _call_sig                                     6335
+#     _anchor_positions                             6340
+#     _prune_refused                                6367
+# §19 调整块：pyplot 定位可证与目标表达式表（行 6406-6801，6 个顶层函数）
+#     _gcf_provable                                 6408
+#     _plt_bound_as_plt                             6445
+#     _implicit_gcf_verdict                         6466
+#     _single_figure_attribution                    6535
+#     _numbered_fig_expr                            6582
+#     _block_targets                                6667
+# §20 调整块生成：render_block（行 6802-7001，1 个顶层函数）
+#     render_block                                  6804
+# §21 调整块插入 / 替换（幂等与缩进）（行 7002-7147，7 个顶层函数）
+#     _unclosed_block_lines                         7004
+#     _meta_path                                    7024
+#     _block_spans                                  7030
+#     _existing_span                                7042
+#     _reindent                                     7072
+#     _norm_ts                                      7083
+#     insert_or_replace                             7089
+# §22 验证：无头重跑与一遍式验证（行 7148-7379，4 个顶层函数）
+#     verify_run                                    7150
+#     _verify_script                                7182
+#     _position_axes                                7270
+#     position_write_needed                         7282
+# §23 写回入口：writeback（行 7380-8211，1 个顶层函数）
+#     writeback                                     7382
 # --- END AUTO NAV ---

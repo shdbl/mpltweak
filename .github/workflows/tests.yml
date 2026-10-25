@@ -91,6 +91,40 @@ jobs:
           # tools/ci_suite_coverage.py 分词时会把它当成一个关键字）。
           python -m pytest -q -k "docs or notation_discipline or tmpdir_discipline or msg_key_audit or cli_fuzz or verify_onepass or sandbox or apply_layout_conflict or demo"
 
+      # 0.1.18（T4 债③）：**只给 3.10 腿**加 `test_shapes`，理由是实测出来的「matplotlib 版本轴」。
+      #
+      # 这个产品是 matplotlib 布局工具，所以真正决定成败的轴不只是解释器版本，还有
+      # `pip install matplotlib` 在每条腿上**拿到哪个 matplotlib**。本机逐腿实测：
+      #   3.9  → matplotlib 3.9.4     （py39_audit，0.1.15 记录）
+      #   3.10 → matplotlib 3.10.9    （uv 3.10.20 实测）
+      #   3.11 → matplotlib 3.11.2    （uv 3.11.15 实测）
+      #   3.12 → matplotlib 3.11.2    （矩阵 venv 实测）
+      # ⇒ 8 条腿只覆盖 **三条** matplotlib 线，而且 **3.11 与 3.12 同版**（没有独立轴）。
+      # 所以：
+      #   * 3.11 腿维持"解释器哨兵"（7 个老套件）—— 它带不来新的 matplotlib 轴；
+      #   * 3.10 腿补 **1 个**套件：`test_shapes`（10 种建轴写法 → describe → apply --write →
+      #     子进程重跑；0.1.16 的元组解包 bug 就藏在这里，也是 L3 轴寻址的主判据）。
+      #     它是"能因 matplotlib 版本而红"的那一类里最便宜的一个。
+      #
+      # 实测（本机 uv 3.10.20 + matplotlib 3.10.9，冻结树上 `pytest -q -k "shapes"`）：
+      #   2 passed / 103 deselected / **55.18s**（墙钟 55.8s）
+      # ⇒ 只落在 2 条腿（ubuntu/windows × 3.10）上，与其它腿并行 ⇒ 墙钟不涨，
+      #   billed minutes 约 +1.9 分钟/次。
+      #
+      # **刻意没做**：把 3.9 那条 smoke step 原样搬到 3.10/3.11 两条腿。实测成本是
+      # 3.10 腿 +111.9s、3.11 腿 +122.1s（逐套件秒数见 CONTRIBUTING 的表），而九条里有八条
+      # 与 3.9 腿重复；候选里更贵的两个（test_shapes 56.9s / test_apply_layout_conflict 39.1s）
+      # 才是唯一与 matplotlib 版本强相关的 —— 这正是这里只加 shapes 的原因。
+      #
+      # 回滚办法：删掉这个 step 即可 —— `test_shapes` 仍由 3.12 腿的 `pytest -q` 覆盖，
+      # `tools/ci_suite_coverage.py` 不会因此变红（覆盖是"至少一条腿"）。
+      - name: Mid-leg matplotlib surface (3.10 only)
+        if: matrix.python-version == '3.10'
+        run: |
+          # 3.10 leg 的安装步骤只装 matplotlib/numpy（不装 pytest）——这里补上（同 3.9 的做法）。
+          python -m pip install "pytest>=7.0"
+          python -m pytest -q -k "shapes"
+
       # 同一批套件再走一遍 pytest：拿到逐条用例的报告（GitHub 的失败摘要/重跑单条），
       # 外加工程卫生棘轮（宽兜底计数 / 消息 GBK 可编码）。只在最新版 python 上跑，
       # 避免把 CI 时间乘 4。见 tests/test_suites.py 与 tests/test_hygiene.py。

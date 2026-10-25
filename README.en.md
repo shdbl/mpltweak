@@ -60,7 +60,7 @@ mpltweak ships a **manual (Skill) written for AI agents**: hand that manual to a
 
 **Copy the sentence below straight into the agent you are using** (Claude Code / Codex / Cursor / DeepSeek Harness — anything that can read and write files on your computer):
 
-> Please read https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md and follow it to install mpltweak; once it is installed, run the demo first so I can see the effect.
+> Please install the skill at https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md , then follow its instructions to install mpltweak; once it is set up, run the demo first so I can see the result.
 
 ### See it in two minutes (the Agent runs the demo)
 
@@ -116,7 +116,7 @@ For every script the outcome is knowable in advance, and there are only three:
 |---|---|---|
 | **The number is literally in your source**<br>(`fig.add_axes([0.08, 0.66, 0.30, 0.21])`) | **edits that one number in place**, inserts nothing | that line changes, nothing else moves |
 | **There is no editable number in the source**<br>(figures built by `plt.subplots()` / `GridSpec`) | **appends one self-contained snippet at the end of the file** — no `import`, none of your logic touched | a block marked `auto layout` appears at the end |
-| **It cannot prove which object to edit**<br>(`fig.axes[i]` / `plt.gca()` / axes built in a loop — only the runtime knows) | **writes nothing.** It will not guess an object that "is probably this one" | **your code stays byte-for-byte identical**; you get a locating note an **Agent can act on** (which symbol, change it to what) |
+| **It cannot prove which object to edit**<br>(**when the label is not stable it does not guess**: axes built in a loop, axis count not matching the params, a carrier name that is not exactly one module-level call; **figures built inside a function are writable now**) | **writes nothing.** It will not guess an object that "is probably this one" | **your code stays byte-for-byte identical**; you get a locating note an **Agent can act on** (which symbol, change it to what). Full decision table (scope x how axes are built -> writable or not) in [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) |
 
 ### 1. Editable in place: the line itself changes
 

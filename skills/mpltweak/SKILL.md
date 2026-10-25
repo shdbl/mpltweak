@@ -307,7 +307,7 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **`layout_conflicts` / `layout_why`**：`layout_conflicts` **恒有**（数组）—— 脚本里开着的布局引擎冲突点
   （`constrained_layout` / `figure.autolayout`，带行号）。**空 = 没开引擎**；非空且 `reason='layout_conflict'`
   ⇒ 这次要写轴位置被默认拦下（`applied: false`，**只这一份**没写盘，见下表）；非空而 `reason` 是
-  `ok` / `best_effort` ⇒ 这次只改了非几何字段或加了 `--force`，已写回。`layout_why` 是"这次会不会真改
+  `ok` / `best_effort` / `refused` / `fail` ⇒ 冲突**没挡这次**（只改了非几何字段 / 加了 `--force` / 走的是拒写或回滚那条路）。`layout_why` 是"这次会不会真改
   位置"的判定依据（五值：`no_pos` 参数里没有位置字段 / `proved_equal` 源码现值已等于目标 /
   `live_equal` 实测一致 / `live_differs` 实测不同、真要写 / `unjudged` 判不了 ⇒ 保守拒绝）；
   **0.1.14 的 `--json` 还没带出这个键**，此时按"这次有没有 `--no-verify` / `--verify-fast`"分流：
@@ -325,8 +325,9 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   | `ok` | 写回成功且验证通过 | 完事 |
   | `preview` | 这次**只预览**（不带 `--write` 的 `apply`，或 `--diff`）：`applied: false`、**一个字节都没写**，属正常 | 确认差异后再跑 `--write`（`--diff` 下就是去掉 `--diff`） |
   | `no_change` | 参数与源码一致 → **一个字节都没改**（`applied: false` 属正常） | 不用做 |
-  | `best_effort` | 写回成功，但有字段**没能原位落地**（已退块落地）；`--keep-unverified` 保留时也是它。⚠️ 若同一条目 `applied: false`，那这次是**一个字节都没写**（顶层会给 `rc=1 / ok=false / error_code="nothing_applied"`） | 看 `inplace_pending` / `warnings`；`applied:false` 时别当写好了 |
-  | `fail` | **已回滚 / 拒绝写回**，原因在 `err`（语法被写坏、重跑不通、没有合规块锚点…） | 读 `err`，修脚本或重调 |
+  | `best_effort` | **能写、没全写**：能落地的都落了，其余在 `pending` / `inplace_pending`。**它不等于被拒**（拒写自成 `refused` 一档，0.1.18 起） | 看 `pending` / `inplace_pending`；判"写没写"看 `applied` / `changes` |
+| `refused` | **拒写**：静态层面就证不出目标（循环里建轴 / 建轴点与参数条数对不上 / 载体名不是恰好一次模块层调用…）⇒ **源码一个字节都没动**，`error_code="nothing_applied"`、`rc=1` | 按 `--snippet` 给的手改片段改，或改脚本结构 |
+  | `fail` | **写了又回滚**（重跑回比不达标 / 语法被写坏 / 重跑不通 / 没有合规块锚点…），`error_code="writeback_failed"`，原因在 `err`。**"以为改了、其实没改"就是这一档** | 读 `err`，修脚本或重调 |
   | `stale` | 参数比脚本旧（存参数之后脚本被手改过）→ **跳过** | 重新 `describe` / 开窗调；确要覆盖手改才用 `--force` |
   | `no_axes` | 参数文件里没有 `axes`（最典型：`describe --all-figs` 的**嵌套包装**直接喂回 `apply`） | 喂它顺手写出的 `<stem>.fig<k>.json`（0.1.14 起），或逐图 `--fig N` 导出 |
   | `bad_params` | 参数结构硬错误（`rc=2`），`err` 指出是哪个字段 | 修参数文件 |

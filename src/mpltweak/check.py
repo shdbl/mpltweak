@@ -114,6 +114,22 @@ def _name(a):
     return 'ax%s' % a.get('index')
 
 
+def _edge_line(edge_name, value):
+    """「左边缘 0.12」这种"边缘名字 + 位置"的一行。
+
+    名字（``chk_edge_left`` 等）与值拼法（``chk_edge_value``）是**两条**消息：
+    越界那几行要值，``chk_not_aligned`` 只要名字。合成一条带 ``%(v)s`` 的消息会让
+    "只要名字"的那处把模板原样带进输出（0.1.16 的 ``%(v)s`` 就是这么漏的）。
+
+    ``edge_name`` 是**已经渲染好的名字**（调用点用**静态**键取词，见下面的
+    ``_msg.t('chk_edge_left')`` —— 不在这里收键名，是因为键名当参数传就会变成
+    `test_msg_key_audit` 的"未解析调用点"：那个洞只减不增，别为省事把它撑大）。
+    ``value`` 同理是已经格式化好的字符串：两处调用点的精度不同（``_fmt`` 与
+    ``%.3f``），格式化留在调用点，这里只负责拼。
+    """
+    return _msg.t('chk_edge_value', edge=edge_name, v=value)
+
+
 # ==== §3 几何规则：analyze（越界 / 重叠 / 对齐 / 尺寸 / 间距 / 字号 / 范围） ====
 
 def analyze(axes, tol=DEFAULT_TOL):
@@ -133,13 +149,13 @@ def analyze(axes, tol=DEFAULT_TOL):
         x0, y0, w, h = _pos(a)
         out = []
         if x0 < -tol:
-            out.append(_msg.t('chk_edge_left', v=_fmt(x0)))
+            out.append(_edge_line(_msg.t('chk_edge_left'), _fmt(x0)))
         if y0 < -tol:
-            out.append(_msg.t('chk_edge_bottom', v=_fmt(y0)))
+            out.append(_edge_line(_msg.t('chk_edge_bottom'), _fmt(y0)))
         if x0 + w > 1 + tol:
-            out.append(_msg.t('chk_edge_right', v=_fmt(x0 + w)))
+            out.append(_edge_line(_msg.t('chk_edge_right'), _fmt(x0 + w)))
         if y0 + h > 1 + tol:
-            out.append(_msg.t('chk_edge_top', v=_fmt(y0 + h)))
+            out.append(_edge_line(_msg.t('chk_edge_top'), _fmt(y0 + h)))
         if out:
             problems.append({
                 'rule': 'out_of_canvas', 'level': 'error', 'axes': [_name(a)],
@@ -376,13 +392,13 @@ def analyze_texts(state, tight=False):
         b = t.get('box') or [0, 0, 0, 0]
         out = []
         if b[0] < -TEXT_EDGE_EPS:
-            out.append(_msg.t('chk_edge_left', v='%.3f' % b[0]))
+            out.append(_edge_line(_msg.t('chk_edge_left'), '%.3f' % b[0]))
         if b[1] < -TEXT_EDGE_EPS:
-            out.append(_msg.t('chk_edge_bottom', v='%.3f' % b[1]))
+            out.append(_edge_line(_msg.t('chk_edge_bottom'), '%.3f' % b[1]))
         if b[2] > 1 + TEXT_EDGE_EPS:
-            out.append(_msg.t('chk_edge_right', v='%.3f' % b[2]))
+            out.append(_edge_line(_msg.t('chk_edge_right'), '%.3f' % b[2]))
         if b[3] > 1 + TEXT_EDGE_EPS:
-            out.append(_msg.t('chk_edge_top', v='%.3f' % b[3]))
+            out.append(_edge_line(_msg.t('chk_edge_top'), '%.3f' % b[3]))
         if out:
             item = {
                 'rule': 'text_out_of_canvas',
@@ -786,7 +802,7 @@ if __name__ == '__main__':
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头与容差表：几何 / 文字渲染 / colorbar（行 2-73，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 文字种类与几何小工具（行 74-116，7 个顶层函数）
+# §2 文字种类与几何小工具（行 74-132，8 个顶层函数）
 #     _kind                                           76
 #     _join                                           82
 #     _tol_positive                                   87
@@ -794,28 +810,29 @@ if __name__ == '__main__':
 #     _pos                                           103
 #     _fmt                                           108
 #     _name                                          112
-# §3 几何规则：analyze（越界 / 重叠 / 对齐 / 尺寸 / 间距 / 字号 / 范围）（行 117-330，1 个顶层函数）
-#     analyze                                        119
-#         §3.1 越界（超出画布 0~1）                          131
-#         §3.2 重叠（两两相交，忽略仅相接的）                       150
-#         §3.3 colorbar × 任意轴的矩形相交                   165
-#         §3.4 边缘不齐（与最近的另一个轴差一点点）                    189
-#         §3.5 大小不一（多数一致的尺寸里混进少数派）                   218
-#         §3.6 间距不均（同一列面板的垂直间隙应一致）                   244
-#         §3.7 字号不统一（降级为提示：有时是有意的）                   276
-#         §3.8 轴范围不统一（多面板该共享 xlim/ylim）              298
-# §4 文字渲染尺寸：analyze_texts（按真实像素外框）（行 331-457，1 个顶层函数）
-#     analyze_texts                                  333
-#         §4.1 超出画布（tight 脚本里降级为提示）                  374
-#         §4.2 互相压住（warn）                            402
-# §5 共同入口、tight 探测与静态扫描（A4）（行 458-564，4 个顶层函数）
-#     analyze_state                                  460
-#     _const_str                                     474
-#     has_tight_bbox                                 479
-#     static_scan                                    521
-# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 565-780，3 个顶层函数）
-#     _tol_arg                                       567
-#     main                                           579
-#         §6.1 A4：--static —— 一行脚本都不执行               608
-#     _run_static                                    701
+#     _edge_line                                     117
+# §3 几何规则：analyze（越界 / 重叠 / 对齐 / 尺寸 / 间距 / 字号 / 范围）（行 133-346，1 个顶层函数）
+#     analyze                                        135
+#         §3.1 越界（超出画布 0~1）                          147
+#         §3.2 重叠（两两相交，忽略仅相接的）                       166
+#         §3.3 colorbar × 任意轴的矩形相交                   181
+#         §3.4 边缘不齐（与最近的另一个轴差一点点）                    205
+#         §3.5 大小不一（多数一致的尺寸里混进少数派）                   234
+#         §3.6 间距不均（同一列面板的垂直间隙应一致）                   260
+#         §3.7 字号不统一（降级为提示：有时是有意的）                   292
+#         §3.8 轴范围不统一（多面板该共享 xlim/ylim）              314
+# §4 文字渲染尺寸：analyze_texts（按真实像素外框）（行 347-473，1 个顶层函数）
+#     analyze_texts                                  349
+#         §4.1 超出画布（tight 脚本里降级为提示）                  390
+#         §4.2 互相压住（warn）                            418
+# §5 共同入口、tight 探测与静态扫描（A4）（行 474-580，4 个顶层函数）
+#     analyze_state                                  476
+#     _const_str                                     490
+#     has_tight_bbox                                 495
+#     static_scan                                    537
+# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 581-796，3 个顶层函数）
+#     _tol_arg                                       583
+#     main                                           595
+#         §6.1 A4：--static —— 一行脚本都不执行               624
+#     _run_static                                    717
 # --- END AUTO NAV ---

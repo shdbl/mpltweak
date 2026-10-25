@@ -47,6 +47,22 @@ ALLOW = {
     # 仓库内别的工具的选项
     '--workroot': 'tools/corpus_filter_t7.py 的选项',
     '--with-maintenance': 'tools/check_doc_refs.py 的选项',
+    # 0.1.18 新增：树身闸门 `tools/guard_tree_stable.py` 的选项。
+    # 为什么要在**判断工具**里登记**工具自己的旗标**：这把尺子查的是
+    # "文档里出现的 CLI 选项，产品是否接受"，而工具旗标本来就不是产品选项；
+    # 不登记就会把 docs/dev.md 里"用 --record/--verify 包起来跑两臂"这类**正确写法**
+    # 报成 suspicious（0.1.18 的 V1 基线就是这么红的：documented_not_accepted: ["--record"]）。
+    '--record': 'tools/guard_tree_stable.py 的选项（记录树身指纹）',
+    '--state': 'tools/guard_tree_stable.py 的选项（显式指定状态文件路径）',
+    '--include-untracked': 'tools/guard_tree_stable.py 的选项（把未跟踪文件算进指纹）',
+    '--wrap': 'tools/guard_tree_stable.py 的选项（包住一条命令，树变了就 rc=97）',
+    '--early-ratio': 'tools/mutate_gate.py 的选项（提前退出判定的耗时阈值）',
+    '--allow-broken-tree': 'tools/mutate_gate.py 的选项（基线语法坏时仍强行跑变异）',
+    '--jobs': 'tools/mutate_gate.py 的选项（并行度）',
+    '--only': 'tools/mutate_gate.py 的选项（只跑指定判据）',
+    '--kind': 'tools/mutate_gate.py 的选项（只跑指定变异种类）',
+    '--control': 'tests/test_corpus_identity.py 的选项（正对照：用指定树复跑）',
+    '--limit': 'tests/test_corpus_identity.py 的选项（抽样上限）',
     '--backend': 'tests/test_real_window.py 的选项（真窗口测试脚本；它出现在含 mpltweak URL 的那一行）',
     '--dry-list': 'tests/test_real_window.py 的选项（免弹窗列场景/断言）',
     '--selftest': 'tests/test_real_window.py 的选项（断言机器自检）',

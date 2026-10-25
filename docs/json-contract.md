@@ -43,19 +43,19 @@
 | 键 | 类型 | 值域 / 口径 |
 |---|---|---|
 | `params` | string | 参数文件 basename |
-| `reason` | string | 落位结果码：`ok` / `best_effort` / `no_change` / `preview` / `bad_params` / `stale` / `no_axes` / `no_fig` / `fail` / `external_modified` / `layout_conflict` / `unknown`（兜底） |
+| `reason` | string | 落位结果码：`ok` / `best_effort` / `refused` / `no_change` / `preview` / `bad_params` / `stale` / `no_axes` / `no_fig` / `fail` / `external_modified` / `layout_conflict` / `unknown`（兜底） |
 | `style` | string | `auto` / `inplace` / `block`；**永不为 null** —— 没走过写回时是"请求的通道"，走过写回时是"实际通道" |
 | `applied` | bool | 磁盘**是否真的改了**；`false` 时不许把文案读成"已写回" |
 | `changes` | array | 真正落地的字段令牌，如 `["ax0.pos", "ax1.title_fontsize"]` |
-| `block_lines` | int | 插入/替换的调整块行数（块通道用；原位通道恒 0） |
+| `block_lines` | int | 块通道写进去的**整块总行数**（含两行标记、生成时间与说明行）—— **不是"改了几行代码"**，也**没有固定值**（单字段实测 4 / 5 / 6 都有）；原位通道恒 `0`。想知道改了什么看 `changes` |
 | `auto_fallback` | bool | 这次是否由 `auto` 自动退到了块模式 |
 | `inplace_reason` | string or null | **原位那一趟**的落位结果（口径同 `reason`） |
 | `inplace_changes` | array | 原位那一趟真正改到的字段 |
 | `needs_block` | bool | **这次 apply 之后**是否仍有字段没落地（退过块且都落地了就是 `false`） |
 | `inplace_needs_block` | bool | 原位那一趟是否因为写不了而退块 |
-| `pending` | array | 这次仍然没落地的字段令牌清单 |
-| `inplace_pending` | array | 原位那一趟写不了的字段清单（`auto_fallback` 时用来看"为什么退块"） |
-| `refused_hint` | string or null | 拒写时的**照着改**指导（0.1.17 起；只在"函数里建图"那两类拒写时出现） |
+| `pending` | array | 这次仍然没落地的字段令牌清单（**块路径**这一份；原位路径那份在 `inplace_pending`，**别把两列相加当总数**） |
+| `inplace_pending` | array | **原位**那一趟写不了的字段清单（`auto_fallback` 时用来看"为什么退块"；与 `pending` 是**两条通道各自的账** —— 同数时是镜像，不同数时各表其事） |
+| `refused_hint` | string or null | 拒写时的**照着改**指导（0.1.17 起）。**0.1.18 起触发面变了**：只对"引擎能点名"的拒写生成（建轴点与参数条数对不上、载体名不是恰好一次模块层调用…）；`fig.axes[i]` / `plt.gca()` / 函数里建图**已不再必然拒写**（判据表见 [verify.md](verify.md)） |
 | `anchor` | string or null | 块的插入位置标记（如 `before`） |
 | `attempts` | array | 块落点尝试记录，每项 `{anchor, line, ok, semantic}` |
 | `layers` | object | 三层验证的真实状态：`{syntax: bool, rerun: bool or null, semantic: bool or null}`；**null = 这一层没跑**（别再用 `verify_mode` 反推） |
@@ -80,6 +80,23 @@
 | `dry_run` | bool | **不在上面的显式键集里**：它由 `--dry-run` 通过"额外平铺"塞进**每条** `files[]` |
 
 ## 值域表
+
+### `reason` 的三档 + 两种"没写"（0.1.18）
+
+"没写成"在同一份载荷里其实是**三件不同的事**，机器分支只认 `reason` 配 `error_code`：
+
+| `reason` | `error_code` | 含义 | 源码动了没 |
+|---|---|---|---|
+| `best_effort` | ——（无） | **能写、没全写**：能落地的都落了，其余在 `pending` / `inplace_pending` | 动了 |
+| `refused` | `nothing_applied` | **拒写**：静态层面就证不出目标 | **一个字节都没动** |
+| `fail` | `writeback_failed` | **写了又回滚**：重跑回比不达标 | 还原成原样 |
+
+**`best_effort` 不等于被拒**：它只说"能写的都写了、剩下的进清单"。判"写没写"看 `applied` / `changes`
+（块路径落地时 `changes` 可能是 `[]`，那种情况以 `applied: true` + 文件 sha256 变了为准）；
+判"成没成"看 `ok` / `rc` / `error_code`。
+
+**两种"没写"对用户是两件事**：`nothing_applied` = 根本没定位到目标（改脚本结构，或按 `--snippet` 手改）；
+`writeback_failed` = 改过又退回（"以为改了、其实没改"，读 `err` / `warnings`，**别当成已写回**）。
 
 ### `stage`：六个值
 

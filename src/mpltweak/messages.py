@@ -283,9 +283,9 @@ MESSAGES = {
         'zh': '工具自身异常（internal_error）',
         'en': 'internal tool error (internal_error)',
     },
-    # 0.1.16：**写回后的代码跑不起来，但原脚本单独能跑** ⇒ 证据就指着"我们生成错了"。
+    # 0.1.16：**写回后的代码跑不起来，但原脚本单独能跑** → 证据就指着"我们生成错了"。
     # 旧版这里落到 fail_kind_cannot_run + fail_unknown_reason（"无法确定原因"），
-    # 用户读到"你的脚本有问题"⇒ 不报告、只当"这种图它不支持"（元组解包那个 bug
+    # 用户读到"你的脚本有问题"→ 不报告、只当"这种图它不支持"（元组解包那个 bug
     # 就是这么躲过 0.1.13/0.1.14/0.1.15 三个版本的）。
     'fail_kind_generated_code': {
         'zh': '写回后的代码跑不起来（你的原脚本本身是能跑的）',
@@ -472,6 +472,15 @@ MESSAGES = {
         'en': '[--] nothing could be applied; the script was left untouched '
               '(%(script)s)',
     },
+    # t16（0.1.18）：`refused` 有了自己的 reason 之后，人读这边也要把那句关键话说出来
+    # —— 光看 `未写回[refused]` 用户仍分不清"整份拒了"与"只丢了几个字段"。
+    'refused_note': {
+        'zh': '  说明：%(n)d 个字段无法确定性落地，即**整份拒写**（不是"改了一部分"）；'
+              '照下面的片段手改，或加 --snippet 拿可粘贴的代码',
+        'en': '  note: %(n)d field(s) cannot be placed deterministically, so the whole '
+              'write was refused (this is NOT a partial write); edit by hand using the '
+              'snippet below, or add --snippet',
+    },
     'no_change': {
         'zh': '· 参数与原代码一致，无需改动',
         'en': '- params already match the code; nothing to change',
@@ -633,10 +642,17 @@ MESSAGES = {
         'zh': '%(ax)s 超出画布：%(edges)s',
         'en': '%(ax)s is outside the canvas: %(edges)s',
     },
-    'chk_edge_left': {'zh': '左边缘 %(v)s', 'en': 'left edge %(v)s'},
-    'chk_edge_bottom': {'zh': '下边缘 %(v)s', 'en': 'bottom edge %(v)s'},
-    'chk_edge_right': {'zh': '右边缘 %(v)s', 'en': 'right edge %(v)s'},
-    'chk_edge_top': {'zh': '上边缘 %(v)s', 'en': 'top edge %(v)s'},
+    # 0.1.18（T9）：`chk_edge_*` 只装**边缘名字**，位置值另由 `chk_edge_value` 拼。
+    # 为什么拆：`chk_not_aligned` 只要"左边缘"这几个字（调 `_msg.t(label)` 时**不传 v**），
+    # 而名字里带着 `%(v)s` 时 t() 按设计（KeyError ⇒ 原样返回模板）把整条模板插进输出，
+    # 用户在 `mpltweak check` 里读到 `ax1 的左边缘 %(v)s是 0.145` —— 模板漏到了用户眼前
+    # （0.1.16 外部评审报的就是这一条）。名字与值分开后，两处各自拿对自己要的东西。
+    'chk_edge_left': {'zh': '左边缘', 'en': 'left edge'},
+    'chk_edge_bottom': {'zh': '下边缘', 'en': 'bottom edge'},
+    'chk_edge_right': {'zh': '右边缘', 'en': 'right edge'},
+    'chk_edge_top': {'zh': '上边缘', 'en': 'top edge'},
+    #: 边缘名字 + 具体位置：越界那几行、文字出界那几行用它拼成"左边缘 0.12"
+    'chk_edge_value': {'zh': '%(edge)s %(v)s', 'en': '%(edge)s %(v)s'},
     'doctor_usage': {'zh': '用法: mpltweak doctor\n环境自检（后端 / Qt 绑定 / 版本 / 光标枚举）；不接受其它选项', 'en': 'usage: mpltweak doctor\nenvironment self-check (backend / Qt bindings / version / cursor); takes no other options'},
     'doctor_no_json': {'zh': 'doctor 没有 --json：它的输出是给人看的自检结果（不产出机器可读载荷）；请去掉 --json', 'en': 'doctor has no --json: its output is a human-readable self-check (nothing machine-readable is produced); drop --json'},
     'schema_unknown_args': {'zh': '无法识别的参数：%(args)s', 'en': 'unrecognized argument(s): %(args)s'},
@@ -1081,6 +1097,28 @@ MESSAGES = {
         'zh': '!! 参数文件错误（已拒写，脚本未改动）: %(msg)s',
         'en': '!! params file error (write refused, script untouched): %(msg)s',
     },
+    # t16 / t15-F2：fig_index 非整数 ⇒ **不猜**。旧行为：单图时静默退回 0 照写；二图时
+    # 错报 `no_fig`（让用户以为脚本里没有这张图）。
+    'apply_params_bad_fig_index': {
+        'zh': 'fig_index 必须是整数（收到 %(got)s）：多图给 0/1/…，单图给 0；工具不猜，'
+              '也不会因此报"找不到 figure"',
+        'en': 'fig_index must be an integer (got %(got)s): use 0/1/... for multi-figure '
+              'scripts, 0 for a single figure; the tool does not guess, and it will not '
+              'report "no figure found" because of this',
+    },
+    # t16（0.1.18，船长裁决 F6 后加的）：**"整份参数一个有效字段都没有"** 要明说，
+    # 不许复用 `no_change`（"参数与原代码一致，无需改动"）—— 那是两件事：
+    #   * 一个有效字段都没有 = 你**没要求**改任何东西（多半是导出一份空壳就来了）；
+    #   * no_change = 你要求了，但要求的值与源码现值逐项相同。
+    # 把前者说成后者，用户会以为"工具看了我的参数、确认没问题"，其实什么也没看。
+    # 字段写成 `null` 本身**不是**错误（= 未请求，等同该键不存在），见 apply 侧的说明。
+    'apply_no_fields': {
+        'zh': '[--] 这份参数没有任何要改的字段（每个字段都是 null 或没写）：'
+              '脚本未被改动。先 `describe` 导出一份，再在你要改的那几项上填值',
+        'en': '[--] this params file requests no changes at all (every field is null or '
+              'absent): the script was left untouched. Export one with describe first, '
+              'then fill in the fields you want to change',
+    },
     'apply_params_dropped': {
         'zh': '!! 参数文件里有内容已被丢弃脚本未改动: %(msg)s',
         'en': '!! params file has dropped content; the script was not modified: '
@@ -1277,7 +1315,7 @@ MESSAGES = {
               'saves a figure)',
     },
     # S3（0.1.16）静态自检：生成前问"这个符号真的能下标吗"。可证是单轴（元组解包
-    # 出来的名字 / add_subplot 名）或证不出 ⇒ **拒绝生成**并点名原因。为什么必须
+    # 出来的名字 / add_subplot 名）或证不出 → **拒绝生成**并点名原因。为什么必须
     # 提前拦：写出去再靠"重跑失败→回滚"兜，只会得到 rc=1 +「无法确定原因」，
     # 看起来像用户脚本的问题（元组解包那个 bug 就这样隐身了三个版本）。
     'wb_block_refused_addr': {
@@ -1492,6 +1530,153 @@ MESSAGES = {
               'call), there is exactly one figure, those calls run straight at module '
               'level, there is no close and no extra colorbar/inset/twin/... axes, so '
               '%(fig)s.axes[k] is the k-th axes statically',
+    },
+    # --- L3（0.1.18）：**位置身份**（`<fig>.axes[k]`，按建轴顺序发号牌）----------
+    # 与上面三条的区别：那三条的理由是"本文件只建一次图 / 没有额外建轴"；这一条的理由
+    # 是"**号稳**"——建轴顺序可静态枚举、与运行期一致、条数与真跑出来的参数一致。
+    # 典型现场：画图代码封装在函数里（模块层没有 fig/axes 名字可喊，只能发号牌）。
+    'wb_block_anchor_posident': {
+        'zh': '# 目标定位（L3 位置身份）：图在函数里建、模块层没有可喊的轴名字 → 按'
+              '**建轴顺序**发号牌。号牌已证明稳定：建轴调用全部直线执行一次'
+              '（不在循环/条件分支/推导式里）、没有 add_axes、也没有 '
+              'inset/twin/secondary/mosaic 额外建轴、静态数出 %(n)d 条轴与真跑出来的'
+              '参数条数一致，因此 %(fig)s.axes[k] 就是第 k 条轴',
+        'en': '# target location (L3 position identity): the figure is built inside a '
+              'function, so no axes name is available at module level -> the block '
+              'addresses axes by **creation order**. The ordinal is proven stable: every '
+              'axes-creating call runs straight exactly once (no loop / conditional '
+              'branch / comprehension), there is no add_axes and no extra '
+              'inset/twin/secondary/mosaic axes, and the statically counted %(n)d axes '
+              'match the number of axes in the runtime parameters, so %(fig)s.axes[k] '
+              'is the k-th axes',
+    },
+    'wb_block_refused_posident': {
+        'zh': '位置身份（`<fig>.axes[k]` 按建轴顺序发号牌）这条路**试过了但号码不稳**，'
+              '所以这些字段仍然按 fail-closed 不写 —— 原因：%(why)s。'
+              '把上面那条结构改掉（让建轴顺序可重复），或用带名字的轴'
+              '（`fig, axs = plt.subplots(...)` 之后用 `axs[0,0]`），重跑 apply 就能写。',
+        'en': 'the position-identity route (addressing axes by creation order, '
+              '`<fig>.axes[k]`) was **tried but the ordinal is not stable**, so these '
+              'fields stay fail-closed - reason: %(why)s. Remove that structure (make '
+              'the axes creation order repeatable), or use named axes (`axs[0, 0]` after '
+              '`fig, axs = plt.subplots(...)`), then run apply again.',
+    },
+    'wb_aspect_locked_pos': {
+        'zh': '这根轴的长宽比被它自己锁定（`aspect=equal`，或它是 `imshow` / 地图轴）：'
+              '位置由 matplotlib 按数据比例自己现算，写 `set_position` 不会生效 —— '
+              '所以这次**没有改它的位置**。要能自由摆位置，先把长宽比放开'
+              '（`ax.set_aspect("auto")`），或用 `add_axes([...])` 重新划一块。',
+        'en': 'this axes locks its own aspect ratio (`aspect=equal`, or it is an `imshow` / '
+              'map axes): matplotlib recomputes the position from the data aspect, so a '
+              'written `set_position` has no effect - its position was therefore left '
+              'untouched. To place it freely, release the aspect '
+              '(`ax.set_aspect("auto")`) or carve out a new box with `add_axes([...])`.',
+    },
+    'wb_pos_why_loop': {
+        'zh': '第 %(line)s 行的建轴调用在**循环**里，运行期会按迭代次数反复建轴，'
+              '"第 k 条是谁"取决于循环次数',
+        'en': 'the axes-creating call on line %(line)s sits inside a **loop**: it creates '
+              'axes once per iteration, so which axes ends up k-th depends on the trip '
+              'count',
+    },
+    'wb_pos_why_cond': {
+        'zh': '第 %(line)s 行是**条件分支**（if/try），那个分支执不执行要到运行期才知道，'
+              '轴可能根本不存在，后面的号码会整体前移',
+        'en': 'line %(line)s is a **conditional branch** (if/try): whether it runs is only '
+              'known at runtime, the axes may not exist at all, and every later ordinal '
+              'shifts',
+    },
+    'wb_pos_why_repeat': {
+        'zh': '第 %(line)s 行的建轴调用在**推导式**里（会重复执行），运行期出几条轴说不清',
+        'en': 'the axes-creating call on line %(line)s sits inside a **comprehension** '
+              '(runs repeatedly), so the runtime number of axes is unknowable',
+    },
+    'wb_pos_why_add_axes': {
+        'zh': '第 %(line)s 行用 `add_axes(...)` **手工摆轴**（位置由你给的四元组决定），'
+              '它插进 `fig.axes` 的顺序不可静态枚举',
+        'en': 'line %(line)s places an axes manually with `add_axes(...)` (its position '
+              'comes from your rectangle), and where it lands in `fig.axes` cannot be '
+              'enumerated statically',
+    },
+    'wb_pos_why_extra_axes': {
+        'zh': '第 %(line)s 行会**额外建轴**（inset / twinx / twiny / secondary_* / '
+              'subplot_mosaic 之类），条数或顺序静态说不清，号码会整体漂移',
+        'en': 'line %(line)s creates **extra axes** (inset / twinx / twiny / secondary_* / '
+              'subplot_mosaic and the like); their count or order is not statically '
+              'knowable, so every ordinal drifts',
+    },
+    'wb_pos_why_enumerate': {
+        'zh': '静态数不清这张图**建了哪几条轴、按什么顺序**（第 %(line)s 行起）——'
+              '数不清就没有号码可用',
+        'en': 'statically, which axes this figure creates and in what order cannot be '
+              'enumerated (from line %(line)s) - no ordinals without that',
+    },
+    'wb_pos_why_suspect': {
+        'zh': '第 %(line)s 行有一处**引擎认不出的建轴调用**：它可能也建轴、把运行期序号'
+              '顶掉，所以后面的号码都不可信',
+        'en': 'line %(line)s holds an axes-creating call the engine does not recognise: it '
+              'may create axes and shift the runtime indices, so later ordinals are not '
+              'trustworthy',
+    },
+    'wb_pos_why_count': {
+        'zh': '静态数出的轴条数与**真跑出来的参数**里的轴条数不一致（说明有静态看不见的'
+              '建轴/删轴），号码与运行期对不上',
+        'en': 'the statically counted axes do not match the number of axes in the **runtime '
+              'parameters** (something creates or removes axes invisibly to static '
+              'analysis), so ordinals would not line up at runtime',
+    },
+    'wb_pos_why_scope': {
+        'zh': '建轴调用与调整块**不在同一个作用域**（第 %(line)s 行）：那一次执行证不出来，'
+              '号码可能在别的执行里指向别的轴',
+        'en': 'the axes-creating call and the adjustment block are **not in the same scope** '
+              '(line %(line)s): that execution cannot be proven, so the ordinal may point '
+              'at another axes in a different execution',
+    },
+    'wb_pos_why_anchor': {
+        'zh': '调整块要落在第 %(line)s 行、**在轴建好之前** —— 那时 `fig.axes[k]` 还不存在'
+              '（或条数不够），号牌必然打空',
+        'en': 'the adjustment block would land on line %(line)s, **before the axes exist** '
+              '- at that point `fig.axes[k]` does not exist yet (or there are too few '
+              'axes), so the ordinal would miss',
+    },
+    'wb_pos_why_nofig': {
+        'zh': '找不到可以挂 `.axes[k]` 的 figure 名字（模块层既没有可证的 fig 变量，'
+              '也没有接住函数返回值的名字）',
+        'en': 'no figure name to hang `.axes[k]` on (module level has neither a provable '
+              'fig variable nor a name receiving the function\'s returned figure)',
+    },
+    # T8（0.1.18）：轴身份闸门 —— 建轴点清单与参数轴条数对不上时，原位路径一个字都不写
+    'wb_t8_axis_gate': {
+        'zh': '（轴身份：这张图的建轴点与参数条数对不上，按 fail-closed 不动它）',
+        'en': ' (axes identity: this figure\'s axis-creation points do not match the '
+              'parameter count, so it is left untouched / fail-closed)',
+    },
+    'wb_t8_axis_gate_note': {
+        'zh': '这张图的**建轴点**与参数里的轴条数对不上（本次按 fail-closed 不改源码）：'
+              '静态数出 %(n_src)s 个建轴点、参数里有 %(n_par)s 根轴（差在第 %(line)s 行'
+              '附近，原因码 %(why)s）。常见起因：解析器看不见的建轴写法'
+              '（`getattr(fig, "add_axes")(...)`）、建图函数被**多次调用**（静态 1 个点、'
+              '运行期 N 根轴）、或库里自己加了轴。要能写回，请把每根轴显式写成'
+              '`ax = fig.add_axes([...])` / `ax = fig.add_subplot(...)`，一次调用建一根。',
+        'en': 'this figure\'s **axis-creation points** do not match the number of axes in '
+              'the parameters (source left untouched / fail-closed): %(n_src)s creation '
+              'points statically vs %(n_par)s axes in the parameters (around line '
+              '%(line)s, reason code %(why)s). Typical causes: creation calls the parser '
+              'cannot see (`getattr(fig, "add_axes")(...)`), a figure-building function '
+              'called **several times** (one static point, N runtime axes), or axes added '
+              'by a library. To make it writable, create each axes explicitly with '
+              '`ax = fig.add_axes([...])` / `ax = fig.add_subplot(...)`, one call per axes.',
+    },
+    # T7（0.1.18）：只写**有差异**的字段 —— 基线取不到时的如实交代（不许当成"没变化"）
+    'wb_delta_no_baseline': {
+        'zh': '差异过滤这次**没做成**：算基线要把当前源码跑一遍，而这次没跑成（%(err)s）'
+              '—— 所以块里**照旧**把证不出等值的字段都写上了（宁可多写，绝不漏写）。'
+              '想让 diff 干净，先让脚本在无头环境（Agg）能跑通，再重跑一次 apply。',
+        'en': 'difference filtering could **not run** this time: the baseline needs one run '
+              'of the current script, and it did not succeed (%(err)s) - so the block still '
+              'writes every field whose equality cannot be proven (writing too much '
+              'rather than too little). For a clean diff, make the script run headless '
+              '(Agg) first, then run apply again.',
     },
     'wb_block_colorbar': {
         'zh': '# colorbar 轴：先解除自动定位/盒比，否则重绘会重置位置与宽度',
@@ -1964,6 +2149,180 @@ def emit_json(obj, indent=2):
 STAGES = ('params', 'preflight', 'backup', 'writeback', 'verify', 'finalize')
 
 
+# ---------------------------------------------------------------------------
+# §5 `files[].reason` / 顶层 `error_code` 的**唯一出处**（t16，0.1.18）
+#
+# 为什么要有这张表：0.1.17 之前这些字面量至少在四处各写一份 ——
+#   * `apply.py` 的三张表 `_OK_REASONS` / `_FAIL_ERROR_CODE` / `_FAIL_STAGE`；
+#   * `apply.py` 里 `('ok', 'best_effort', 'no_change')` 这类**内联元组**（4 处）；
+#   * `writeback.py` 的 `NO_FIG` / `NO_AXES` / `BEST_EFFORT` / `BAD_PARAMS` 常量；
+#   * `docs/json-contract.md` 里那张散文表。
+# 加一个取值必然漏一处。现在代码侧**只认下面这一张**：apply 的 ok 判定、error_code
+# 映射、stage 映射、人读口径全部从它派生（`REASONS_OK` / `REASON_ERROR_CODE` /
+# `REASON_STAGE`），文档侧引它。
+#
+# 三档 `kind`（消费方**按 kind 分支**即可，不必枚举 reason —— 这也是"新增取值不破
+# 旧消费者"的口径来源）：
+#   success  这份参数确实落地了 / 本来就无需落地（ok / best_effort / no_change / preview）
+#   refused  **一个字节都没写**（拒写）。与 `best_effort` 的分界正是 t16 要修的：
+#            `best_effort` 只表示"写了一部分、另有保留项"，**不再**表示"什么都没写"。
+#   error    这份参数 / 这次写回没能成（bad_params / no_axes / no_fig / stale / fail …）
+#
+# 未知取值：消费方按 **informational** 处理（不认识就当"有一条信息"照常打印 / 记日志，
+# 不许崩、更不许当成"被拒"）。这条也写进 docs/json-contract.md，是**只加不改**的保证。
+#
+# 与 `stage` / `error_code` 的关系：三者是**正交**的三个键 —— reason 说"落位结果的种类"，
+# stage 说"坏在哪一步"，error_code 说"机器该走哪个分支"。同一个 reason 恒映射到同一个
+# error_code + stage（下面表里就是死的），别在调用点各算一份。
+# ---------------------------------------------------------------------------
+REASON_SUCCESS = 'success'
+REASON_REFUSED = 'refused'
+REASON_ERROR = 'error'
+
+#: reason 取值表。**顺序 = 契约页顺序**（先成功档、再拒写档、最后错误档）。
+#: 每条的 `zh` 是给文档/契约页用的**一句话口径**（不是给人读的 CLI 文案 —— 那在 MESSAGES 里）。
+REASONS = {
+    'ok': {
+        'kind': REASON_SUCCESS, 'error_code': None, 'stage': None,
+        'zh': '已按参数落地（逐字段原位改，或插入调整块）',
+    },
+    'best_effort': {
+        'kind': REASON_SUCCESS, 'error_code': None, 'stage': None,
+        'zh': '写了一部分：有字段落地，另有字段没能确定性落地（见 pending / warnings）',
+    },
+    'no_change': {
+        'kind': REASON_SUCCESS, 'error_code': None, 'stage': None,
+        'zh': '参数与源码本来就一致，无需改动（正常成功，不是拒写）',
+    },
+    # t16（船长裁决 F6）：**"这份参数没有任何要改的字段"** 是独立一档 —— 与 `no_change`
+    # 的区别是"你要求了但值本来就一样"vs"你压根没要求任何字段"。两者都不写盘、都 rc=0，
+    # 但人读那句话必须分开（把前者说成后者 = 谎报"我看过你的参数了"）。
+    'no_fields': {
+        'kind': REASON_SUCCESS, 'error_code': None, 'stage': None,
+        'zh': '参数里没有任何要改的字段（全是 null 或没写）；脚本未被改动',
+    },
+    'preview': {
+        'kind': REASON_SUCCESS, 'error_code': None, 'stage': None,
+        'zh': '只读预览（没开 --write，或用了 --diff）：脚本一个字节都没动',
+    },
+    'refused': {
+        'kind': REASON_REFUSED, 'error_code': 'nothing_applied', 'stage': 'writeback',
+        'zh': '拒写：这些字段无法确定性落地，脚本一个字节都没改（与"写了一部分"是两件事）',
+    },
+    'bad_params': {
+        'kind': REASON_ERROR, 'error_code': 'bad_params', 'stage': 'params',
+        'zh': '参数文件结构 / 取值非法（含 null 非法值、非整数 fig_index、轴序号越界）',
+    },
+    'stale': {
+        'kind': REASON_ERROR, 'error_code': 'stale_params', 'stage': 'preflight',
+        'zh': '脚本比参数文件新（套用会覆盖手改）；--force 可照样套用',
+    },
+    'no_axes': {
+        'kind': REASON_ERROR, 'error_code': 'no_axes', 'stage': 'preflight',
+        'zh': '参数里没有任何可落地的轴 / 字段',
+    },
+    'no_fig': {
+        'kind': REASON_ERROR, 'error_code': 'no_fig', 'stage': 'preflight',
+        'zh': '脚本里找不到可确定性定位的 figure / subplots 赋值目标（如纯 pyplot 流）',
+    },
+    'layout_conflict': {
+        'kind': REASON_ERROR, 'error_code': 'layout_conflict', 'stage': 'preflight',
+        'zh': '布局引擎（constrained_layout / figure.layout）冲突下仍要写轴位置，被拒',
+    },
+    'fail': {
+        'kind': REASON_ERROR, 'error_code': 'writeback_failed', 'stage': 'writeback',
+        'zh': '写回自己失败（写盘 / 语法 / 锚点）或写回后的重跑验证失败',
+    },
+    'external_modified': {
+        'kind': REASON_ERROR, 'error_code': 'external_modified', 'stage': 'verify',
+        'zh': '验证窗口内脚本被外部改过；已回滚、未覆盖你的改动',
+    },
+}
+
+#: 成功档 reason 的**唯一判据**（`apply` 的 ok / rc、`_nothing_applied` 都引它）
+REASONS_OK = tuple(_r for _r, _v in REASONS.items() if _v['kind'] == REASON_SUCCESS)
+
+#: reason → 顶层 `error_code`（只收**有码的**；成功档没有码，所以不在表里）
+REASON_ERROR_CODE = dict((_r, _v['error_code']) for _r, _v in REASONS.items()
+                         if _v['error_code'])
+
+#: reason → 顶层 `stage`（"坏在哪一步"；留空表示这一步没坏）
+REASON_STAGE = dict((_r, _v['stage']) for _r, _v in REASONS.items() if _v['stage'])
+
+#: 调用点用的**具名别名**（消掉散落的裸字符串）。值只在这里写一次的问题由下面那段
+#: 导入期自检钉死：别名与 `REASONS` 的键必须一一对上，写错/漏登记 ⇒ 立刻 RuntimeError，
+#: 而不是"某个分支永远匹配不上"这种沉默故障。
+REASON_OK = 'ok'
+REASON_BEST_EFFORT = 'best_effort'
+REASON_NO_CHANGE = 'no_change'
+REASON_NO_FIELDS = 'no_fields'
+REASON_PREVIEW = 'preview'
+REASON_BAD_PARAMS = 'bad_params'
+REASON_STALE = 'stale'
+REASON_NO_AXES = 'no_axes'
+REASON_NO_FIG = 'no_fig'
+REASON_LAYOUT_CONFLICT = 'layout_conflict'
+REASON_FAIL = 'fail'
+REASON_EXTERNAL_MODIFIED = 'external_modified'
+REASON_ALL_ALIASES = (REASON_OK, REASON_BEST_EFFORT, REASON_NO_CHANGE,
+                      REASON_NO_FIELDS, REASON_PREVIEW, REASON_REFUSED,
+                      REASON_BAD_PARAMS, REASON_STALE, REASON_NO_AXES,
+                      REASON_NO_FIG, REASON_LAYOUT_CONFLICT, REASON_FAIL,
+                      REASON_EXTERNAL_MODIFIED)
+_MISSING_REASONS = [_r for _r in REASON_ALL_ALIASES if _r not in REASONS]
+if _MISSING_REASONS:
+    raise RuntimeError(
+        'messages.REASONS 里缺这些取值（新增 reason 请先登记到那张表）：%r'
+        % (_MISSING_REASONS,))
+
+
+def reason_kind(reason):
+    """reason → 'success' / 'refused' / 'error'；**不认识的返回 None**。
+
+    返回 None 而不是抛：契约承诺"未知 reason 按 informational 处理"，消费方（含本工具
+    自己的旧调用点）拿到 None 应当当"有一条信息"照常走下去，不许崩。
+    """
+    _item = REASONS.get(reason)
+    return _item['kind'] if _item else None
+
+
+def is_known_reason(reason):
+    """这个 reason 在契约表里登记过吗（`--json` 自检 / 测试用）。"""
+    return reason in REASONS
+
+
+# ---------------------------------------------------------------------------
+# `error_code` 的取值表（t16 / t15-F3：把 bad_params / no_axes / no_fig 三者并成一套
+# **可解释**的取值 —— 每个码写清"什么时候出现"，读者不必猜三个相近码的区别）。
+#
+# 与 `REASON_ERROR_CODE` 的关系：那张表是"reason → 码"的映射，这张是"码 → 触发条件"的解释。
+# 值域合起来只有下面这些（外加 `nothing_applied` / `apply_failed` 两个**不对应任何单条
+# reason** 的兜底码，见 apply.py 的 `_nothing_applied` / `_failure_code`）。
+# ---------------------------------------------------------------------------
+#: 两个**不对应任何单条 reason** 的兜底码（值域也只有这一处）：
+#:   * `nothing_applied`：由 `_nothing_applied()` 判（整批零落地），refused 也映射到它；
+#:   * `apply_failed`：出现了 `REASONS` 表里没登记的 reason —— "该补表了"的信号。
+ERROR_CODE_NOTHING_APPLIED = 'nothing_applied'
+ERROR_CODE_APPLY_FAILED = 'apply_failed'
+
+ERROR_CODES = {
+    'bad_params': '参数文件本身不合法：不是 JSON 对象 / 缺 version / 字段类型不对 / '
+                  '字段值是 null（如 axes[k].pos）/ fig_index 不是整数 / 轴序号越界。'
+                  '**你的参数要重导或改**，不是写回失败',
+    'no_axes': '参数能读，但里面没有任何可落地的轴或字段（axes 为空 / 字段全是空值）。'
+               '通常是参数与脚本对不上（换了脚本、或 describe 的是另一张图）',
+    'no_fig': '脚本里找不到可确定性定位的 figure / subplots **赋值目标**（纯 pyplot 流、'
+              '在函数里建图等）。参数没问题，是**这个脚本形态**没法按 AST 写回',
+    'stale_params': '脚本比参数文件新（参数保存之后脚本被手改过），套用会覆盖手改；'
+                    '--force 可照样套用',
+    'layout_conflict': '脚本开着布局引擎、这次又要写轴位置 —— 写了也会被引擎覆盖，默认拒',
+    'writeback_failed': '写回本身失败（写盘 / 语法 / 锚点），或写回后的重跑验证没通过',
+    'external_modified': '验证窗口内脚本被外部改过；已回滚，你的改动没被覆盖',
+    'nothing_applied': '确实想写，但**一个字段都没落地**（对应 files[].reason=refused）',
+    'apply_failed': '兜底码：出现了 REASONS 表里没登记的新 reason（**该补表了**的信号）',
+}
+
+
 def shell_path(path):
     """把路径拼成**可直接粘贴**的命令行参数（一律双引号：cmd / PowerShell / bash 通吃）。
 
@@ -2264,9 +2623,9 @@ def t_wb(zh_template):
 # 两张表各自被自己的棘轮守着，混在一起会让"谁漏登记"分不清。
 #
 # ⚠ 这张表的 key 是**整段中文串的精确文本**（`t_ui` 就按它查表）。所以**改中文串里
-# 一个字/加一行**，都等于换 key：查不到 ⇒ 静默回退中文（不报错、不警告）。0.1.15 实测
-# 两次踩同一坑：① `_usage()` 里插一行 `mpltweak --version` ⇒ en 下 28 行 help 全变中文；
-# ② 那次（GBK 编码检查）改文本 ⇒ 整块功能静默丢。纪律：**改这里的中文串必须同步改
+# 一个字/加一行**，都等于换 key：查不到 → 静默回退中文（不报错、不警告）。0.1.15 实测
+# 两次踩同一坑：① `_usage()` 里插一行 `mpltweak --version` → en 下 28 行 help 全变中文；
+# ② 那次（GBK 编码检查）改文本 → 整块功能静默丢。纪律：**改这里的中文串必须同步改
 # 这里的英文值，且两边行数与顺序逐行对齐**；改完跑 en 模式确认非 ASCII 行数 = 0
 # （`MPLTWEAK_LANG=en python -m mpltweak --help`）。
 # 纪律（同 t63）：zh **逐字不变**（原样返回入参）；en 查本表；查不到原样返回
@@ -2547,53 +2906,55 @@ UI_ZH_TO_EN.update({
 #     detect_lang                                    109
 #     set_lang                                       140
 #     current_lang                                   148
-# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 155-1843，0 个顶层函数）
+# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 155-2028，0 个顶层函数）
 #     （本分区没有顶层函数）
 #         §4.1 apply 写回结果                            163
 #         §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了          265
 #         §4.3 跨组约定键（T7/T11，键名无下划线）                  455
-#         §4.4 launch                                536
-#         §4.5 布局引擎冲突（constrained_layout / autolayout）   571
-#         §4.6 写进用户脚本里的文案（哨兵行除外）                     597
-#         §4.7 通用                                    603
-#         §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时）   616
-#         §4.9 check：几何规则（CH-12）                     631
-#         §4.10 check：文字渲染尺寸                         698
-#         §4.11 check：参数校验 / 人读输出 / --static（A4）     742
-#         §4.12 MCP（机器可读通道，一律稳定英文）                   820
-#         §4.13 窗口后端（回退到 Tk 必须告知）                    829
-#         §4.14 首次开窗（每个用户只打一次）                       836
-#         §4.15 launch 关窗后的下一步                       859
-#         §4.16 schema（CH-9）                         870
-#         §4.17 可重跑预检（0.1.10 pre-flight）             878
-#         §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论）   939
-#         §4.19 apply 人读输出（B4 / t33）                1008
-#         §4.20 落地提示与"验了哪几层"（T15 / T23）             1190
-#         §4.21 writeback 生成的文案（B4 + 原 t9）          1241
-#         §4.22 params 校验文案（t55）                    1515
-#         §4.23 参数文件自身损坏（t56）                       1680
-#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1692
-#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1758
-#         §4.26 显式联网查 PyPI（--check-update / 0.1.17）  1778
-# §5 取词：t / code / t_en（行 1844-1883，3 个顶层函数）
-#     t                                             1846
-#     code                                          1862
-#     t_en                                          1867
-# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 1884-2061，5 个顶层函数）
-#     _finite                                       1886
-#     emit_json                                     1905
-#     shell_path                                    1967
-#     fail_json                                     1976
-#     guard_json_main                               2005
-# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2062-2258，1 个顶层函数）
-#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2087
-#     t_wb                                          2246
-# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2259-2440，0 个顶层函数）
+#         §4.4 launch                                545
+#         §4.5 布局引擎冲突（constrained_layout / autolayout）   580
+#         §4.6 写进用户脚本里的文案（哨兵行除外）                     606
+#         §4.7 通用                                    612
+#         §4.8 check / describe 的采集边界（A1/A2：子进程 + 超时）   625
+#         §4.9 check：几何规则（CH-12）                     640
+#         §4.10 check：文字渲染尺寸                         714
+#         §4.11 check：参数校验 / 人读输出 / --static（A4）     758
+#         §4.12 MCP（机器可读通道，一律稳定英文）                   836
+#         §4.13 窗口后端（回退到 Tk 必须告知）                    845
+#         §4.14 首次开窗（每个用户只打一次）                       852
+#         §4.15 launch 关窗后的下一步                       875
+#         §4.16 schema（CH-9）                         886
+#         §4.17 可重跑预检（0.1.10 pre-flight）             894
+#         §4.18 launch 的三处人话（rc=4 / 需要参数 / doctor 结论）   955
+#         §4.19 apply 人读输出（B4 / t33）                1024
+#         §4.20 落地提示与"验了哪几层"（T15 / T23）             1228
+#         §4.21 writeback 生成的文案（B4 + 原 t9）          1279
+#         §4.22 params 校验文案（t55）                    1700
+#         §4.23 参数文件自身损坏（t56）                       1865
+#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1877
+#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1943
+#         §4.26 显式联网查 PyPI（--check-update / 0.1.17）  1963
+# §5 取词：t / code / t_en（行 2029-2068，3 个顶层函数）
+#     t                                             2031
+#     code                                          2047
+#     t_en                                          2052
+# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 2069-2420，7 个顶层函数）
+#     _finite                                       2071
+#     emit_json                                     2090
+#     reason_kind                                   2279
+#     is_known_reason                               2289
+#     shell_path                                    2326
+#     fail_json                                     2335
+#     guard_json_main                               2364
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2421-2617，1 个顶层函数）
+#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2446
+#     t_wb                                          2605
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2618-2799，0 个顶层函数）
 #     （本分区没有顶层函数）
-#         §8.1 doctor 的列标签与括注                       2280
-#         §8.2 launch 的运行时人读输出                      2306
-#         §8.3 describe：写盘那一行                       2376
-#         §8.4 toolbox：启动横幅那 2 行                    2378
-# §9 查表函数 t_ui 与运行期追加的两块 update（行 2441-2535，1 个顶层函数）
-#     t_ui                                          2443
+#         §8.1 doctor 的列标签与括注                       2639
+#         §8.2 launch 的运行时人读输出                      2665
+#         §8.3 describe：写盘那一行                       2735
+#         §8.4 toolbox：启动横幅那 2 行                    2737
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2800-2894，1 个顶层函数）
+#     t_ui                                          2802
 # --- END AUTO NAV ---

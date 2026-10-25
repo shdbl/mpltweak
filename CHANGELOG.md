@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## 0.1.18
+
+### 这一版用户能感知到的变化
+
+- **图建在函数里，现在也能写回了（新能力）**：`def build(): fig = plt.figure(); fig.add_subplot(1, 2, 1).plot(...); fig.savefig(...)` 这种"图在函数里建、外面拿不到那个变量"的写法，此前一律拒写；现在块里用 `<载体>.axes[k]` 这类**号牌**寻址（号码 = `fig.axes` 的建轴顺序），照样能落地。**"号牌"只在号稳时发**：建轴写在循环 / 条件里、建轴点数与参数条数对不上、载体名不是"恰好一次模块层调用"时，仍然**不猜**——不写盘，并给一句能照着改的话。**完整判据表**（作用域 × 建轴方式 → 能不能写）见 [docs/verify.md](docs/verify.md) 的「调整块的写法与取舍」。
+- **写回只写"确实不一样"的字段，代码不再被整块糊住（修缺陷）**：写块前先跑一次基线、逐字段比，**相等的不写**。实测同一份 8 行 `plt.subplots(2, 2)` 脚本只改一根轴的位置：**35 行代码 → 1 行**。这是**默认档**（`apply --write` / `--diff`）的行为；`--verify-fast` / `--no-verify` / `--no-semantic` 三档承诺不跑你的脚本，所以它们**没有**差异过滤（那三档仍可能整份写进块）。
+- **改一根轴不会再改到隔壁（修缺陷）**：0.1.17 存在一种静默改错：把 `ax3` 的 `xlim` 写到 `ax5` 身上，重跑还报"通过"。现在一张图只有一张号牌表，写回与验证都按它核；真实语料抽样里**"声称写了但写错" 0 份**（抽样 12 份真跑：写对 8 / 按口径拒写 4 / 写错 0；尝试 55 份、其中 43 份因脚本自身跑不通按 `n/a` 计）。
+- **"没写成"现在分得清是哪一种（读 `--json` 的人会用到）**：`reason` 里 `refused` 自成一种（拒写：源码一个字节都没动），`best_effort` 只表示"能写的都写了、剩下的没写"；`error_code` 也分成两种 —— **`nothing_applied`**（静态层面就证不出目标）与 **`writeback_failed`**（写进去了、重跑回比不达标、又回滚）。**"以为改了、其实被回滚"是后一种**，别再当成已写回。
+
+### 维护可见（不改变日常用法，但让"验证过"更可信）
+
+- **配置文件的隐形字符有了哨兵**：`.gitattributes` / `.gitignore` 这类配置文件**首字节 BOM**、以及行内 `Cf` / `Cc` 隐形字符，现在有 4 条常驻断言（含"把 BOM 种回去必须红"的反向验证）。**只做静态字节检查，不依赖 git 的行为** —— 0.1.16 那次 CI 红的准确因果是：**CI 那台 Windows runner 的 git 版本不剥 BOM ⇒ 全局 `* text=auto eol=lf` 没生效 ⇒ 语料证据 JSON 被转成 CRLF ⇒ sha256 与 MANIFEST 不符**；本机 git 2.53 会自己剥掉行首 BOM，所以这个机制**在本地复现不出来**。同一份文件、两个 git 版本两种结果 —— 所以哨兵只查字节，不拿 git 当安全带。
+- **"树在变就不许开跑"成了闸门**：`tools/guard_tree_stable.py`（`--record` / `--verify` / `--wrap`）先记树身指纹（文件数 / 字节 / 换行 / 逐文件 sha256），跑完再核；`--wrap` 下树变了就用**专用退出码 97** 压过命令自己的 rc —— 一次"边跑边改"的测试不会再把结果说成可信。
+- **判据自己被改坏时现在会红**：`tools/mutate_gate.py` 把判据逐条改坏（恒真 / 翻转 / 常量替换 / 空变异），断言**必须**跟着红。本机一轮：判据 6 条 / 变异体 9 个 / 抓住 8 / 无误报；6 条里只有 2 条是"单方向牙齿"（只验"该报的时候报了"，没验"不该报的时候闭嘴"），这条教训已写进工具说明。
+- **新增 7 套回归，SUITES 从 27 条到 34 条**：`test_roundtrip`（describe → 原样写回 → describe 恒等 + 幂等）、`test_shape_matrix`（8 建轴方式 × 6 特殊轴 × 3 命名，抽 56 组，判"要么身份级写对、要么拒写"）、`test_boundaries`（脏参数 / 多图 / 插入点语法 / `--diff` 与实际一致 / 旧参数兼容，22 例）、`test_exotic_axes`（3D / polar / cartopy）、`test_revert_bytes`（`revert` 后 sha256 逐字节复原，LF / CRLF / BOM 三形态）、`test_corpus_identity`（真语料抽样验"写对没"）、`test_xreview_regressions`（9 条已知盲区的失败优先网）。
+- **`revert` 的"改坏了能退回原样"第一次被逐字节钉住**：LF / CRLF / BOM 三种原始形态，回滚后 `sha256` 与原件逐字节相等；`--first`（取最早那份备份）的两个分支也各有断言。
+- **真窗口测试的鼠标投递修好了**：`QTest.mouseMove` 换成 `QApplication.postEvent`（合成事件才真的送到画布），并加了**运行前投递探针** —— 先证明"这个环境能投递"，投不到就跳过并打印原因，不硬跑产出一堆假失败。
+- **`tests/test_journey_wheel.py` 在环境不满足时不再崩**：原来会 `IndexError` 崩掉（失败列表与末尾汇总全丢，看起来像"全绿"），现在干净地打 `FAILED: N 项` 并以 `rc=1` 退出 —— **"崩掉导致报告失真"本身就是一类事故**，值得单独记一笔。
+- **3.10 / 3.11 腿的覆盖决策有实测支撑**：3.11 与 3.12 是同一版 matplotlib ⇒ 没有独立轴；只给 3.10 加跑 `test_shapes`（**+55.18 s**）。`CONTRIBUTING.md` 里写了「Why the mid-legs stay short (measured, 0.1.18)」。
+- **文档侧**：判据表成为"我这种写法到底能不能写"的**唯一出处**（`docs/verify.md`），README 中英 / `docs/agent.md` / `docs/boundaries.md` 只写一句概括再指过去；`reason` 三档与两种 `error_code` 写进契约页（`docs/json-contract.md`）；`block_lines` 明确为"**含标记行的整块总行数**"（实测 4 / 5 / 6 都有，**没有固定值**）；`pending` 与 `inplace_pending` 写清是**两条通道各自的账**（别相加）。本版还重锚了文档里所有随源码漂移的引用（默认面 / 维护面各 `rc=0`、可疑 0）。
+- **本版不声称的两条**（如实写在这里，不写成"已支持"）：① **验证层仍按 index 对齐**，另有轴身份交叉核对（能抓"值落到隔壁轴"，抓不了"顺序不同但内容都对"）；② **"这个轴被长宽比锁定、位置写不进去"这条提示只在块路径发**，原位路径与"请求了但没改"的恒等 apply 是静默的。
+
+### 数字
+
+- **判据表复跑（可复跑，22 格）**：能写 **15** 格（`rc=0` / `applied=true`）、拒写 **4** 格（`refused` / `nothing_applied` / 源码零改动）、实测拒写 **3** 格（其中 2 格 `fail` / `writeback_failed` 回滚、1 格 `refused`）；块通道 `block_lines` 实测 **4 / 5 / 6**（无固定值），原位通道恒 **0**。
+- **写回只写差异**：同一份 8 行脚本改一根轴位置，块从 **35 行 → 1 行**（默认档）；`--verify-fast` 档不做差异过滤（同一操作仍会整份入块）。
+- **源码规模（`bytes.count` 口径，落仓时现取）**：`writeback.py` **8438** 行（sha16 `a230c235cfee3a8e`）/ `verify.py` **1935**（`52a507077615779f`）/ `messages.py` **2960**（`17059168265ef064`）/ `apply.py` **2006**（`22c5393d209c0ac7`）；`tests/test_writeback.py` **10480** 行（`06ae4df0de0d952c`）。
+- **新增套件规模**：`test_roundtrip` **1192** 行 / `test_shape_matrix` **689** / `test_boundaries` **748** / `test_exotic_axes` **651** / `test_revert_bytes` **1026** / `test_corpus_identity` **1328** / `test_xreview_regressions` **706**；工具 `tools/mutate_gate.py` **981** 行、`tools/guard_tree_stable.py` **476** 行。
+- **套件计数**：`SUITES` **34** 条、`tests/test_*.py` **39** 个文件；CI 覆盖检查 `tools/ci_suite_coverage.py` rc=0。
+- **文档引用面**：默认面 / 维护面均 `rc=0`、可疑 **0**；`python tests/test_docs.py` **ALL PASS**。
+- **闸门读数（本机，落仓前现跑）**：`pytest -q tests/test_hygiene.py` **85 passed / 5 skipped / 0 failed**（170.6 s）；`python tools/gen_nav.py --check` **rc=0**（7 个模块索引块均最新）；`python tools/doc_cli_options.py` **双向 0 处**（结论 OK）；`python tools/ci_suite_coverage.py` **rc=0**（每个套件至少落一条腿；2 个显式豁免：真开窗 / 仓外语料）。
+- **判据表复跑耗时**：22 格 **130.5 s**（本机，Agg）；单格最快 4 s、最慢约 12 s。
+- **两臂（中 / 英，3.12，串行）**：各 **118 passed / 5 skipped**；各 1 条按矩阵工具显式分类的**环境副作用**（`test_journey_wheel`：矩阵 venv 的 base 解释器里没有 matplotlib ⇒ 该套件结构上不可能绿；两条判定条件同时成立才记 `known_env`，失败行照列不藏）；**真失败 0**。墙钟 zh **1488.2 s** / en **1488.5 s**（0:24:48），两臂树身完全一致（`files=86 / bytes=4,233,358 / newlines=81,343 / sha16=92b6a54c`）。
+- **真窗口（本机 Qt）**：断言机器自检 `--selftest` **ALL PASS**（谓词灵敏度 **36/36** 条变异被捕获，12 s）；实跑 `--backend qt --layer B` **rc=0 / 6 条硬断言全过 / 23.3 s / 零残留进程**，跑前跑后指纹一致。**层 C 大场景（`figs_grid4x4` n=1000 手势）不跑**：单场景 >20 分钟属已知成本，发版门禁不跑。
+
 ## 0.1.17
 
 ### 这一版用户能感知到的变化

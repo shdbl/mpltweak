@@ -70,6 +70,12 @@ REFUSE_OK = {
     'layout_conflict': '白名单①：开了 tight_layout/constrained_layout 又要写位置',
     'best_effort': '白名单③：不可证的多图/循环建图（fail-closed 保守拒写）',
     'colorbar_pos_unsupported': '白名单②：colorbar 位置（需额外两行才生效）',
+    # 0.1.18 / t16：**CLI 契约层**把"拒写"从 `best_effort` 里拆出来，单独叫 `refused`
+    # （引擎内部仍然报 `best_effort` —— 重命名只发生在 CLI 的 `_normalize_reason`，
+    # 判据只看 `applied`）。这一格走的是 CLI，所以看到的是 `refused`。
+    # 语义与白名单③**完全一致**（不可证的保守拒写），不是放宽：脚本零改动 + 仍能跑
+    # 这两条断言一个字没动（见每格的另外两条 check）。
+    'refused': '白名单③同义（t16 起 CLI 契约层的名字）：不可证 ⇒ fail-closed 保守拒写',
 }
 
 # 每格：名字 -> (脚本正文, 期望)

@@ -107,8 +107,8 @@ axes[1, 1].title.set_fontsize(11)
 > （四块面板用**字面量下标**逐条画，如 `axes[0, 0].plot(...)`），命令是
 > `mpltweak apply fig1.py --params .tweak_params/fig1.json --write --style block`
 > （Agg、无头，零窗口）。生成文本的是 `src/mpltweak/writeback.py` 的 `render_block`
-> （`writeback.py:6072 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:5983 # _block_targets`，
-> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:5489 # _axes_binding_entries`）；
+> （`writeback.py:6804 # render_block`），决定"哪条轴能静态定位"的是 `_block_targets`（`writeback.py:6667 # _block_targets`，
+> 那张**允许/拒绝**的目标表达式表）与 `_axes_binding_entries`（`writeback.py:5941 # _axes_binding_entries`）；
 > "轴身份"注释里恒为中文。
 > 你实际拿到的数字与轴数会跟着你的布局变。
 
@@ -239,8 +239,12 @@ applied=false`，脚本 sha256 不变；把同一份单图状态（`describe <�
 - **平时的零侵入**：不加 `import`、脚本里不留任何工具痕迹、不生成副文件；开窗只写参数。
 - **写回是你主动要求的动作**（`apply --write`），它本来就要改代码 —— 问题在**改多少**：
   开窗导出的是**当时各轴的实测状态**（每个轴的 pos / 字号 / 网格 / spines / 线宽 / 图例 /
-  xlim），直通写回会把这一整份**钉进源码**。实测：一个 8 行的 `plt.subplots(2, 2)` 脚本被插进
-  30+ 行的块，连"当时恰好是默认值"的那些字段也一起写死（以后改脚本里的默认值就不生效了）。
+  xlim），直通写回会把这一整份**钉进源码**。
+  **0.1.18 起，默认档只写"有差异"的字段**（写块前先跑一次基线逐字段比）：实测一个 8 行的
+  `plt.subplots(2, 2)` 脚本、改一根轴的位置，**35 行代码 → 1 行**。
+  **仍会整份钉进去的是"不跑脚本"的三档**（`--verify-fast` / `--no-verify` / `--no-semantic`）：
+  它们没有基线可比，一个 8 行脚本仍可能被插进 30+ 行的块，连"当时恰好是默认值"的字段也一起写死
+  （以后改脚本里的默认值就不生效了）。
 - **只给"代码里确有写法"的等值参数 = 不改源码**（实测）：只传 `index` + `pos`（可选
   `figsize_in`）且值与原图一致时，`apply --write --verify-fast` 报 `reason=no_change`、
   `changes=[]`、字节不变（实测）。

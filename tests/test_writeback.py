@@ -174,8 +174,15 @@ check('figsize 已替换 (12, 4.8)',
 check('T70 块内无运行期下标/动态定位',
       'fig.axes[' not in src and 'plt.gcf()' not in src
       and 'plt.gca()' not in src and 'get_axes()[' not in src)
-check('T70 ax0/ax1 用可证的容器元素（axes[0] / axes[1]）',
-      'axes[0].set_position(' in src and 'axes[1].set_position(' in src)
+# T10（0.1.18）注：PARAMS 里 **ax1 是 aspect_locked=True**（长宽比锁定的轴）——
+# 按 T10 的新口径，这类轴的位置由 matplotlib 按比例现算，**不写 pos**（与
+# `verify.compare()` 的"锁定轴不比 pos"同口径，也与 §T10⑦ 的"恒等 apply ⇒ no_change"一致）。
+# 所以"容器元素寻址"这条改由 ax0（未锁定）来钉；ax1 改成断言"锁定轴没有 set_position"，
+# 两件事各测各的，不许互相借光。
+check('T70 ax0 用可证的容器元素（axes[0]）+ 锁定轴 ax1 不写 pos（T10 口径）',
+      'axes[0].set_position(' in src
+      and 'axes[1].set_position(' not in src,
+      [ln.strip() for ln in src.splitlines() if 'set_position' in ln])
 check('T70 未命名 colorbar 轴：块里没有它、但如实进 pending',
       '_colorbar' not in src and 'ax2.cmap' in (res.get('pending') or []))
 check('非 colorbar mappable 用变量 im',
@@ -217,7 +224,7 @@ with open(script3, 'w', encoding='utf-8') as f:
 params_bad = {
     'version': 4, 'script': 'target.py', 'figsize_px': None, 'figsize_in': None,
     'axes': [
-        {'index': 0, 'pos': None, 'aspect_locked': False,
+        {'index': 0, 'aspect_locked': False,
          'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
          'is_colorbar': False, 'clim': [0.0, 15.0], 'cmap': 'plasma',
          'xscale': 'linear', 'yscale': 'linear', 'grid': False,
@@ -285,12 +292,12 @@ d5, script5, pp5 = setup()
 params_edge = {
     'version': 4, 'script': 'target.py', 'figsize_px': None, 'figsize_in': None,
     'axes': [
-        {'index': 0, 'pos': None, 'aspect_locked': False,
+        {'index': 0, 'aspect_locked': False,
          'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
          'is_colorbar': True, 'clim': [0.0, 1.0], 'cmap': 'from_list',
          'xscale': 'function', 'yscale': 'linear', 'grid': False,
          'spines': {}, 'lines': []},
-        {'index': 1, 'pos': None, 'aspect_locked': False,
+        {'index': 1, 'aspect_locked': False,
          'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
          'is_colorbar': False, 'clim': None, 'cmap': None,
          'xscale': 'log', 'yscale': 'linear', 'grid': False,
@@ -458,7 +465,7 @@ with open(script10, 'w', encoding='utf-8') as f:
 
 
 def _mm(i, clim, cmap):
-    return {'index': i, 'pos': None, 'aspect_locked': False,
+    return {'index': i, 'aspect_locked': False,
             'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
             'is_colorbar': False, 'clim': clim, 'cmap': cmap,
             'xscale': 'linear', 'yscale': 'linear', 'grid': None,
@@ -1726,11 +1733,26 @@ with open(_pp47, 'w', encoding='utf-8') as f:
     json.dump(_p47b, f, ensure_ascii=False, indent=2)
 _res47b = writeback.writeback(_s47, _params.load(_pp47), _pp47, verify=True,
                               semantic=True, style='inplace')
-check('47 E4：拖过 aspect 锁定轴的位置 → needs_block=True（该退块，不许静默丢）',
-      _res47b.get('reason') == 'best_effort'
-      and _res47b.get('needs_block') is True and read(_s47) == _SRC47,
+# T10（0.1.18）**口径变更，取代 0.1.17 的 E4 期望**：
+# 长宽比锁定的轴（imshow / cartopy 地图）位置由 matplotlib 按比例现算 —— 写进去既不是
+# 它呈现的几何、也改不动它，而 `verify.compare()` 里同口径的判据是"锁定轴不比 pos"。
+# 所以这类轴的 pos **不写、也不进 pending**（不是"写不了"，是"没有要写的"）。
+# 旧期望（best_effort + needs_block=True）被 T10⑦ 的"恒等 apply ⇒ no_change / 0 字节"取代；
+# 若将来要恢复"报告但不写"，需要引入"请求值 vs 运行时值"的基线比较（与 T7 的 delta 同一套）。
+_w47b = ' '.join(str(_w) for _w in (_res47b.get('warnings') or []))
+check('47 E4（T10 新口径）：拖过 aspect 锁定轴的位置 ⇒ **不写、字节不变**'
+      '（不再为它改源码）；宿主轴那条既有分支仍如实报原因',
+      _res47b.get('reason') in ('no_change', 'ok', 'best_effort')
+      and read(_s47) == _SRC47,
       '%s / nb=%r / %s' % (_res47b.get('reason'), _res47b.get('needs_block'),
                            _res47b.get('warnings')))
+check('47 E4b 但**不许静默**：必须留一句人话说清"为什么没动它"',
+      bool(_w47b.strip()) and ('aspect' in _w47b.lower()
+                               or 'colorbar' in _w47b.lower()),
+      _w47b[:240])
+check('47 E4c 文案**不许**把消息键漏到用户眼前（`wb_aspect_locked_pos` 字面量不许出现'
+      '—— 键未注册时 _msg.t 会原样回键名，这条会红）',
+      'wb_aspect_locked_pos' not in _w47b, _w47b[:240])
 shutil.rmtree(d47, ignore_errors=True)
 
 # ---- 49. T11：x / y 轴标签字号分开写（label_fontsize_y）----
@@ -1977,7 +1999,7 @@ _bak52 = os.path.join(os.path.dirname(_s52), '.tweak_params',
 #   （fix018/reverse_check_t12.py 的 R-E）→ 本段 FAIL。
 _p52a = {'version': 4, 'script': 'target.py', 'fig_index': 0, 'n_figs': 1,
          'figsize_in': [4.0, 3.0],
-         'axes': [{'index': 0, 'pos': None, 'title_fontsize': 16}]}
+         'axes': [{'index': 0, 'title_fontsize': 16}]}
 with open(_pp52, 'w', encoding='utf-8') as f:
     json.dump(_p52a, f, ensure_ascii=False)
 _r52a1 = writeback.writeback(_s52, _params.load(_pp52), _pp52, verify=False,
@@ -2815,6 +2837,32 @@ check('60d 只改 y（11→13）：x 保持 10、y 变 13（x 的 10 不重写�
       and "axis='x', labelsize=10" in read(_s60d),
       'rc=%s | %s' % (_rr60d.returncode, _oo60d[-200:]))
 shutil.rmtree(_d60d, ignore_errors=True)
+
+
+# ---- 47 E4d（T23）：锁定轴**不写 pos** —— 只钉代码保证得了的那件事 --------------
+# 人话提示（`wb_aspect_locked_pos`）目前只在**块路径且差异过滤后仍要改**时才发；
+# 原位路径与"恒等 apply"不发（那两格分别由 §T7④ / §T10⑦ 钉"不许被算成 needs_block"）。
+# 这是**已知缺口**（记在 `_team014/t10_closeout.md` §5），本格只钉"不写"这一条，
+# 免得把"还没有的能力"写成假绿。
+_T10_LOCK_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+                 'import matplotlib.pyplot as plt\nimport numpy as np\n\n'
+                 'fig = plt.figure(figsize=(6, 4))\n'
+                 'ax = fig.add_axes([0.10, 0.10, 0.65, 0.80])\n'
+                 'ax.imshow(np.arange(12).reshape(3, 4))\n'
+                 'fig.savefig("o.png")\n')
+_d47d, _s47d, _p47d = _mk15('t47d', _T10_LOCK_SRC,
+                            {'version': 4, 'script': 'fig.py'})
+_st47d, _e47d = verify.collect(_s47d, 0)
+_data47d = _describe._to_params(_st47d, _s47d)
+_data47d['axes'][0]['pos'] = [0.18, 0.18, 0.55, 0.70]     # 用户拖过锁定轴
+with open(_p47d, 'w', encoding='utf-8') as _f47d:
+    json.dump(_data47d, _f47d, ensure_ascii=False, indent=2)
+_res47d = writeback.writeback(_s47d, _params.load(_p47d), _p47d, verify=True,
+                              semantic=True, style='inplace')
+check('47 E4d 独立的锁定轴被拖动 ⇒ **不写**（源码逐字节不变；位置由 matplotlib'
+      ' 按数据比例现算，写不进去）',
+      read(_s47d) == _T10_LOCK_SRC, read(_s47d)[:200])
+shutil.rmtree(_d47d, ignore_errors=True)
 
 
 # ---- 61. T23 跨线回归：T26 新采集的字段（cmap / legend / lines / tick_fontsize_y）----
@@ -4083,9 +4131,12 @@ check('72① 坏参数：rc=2、未写盘、人读不得出现「已写回」，
 _rc72b, _o72b, _t72b = _s72_run(
     _S71_A, {'version': 4, 'script': 'fig.py',
              'axes': [{'index': 0, 'pos': [0.10, 0.10, 0.50, 0.50]}]})
+# t16（0.1.18）：CLI 契约层把"拒写"从 `best_effort` 拆成独立 `refused`（引擎内部仍报
+# `best_effort`，重命名只在 CLI 的 `_normalize_reason`，判据只看 `applied`）——
+# 所以这里期望 `refused`；**两边都认**是为了让"直调引擎"的断言不受影响。
 check('72② 块目标证不出（一个字节都没写）：人读不得说「已写回」，须「未写回」+ 原因码',
       _rc72b == 1 and '[OK] 已写回' not in _o72b and '未写回' in _o72b
-      and 'best_effort' in _o72b and _t72b == _S71_A,
+      and ('refused' in _o72b or 'best_effort' in _o72b) and _t72b == _S71_A,
       'rc=%s | %s' % (_rc72b, [_l for _l in _o72b.splitlines() if '写回' in _l]))
 
 # 72③a 正常**原位**写盘 → 人读仍要说"已原位写回"（不许因为本次修正而少说）
@@ -8729,9 +8780,14 @@ _CASES114 = (
            "ax.plot([0, 1], [1, 0])\n"
            "ax.set_xlabel('x')\n"
            "fig.savefig('o.png')\n",
+     # T7（0.1.18）注：pos 必须给**与源码默认值不同**的值。原先这里写的是
+     # `[0.125, 0.11, 0.775, 0.77]`（= subplots 的默认 rect）⇒ 只写差异字段之后
+     # 它**不再需要落地**（基线本来就是它）⇒ 退块那次自然没有 insert_block，
+     # 这一格就不再是"混合档"。换成真改动过的 rect，混合档才仍然成立；
+     # "请求写默认值 ⇒ 无块"这一档由 §T7 的 no_change 断言单独钉住。
      {'fig_index': 0, 'n_figs': 1,
       'axes': [{'index': 0, 'label_fontsize': 18,
-                'pos': [0.125, 0.11, 0.775, 0.77]}]}, 'mixed'),
+                'pos': [0.1, 0.15, 0.35, 0.75]}]}, 'mixed'),
 )
 
 for _nm114, _body114, _pdata114, _kind114 in _CASES114:
@@ -9644,6 +9700,780 @@ try:
           % (_dup_applied, _dup_lines, _dup_pending))
 finally:
     writeback._implicit_creator_is_module_call = _o_mod_call
+
+# ==== L3（0.1.18）：位置身份寻址 `<fig>.axes[k]`（函数内建图发号牌）==========
+# 现场的"为什么"：语料里那 10 份"不支持"都是**画图代码封装在函数里** —— 函数内部建图、
+# 模块层没有 fig/axes 名字可喊，0.1.17 一律 fail-closed。L3 给这种形态发号牌：
+# 运行期第 k 条轴 = 建轴顺序第 k 次建轴 ⇒ 块里写 `<fig>.axes[k]`。号牌的前提是**号稳**，
+# 判据见 writeback._pos_identity_verdict（每条建轴直线执行一次 / 无 add_axes 与额外建轴 /
+# 枚举完整 / 条数与真跑出来的参数一致 / 同作用域 / 锚点在建轴之后）。
+# 本节四问：① 稳的形态确实写得出（写回后重跑 rc=0、幂等）；② 不稳的形态仍 fail-closed +
+# 点名根因；③ 关掉这条通道 ⇒ 那格回拒写（有牙）；④ 老的名字寻址一个字节不变。
+
+
+def _l3_params(n):
+    """最小参数：**n 条轴全都要位置**（都换了值 ⇒ 块里必须逐条落地，不能只写第一条）。"""
+    _pos = [[0.10, 0.60, 0.40, 0.38], [0.56, 0.60, 0.40, 0.38],
+            [0.10, 0.12, 0.40, 0.38], [0.56, 0.12, 0.40, 0.38]]
+    ax = []
+    for k in range(n):
+        # 只放**真要请求**的字段：其余一律省略。`pos: null` 在 t16 的参数校验里是
+        # **非法值**（null 不等于"与代码一致"，而是"没给有效值"），别拿它当占位符。
+        item = {'index': k, 'pos': _pos[k], 'aspect_locked': False}
+        ax.append(item)
+    return {'version': 4, 'script': 'target.py', 'figsize_px': None,
+            'figsize_in': None, 'n_figs': 1, 'fig_index': 0, 'axes': ax}
+
+
+_L3_HEAD = ('import matplotlib\nmatplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n\n\n')
+_L3_TAIL = '\n\nplot_it()\n'
+
+# g1：函数内建图 + 函数内 savefig + **匿名轴**（只有创建顺序可喊）
+_L3_ANON = _L3_HEAD + (
+    'def plot_it():\n'
+    '    fig = plt.figure()\n'
+    '    fig.add_subplot(2, 2, 1).plot([1, 2, 3], [1, 4, 9])\n'
+    '    fig.add_subplot(2, 2, 2).plot([1, 2, 3], [2, 3, 4])\n'
+    '    fig.add_subplot(2, 2, 3).plot([1, 2, 3], [3, 2, 1])\n'
+    '    fig.add_subplot(2, 2, 4).plot([1, 2, 3], [4, 4, 2])\n'
+    '    fig.savefig("out.png", dpi=100)\n') + _L3_TAIL
+
+# g2：函数内建图 + return fig，模块层用**别的名字**接住 ⇒ 载体是模块层那个名字
+_L3_RECV = _L3_HEAD + (
+    'def plot_it():\n'
+    '    f, axes = plt.subplots(2, 2)\n'
+    '    axes[0, 0].plot([1, 2, 3], [1, 4, 9])\n'
+    '    axes[0, 1].plot([1, 2, 3], [2, 3, 4])\n'
+    '    axes[1, 0].plot([1, 2, 3], [3, 2, 1])\n'
+    '    axes[1, 1].plot([1, 2, 3], [4, 4, 2])\n'
+    '    return f\n\n\n'
+    '_the = plot_it()\n'
+    'plt.savefig("out.png", dpi=100)\n')
+
+
+def _l3_run(src, params):
+    d, script, _pp = setup()
+    with open(script, 'w', encoding='utf-8') as f:
+        f.write(src)
+    res = writeback.writeback(script, params, os.path.join(d, 't.json'),
+                              verify=True)
+    return d, script, res, read(script)
+
+
+def _l3_poslines(src):
+    return [ln.strip() for ln in src.splitlines() if '.set_position(' in ln]
+
+
+# ---- L3① 号稳 ⇒ 写得出，块里是 `<fig>.axes[k]`，写回后重跑通过（verify=True）----
+d, script, res, src_now = _l3_run(_L3_ANON, _l3_params(4))
+check('L3① 函数内建图（匿名轴）⇒ 写回 ok（applied=True、reason=ok、无 pending）',
+      res.get('applied') is True and res.get('reason') == 'ok'
+      and not (res.get('pending') or []),
+      'applied=%r reason=%r pending=%r'
+      % (res.get('applied'), res.get('reason'), res.get('pending')))
+_l3_lines = _l3_poslines(src_now)
+check('L3① 块里是位置身份形式 `fig.axes[k].set_position(...)`（4 条轴逐条落地）',
+      len(_l3_lines) == 4
+      and _l3_lines[0]
+      == 'fig.axes[0].set_position([0.1000, 0.6000, 0.4000, 0.3800])'
+      and _l3_lines[3].startswith('fig.axes[3].set_position('),
+      str(_l3_lines))
+check('L3① 块注释说清"凭什么号稳"（不是照抄"本文件只有一次建图"）',
+      '位置身份' in src_now and '建轴顺序' in src_now, '')
+# 写回后的脚本必须还能跑（verify=True 已经重跑过；这里再独立跑一次，明确记录 rc）
+# env 必须钉死（级联闸门：宿主 MPLBACKEND 原样继承 ⇒ 子进程可能落到 Qt/Tk 抢鼠标）
+_rr = subprocess.run([sys.executable, script], cwd=d, capture_output=True,
+                     env=dict(os.environ, MPLBACKEND='Agg',
+                              PYTHONIOENCODING='utf-8'),
+                     text=True, encoding='utf-8', errors='replace')
+check('L3① 写回后重跑 rc=0', _rr.returncode == 0,
+      (_rr.stdout + _rr.stderr)[-300:])
+# 幂等：同一份参数再走一遍 ⇒ 无改动、脚本逐字节不变
+_before2 = read(script)
+res2 = writeback.writeback(script, _l3_params(4),
+                           os.path.join(d, 't.json'), verify=False)
+check('L3① 幂等：同一参数第二次 apply ⇒ no_change 且脚本逐字节不变',
+      res2.get('reason') == 'no_change' and read(script) == _before2,
+      'reason=%r changed=%r' % (res2.get('reason'), read(script) != _before2))
+shutil.rmtree(d, ignore_errors=True)
+
+# ---- L3①b 模块层名字接住函数返回值 ⇒ 载体是那个名字（0.1.17 整份拒写）----
+d, script, res, src_now = _l3_run(_L3_RECV, _l3_params(4))
+_l3_lines = _l3_poslines(src_now)
+check('L3①b `_the = plot_it()` ⇒ 块用 `_the.axes[k]`（0.1.17 这一格整份拒写）',
+      res.get('applied') is True and len(_l3_lines) == 4
+      and _l3_lines[0].startswith('_the.axes[0].set_position(')
+      and _l3_lines[3].startswith('_the.axes[3].set_position('),
+      'applied=%r lines=%r' % (res.get('applied'), _l3_lines))
+shutil.rmtree(d, ignore_errors=True)
+
+# ---- L3② 号不稳 ⇒ 仍 fail-closed，并**点名根因** ---------------------------
+_L3_BAD = (
+    ('loop', 4, _L3_HEAD + (
+        'def plot_it():\n'
+        '    fig = plt.figure()\n'
+        '    for i in range(4):\n'
+        '        fig.add_subplot(2, 2, i + 1).plot([1, 2, 3], [i, i + 1, i + 2])\n'
+        '    fig.savefig("out.png", dpi=100)\n') + _L3_TAIL, '循环'),
+    ('cond', 2, _L3_HEAD + (
+        'FLAG = True\n\n\n'
+        'def plot_it(flag):\n'
+        '    fig = plt.figure()\n'
+        '    fig.add_subplot(1, 2, 1).plot([1, 2, 3], [1, 2, 3])\n'
+        '    if flag:\n'
+        '        fig.add_subplot(1, 2, 2).plot([1, 2, 3], [3, 2, 1])\n'
+        '    fig.savefig("out.png", dpi=100)\n\n\n'
+        'plot_it(FLAG)\n'), '条件分支'),
+    ('add_axes', 3, _L3_HEAD + (
+        'def plot_it():\n'
+        '    fig = plt.figure()\n'
+        '    fig.add_subplot(1, 2, 1).plot([1, 2, 3], [1, 2, 3])\n'
+        '    fig.add_subplot(1, 2, 2).plot([1, 2, 3], [3, 2, 1])\n'
+        '    fig.add_axes([0.3, 0.6, 0.15, 0.15]).plot([1, 2], [1, 2])\n'
+        '    fig.savefig("out.png", dpi=100)\n') + _L3_TAIL, 'add_axes'),
+)
+for _k, _n, _src, _kw in _L3_BAD:
+    d, script, res, src_now = _l3_run(_src, _l3_params(_n))
+    _pending = res.get('pending') or []
+    _warn = ' '.join(str(w) for w in (res.get('warnings') or []))
+    check('L3② 号不稳（%s）⇒ 位置字段仍进 pending、块里不出现 `.axes[`' % _k,
+          ('ax0.pos' in _pending and '.axes[' not in src_now),
+          'pending=%r lines=%r' % (
+              _pending, [ln.strip() for ln in src_now.splitlines()
+                         if '.axes[' in ln]))
+    check('L3② 号不稳（%s）⇒ 拒写原因点名到具体结构（含「%s」）' % (_k, _kw),
+          '位置身份' in _warn and _kw in _warn, _warn[:240])
+    shutil.rmtree(d, ignore_errors=True)
+
+# ---- L3③【有牙】把位置身份通道关掉 ⇒ 同一格回拒写（等价 0.1.17）------------
+_po = writeback.POS_IDENTITY
+try:
+    writeback.POS_IDENTITY = False
+    d, script, res, src_now = _l3_run(_L3_ANON, _l3_params(4))
+    _pend_off = res.get('pending') or []
+    check('L3③【有牙】关掉 POS_IDENTITY ⇒ 匿名轴那格回拒写（4 条轴的 pos 全进 '
+          'pending、块里没有 `.axes[`）',
+          writeback.POS_IDENTITY is False and '.axes[' not in src_now
+          and all(('ax%d.pos' % k) in _pend_off for k in range(4)),
+          'pending=%r lines=%r' % (
+              _pend_off, [ln.strip() for ln in src_now.splitlines()
+                          if '.axes[' in ln]))
+    shutil.rmtree(d, ignore_errors=True)
+finally:
+    writeback.POS_IDENTITY = _po
+
+# ---- L3④ 共存：名字寻址的老格子一个字节不变（位置身份不抢原路）--------------
+_L3_NAMED = _L3_HEAD + (
+    'fig, axes = plt.subplots(2, 2)\n'
+    'axes[0, 0].plot([1, 2, 3], [1, 4, 9])\n'
+    'axes[0, 1].plot([1, 2, 3], [2, 3, 4])\n'
+    'axes[1, 0].plot([1, 2, 3], [3, 2, 1])\n'
+    'axes[1, 1].plot([1, 2, 3], [4, 4, 2])\n'
+    'fig.savefig("out.png", dpi=100)\n')
+d, script, res, src_now = _l3_run(_L3_NAMED, _l3_params(4))
+check('L3④ 模块层名字齐全 ⇒ 仍走名字 `axes[0, 0]`，块里没有 `fig.axes[`',
+      res.get('applied') is True
+      and 'axes[0, 0].set_position(' in src_now
+      and 'fig.axes[' not in src_now, str(_l3_poslines(src_now)))
+shutil.rmtree(d, ignore_errors=True)
+
+# ---- L3⑤ 载体名字被**重新赋值** ⇒ 不发号牌（"号稳"不等于"名字还指着那张图"）----
+# 船长问的那一点：`_the = plot_it()` 之后又给 `_the` 赋一次值（哪怕指向同一个对象），
+# `_the.axes[k]` 还准吗？判据在 `_caller_fig_name` 的第③⑤步：接收名在函数里只被直接
+# 赋过一次、且在**每个候选锚点**上都仍绑着那次调用返回的对象（`_name_still_bound`）。
+# 这里刻意用"别名再赋回来"这种最像等价改写的形式 —— 引擎不知道别名等价，就**不许猜**：
+# 退回拒写（旧的 fail-closed 口径），而不是拿可能过期的名字发号牌。
+_L3_REBIND = _L3_HEAD + (
+    'def plot_it():\n'
+    '    f, axes = plt.subplots(2, 2)\n'
+    '    axes[0, 0].plot([1, 2, 3], [1, 4, 9])\n'
+    '    axes[0, 1].plot([1, 2, 3], [2, 3, 4])\n'
+    '    axes[1, 0].plot([1, 2, 3], [3, 2, 1])\n'
+    '    axes[1, 1].plot([1, 2, 3], [4, 4, 2])\n'
+    '    return f\n\n\n'
+    '_the = plot_it()\n'
+    '_backup = _the\n'
+    '_the = _backup\n'
+    'plt.savefig("out.png", dpi=100)\n')
+d, script, res, src_now = _l3_run(_L3_REBIND, _l3_params(4))
+check('L3⑤ 载体名 `_the` 被重新赋值（别名再赋回）⇒ 不发号牌、退回拒写（4 条轴的 '
+      'pos 全进 pending、块里没有 `.axes[`）',
+      res.get('applied') is False and '.axes[' not in src_now
+      and all(('ax%d.pos' % k) in (res.get('pending') or []) for k in range(4)),
+      'applied=%r pending=%r lines=%r'
+      % (res.get('applied'), res.get('pending'), _l3_poslines(src_now)))
+shutil.rmtree(d, ignore_errors=True)
+
+# ==== T7（0.1.18）：块只写**有差异**的字段（修 diff 脏）=====================
+# 现场（v0.1.17 就能复现）：4 面板 + 2 colorbar，**只改一根轴的位置**，块里却写出 35 行
+# 代码 —— 另外 3 根轴的 set_position、每条线的 set_linewidth/set_color、colorbar 的
+# xlim/ylim/spines/clim/cmap，用户一样都没碰。
+# 根因：`_needed_block_fields` 只问"源码里能否**证明**该字段等于参数值"，证不出就写；
+# 而「证不出」≠「用户改过」。修法 = 写块前先算一次**基线**（把去掉旧块的当前源码跑一遍，
+# 复用 describe 的纯采集路径），逐字段比，相等就摘掉；基线取不到就回老口径（宁脏不漏）。
+_T7_PANELS = (
+    'import matplotlib\nmatplotlib.use("Agg")\n'
+    'import matplotlib.pyplot as plt\n'
+    'import numpy as np\n\n'
+    'fig, axes = plt.subplots(2, 2, figsize=(10, 7))\n'
+    'x = np.linspace(0, 1, 50)\n'
+    'g = np.add.outer(np.linspace(0, 1, 40) ** 2, x)\n'
+    'im0 = axes[0, 0].imshow(g, origin="lower", cmap="viridis")\n'
+    'cb0 = fig.colorbar(im0, ax=axes[0, 0])\n'
+    'im1 = axes[0, 1].imshow(g.T, origin="lower", cmap="magma")\n'
+    'cb1 = fig.colorbar(im1, ax=axes[0, 1])\n'
+    'axes[1, 0].plot(x, np.sin(3 * x))\n'
+    'axes[1, 0].set_xlabel("x")\n'
+    'axes[1, 1].plot(x, np.cos(2 * x), label="cos")\n'
+    'axes[1, 1].legend()\n'
+    'fig.suptitle("four panels")\n'
+    'fig.savefig("out.png", dpi=100)\n')
+# 这 35 行里"用户没碰过"的那几族：写成断言直接盯它们（比数行数更难糊弄）
+_T7_NOISE = ("set_linewidth(", "set_color(", ".spines[", "set_xlim(",
+             "set_ylim(", "set_clim(", "set_cmap(")
+_T7_ENV = dict(os.environ, PYTHONPATH=_SRC_DIR, MPLBACKEND='Agg',
+               MPLTWEAK_LANG='zh', PYTHONIOENCODING='utf-8')
+
+
+def _t7_cli(args, cwd, off=False):
+    """跑 CLI；off=True 时关掉差异过滤（反向验证，等价 0.1.17 的脏 diff）。"""
+    if off:
+        cmd = [sys.executable, '-c',
+               'import sys;'
+               'import mpltweak.writeback as wb;'
+               'wb.DELTA_ONLY = False;'
+               'from mpltweak.cli import main;'
+               'sys.argv = ["mpltweak"] + sys.argv[1:];'
+               'sys.exit(main())'] + list(args)
+    else:
+        cmd = [sys.executable, '-m', 'mpltweak'] + list(args)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, env=_T7_ENV)
+    return r.returncode, _decode_out(r.stdout + r.stderr)
+
+
+def _t7_json(out):
+    i = out.find('{\n  "script"')
+    if i < 0:
+        return {}
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(out[i:])
+    except ValueError:
+        return {}
+    return (obj.get('files') or [{}])[0]
+
+
+def _t7_block_code(text):
+    """块里的**代码行**（去掉注释与空行）—— 用产品自己的哨兵切块。"""
+    lines = text.splitlines()
+    try:
+        i = next(k for k, ln in enumerate(lines) if writeback.BLOCK_START in ln)
+        j = next(k for k, ln in enumerate(lines) if writeback.BLOCK_END in ln)
+    except StopIteration:
+        return []
+    return [ln.strip() for ln in lines[i:j + 1]
+            if ln.strip() and not ln.lstrip().startswith('#')]
+
+
+def _t7_case(name):
+    d, s, p = _mk15(name, _T7_PANELS, {'version': 4, 'script': 'fig.py'})
+    rc, out = _t7_cli(['describe', s, '-o', p], d)
+    return d, s, p, rc, out
+
+
+# ---- T7① 只改一根轴的位置 ⇒ 块里只有那一根（代码行 ≤3、噪声族一个都不许出现）----
+_d7a, _s7a, _p7a, _rc7a, _o7a = _t7_case('t7a')
+_data7a = json.load(open(_p7a, encoding='utf-8'))
+# T10（0.1.18）注：目标必须是**没被长宽比锁定**的轴。imshow 面板 `aspect_locked=True`
+# ⇒ 按 T10 的新口径"锁定轴不写 pos"（它的位置由 matplotlib 按比例现算，写不进去），
+# 拿它当"只改一根轴"的靶子会变成"没有东西可写"。这里挑第一根未锁定的轴（折线面板）。
+for _a in _data7a['axes']:
+    if not _a.get('is_colorbar') and not _a.get('aspect_locked') and _a.get('pos'):
+        _pp = list(_a['pos'])
+        _pp[0] -= 0.02
+        _pp[2] -= 0.02
+        _a['pos'] = _pp
+        break
+json.dump(_data7a, open(_p7a, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc7a, _o7a = _t7_cli(['apply', _s7a, '--params', _p7a, '--write', '--json'], _d7a)
+_f7a = _t7_json(_o7a)
+_code7a = _t7_block_code(read(_s7a))
+check('T7① 4 面板 + 2 colorbar，只改一根轴位置 ⇒ 块代码行 ≤3（v0.1.17 是 35 行）',
+      _rc7a == 0 and _f7a.get('reason') == 'ok' and len(_code7a) <= 3,
+      'rc=%s reason=%r 代码行=%d %r'
+      % (_rc7a, _f7a.get('reason'), len(_code7a), _code7a[:6]))
+check('T7① 块里只有那一根 `set_position`（其余轴、colorbar 的位置都不写）',
+      len([ln for ln in _code7a if 'set_position(' in ln]) == 1,
+      '\n'.join(_code7a))
+check('T7① 没碰过的字段一个都不写（linewidth/color/spines/xlim/ylim/clim/cmap）',
+      not [ln for ln in _code7a if any(n in ln for n in _T7_NOISE)],
+      '噪音行=%r' % [ln for ln in _code7a if any(n in ln for n in _T7_NOISE)][:4])
+# 语义层仍然是绿的（只有"写进去的字段都没错"才算 ok）—— 这就是"没有漏写坏"的旁证
+check('T7① 写回后语义验证仍然通过（reason=ok ⇒ 目标值全部达成）',
+      _f7a.get('reason') == 'ok' and _f7a.get('applied') is True,
+      'reason=%r applied=%r' % (_f7a.get('reason'), _f7a.get('applied')))
+
+# ---- T7②【有牙】关掉差异过滤 ⇒ 同一夹具回到脏 diff（35 行）------------------
+_d7b, _s7b, _p7b, _rc7b, _o7b = _t7_case('t7b')
+_data7b = json.load(open(_p7b, encoding='utf-8'))
+for _a in _data7b['axes']:
+    if not _a.get('is_colorbar') and not _a.get('aspect_locked') and _a.get('pos'):
+        _pp = list(_a['pos'])
+        _pp[0] -= 0.02
+        _pp[2] -= 0.02
+        _a['pos'] = _pp
+        break
+json.dump(_data7b, open(_p7b, 'w', encoding='utf-8'), ensure_ascii=False)
+# T10（0.1.18）注：这一格量的是**块内容**（0.1.17 的脏 diff 长什么样），所以走
+# `--no-verify` —— 因为那个脏块还会把 lines/cmap 写到**错误的对象**上（t7 顺手发现的
+# im0 set_cmap 两次），而现在 verify 真的会比对 cmap/lines ⇒ 验证必然判红并回滚，
+# 块就量不到了。脏内容本身仍是"DELTA_ONLY 关掉就会回来"的铁证。
+_rc7b, _o7b = _t7_cli(['apply', _s7b, '--params', _p7b, '--write',
+                       '--no-verify', '--json'], _d7b, off=True)
+_code7b = _t7_block_code(read(_s7b))
+check('T7②【有牙】DELTA_ONLY=False（= 0.1.17 口径）⇒ 同夹具脏 diff 回来'
+      '（代码行 ≥20 且噪声族重新出现）',
+      _rc7b == 0 and len(_code7b) >= 20
+      and bool([ln for ln in _code7b if any(n in ln for n in _T7_NOISE)]),
+      'rc=%s 代码行=%d' % (_rc7b, len(_code7b)))
+
+# ---- T7③ 不许漏写：目标 = figsize 13x9 那张图的状态，落到 10x7 的源码上 ----
+# 判据取**终态**而不是行数：写回后重新 describe，逐轴 pos / xlim / ylim 必须等于参数。
+_d7c, _s7c, _p7c, _rc7c, _o7c = _t7_case('t7c')
+_s7c2 = os.path.join(_d7c, 'fig2.py')
+with open(_s7c2, 'w', encoding='utf-8', newline='\n') as f:
+    f.write(_T7_PANELS.replace('figsize=(10, 7)', 'figsize=(13, 9)'))
+_p7c2 = os.path.join(_d7c, 'p2.json')
+_rc, _o = _t7_cli(['describe', _s7c2, '-o', _p7c2], _d7c)
+_data7c = json.load(open(_p7c2, encoding='utf-8'))
+_data7c['script'] = 'fig.py'          # 参数里的 script 要指向真目标（越界判据）
+json.dump(_data7c, open(_p7c, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc7c, _o7c = _t7_cli(['apply', _s7c, '--params', _p7c, '--write', '--json'], _d7c)
+_f7c = _t7_json(_o7c)
+_p7c3 = os.path.join(_d7c, 'p3.json')
+_rc, _o = _t7_cli(['describe', _s7c, '-o', _p7c3], _d7c)
+_data7c3 = json.load(open(_p7c3, encoding='utf-8'))
+_bad7c = []
+_b7 = {a.get('index'): a for a in _data7c['axes']}
+for _a in _data7c3['axes']:
+    _want = _b7.get(_a.get('index'))
+    if not _want:
+        continue
+    for _f in ('pos', 'xlim', 'ylim', 'clim'):
+        if _want.get(_f) is not None and not writeback._val_same(
+                _want.get(_f), _a.get(_f)):
+            _bad7c.append('ax%s.%s %r≠%r' % (_a.get('index'), _f,
+                                             _a.get(_f), _want.get(_f)))
+check('T7③ 改 figsize（连带布局全变）⇒ 终态逐轴 pos/xlim/ylim/clim 全达成，不漏写',
+      _rc7c == 0 and not _bad7c,
+      'rc=%s reason=%r 不一致=%r' % (_rc7c, _f7c.get('reason'), _bad7c[:3]))
+check('T7③ 画布尺寸也真的落到源码里（set_size_inches / figsize 字面量其一）',
+      'set_size_inches(13' in read(_s7c) or 'figsize=(13, 9)' in read(_s7c)
+      or 'figsize=(13.0, 9.0)' in read(_s7c), read(_s7c)[-200:])
+
+# ---- T7④ 原样回写 ⇒ 0 行、字节不变（"没改就别写"的老口径不许退步）----------
+_d7d, _s7d, _p7d, _rc7d, _o7d = _t7_case('t7d')
+_before7d = read(_s7d)
+_rc7d, _o7d = _t7_cli(['apply', _s7d, '--params', _p7d, '--write', '--json'], _d7d)
+_f7d = _t7_json(_o7d)
+check('T7④ 原样回写 ⇒ no_change、块 0 行、脚本逐字节不变',
+      _rc7d == 0 and _f7d.get('reason') == 'no_change'
+      and _t7_block_code(read(_s7d)) == [] and read(_s7d) == _before7d,
+      'rc=%s reason=%r same=%r' % (_rc7d, _f7d.get('reason'),
+                                   read(_s7d) == _before7d))
+
+# ---- T7⑤ 真有字面量的改动照旧写（不许"过滤"把真改动吃掉）-------------------
+_d7e, _s7e, _p7e, _rc7e, _o7e = _t7_case('t7e')
+_data7e = json.load(open(_p7e, encoding='utf-8'))
+_n7e = 0
+for _a in _data7e['axes']:
+    if _a.get('is_colorbar') or _n7e >= 2:
+        continue
+    _a['title_fontsize'] = 15.0
+    _n7e += 1
+json.dump(_data7e, open(_p7e, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc7e, _o7e = _t7_cli(['apply', _s7e, '--params', _p7e, '--write', '--json'], _d7e)
+_f7e = _t7_json(_o7e)
+_code7e = _t7_block_code(read(_s7e))
+check('T7⑤ 改了标题字号 ⇒ 块里照旧写 `title.set_fontsize(15)`，且只写改动的那两根',
+      _rc7e == 0 and _f7e.get('reason') == 'ok'
+      and len([ln for ln in _code7e if 'title.set_fontsize(15)' in ln]) == 2
+      and len(_code7e) == 2, 'rc=%s reason=%r %r'
+      % (_rc7e, _f7e.get('reason'), _code7e))
+
+# ---- T7⑥ 浮点容差有断言：0.3523 vs 0.3524 判为变了；1e-12 噪声判为没变 ------
+check('T7⑥ 容差口径：0.3523 vs 0.3524 ⇒ 变了（不许把真实改动吃掉）',
+      writeback._num_close(0.3523, 0.3524) is False, '')
+check('T7⑥ 容差口径：0.3523 vs 0.3523+1e-12 ⇒ 没变（1e-12 噪声不算改动）',
+      writeback._num_close(0.3523, 0.3523 + 1e-12) is True, '')
+check('T7⑥ 结构比较：pos 列表差 1e-12 ⇒ 相同；差 1e-4 ⇒ 不同',
+      writeback._val_same([0.1, 0.2, 0.3523, 0.4],
+                          [0.1, 0.2, 0.3523 + 1e-12, 0.4]) is True
+      and writeback._val_same([0.1, 0.2, 0.3523, 0.4],
+                              [0.1, 0.2, 0.3524, 0.4]) is False, '')
+check('T7⑥ bool 与 int 不混为一谈（True 不等于 1）',
+      writeback._val_same(True, 1) is False
+      and writeback._val_same(True, True) is True, '')
+
+# ---- T7⑦ 基线取不到 ⇒ 回老口径（宁脏不漏）+ 如实留一句 warning ---------------
+_o7f = writeback._baseline_params
+try:
+    writeback._baseline_params = lambda *a, **k: (None, 'boom')
+    _d7f, _s7f, _p7f, _rc7f, _o7f = _t7_case('t7f')
+    _data7f = json.load(open(_p7f, encoding='utf-8'))
+    for _a in _data7f['axes']:
+        if not _a.get('is_colorbar') and not _a.get('aspect_locked') \
+                and _a.get('pos'):
+            _pp = list(_a['pos'])
+            _pp[0] -= 0.02
+            _pp[2] -= 0.02
+            _a['pos'] = _pp
+            break
+    # T10（0.1.18）注：走**预览态**（`preview_begin`）—— 与 `--diff` 同一条路：
+    # 允许算基线（所以能验证"基线取不到"这条分支），但不跑验证、不落盘，
+    # 免得被"脏块把图元写到错对象上"这件事（现在 verify 会判红）挡住取数。
+    writeback.preview_begin()
+    try:
+        _r7f = writeback.writeback(_s7f, _data7f, os.path.join(_d7f, 't.json'),
+                                   verify=False, dry_run=True, style='block')
+    finally:
+        writeback.preview_end()
+    _w7f = ' '.join(str(w) for w in (_r7f.get('warnings') or []))
+    _code7f = _t7_block_code(read(_s7f) or '')
+    check('T7⑦ 基线取不到 ⇒ 仍按"证不出就写"的老口径（不清空、不谎报"没变化"）'
+          ' + warning 点名',
+          _r7f.get('block') is not None
+          and len(_t7_block_code(_r7f.get('block') or '')) > 3
+          and '差异过滤' in _w7f,
+          'warn=%r 行数=%d' % (_w7f[:120],
+                              len(_t7_block_code(_r7f.get('block') or ''))))
+finally:
+    writeback._baseline_params = _o7f
+for _dd in (_d7a, _d7b, _d7c, _d7d, _d7e):
+    shutil.rmtree(_dd, ignore_errors=True)
+if 'd7f' in dir():
+    shutil.rmtree(_d7f, ignore_errors=True)
+
+# ==== T8（0.1.18）：轴身份 —— 号牌只有一张（`fig.axes` 序号）=================
+# 事故（发布版 0.1.17，外部评审逐字复现）：`ax1 / ax_inset / cax1 / ax2 / cax2 / ax3`
+# 混搭命名，describe 报 6 根轴、源码 6 个 `add_axes`，条数**完全对得上**；但写回侧按
+# "过滤 cax 后重新编号"定位 ⇒ 参数 index=3（describe 的 ax2）落到 axes_calls[3]（ax3）
+# ⇒ 把 ax2 的矩形写进 `ax3 = fig.add_axes([...])`，rc=0、还打印 semantic check passed。
+# 修法：一张图只有**一张号牌表** —— 按源码顺序枚举每一个建轴点（含 cax、含 colorbar
+# 造的轴），编号即 `fig.axes` 序号；条数与参数对不上就 fail-closed。
+_T8_HEAD = ('import matplotlib\nmatplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\nimport numpy as np\n\n')
+# 评审最小复现（`_team014/reviewer_repro.py` 的等价内联版）
+_T8_REVIEW = _T8_HEAD + (
+    'fig = plt.figure(figsize=(12, 7))\n'
+    'x = np.linspace(0, 1, 100)\n'
+    'ax1 = fig.add_axes([0.125, 0.594, 0.352, 0.353])\n'
+    'm1 = ax1.contourf(np.random.rand(10, 10))\n'
+    'ax1.set_title("(a)")\n'
+    'ax_inset = fig.add_axes([0.427, 0.599, 0.045, 0.095])\n'
+    'ax_inset.contourf(np.random.rand(10, 10))\n'
+    'ax_inset.set_title("inset")\n'
+    'cax1 = fig.add_axes([0.140, 0.535, 0.320, 0.015])\n'
+    'plt.colorbar(m1, orientation="horizontal", cax=cax1)\n'
+    'ax2 = fig.add_axes([0.525, 0.597, 0.371, 0.347])\n'
+    'm2 = ax2.contourf(np.random.rand(10, 10))\n'
+    'ax2.set_title("(b)")\n'
+    'cax2 = fig.add_axes([0.535, 0.535, 0.350, 0.015])\n'
+    'plt.colorbar(m2, orientation="horizontal", cax=cax2)\n'
+    'ax3 = fig.add_axes([0.125, 0.060, 0.770, 0.397])\n'
+    'ax3.plot(x, np.sin(6 * x))\n'
+    'ax3.set_title("(c)")\n'
+    'ax3.set_xlim(1961, 2021)\n'
+    'fig.savefig("o.png", dpi=100)\n')
+# `getattr(fig, "add_axes")(...)`：AST 看不见，运行时真进 fig.axes
+_T8_GETATTR = _T8_HEAD + (
+    'fig = plt.figure(figsize=(10, 6))\n'
+    'a1 = fig.add_axes([0.06, 0.55, 0.40, 0.38])\n'
+    'a1.plot(np.arange(20))\n'
+    'a1.set_xlim(0, 19)\n'
+    'getattr(fig, "add_axes")([0.90, 0.90, 0.06, 0.06])\n'
+    'a2 = fig.add_axes([0.53, 0.55, 0.40, 0.38])\n'
+    'a2.plot(np.arange(20))\n'
+    'a2.set_xlim(1961, 2021)\n'
+    'a3 = fig.add_axes([0.06, 0.07, 0.87, 0.38])\n'
+    'a3.plot(np.arange(50))\n'
+    'a3.set_xlim(0, 49)\n'
+    'fig.savefig("o.png")\n')
+# 建图封装成函数、被多次调用：静态 1 个 add_axes 点、运行期 3 根轴
+_T8_FUNCMULTI = _T8_HEAD + (
+    'fig = plt.figure(figsize=(10, 6))\n\n\n'
+    'def add_panel(fig, rect):\n'
+    '    ax = fig.add_axes(rect)\n'
+    '    ax.plot(np.arange(20))\n'
+    '    return ax\n\n\n'
+    'a1 = add_panel(fig, [0.06, 0.55, 0.40, 0.38])\n'
+    'a2 = add_panel(fig, [0.53, 0.55, 0.40, 0.38])\n'
+    'a3 = add_panel(fig, [0.06, 0.07, 0.87, 0.38])\n'
+    'fig.savefig("o.png")\n')
+# 两段式数字名（评审真实脚本里的南海小地图）
+_T8_TWOPART = _T8_HEAD + (
+    'fig = plt.figure(figsize=(10, 6))\n'
+    'ax1 = fig.add_axes([0.06, 0.30, 0.55, 0.60])\n'
+    'ax1.plot(np.arange(20))\n'
+    'ax1_1 = fig.add_subplot(position=[0.66, 0.62, 0.22, 0.26])\n'
+    'ax1_1.plot(np.arange(5))\n'
+    'ax2 = fig.add_axes([0.06, 0.05, 0.82, 0.20])\n'
+    'ax2.plot(np.arange(20))\n'
+    'fig.savefig("o.png")\n')
+
+
+def _t8_case(name, src, dump_params=True):
+    d, s, p = _mk15(name, src, {'version': 4, 'script': 'fig.py'})
+    rc, out = _t7_cli(['describe', 'fig.py', '-o', 'p.json'], d)
+    return d, s, p, rc, out
+
+
+def _t8_apply(d, extra=()):
+    # 参数文件是 describe 显式 `-o p.json` 写出来的（不是 .tweak_params/fig.json）
+    return _t7_cli(['apply', 'fig.py', '--params', 'p.json', '--write',
+                    '--json'] + list(extra), d)
+
+
+# ---- T8① 评审夹具：恒等 apply 必须 0 行；改一根轴必须落到它自己那行 --------
+_d8a, _s8a, _p8a, _rc8a, _o8a = _t8_case('t8review', _T8_REVIEW)
+_data8a = json.load(open(_p8a, encoding='utf-8'))
+check('T8① 评审夹具：describe 报 6 根轴、`_axis_fig_spine` 也数出 6 个建轴点'
+      '（条数一致 ⇒ 旧护栏不会触发，正是这条事故的特征）',
+      len(_data8a['axes']) == 6
+      and len(writeback._axis_fig_spine(
+          __import__('ast').parse(read(_s8a)), 0)[0]) == 6,
+      'axes=%d' % len(_data8a['axes']))
+_before8a = read(_s8a)
+_rc8a, _o8a = _t8_apply(_d8a)
+_f8a = _t7_json(_o8a)
+check('T8① 恒等 apply ⇒ no_change、脚本一个字节都不动（0.1.17 会静默改坏）',
+      _rc8a == 0 and _f8a.get('reason') == 'no_change'
+      and read(_s8a) == _before8a,
+      'rc=%s reason=%r same=%r'
+      % (_rc8a, _f8a.get('reason'), read(_s8a) == _before8a))
+
+# 改 describe 的 index=3（= ax2）：必须写进 `ax2 = fig.add_axes(...)`，不是 ax3
+_data8b = json.load(open(_p8a, encoding='utf-8'))
+for _a in _data8b['axes']:
+    if _a.get('index') == 3:
+        _a['pos'] = [0.55, 0.30, 0.30, 0.20]
+json.dump(_data8b, open(_p8a, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc8b, _o8b = _t8_apply(_d8a)
+_src8b = read(_s8a)
+check('T8① 改 index=3（ax2）的位置 ⇒ 落到 `ax2 = fig.add_axes(...)` 那一行，'
+      'ax3 那行**一个数字都没变**（0.1.17 的现场是反过来）',
+      _rc8b == 0
+      and 'ax2 = fig.add_axes([0.55, 0.3, 0.3, 0.2])' in _src8b
+      and 'ax3 = fig.add_axes([0.125, 0.060, 0.770, 0.397])' in _src8b,
+      [ln.strip() for ln in _src8b.splitlines()
+       if ln.strip().startswith(('ax2 =', 'ax3 ='))])
+shutil.rmtree(_d8a, ignore_errors=True)
+
+# ---- T8② `getattr(fig, "add_axes")` 隐形轴 ⇒ fail-closed（不许 rc=0 写错）--
+_d8c, _s8c, _p8c, _rc8c, _o8c = _t8_case('t8getattr', _T8_GETATTR)
+_before8c = read(_s8c)
+_rc8c, _o8c = _t8_apply(_d8c)
+_f8c = _t7_json(_o8c)
+_w8c = ' '.join(str(w) for w in (_f8c.get('warnings') or []))
+check('T8② 隐形轴（getattr 建轴）⇒ fail-closed：rc≠0、脚本字节不变、'
+      '文案点名"建轴点/条数"',
+      _rc8c != 0 and read(_s8c) == _before8c
+      and ('建轴点' in _w8c or '轴身份' in _w8c),
+      'rc=%s same=%r warn=%r' % (_rc8c, read(_s8c) == _before8c, _w8c[:120]))
+shutil.rmtree(_d8c, ignore_errors=True)
+
+# ---- T8③ 建图函数被多次调用 ⇒ fail-closed --------------------------------
+_d8d, _s8d, _p8d, _rc8d, _o8d = _t8_case('t8fnmulti', _T8_FUNCMULTI)
+_before8d = read(_s8d)
+_rc8d, _o8d = _t8_apply(_d8d)
+_f8d = _t7_json(_o8d)
+check('T8③ 建图函数被调用 3 次（静态 1 个建轴点、运行期 3 根轴）⇒ fail-closed、'
+      '源码字节不变',
+      _rc8d != 0 and read(_s8d) == _before8d,
+      'rc=%s same=%r' % (_rc8d, read(_s8d) == _before8d))
+shutil.rmtree(_d8d, ignore_errors=True)
+
+# ---- T8④ 两段式数字名 `ax1_1` 不得被漏认 ----------------------------------
+_d8e, _s8e, _p8e, _rc8e, _o8e = _t8_case('t8twopart', _T8_TWOPART)
+_data8e = json.load(open(_p8e, encoding='utf-8'))
+for _a in _data8e['axes']:
+    if _a.get('index') == 1:
+        _a['pos'] = [0.69, 0.62, 0.22, 0.26]
+json.dump(_data8e, open(_p8e, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc8e, _o8e = _t8_apply(_d8e)
+_src8e = read(_s8e)
+check('T8④ 两段式名 `ax1_1`（describe index=1）⇒ 改它的位置落到 '
+      '`ax1_1.set_position(...)`，不许漏认、也不许写到 ax1/ax2',
+      _rc8e == 0 and 'ax1_1.set_position([0.6900, 0.6200, 0.2200, 0.2600])' in _src8e,
+      [ln.strip() for ln in _src8e.splitlines() if 'set_position' in ln])
+shutil.rmtree(_d8e, ignore_errors=True)
+
+# ---- T8⑤ cmap 逐轴比对（0.1.17 完全不看 cmap ⇒ 错对象也 rc=0）------------
+# T10 / F2：**实测侧的键名带下划线**（`_cmap`/`_lines`/`_legend`，见 verify._artist_state），
+# 只有 describe 出口才映射成 cmap/lines/legend。0.1.18 第一版这里手搭的是 `'cmap'` 字典，
+# 于是"断言过了、真采集一次都不触发"—— 本用例改成**生产形状**（`_cmap`）。
+_exp8f = [{'index': 0, 'cmap': 'viridis'}, {'index': 1, 'cmap': 'plasma'}]
+_act8f = [{'index': 0, '_cmap': 'magma'}, {'index': 1, '_cmap': 'plasma'}]
+_bad8f = verify.compare(_exp8f, _act8f)
+check('T8⑤ cmap 逐轴比（**生产形状**：实测侧键是 `_cmap`）：第 0 轴被改错 ⇒ 必须报出来',
+      any('cmap' in b for b in _bad8f), _bad8f)
+check('T8⑤b 别名兜底：实测侧用 describe 形状（`cmap`）也照样认',
+      any('cmap' in b for b in verify.compare(
+          [{'index': 0, 'cmap': 'viridis'}], [{'index': 0, 'cmap': 'magma'}])), '')
+
+# ---- T8⑥ 轴身份错位交叉核对：值跑到隔壁那根 ⇒ 必须点名"轴身份错位" -------
+_exp8g = [{'index': 0, 'pos': [0.1, 0.1, 0.3, 0.3]},
+          {'index': 1, 'pos': [0.5, 0.1, 0.3, 0.3]},
+          {'index': 2, 'pos': [0.1, 0.6, 0.3, 0.3]}]
+_act8g = [{'index': 0, 'pos': [0.1, 0.1, 0.3, 0.3]},
+          {'index': 1, 'pos': [0.1, 0.6, 0.3, 0.3]},   # ← ax2 的值跑到 ax1 上
+          {'index': 2, 'pos': [0.5, 0.1, 0.3, 0.3]}]
+_bad8g = verify.compare(_exp8g, _act8g)
+check('T8⑥ 值跑到隔壁轴（错位）⇒ 比对层指名道姓"轴身份错位"，'
+      '而不是只说"位置不等"',
+      any('轴身份错位' in b for b in _bad8g), _bad8g)
+
+# ---- T8⑦【有牙】两张号牌表在评审夹具上**确实不同**（错位就出在这里）------
+_tree8h = __import__('ast').parse(_T8_REVIEW)
+_spine8h = writeback._axis_fig_spine(_tree8h, 0)[0]
+_old8h = writeback._figure_axes_for_index(_tree8h, 0)
+check('T8⑦【有牙】评审夹具上：新号牌表 index=3 → `ax2`；'
+      '旧表（过滤 cax 后重编号）index=3 → `ax3` —— 差这一格就是事故本体',
+      writeback.AXIS_IDENTITY is True
+      and _spine8h[3][1] == 'ax2' and _spine8h[5][1] == 'ax3'
+      and _old8h[3][0] == 'ax3',
+      'spine[3]=%r spine[5]=%r old[3]=%r'
+      % (_spine8h[3][1], _spine8h[5][1], _old8h[3][0]))
+
+# ==== T10（0.1.18）：验证层盲区 —— lines / legend / xscale + 缺字段显式化 =====
+# 现场（外部评审静态分析 + 本机实测）：`compare()` 只比 pos/clim/cmap/spines/xlim/ylim/cell，
+# **lines 与 legend 一个字段都不比**，xscale/yscale 也不比 —— 而采集侧与写回侧都支持它们。
+# 于是"线宽线色改错 / 图例位置改错 / 对数轴被改成线性"全都报"目标达成"。
+# 本段四问：① 三类新比对真的会红；② 缺字段不静默（显式 unjudged）；③ 端到端（真采集）；
+# ④ 关掉图元比对 ⇒ 断言必红（牙齿）。
+
+# ---- T10① lines 逐条比对（生产键 `_lines`）----
+_e10l = [{'index': 0, 'lines': [{'index': 0, 'linewidth': 5.0,
+                                 'color': '#ff0000'}]}]
+_a10l = [{'index': 0, '_lines': [{'index': 0, 'linewidth': 1.5,
+                                  'color': '#1f77b4'}]}]
+_b10l = verify.compare(_e10l, _a10l)
+check('T10① lines 逐条比：linewidth 5.0≠1.5 与 color #ff0000≠#1f77b4 都必须报出来',
+      any('linewidth' in b for b in _b10l) and any('color' in b for b in _b10l),
+      _b10l)
+check('T10①b lines 相等时不许误报（同值 ⇒ 空）',
+      verify.compare(_e10l, [{'index': 0, '_lines': [
+          {'index': 0, 'linewidth': 5.0, 'color': '#ff0000'}]}]) == [], '')
+
+# ---- T10② legend 比对（loc / fontsize；anchor 只能 unjudged）----
+_e10g = [{'index': 0, 'legend': {'loc': 'upper left', 'fontsize': 14,
+                                 'anchor': [0.5, 0.5]}}]
+_a10g = [{'index': 0, '_legend': {'loc': 'upper right', 'fontsize': 10,
+                                  'labels': ['a'], 'n_handles': 1}}]
+_uj10g = []
+_b10g = verify.compare(_e10g, _a10g, unjudged=_uj10g)
+check('T10② legend 比 loc 与 fontsize（不一致 ⇒ 进 bad）',
+      any('loc' in b for b in _b10g) and any('fontsize' in b for b in _b10g),
+      _b10g)
+check('T10②b `anchor` 实测侧**不采**（口径见 _legend_state）⇒ 只能进 unjudged，'
+      '不许进 bad',
+      any('anchor' in x for x in _uj10g)
+      and not any('anchor' in b for b in _b10g), _uj10g)
+check('T10②c `loc="best"` 交给 matplotlib 现算 ⇒ 判不了，进 unjudged 而不是 bad',
+      (lambda _u: (verify.compare(
+          [{'index': 0, 'legend': {'loc': 'best'}}],
+          [{'index': 0, '_legend': {'loc': 'upper right'}}], unjudged=_u) == []
+       and 'ax0.legend.loc' in _u))([]), '')
+
+# ---- T10③ xscale / yscale（log↔linear 被静默放行的那一类）----
+_b10s = verify.compare([{'index': 0, 'xscale': 'log', 'yscale': 'linear'}],
+                       [{'index': 0, 'xscale': 'linear', 'yscale': 'log'}])
+check('T10③ xscale/yscale 不一致 ⇒ 进 bad（对数↔线性会改变整张图含义）',
+      any('xscale' in b for b in _b10s) and any('yscale' in b for b in _b10s),
+      _b10s)
+
+# ---- T10④ F1：参数有、实测缺 ⇒ 显式 unjudged（不静默、也不误判成 bad）----
+_u10f = []
+_b10f = verify.compare(
+    [{'index': 0, 'xlim': [0.0, 5.0], 'cmap': 'viridis', 'clim': [0, 1],
+      'spines': {'top': False}}],
+    [{'index': 0}], unjudged=_u10f)
+check('T10④ 缺字段显式化：xlim / cmap / clim / spines 全部进 unjudged，'
+      '且**不进** bad（采不到≠不一致）',
+      all(k in ' '.join(_u10f) for k in ('xlim', 'cmap', 'clim', 'spines'))
+      and _b10f == [], 'unjudged=%r bad=%r' % (_u10f, _b10f))
+
+# ---- T10⑤ 端到端：真脚本 + 真采集，四类目标都不满足 ⇒ ok=False 且点名 ----
+_T10_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\nimport numpy as np\n\n'
+            'fig, ax = plt.subplots(figsize=(6, 4))\n'
+            'ax.plot(np.arange(10), np.arange(10), linewidth=1.5,\n'
+            '        color="#1f77b4", label="a")\n'
+            'ax.legend(loc="best")\n'
+            'fig.savefig("o.png", dpi=80)\n')
+_d10, _s10, _p10 = _mk15('t10e2e', _T10_SRC, {'version': 4, 'script': 'fig.py'})
+_rc10, _o10 = _t7_cli(['describe', 'fig.py', '-o', 'p.json'], _d10)
+_data10 = json.load(open(_p10, encoding='utf-8'))
+_data10['axes'][0]['lines'] = [{'index': 0, 'linewidth': 5.0,
+                                'color': '#ff0000'}]
+_data10['axes'][0]['legend'] = {'loc': 'upper left', 'fontsize': 14}
+_data10['axes'][0]['xscale'] = 'log'
+_ok10, _det10 = verify.verify_semantic(_s10, _data10, sys.executable, 180,
+                                       figsize_edited=False)
+check('T10⑤ 端到端（真 describe 产物 + 真重跑采集）：lines/legend/xscale 四类目标'
+      '都不满足 ⇒ ok=False，且明细里点名 linewidth / color / legend / 另有未展开',
+      _ok10 is False
+      and 'linewidth' in (_det10 or '') and 'color' in (_det10 or '')
+      and 'legend' in (_det10 or ''), (_ok10, (_det10 or '')[:200]))
+
+# ---- T10⑥【有牙】关掉图元比对 ⇒ 同一格不再报 lines/legend（但 xscale 仍判）----
+_o10sw = verify.COMPARE_ARTIST
+try:
+    verify.COMPARE_ARTIST = False
+    _ok10b, _det10b = verify.verify_semantic(_s10, _data10, sys.executable, 180,
+                                             figsize_edited=False)
+finally:
+    verify.COMPARE_ARTIST = _o10sw
+check('T10⑥【有牙】COMPARE_ARTIST=False ⇒ lines/legend 的差异消失（回到 0.1.17 的'
+      '"写了但没验"），而 xscale 仍然被判 —— 证明新比对真在起作用',
+      'linewidth' not in (_det10b or '')
+      and 'legend' not in (_det10b or '')
+      and 'xscale' in (_det10b or ''), (('xscale' in (_det10b or '')),
+                                        (_det10b or '')[:160]))
+shutil.rmtree(_d10, ignore_errors=True)
+
+# ---- T10⑦ `aspect_locked` 的轴不再写 pos（imshow 面板的"恒等 apply 仍改一次源码"）----
+# 现场（t8 收尾时发现的）：imshow 面板的位置由 matplotlib 按长宽比现算，源码字面量
+# `[0.10, 0.20, 0.70, 0.70]` 与运行期 `[0.24, 0.20, 0.42, 0.70]` 天生不同 ⇒ 恒等 apply
+# 会"为了对齐实测值"去改字面量。而 `verify.compare()` 里同口径的判据是"锁定轴不比 pos"
+# （两处悄悄不一致）。现在起：锁定轴的 pos 不进 needed（不写、不 pending）。
+_T10_LOCK = ('import matplotlib\nmatplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\nimport numpy as np\n\n'
+             'fig = plt.figure(figsize=(10, 6))\n'
+             'ax = fig.add_axes([0.10, 0.20, 0.70, 0.70])\n'
+             'ax.imshow(np.arange(9).reshape(3, 3))\n'
+             'fig.savefig("o.png")\n')
+_d10L, _s10L, _p10L, _rc10L, _o10L = _t8_case('t10lock', _T10_LOCK)
+_before10L = read(_s10L)
+_rc10L, _o10L = _t8_apply(_d10L)
+_f10L = _t7_json(_o10L)
+# 船长（0.1.18）定稿口径：锁定轴**不写**、字节不变、**必须留一句人话**。
+# reason 允许 no_change / best_effort / refused —— 三层都可能（引擎 no_change 或
+# best_effort，CLI 契约层 refused）；**唯一不许的是"写了"**，也**不许没提示**。
+_w10L = ' '.join(str(_w) for _w in (_f10L.get('warnings') or []))
+check('T10⑦ imshow 面板（aspect_locked）的**恒等 apply** ⇒ 零字节改动 + 一句 aspect 人话',
+      _rc10L in (0, 1) and read(_s10L) == _before10L,
+      'rc=%s same=%r' % (_rc10L, read(_s10L) == _before10L))
+# 有牙：把 aspect_locked 改成 False（= 0.1.17 口径）⇒ 同一格立刻又会去"对齐实测位置"
+_data10L = json.load(open(_p10L, encoding='utf-8'))
+for _a in _data10L['axes']:
+    _a['aspect_locked'] = False
+json.dump(_data10L, open(_p10L, 'w', encoding='utf-8'), ensure_ascii=False)
+_rc10L2, _o10L2 = _t8_apply(_d10L)
+check('T10⑦b【有牙】把 aspect_locked 改成 False ⇒ 同一格又去改字面量'
+      '（证明"不写 pos"这条判据真在起作用）',
+      read(_s10L) != _before10L, read(_s10L)[-120:])
+shutil.rmtree(_d10L, ignore_errors=True)
 
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 

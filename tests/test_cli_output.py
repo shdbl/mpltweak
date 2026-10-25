@@ -33,6 +33,7 @@ stdout、stderr 变空。改回来即 14 条全绿。
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -700,6 +701,162 @@ def test_no_change_still_counts_as_success(work):
     assert payload.get('ok') is True, payload.get('ok')
     assert 'error_code' not in payload, payload.get('error_code')
     assert payload['files'][0]['reason'] == 'no_change', payload['files'][0]
+
+
+# ----------------------------------------------------------------------
+# T9（0.1.18）：`check` 的输出里**不许有没被替换的模板占位符**
+#
+# 现场（0.1.16 外部评审在发布版上复现）：`mpltweak check mis.py` 直接印出
+#     × ax1 的左边缘 %(v)s是 0.145，与相邻面板 ax0/ax2 差 0.02
+# 根因不是"格式串少传了值"，而是**取词时用了一条带占位符的模板去干"纯名字"的活**：
+# `chk_not_aligned` 只想要"左边缘"这三个字，调用点写的是 `edge=_msg.t(label)`
+# （**不传 v**），而 `chk_edge_left` 当时的模板是 `'左边缘 %(v)s'`；`t()` 的契约是
+# "KeyError ⇒ 原样返回模板"（宁可少一行字也不崩），于是整条模板被当成文案插进正文。
+#
+# 这类 bug 的共同形状：**模板是数据，一旦有谁把它当成渲染结果用，用户就看到 `%(…)s`**。
+# 所以这里不测某条消息"写没写对"，而是扫**用户真能看到的整份输出**（stdout + stderr、
+# zh + en、多条不同分支的夹具），不许出现 `%(名字)s` 形状的残留。
+# ----------------------------------------------------------------------
+#: 模板占位符残留的形状（`%(v)s` / `%(ax)d` / `%(mw).3f` …；也收 `%(x)` 无转换符的）
+_RESIDUE = re.compile(r'%\([A-Za-z_][A-Za-z0-9_]*\)[sdifgr%]?')
+
+#: 三条竖排面板，中间那条左边缘偏 0.02 ⇒ 走 `not_aligned`（T9 现场那条）
+_FIX_MISALIGNED = '''\
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig = plt.figure(figsize=(6, 6))
+a0 = fig.add_axes([0.125, 0.70, 0.30, 0.20])
+a1 = fig.add_axes([0.145, 0.40, 0.30, 0.20])
+a2 = fig.add_axes([0.125, 0.10, 0.30, 0.20])
+for i, a in enumerate((a0, a1, a2)):
+    a.plot([0, 1], [0, i + 1])
+fig.savefig('mis.png')
+'''
+
+#: 一条轴越出画布 + 一段文字越出画布 ⇒ 走 `out_of_canvas` 与 `text_out_of_canvas`
+#: （这两处**要带具体数值**：`左边缘 -0.05`。少了数值也是回归，见下面的正向断言）
+_FIX_OUT_OF_CANVAS = '''\
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig = plt.figure(figsize=(6, 6))
+a = fig.add_axes([-0.05, 0.90, 0.30, 0.30])
+a.plot([0, 1], [0, 1])
+fig.text(0.5, 1.06, 'text far above the canvas', fontsize=20)
+fig.savefig('out.png')
+'''
+
+#: 干净的图 ⇒ 走"没发现问题"那条收尾路径（不许因为是捷径就漏出模板）
+_FIX_CLEAN = '''\
+import matplotlib
+
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([0, 1], [0, 1])
+fig.savefig('ok.png')
+'''
+
+
+def _no_residue(out, err):
+    """用户看到的整份输出里，模板占位符残留（stdout 与 stderr 一起算）。"""
+    hits = []
+    for where, text in (('stdout', out), ('stderr', err)):
+        for m in _RESIDUE.finditer(text or ''):
+            line = (text or '')[:m.start()].splitlines()[-1] if text else ''
+            hits.append('%s: %r（行首：%r）' % (where, m.group(0), line[:60]))
+    return hits
+
+
+@pytest.mark.parametrize('lang', ['zh', 'en'])
+def test_check_output_has_no_unfilled_placeholders(work, lang):
+    """`check` 的整份输出（zh / en × 三条分支）里不许有 `%(名字)s` 残留。
+
+    三条夹具各钉一条输出路径：`not_aligned`（T9 现场）、`out_of_canvas` /
+    `text_out_of_canvas`（边缘行**带数值**）、`all_clean`（收尾语）。
+    反向验证（手工一步，约 20 秒）：把 `src/mpltweak/messages.py` 里
+    `'chk_edge_left'` 那句改回 `'左边缘 %(v)s'`（或把 `check.py` 里那处
+    `edge=_msg.t(label)` 换回旧的带值调法），再跑本用例 ⇒ **必须红**。
+    """
+    for name, body in (('mis.py', _FIX_MISALIGNED),
+                       ('out.py', _FIX_OUT_OF_CANVAS),
+                       ('ok.py', _FIX_CLEAN)):
+        _write(os.path.join(work, name), body)
+
+    # ① 现场那条：not_aligned 的两面（zh / en）都要读成人话
+    rc, out, err = _run(work, 'check', 'mis.py', MPLTWEAK_LANG=lang)
+    assert rc == 1, ('check 该报问题（rc=1），实际 %r：%s' % (rc, out[-400:] + err[-400:]))
+    assert not _no_residue(out, err), (
+        'check 的输出里漏出了模板占位符（用户会看到模板而不是话）：\n%s\n---\n%s'
+        % ('\n'.join(_no_residue(out, err)), out[-800:]))
+    want_zh = '左边缘是 0.145'
+    want_en = 'left edge is 0.145'
+    want = want_zh if lang == 'zh' else want_en
+    assert want in out, (
+        '边缘值必须**拼进正文**（不是删掉占位符了事）：要看到 %r\n%s'
+        % (want, out[-800:]))
+
+    # ② 边缘行带数值：越界那两处（轴 / 文字）都得把 -0.05 这类数字说出来。
+    #    只看**轴**那条越界行（`超出画布：…`）——"文字越界"那几行是另一处调用点，
+    #    用它兜底会让这条断言被另一条路径喂饱（实测：只把轴那处改回"不传值"时，
+    #    文字那几行仍带着数值，断言就绿着不咬了）。
+    rc, out, err = _run(work, 'check', 'out.py', MPLTWEAK_LANG=lang)
+    assert rc == 1, (rc, out[-400:] + err[-400:])
+    assert not _no_residue(out, err), (
+        'out_of_canvas 分支漏出模板占位符：\n%s\n---\n%s'
+        % ('\n'.join(_no_residue(out, err)), out[-800:]))
+    marker = '超出画布：' if lang == 'zh' else 'is outside the canvas:'
+    words = (('左边缘', '上边缘') if lang == 'zh' else ('left edge', 'top edge'))
+    axis_lines = [l for l in out.splitlines() if marker in l]
+    assert len(axis_lines) == 1, ('轴越界那行该恰好一条，实际：%r\n%s'
+                                  % (axis_lines, out[-800:]))
+    for word in words:
+        assert re.search(re.escape(word) + r' -?\d', axis_lines[0]), (
+            '边缘行必须带真实数值（要看到 %r 后跟数字，而不是只有名字）：%r'
+            % (word, axis_lines[0]))
+
+    # ③ 干净分支：走的是另一条收尾路径，也不许漏
+    rc, out, err = _run(work, 'check', 'ok.py', MPLTWEAK_LANG=lang)
+    assert rc == 0, ('干净图该 rc=0，实际 %r：%s' % (rc, out[-400:] + err[-400:]))
+    assert not _no_residue(out, err), (
+        'all_clean 分支漏出模板占位符：\n%s\n---\n%s'
+        % ('\n'.join(_no_residue(out, err)), out[-800:]))
+
+
+def test_edge_label_messages_are_name_only():
+    """结构判据：边缘**名字**那四条消息里不许有占位符（T9 的根因面）。
+
+    `chk_not_aligned` 要的是"左边缘"这个**名字**，值由 `chk_edge_value` 拼。
+    名字里带 `%(v)s` 时，任何"只取名字"的调用点都会把模板原样印出来——而 `t()`
+    的 KeyError 兜底（原样返回模板）正是让这件事**静默**发生的机制。
+    所以这条钉的是"名字与值分家"，比扫输出更早、更直接。
+    """
+    sys.path.insert(0, SRC)
+    try:
+        from mpltweak import messages as msg
+    finally:
+        sys.path.remove(SRC)
+
+    for key in ('chk_edge_left', 'chk_edge_bottom',
+                'chk_edge_right', 'chk_edge_top'):
+        for lang in ('zh', 'en'):
+            msg.set_lang(lang)
+            text = msg.t(key)
+            assert '%(' not in text, (
+                '%s（%s）是**边缘名字**，不许带占位符：%r —— 只取名字的调用点会'
+                '把这条模板原样印给用户' % (key, lang, text))
+    for lang in ('zh', 'en'):
+        msg.set_lang(lang)
+        joined = msg.t('chk_edge_value', edge=msg.t('chk_edge_left'), v='0.12')
+        assert joined.endswith('0.12'), (
+            '%s（%s）要把名字和值拼起来：%r' % ('chk_edge_value', lang, joined))
+        assert '%(' not in joined, joined
 
 
 # ----------------------------------------------------------------------
