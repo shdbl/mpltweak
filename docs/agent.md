@@ -86,6 +86,18 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 `audit_018/promo/t16_probe2.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
+**读 `--json` 先看这五个字段**（`files[]` 每一条里都有）：`rc`（顶层退出码）/ `reason` / `applied` / `verified` / `pending`。
+
+| 字段 | 回答什么 | 怎么读才不踩坑 |
+|---|---|---|
+| `rc` | 这一次命令算不算成功 | `0` = 成功；`1` = 写回没（全）落地或验证失败；`2` = 参数/用法错；`4` = 需要参数 |
+| `reason` | **结论是哪一档** | `ok`（该写的都写了）/ `best_effort`（能写、没全写）/ `refused`（拒写，源码零改动）/ `fail`（写了又回滚）/ `no_change`（本来就不一样都不用改） |
+| `applied` | **磁盘到底动没动** | `false` = 一个字节没改（**这时别把 `reason=best_effort` 读成"改了一点"**） |
+| `verified` | 重跑验证过没有 | 默认档**真正写过**时不是 `null`；`null` = 没跑（`--no-verify` / `--verify-fast`，或 `no_change` / `preview` 这种没写盘的早退） |
+| `pending` | **本次最终**还剩什么没落地 | 空数组 = 都落地了；非空 = 这几项没写（`inplace_pending` 是退块前那一趟的留档，**不要相加**） |
+
+**不要只看 `ok`**：`ok` 只说"整批算不算成功"，它**不回答"改了没有"**。要回答那个，看 `applied` + `changes`（块路径落地时 `changes` 可能是 `[]`，此时以 `applied: true` 与写回后文件 sha256 变了为准）。
+
 **`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。下面几个键的口径容易读错，逐个写清（0.1.14 起 `style` 也在此列）：
 
 * `files[].style`（**恒存在，永不为 `null`**）：这次**请求的通道**（`auto` / `inplace` / `block`）。走过写回时它被**实际采用的通道**覆盖 —— `auto` 退块就是 `block`（同时 `auto_fallback=true`、`inplace_reason` 说为什么没原位落地）；只读预览（`reason=preview`）与早退条目（`bad_params` / `stale` / `layout_conflict` 等）填的是**请求值**，`auto` = 逐图待定。**别把 `style` 单独当"落没落地"**：那件事只看 `reason` 与 `applied`（早退条目也带请求的 `style`，但它一个字节都没写）。

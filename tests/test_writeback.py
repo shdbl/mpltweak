@@ -10475,6 +10475,358 @@ check('T10⑦b【有牙】把 aspect_locked 改成 False ⇒ 同一格又去改�
       read(_s10L) != _before10L, read(_s10L)[-120:])
 shutil.rmtree(_d10L, ignore_errors=True)
 
+# ==== P0（0.1.19 / t27）：三档一致 + lines 口径 + auto 不撒谎 ================
+# 这一节钉的是 0.1.18 收尾时实测到的三条事故形状（都不是新功能，是"结论口径"）：
+#
+#   ① **三档不自洽**：同一份参数，`--style auto` / `inplace` 报 best_effort，`block` 报 ok。
+#      根因不在引擎，而在「ax0 未原位应用：lines」这条**聚合警告被过早打出来** —— 被基线
+#      摘掉的字段（源码本来就是那个值）被当成"写不了"，于是 warnings 非空 ⇒ 本函数末尾
+#      `BEST_EFFORT if warnings else OK` 把结论从 ok 抬成 best_effort。用户看到的是"这台
+#      机器有东西没写进去"，实际上什么都没丢。
+#   ② **lines 口径两头都要对**：lines 没改过时，`pending` 里**不许**出现 ax0.lines／ax1.lines
+#      （否则用户以为丢了东西，会把本来干净的图抬进 block 模式）；真改过 linewidth 时，
+#      `inplace` **必须**如实 pending、`block` **必须**真写掉（不许为了"好看"把写不了的
+#      事情掩盖成已落地）。
+#   ③ **auto 不撒谎**：`verified` 不许是 null 却打印「正在验证」（真实症状：块那次走
+#      no_change 早退、没有 layers，apply 没把原位那次的凭据继承过来）；同一份人读输出里
+#      **不许同时**出现「正在验证」与「本次没有重跑脚本」两句互斥的话。
+#
+# 断言的**独立性**（船长硬要求，别删）：`MPLTWEAK_P0_SRC` 可以把这一节整体指到另一份 src。
+# 拿"只回退 L35 那个过滤"的副本跑这一节 ⇒ P0① 必须红 —— 那是"断言不是跟着实现写的"的唯一
+# 证据。反向牙齿 P0⑤t1/t2/t3 同理，都在**临时副本**里改，仓库产品码一个字节都不动。
+_P0_DEMO = ('import matplotlib\n'
+            'matplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n\n'
+            'fig = plt.figure(figsize=(8, 5))\n'
+            'ax0 = fig.add_axes([0.08, 0.10, 0.55, 0.80])\n'
+            'ax1 = fig.add_axes([0.70, 0.10, 0.25, 0.80])\n'
+            'ax0.plot([1, 2, 3], [1, 2, 3])\n'
+            'ax0.set_title("A", fontsize=12)\n'
+            'ax1.plot([1, 2, 3], [3, 2, 1])\n'
+            'ax1.set_title("B", fontsize=12)\n'
+            'fig.savefig("out.png", dpi=80)\n')
+# 默认测仓库这份 src；要看"回退版必须红"时，把 MPLTWEAK_P0_SRC 指到副本根即可。
+_P0_SRC = os.environ.get('MPLTWEAK_P0_SRC') or _SRC_DIR
+_P0_DIRS = []
+
+
+def _p0_env(src):
+    """子进程环境：PYTHONPATH=被测 src（editable 安装下只有它能决定加载哪一份）。"""
+    return dict(os.environ, PYTHONPATH=src, MPLBACKEND='Agg', MPLTWEAK_LANG='zh',
+                PYTHONIOENCODING='utf-8')
+
+
+def _p0_cli(args, cwd, src):
+    """跑 CLI，并让子进程**自报** `mpltweak.__file__`（副本证据的唯一来源）。
+
+    不用 `-m mpltweak`：editable 安装会让它永远指向仓库那份，副本就白建了。
+    """
+    cmd = [sys.executable, '-c',
+           'import mpltweak, sys;'
+           'print("MODULE_FILE=" + mpltweak.__file__);'
+           'from mpltweak.cli import main;'
+           'sys.argv = ["mpltweak"] + sys.argv[1:];'
+           'sys.exit(main())'] + list(args)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, env=_p0_env(src))
+    out = _decode_out(r.stdout + r.stderr)
+    mf = ''
+    for ln in out.splitlines():
+        if ln.startswith('MODULE_FILE='):
+            mf = ln.split('=', 1)[1].strip()
+    return r.returncode, out, mf
+
+
+def _p0_case(name, patch):
+    """建夹具：内联源码 → 现场 describe 出参数 → 按 patch 改两个字段。"""
+    d, s, p = _mk15(name, _P0_DEMO, {'version': 4, 'script': 'fig.py'})
+    _P0_DIRS.append(d)
+    rc, out, _mf = _p0_cli(['describe', s, '-o', p], d, _P0_SRC)
+    if rc != 0:
+        return d, s, p
+    data = json.load(open(p, encoding='utf-8'))
+    patch(data)
+    with open(p, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(data, f, ensure_ascii=False)
+    return d, s, p
+
+
+def _p0_run(workdir, style, src, extra=()):
+    """每档一份**独立副本**跑 apply --write（三档互不污染，能各自读回自己的产物）。"""
+    d = workdir + '_' + style
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(workdir, d)
+    _P0_DIRS.append(d)
+    rc, out, mf = _p0_cli(['apply', 'fig.py', '--params', 'p.json', '--write',
+                           '--style', style, '--json'] + list(extra), d, src)
+    return rc, _t7_json(out), out, mf, d
+
+
+def _p0_copy(tag):
+    """把**当前被测的那份** src 复制成临时副本（牙齿只在副本里咬，仓库不动）。"""
+    d = tempfile.mkdtemp(prefix='mpltweak_p0_%s_' % tag)
+    shutil.copytree(os.path.join(_P0_SRC, 'mpltweak'), os.path.join(d, 'mpltweak'))
+    _P0_DIRS.append(d)
+    return d
+
+
+def _p0_patch(path, old, new):
+    """恰好替换 1 处；锚点漂了返回 False（牙齿失明必须显形，不许静默跳过）。"""
+    t = open(path, encoding='utf-8').read()
+    if t.count(old) != 1:
+        return False
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(t.replace(old, new, 1))
+    return True
+
+
+# 断言 ④ 的驱动器：精确复刻 t26 修的 L32 形状 —— auto 先跑原位（有真凭据），再退块，
+# 而**块那次**自己走 no_change 早退、压根没有 layers。修好后 apply 必须把原位那次的
+# verified/layers 继承下来；删掉继承就是"verified=null 却打印正在验证"。
+_P0_DRIVER = r'''
+import sys
+import mpltweak, mpltweak.apply as ap, mpltweak.writeback as wb
+print('MODULE_FILE=%s' % mpltweak.__file__)
+print('APPLY_FILE=%s' % ap.__file__)
+calls = []
+
+def stub(script, data, pp, style='auto', **kw):
+    calls.append(style)
+    if style == 'block':
+        return {'reason': 'no_change', 'applied': False, 'changes': [],
+                'warnings': [], 'needs_block': False, 'pending': [],
+                'block': None, 'backup': None, 'semantic': 'skipped'}
+    return {'reason': 'best_effort', 'applied': True,
+            'changes': ['ax0.title_fontsize'], 'warnings': [],
+            'needs_block': True, 'pending': ['ax0.pos'],
+            'verified': True, 'verify_mode': 'full', 'verify_passes': 1,
+            'semantic': True, 'semantic_basis': 'live',
+            'layers': {'syntax': True, 'rerun': True, 'semantic': True},
+            'anchor': 'inplace', 'backup': None}
+
+wb.writeback = stub
+mode = sys.argv[1]
+av = ['fig.py', '--params', 'p.json', '--write'] + (['--json'] if mode == 'json' else [])
+print('RC=%d' % ap.main(av))
+print('CALLS=%r' % (calls,))
+'''
+
+
+def _p0_drive(workdir, src, mode):
+    """跑驱动器（每个 mode 一份副本目录，避免两次写盘互相踩）。"""
+    d = workdir + '_drv_' + mode
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.copytree(workdir, d)
+    _P0_DIRS.append(d)
+    with open(os.path.join(d, '_drv.py'), 'w', encoding='utf-8') as f:
+        f.write(_P0_DRIVER)
+    r = subprocess.run([sys.executable, '_drv.py', mode], cwd=d, capture_output=True,
+                       env=_p0_env(src))
+    return _decode_out(r.stdout + r.stderr)
+
+
+def _p0_sig(res):
+    """三档可比的那四个字段（pending 去序，否则 list 顺序会让比较假红/假绿）。"""
+    rc, f = res[0], (res[1] or {})
+    return (rc, f.get('reason'), f.get('applied'),
+            tuple(sorted(f.get('pending') or [])))
+
+
+def _p0_hits(out):
+    """人读输出里那两句互斥的话各出现过没有。"""
+    return ('正在验证' in out, '没有重跑' in out)
+
+
+def _p0_in_copy(mf, root):
+    """模块文件是否真的落在副本目录里（不落 = 牙齿咬的是空气）。"""
+    if not mf:
+        return False
+    return (os.path.normcase(os.path.abspath(mf))
+            .startswith(os.path.normcase(os.path.abspath(root)) + os.sep))
+
+
+def _p0_field(out, key):
+    """从驱动器/CLI 输出里取一行 `KEY=...`（副本自报路径用）。"""
+    for ln in out.splitlines():
+        if ln.startswith(key + '='):
+            return ln.split('=', 1)[1].strip()
+    return ''
+
+
+# ---- 夹具 A：只改「原位写得进去」的两样（pos 与标题字号），lines 一个字节没动 ----
+# pos 只改 x0（0.08 → 0.10），保留 4 位小数：add_axes 的字面量原位能改。
+_P0_A = _p0_case('p0a', lambda p: (
+    p['axes'][0].__setitem__(
+        'pos', [round(p['axes'][0]['pos'][0] + 0.02, 4)] + list(p['axes'][0]['pos'][1:])),
+    p['axes'][0].__setitem__('title_fontsize', 14)))
+# ---- 夹具 B：额外把 ax0 第一条线的 linewidth 改成 3.0（原位写不了，只有块能落地）----
+_P0_B = _p0_case('p0b', lambda p: (
+    p['axes'][0].__setitem__(
+        'pos', [round(p['axes'][0]['pos'][0] + 0.02, 4)] + list(p['axes'][0]['pos'][1:])),
+    p['axes'][0]['lines'][0].__setitem__('linewidth', 3.0)))
+
+_P0_RA = {st: _p0_run(_P0_A[0], st, _P0_SRC) for st in ('auto', 'inplace', 'block')}
+_P0_RB = {st: _p0_run(_P0_B[0], st, _P0_SRC) for st in ('auto', 'inplace', 'block')}
+_P0_SIGA = {st: _p0_sig(v) for st, v in _P0_RA.items()}
+# 夹具 A 是"全都写得进去"的一份参数 ⇒ 三档都必须报**同一件事**（applied=True）。
+# 允许的唯一差别写在船长口径里：block 可以 rc=0 且 pending 空（它落地方式不同）。
+_P0_A_OK = (_P0_SIGA['auto'] == _P0_SIGA['inplace']
+            and _P0_SIGA['block'][1:] == _P0_SIGA['auto'][1:]
+            and (_P0_SIGA['block'][0] == _P0_SIGA['auto'][0]
+                 or (_P0_SIGA['block'][0] == 0 and not _P0_SIGA['block'][3]))
+            and _P0_SIGA['auto'][2] is True)
+check('P0① 三档一致：同一夹具同参数 ⇒ auto/inplace/block 的 {rc,reason,applied,pending} 相等'
+      '（只允许 block 取 rc=0+pending 空；且 auto 必须真的落地，不许"三档一起拒绝"也过）',
+      _P0_A_OK,
+      'auto=%r inplace=%r block=%r' % (_P0_SIGA['auto'], _P0_SIGA['inplace'],
+                                       _P0_SIGA['block']))
+# 同一件事的第二面：被基线摘掉的字段不是"写不了" —— 三档都不许拿它当警告喊。
+# （回退 L35 的过滤行，这一条立刻红：auto/inplace 各多两条"ax0/ax1 未原位应用：lines"。）
+_P0_FAKE = {st: [str(w) for w in ((v[1] or {}).get('warnings') or [])
+                 if '未原位应用' in str(w)] for st, v in _P0_RA.items()}
+check('P0①b 三档都不得声称 lines 未原位应用（lines 没改过 ⇒ 被摘掉的是"源码本来就是那个值"，'
+      '不是"写不了"）',
+      not any(_P0_FAKE.values()),
+      'auto=%r inplace=%r block=%r'
+      % (_P0_FAKE['auto'], _P0_FAKE['inplace'], _P0_FAKE['block']))
+
+# ---- P0②：lines 没改过 ⇒ 三档 pending 都不许含 lines（当前 inplace/auto 会误报）----
+_P0_LINES_PEND = {st: [x for x in ((v[1] or {}).get('pending') or []) if 'lines' in x]
+                  for st, v in _P0_RA.items()}
+_P0_DD = sorted((_P0_RA['inplace'][1] or {}).get('delta_dropped') or [])
+check('P0② lines 未改 ⇒ 三档 pending 都不含 lines；且 ax0.lines/ax1.lines 是被**基线摘除**'
+      '摘掉的（delta_dropped 恰好这两条，不是被别的原因抹掉）',
+      not any(_P0_LINES_PEND.values()) and _P0_DD == ['ax0.lines', 'ax1.lines'],
+      'pending含lines=%r delta_dropped=%r delta=%r'
+      % (_P0_LINES_PEND, _P0_DD, (_P0_RA['inplace'][1] or {}).get('delta')))
+
+# ---- P0③：lines 真改（1.5 → 3.0）⇒ inplace 必须 pending、block 必须写掉 ----
+_P0_PEND_B = [_x for _x in ((_P0_RB['inplace'][1] or {}).get('pending') or [])]
+check('P0③ inplace：真改了 linewidth ⇒ rc≠0 且 ax0.lines 如实进 pending（写不了就得说），'
+      '而 ax1 的线宽没改、不许陪着一起进 pending',
+      _P0_RB['inplace'][0] != 0 and 'ax0.lines' in _P0_PEND_B
+      and 'ax1.lines' not in _P0_PEND_B,
+      'rc=%r reason=%r pending=%r'
+      % (_P0_RB['inplace'][0], (_P0_RB['inplace'][1] or {}).get('reason'), _P0_PEND_B))
+_P0_BLK_SRC = read(os.path.join(_P0_RB['block'][4], 'fig.py'))
+# 读回：块写完之后重新 describe 一遍，实测值必须真是 3.0（只看"源码里有这行"不够）。
+_p0_rc_rb, _p0_o_rb, _p0_mf_rb = _p0_cli(
+    ['describe', 'fig.py', '-o', 'rb.json'], _P0_RB['block'][4], _P0_SRC)
+_P0_LW = None
+try:
+    _p0_rb = json.load(open(os.path.join(_P0_RB['block'][4], 'rb.json'), encoding='utf-8'))
+    _P0_LW = float(_p0_rb['axes'][0]['lines'][0]['linewidth'])
+except Exception:                                                # noqa: BLE001
+    _P0_LW = None
+check('P0③b block：同一份参数必须真写掉（rc=0、pending 空、块里有 set_linewidth，'
+      '写回后重新 describe 读到 linewidth≈3.0）',
+      _P0_RB['block'][0] == 0
+      and ((_P0_RB['block'][1] or {}).get('pending') or []) == []
+      and (_P0_RB['block'][1] or {}).get('applied') is True
+      and 'set_linewidth(3' in _P0_BLK_SRC
+      and _P0_LW is not None and abs(_P0_LW - 3.0) < 1e-6,
+      'rc=%r pending=%r applied=%r set_linewidth=%r linewidth=%r'
+      % (_P0_RB['block'][0], (_P0_RB['block'][1] or {}).get('pending'),
+         (_P0_RB['block'][1] or {}).get('applied'),
+         'set_linewidth(3' in _P0_BLK_SRC, _P0_LW))
+
+# ---- P0④：auto 不撒谎（verified 非 null + 人读不许同时说两句互斥的话）----
+_p0_hA, _p0_hB = _p0_hits(_P0_RA['auto'][2]), _p0_hits(_P0_RB['auto'][2])
+check('P0④ auto（夹具 A，原位即可落地）：verified 非 null，且不许同时含「正在验证」与'
+      '「没有重跑」',
+      (_P0_RA['auto'][1] or {}).get('verified') is True and not all(_p0_hA),
+      'verified=%r hit=%r' % ((_P0_RA['auto'][1] or {}).get('verified'), _p0_hA))
+check('P0④b auto（夹具 B，这一档会真的退块）：退块后凭据仍非 null、人读仍不自相矛盾'
+      '（t26 的 L32：块那次走 no_change 早退时，凭据必须从原位那次继承）',
+      (_P0_RB['auto'][1] or {}).get('verified') is True and not all(_p0_hB),
+      'verified=%r layers=%r hit=%r'
+      % ((_P0_RB['auto'][1] or {}).get('verified'),
+         (_P0_RB['auto'][1] or {}).get('layers'), _p0_hB))
+# 降级档：`--no-verify` / `--verify-fast` **允许** verified 为 null（任务书明写豁免），
+# 但豁免的是"没验"，不是"不说" —— 必须如实披露被跳过的那一层：
+#   --no-verify      ⇒ 不许出现「正在验证」，必须有一句「没有重跑」
+#   --verify-fast    ⇒ 必须明说「只做了语法检查」（弱保证披露到位）
+# 注意（口径债，不在本单 inScope）：fast 档目前**同时**打印「正在验证（子进程重跑脚本，最长
+# 300s）」与「快速验证：…**没有重跑脚本**」，前一句在 fast 档是错的（文案层在 apply.py /
+# messages.py，已单独报给船长）。所以这一条只钉"如实披露 + 非 null"，不钉"两句不同时出现"
+# —— 后者由完整验证档（P0④/P0④b/P0④d）严钉，事故本身也只发生在那一档。
+_p0_deg = {}
+for _p0_flag in ('--no-verify', '--verify-fast'):
+    _p0_v = _p0_run(_P0_A[0], 'auto', _P0_SRC, extra=[_p0_flag])
+    _p0_deg[_p0_flag] = ((_p0_v[1] or {}).get('verified'), _p0_v[2])
+_p0_vv_n, _p0_oo_n = _p0_deg['--no-verify']
+_p0_vv_f, _p0_oo_f = _p0_deg['--verify-fast']
+check('P0④c 降级档如实披露：--no-verify ⇒ verified=None、不喊「正在验证」且明说「没有重跑」；'
+      '--verify-fast ⇒ verified=None 且明说「只做了语法检查」（弱保证不许含糊）',
+      _p0_vv_n is None and '正在验证' not in _p0_oo_n and '没有重跑' in _p0_oo_n
+      and _p0_vv_f is None and '语法检查' in _p0_oo_f,
+      'noverify(verified=%r, 正在验证=%r, 没有重跑=%r) fast(verified=%r, 语法检查=%r)'
+      % (_p0_vv_n, '正在验证' in _p0_oo_n, '没有重跑' in _p0_oo_n,
+         _p0_vv_f, '语法检查' in _p0_oo_f))
+
+# 驱动器（真复刻 L32 的形状，不靠 CLI 自然复现 —— 当前树上这个形状已被 t25 修掉，自然跑不出来）
+_p0_drv_j = _p0_drive(_P0_A[0], _P0_SRC, 'json')
+_p0_drv_h = _p0_drive(_P0_A[0], _P0_SRC, 'human')
+_p0_df = _t7_json(_p0_drv_j)
+_p0_dhit = _p0_hits(_p0_drv_h)
+check('P0④d 驱动器（auto 退块、块那次 no_change 没有 layers）⇒ 合并后 verified=True 且'
+      ' layers.rerun=True、人读只有一句「正在验证」',
+      (_p0_df.get('verified') is True
+       and ((_p0_df.get('layers') or {}).get('rerun') is True)
+       and (_p0_dhit == (True, False))),
+      'verified=%r layers=%r hit=%r'
+      % (_p0_df.get('verified'), _p0_df.get('layers'), _p0_dhit))
+
+# ---- P0⑤ 反向牙齿：三条都在**临时副本**里咬，仓库产品码一个字节不动 ----
+# t1：短路「基线摘除」（DELTA_ONLY=True→False）⇒ lines 回到 pending（P0② 会红）
+_P0_T1 = _p0_copy('t1')
+_p0_t1_ok = _p0_patch(os.path.join(_P0_T1, 'mpltweak', 'writeback.py'),
+                      'DELTA_ONLY = True', 'DELTA_ONLY = False')
+_p0_t1 = _p0_run(_P0_A[0], 'inplace', _P0_T1)
+_p0_t1_pend = (_p0_t1[1] or {}).get('pending') or []
+check('P0⑤t1【有牙】短路基线摘除（副本里 DELTA_ONLY=True→False）⇒ ax0.lines 回到 pending、'
+      'rc=1（即 P0② 会红）',
+      _p0_t1_ok and _p0_in_copy(_p0_t1[3], _P0_T1)
+      and _p0_t1[0] != 0 and 'ax0.lines' in _p0_t1_pend,
+      'patched=%r module=%r rc=%r pending=%r'
+      % (_p0_t1_ok, _p0_t1[3][-42:], _p0_t1[0], _p0_t1_pend))
+# t2：删掉「退块继承」（apply.py 里 `if res.get('layers') is None:` → `if False:`）
+#     ⇒ 驱动器里 verified=null、人读同时出现两句（P0④ 会红）
+_P0_T2 = _p0_copy('t2')
+_p0_t2_ok = _p0_patch(os.path.join(_P0_T2, 'mpltweak', 'apply.py'),
+                      "                if res.get('layers') is None:",
+                      '                if False:')
+_p0_t2_j = _p0_drive(_P0_A[0], _P0_T2, 'json')
+_p0_t2_h = _p0_drive(_P0_A[0], _P0_T2, 'human')
+_p0_t2_f = _t7_json(_p0_t2_j)
+_p0_t2_hit = _p0_hits(_p0_t2_h)
+check('P0⑤t2【有牙】删掉退块继承（副本里 apply.py 那行短路）⇒ 驱动器 verified=None、'
+      'layers 空、人读同时出现「正在验证」+「没有重跑」（即 P0④ 会红）',
+      _p0_t2_ok and _p0_in_copy(_p0_field(_p0_t2_j, 'APPLY_FILE'), _P0_T2)
+      and _p0_t2_f.get('verified') is None and not (_p0_t2_f.get('layers') or {})
+      and _p0_t2_hit == (True, True),
+      'patched=%r verified=%r layers=%r hit=%r'
+      % (_p0_t2_ok, _p0_t2_f.get('verified'), _p0_t2_f.get('layers'), _p0_t2_hit))
+# t3：只回退 L35 的过滤效果（`_delta_dropped_set = set(_delta_dropped)` → `set()`）
+#     ⇒ auto 报 best_effort、block 报 ok（P0① 会红）—— 断言 1 的独立性证明
+_P0_T3 = _p0_copy('t3')
+_p0_t3_ok = _p0_patch(os.path.join(_P0_T3, 'mpltweak', 'writeback.py'),
+                      '_delta_dropped_set = set(_delta_dropped)',
+                      '_delta_dropped_set = set()')
+_p0_t3a = _p0_run(_P0_A[0], 'auto', _P0_T3)
+_p0_t3b = _p0_run(_P0_A[0], 'block', _P0_T3)
+check('P0⑤t3【有牙·独立性】只回退 L35 的过滤（副本里 set(_delta_dropped)→set()）⇒ '
+      'auto=best_effort、block=ok（三档结论再次分裂，即 P0① 会红）',
+      _p0_t3_ok and _p0_in_copy(_p0_t3a[3], _P0_T3)
+      and (_p0_t3a[1] or {}).get('reason') == 'best_effort'
+      and (_p0_t3b[1] or {}).get('reason') == 'ok',
+      'patched=%r auto_reason=%r block_reason=%r auto_warn0=%r'
+      % (_p0_t3_ok, (_p0_t3a[1] or {}).get('reason'),
+         (_p0_t3b[1] or {}).get('reason'),
+         ((_p0_t3a[1] or {}).get('warnings') or [''])[0][:40]))
+
+for _p0_d in _P0_DIRS:
+    shutil.rmtree(_p0_d, ignore_errors=True)
+
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 
 sys.exit(1 if fail else 0)

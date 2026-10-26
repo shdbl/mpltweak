@@ -927,6 +927,11 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              'inplace_needs_block': bool(r.get('inplace_needs_block')),
              'pending': r.get('pending') or [],
              'inplace_pending': r.get('inplace_pending') or [],
+             # T7（t25）摘掉的字段必须**机器可读**：`delta_dropped` 是字段名清单，
+             # `delta` 是计数/原因（{'dropped': n} 或 {'skipped': 'baseline_unavailable'}）。
+             # 引擎（writeback）早就返回它们了，是这里的键集没透传（t25 复核发现的）。
+             'delta_dropped': r.get('delta_dropped') or [],
+             'delta': r.get('delta'),
              # S9（0.1.17）：**照着改**的指导（只在"函数里建图"那两类拒写时出现）。
              # agent 拿到这段就能直接改脚本，不用再从 pending 令牌反推原因。
              'refused_hint': r.get('refused_hint'),
@@ -1530,7 +1535,16 @@ def main(argv=None):
                                                # 状态文件"的留痕要跟着退块走 —— 否则默认
                                                # auto 路径的 --json 里就看不见"这次判定
                                                # 可能不新鲜"（见下面的合并）。
-                                               'probe_warnings')}
+                                               'probe_warnings',
+                                               # L32（t26）：**验证凭据**也得跟着走。
+                                               # 退块那次若因"值已经改对"走 no_change 早退，
+                                               # 它的 res 里**根本没有 layers** ⇒ 外层报
+                                               # layers={} / verified=null，而人读却打了
+                                               # "正在验证"（同一次运行里自相矛盾）。
+                                               # 真凭据在原位那次身上，必须继承。
+                                               'layers', 'verified', 'verify_mode',
+                                               'verify_passes', 'semantic',
+                                               'semantic_basis', 'anchor')}
                 # L0-4：原位那次**可能已经写过盘并备过份** —— 退块的第二次写盘必须
                 # 复用那份备份，否则固定名备份被覆盖成"改过一次"的中间态，
                 # `revert` 拿到的是半成品（主仓实测 20154193__RealSpace.py）。
@@ -1542,7 +1556,14 @@ def main(argv=None):
                 res['inplace_changes'] = _ip['changes'] or []
                 res['inplace_warnings'] = _ip['warnings'] or []
                 res['inplace_needs_block'] = bool(_ip['needs_block'])
+                # L34（t26）：`pending` 是**本次最终没落地**的那一份（一个键，别两套）；
+                # `inplace_pending` 只作"退块前原位那次的账"留档 —— 两个键的语义不再
+                # 互换（旧行为让 `--style auto` 把真账放进 inplace_pending、`pending`
+                # 留空，读 --json 的 agent 会误判"一项都没剩"）。
                 res['inplace_pending'] = _ip['pending'] or []
+                if not res.get('pending') and res.get('applied') is not True:
+                    # 块**什么都写不出去**（no_change/早退）⇒ 原位那份就是最终口径
+                    res['pending'] = list(res['inplace_pending'])
                 # S2①（0.1.16）：原位那次"删不掉旧验证状态文件"的留痕并进块结果 ——
                 # 这条说的是"退/不退块这个判定可能不新鲜"，退块之后更需要看见它。
                 if _ip.get('probe_warnings'):
@@ -1569,6 +1590,19 @@ def main(argv=None):
                                               or _ip.get('needs_block'))
                 if res.get('backup') is None and _ip_bk:
                     res['backup'] = _ip_bk      # 备份如实报告（盘上确实有）
+                # L32（t26）：**块自己没给凭据时才继承**（块真跑了并给了 layers 就以它为准，
+                # 那是"写完之后"的更新结果）。**以 layers 为唯一闸门、整组继承**：
+                #   * 块的 `layers is None` ⇒ 块这次没走到验证（no_change/早退）⇒
+                #     这 7 个字段整组用原位那次的（不逐键混搭，免得凭据来自两次运行）；
+                #   * 块的 `layers` 不为 None ⇒ 整组以块为准，一个字段都不碰。
+                if res.get('layers') is None:
+                    for _k in ('layers', 'verified', 'verify_mode', 'verify_passes',
+                               'semantic', 'semantic_basis', 'anchor'):
+                        if _ip.get(_k) is not None:
+                            res[_k] = _ip[_k]
+                # 人读/机器读同一口径：块没跑验证、而我们继承了原位的真凭据 ⇒
+                # `_verify_rerun_state` 看的是 `layers['rerun']`，这里已经填好，
+                # 那句"本次没有重跑脚本"自然不会再打出来。
         finally:
             if _sh is not None:
                 # F1：先把影子读出来（这份就是"真写回会写成什么"），再删影子 +
@@ -1973,7 +2007,7 @@ if __name__ == '__main__':
 #     _success_tail                                  446
 # §5 参数文件收集与失败错误码（行 467-504，1 个顶层函数）
 #     _all_params_files                              469
-# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-1012，16 个顶层函数）
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-1017，16 个顶层函数）
 #     _failure_code                                  542
 #     _failure_stage                                 569
 #     _failure_next_step                             588
@@ -1990,17 +2024,17 @@ if __name__ == '__main__':
 #     _finalize_next_step                            852
 #     _print_finalize_attribution                    860
 #     _emit_json                                     872
-# §7 验证失败归因与下一步（attribution / next_step）（行 1013-1118，4 个顶层函数）
-#     _classify_verify_failure                      1041
-#     _is_rerun_failure                             1075
-#     _print_attribution                            1090
-#     _next_step_cmd                                1108
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1119-1947，1 个顶层函数）
-#     main                                          1121
-#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1123
-#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1225
-#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1297
-#         §8.4 逐份参数文件：校验与拒写                         1334
-#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1500
-#         §8.6 收尾：mtime 同步与人读 / --json 输出           1844
+# §7 验证失败归因与下一步（attribution / next_step）（行 1018-1123，4 个顶层函数）
+#     _classify_verify_failure                      1046
+#     _is_rerun_failure                             1080
+#     _print_attribution                            1095
+#     _next_step_cmd                                1113
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1124-1981，1 个顶层函数）
+#     main                                          1126
+#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1128
+#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1230
+#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1302
+#         §8.4 逐份参数文件：校验与拒写                         1339
+#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1505
+#         §8.6 收尾：mtime 同步与人读 / --json 输出           1878
 # --- END AUTO NAV ---

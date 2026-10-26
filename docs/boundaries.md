@@ -18,7 +18,7 @@
 |---|---|
 | 要读大数据 / 依赖重环境 / 要联网或凭据 | 无头重跑会卡住或失败 |
 | 中途需要人工输入（`input()`、交互式选择） | 无头重跑直接堵死 |
-| 需要在特定交互后端才有意义的图 | 验证**默认** Agg 无头，但没"钉死"：重跑层只设 `MPLBACKEND=Agg` 就裸跑子进程（`writeback.py:7164 # MPLBACKEND` 设 env、`writeback.py:7167 # cmd` 裸跑），脚本自己写 `matplotlib.use('TkAgg')` 能顶回去 ⇒ 无头机器上跑不通、有桌面的机器上可能真弹窗（采集 / 语义层另把后端钉成 Agg：verify.py:875 # matplotlib.use） |
+| 需要在特定交互后端才有意义的图 | 验证**默认** Agg 无头，但没"钉死"：重跑层只设 `MPLBACKEND=Agg` 就裸跑子进程（`writeback.py:7196 # MPLBACKEND` 设 env、`writeback.py:7199 # cmd` 裸跑），脚本自己写 `matplotlib.use('TkAgg')` 能顶回去 ⇒ 无头机器上跑不通、有桌面的机器上可能真弹窗（采集 / 语义层另把后端钉成 Agg：verify.py:875 # matplotlib.use） |
 
 **跑得久不算"不适用"**：脚本慢只意味着这次写回**等得久一点**，机制上没有任何一条会因为脚本慢就不成立
 （单次重跑的默认超时是 300 秒，`--timeout` 可放宽；超时不会被判成写坏 —— 保留写回并提示手动确认）。

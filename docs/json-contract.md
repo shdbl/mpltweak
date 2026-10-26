@@ -47,14 +47,14 @@
 | `style` | string | `auto` / `inplace` / `block`；**永不为 null** —— 没走过写回时是"请求的通道"，走过写回时是"实际通道" |
 | `applied` | bool | 磁盘**是否真的改了**；`false` 时不许把文案读成"已写回" |
 | `changes` | array | 真正落地的字段令牌，如 `["ax0.pos", "ax1.title_fontsize"]` |
-| `block_lines` | int | 块通道写进去的**整块总行数**（含两行标记、生成时间与说明行）—— **不是"改了几行代码"**，也**没有固定值**（单字段实测 4 / 5 / 6 都有）；原位通道恒 `0`。想知道改了什么看 `changes` |
+| `block_lines` | int | **块通道**写进去的**整块总行数**（含两行标记、生成时间与说明行）—— **不是"改了几行代码"**，也**没有固定值**（单字段实测 4 / 5 / 6 都有）；**原位通道恒 `0`**（所以同一夹具 `auto`/`inplace` = `0`、`block` > 0，这是**通道差异**，不是结论不同）。想知道改了什么看 `changes` |
 | `auto_fallback` | bool | 这次是否由 `auto` 自动退到了块模式 |
 | `inplace_reason` | string or null | **原位那一趟**的落位结果（口径同 `reason`） |
 | `inplace_changes` | array | 原位那一趟真正改到的字段 |
 | `needs_block` | bool | **这次 apply 之后**是否仍有字段没落地（退过块且都落地了就是 `false`） |
 | `inplace_needs_block` | bool | 原位那一趟是否因为写不了而退块 |
-| `pending` | array | 这次仍然没落地的字段令牌清单（**块路径**这一份；原位路径那份在 `inplace_pending`，**别把两列相加当总数**） |
-| `inplace_pending` | array | **原位**那一趟写不了的字段清单（`auto_fallback` 时用来看"为什么退块"；与 `pending` 是**两条通道各自的账** —— 同数时是镜像，不同数时各表其事） |
+| `pending` | array | **本次最终**还没落地的字段令牌清单（唯一口径）。`auto` 退块时它是**退块之后**剩下的账；判"这次写完没"看它，**别把 `inplace_pending` 加进来** |
+| `inplace_pending` | array | **退块之前、原位那一趟**写不了的字段清单（**留档**，不代表最终结果）：`auto` 退块时用它看"为什么退块"；`--style inplace` 单跑时它通常是 `[]`，账在 `pending` 里。**两者禁止相加** |
 | `refused_hint` | string or null | 拒写时的**照着改**指导（0.1.17 起）。**0.1.18 起触发面变了**：只对"引擎能点名"的拒写生成（建轴点与参数条数对不上、载体名不是恰好一次模块层调用…）；`fig.axes[i]` / `plt.gca()` / 函数里建图**已不再必然拒写**（判据表见 [verify.md](verify.md)） |
 | `anchor` | string or null | 块的插入位置标记（如 `before`） |
 | `attempts` | array | 块落点尝试记录，每项 `{anchor, line, ok, semantic}` |
@@ -62,7 +62,7 @@
 | `err` | string or null | 失败原因文本（给人读；机器分支用 `reason` / `attribution`） |
 | `external_modified` | bool | 验证期间脚本被**外部**改过（已回滚、未写回）；正常路径恒 `false` |
 | `backup` | string or null | 备份文件路径；`--diff` 预览时**恒 `null`**（预览不复制备份，不给指向不存在文件的路径） |
-| `verified` | bool or null | 重跑验证结论；`null` = 没跑 |
+| `verified` | bool or null | 重跑验证结论。**默认档（`auto` / `inplace` / `block`，全验证）真正写过时不是 `null`** —— 退块那一次也继承原位那趟的结论；`null` 只出现在：`--no-verify` / `--verify-fast` / `--no-semantic`、`no_change` 与 `preview` 这类**没写盘就早退**的路径、以及 `refused`。要判"这次写没写"别用它，看 `applied` |
 | `verify_mode` | string or null | `fast`（快速档）或 `null`（其余） |
 | `verify_passes` | int | 写回后为验证跑了几遍：`1` = 默认单遍，`2` = 单遍取不到目标图状态已回退两遍，`0` = 这次没为验证跑脚本 |
 | `semantic_basis` | string | 语义判定的依据：`live+savefig` / `live` / `''`（空串 = 这次没有语义判定依据） |
@@ -78,6 +78,8 @@
 | `preview_bytes` | int or null | 将要写出的字节数 |
 | `next_step` | string or null | 逐文件的下一步（只覆盖"验证失败归因"这一档） |
 | `dry_run` | bool | **不在上面的显式键集里**：它由 `--dry-run` 通过"额外平铺"塞进**每条** `files[]` |
+| `delta_dropped` | array（**恒在**） | 因为"**源码本来就是那个值**"而没有写进去的字段令牌（如 `["ax0.lines", "ax1.lines"]`）。`[]` 有两种含义——这一档没算基线，或算了但一个都没摘；**要区分请看 `delta`** |
+| `delta` | object or null | `{"dropped": N}` = 算了基线、摘掉 N 个字段（与 `delta_dropped` 长度一致）；`{"skipped": "baseline_unavailable"}` = 想算但基线取不到（脚本跑不通 / 超时，退回老口径）；**`null` = 这一档压根不算基线** |
 
 ## 值域表
 
@@ -97,6 +99,62 @@
 
 **两种"没写"对用户是两件事**：`nothing_applied` = 根本没定位到目标（改脚本结构，或按 `--snippet` 手改）；
 `writeback_failed` = 改过又退回（"以为改了、其实没改"，读 `err` / `warnings`，**别当成已写回**）。
+
+### `reason` 四档与两条"没写"（0.1.19）
+
+机器分支只认 `reason` 配 `error_code`：
+
+| `reason` | `error_code` | 含义 | 源码动了没 |
+|---|---|---|---|
+| `ok` | ——（无） | 该写的都写了、验证通过 | 动了 |
+| `best_effort` | ——（无） | **能写、没全写**：能落地的都落了，其余在 `pending` | 动了（`applied: true`）；`applied: false` 时是"一个字节都没写" |
+| `refused` | `nothing_applied` | **拒写**：静态层面就证不出目标 | **一个字节都没动** |
+| `fail` | `writeback_failed` | **写了又回滚**：重跑回比不达标 | 还原成原样 |
+
+**`best_effort` 不等于被拒**：它只说"能写的都写了、剩下的进清单"。判"写没写"看 `applied` / `changes`
+（块路径落地时 `changes` 可能是 `[]`，那种情况以 `applied: true` + 文件 sha256 变了为准）；
+判"成没成"看 `ok` / `rc` / `error_code`。
+
+**两条"没写"是两件事**：`nothing_applied` = 根本没定位到目标（改脚本结构，或按 `--snippet` 手改）；
+`writeback_failed` = 改过又退回（"以为改了、其实没改"，读 `err` / `warnings`，**别当成已写回**）。
+
+### 三条通道的结论一致（0.1.19 起）
+
+同一份夹具、同一个改动意图（只改一根轴的位置 + 一个字号），`--style auto` / `inplace` / `block`
+给出**相同的** `{rc, reason, applied, pending}` —— 本机实测：
+
+| `--style` | rc | `reason` | `applied` | `verified` | `pending` | `warnings` |
+|---|---|---|---|---|---|---|
+| `auto` | 0 | `ok` | true | true | `[]` | 0 |
+| `inplace` | 0 | `ok` | true | true | `[]` | 0 |
+| `block` | 0 | `ok` | true | true | `[]` | 0 |
+
+**"一致"指结论一致，不是载荷逐字节相同。** 下面三处是**通道差异**，与"一致"并不冲突，单独读：
+
+| 键 | 谁会看到它 |
+|---|---|
+| `block_lines` | 只有**块通道**有值（同一夹具实测：`auto` / `inplace` = `0`，`block` = `4`） |
+| `inplace_pending` | 只有**退块那次**才留档；`inplace` 单跑时通常为 `[]`（账在 `pending`） |
+| `delta` / `delta_dropped` | 只有**会跑脚本的档位**才有（见下节） |
+
+**降级档不是"不一致"，是"没有基线"**：`--verify-fast` / `--no-verify` / `--no-semantic` **不跑你的脚本**
+⇒ 同一夹具在这三档下仍会 `pending: ["ax0.lines", "ax1.lines"]`（源码里没有对应写法，确实写不了）；
+`--style inplace` 在这档会 `rc=1` + `reason=best_effort`（原位写不了那两项），`auto` 则退块落地
+（`rc=0`、`block_lines=7`）。**这是设计，不是缺口径。**
+
+> 已知**文案**问题（0.1.20 修）：`--verify-fast` 的人读输出会同时打印「正在验证（…）」与「本次没有重跑脚本」。
+> 后半句是事实（fast 档确实不重跑），前半句是文案错。`--json` 侧口径不受影响：`layers.rerun = null`、`verified = null`。
+
+### `delta` / `delta_dropped`：哪些字段"本来就没变"所以没写
+
+- **什么时候算基线**：默认档（`apply --write`）与 `--diff` —— 这两档本来就要跑你的脚本；
+  `--verify-fast` / `--no-verify` / `--no-semantic` **不算**（它们的承诺就是不跑脚本）⇒ 这档 `delta` 是 `null`、
+  `delta_dropped` 是 `[]`。
+- **`no_change` 轮也会带非零 `dropped`**（本机实测 2 项：`ax0.lines` / `ax1.lines`）：那时它只说明
+  "这些字段源码本来就是那个值"，本次**什么都没改**（`applied: false`、`rc: 0`）⇒ **可忽略**。
+- **无基线档下"等值"也会写块**：同一份参数原样回写，默认档是 `no_change` / `applied: false`（0 字节）；
+  `--verify-fast` 下会 `applied: true` 并写一个块（本机实测 7 行）—— 那是"不跑脚本就证明不了现值"的代价。
+- 判"省了什么"看 `delta_dropped`；判"这次写没写"看 `applied`。
 
 ### `stage`：六个值
 

@@ -4534,15 +4534,6 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
         # RC-9：changes 必须与实际改动一致。只改画布尺寸时它过去是空的 ——
         # agent 从 --json 里看不出"到底改了什么"，auto 的退块判定也被它带偏（E1）。
         changes.append('figsize')
-    # 无法原位写回、但参数里有目标值的项 → 聚合成警告（不静默）
-    if skipped:
-        by_axis: Dict[int, set] = {}
-        for i, f, _v in skipped:
-            by_axis.setdefault(i, set()).add(f)
-        for i in sorted(by_axis):
-            warnings.append(_msg.t(
-                'wb_inplace_skipped', ax=i,
-                fields=_msg.t('items_sep').join(sorted(by_axis[i]))))
     # ---- 逐字段三态判据（T15）------------------------------------------------
     # 每个"有目标值"的字段只有三种状态：
     #   ① 已原位落地（covered）
@@ -4552,6 +4543,47 @@ def _writeback_inplace(script, src, tree, data, params_path, verify,
     # 旧判据是"原位一个字段都没落地才退块"，于是 INT-2 的 B 情形（figsize 落地了、
     # pos 写不了）被漏掉：rc=0 + applied=true，pos 静默丢失（只剩一条 warnings）。
     _pending = _pending_fields(skipped)
+    # L33 / P0-2：原位通道也走 T7 基线差分 —— 「目标值 == 当前脚本本来的值」的字段不算
+    # pending（例：describe 给每个 plot() 都导出默认 lines，原位写不了它，旧行为 = 只要
+    # 改了别的字段就 rc=1）。**只在轴身份已可信时才摘**：T8 闸门（建轴点清单与参数轴条数
+    # 对得上）没过 ⇒ 一个字段都不摘，pending 与拒绝写回原样保留（T8②/T8③ 的 fail-closed）。
+    # 档位：仅默认档（verify+semantic）与 --diff 预演；--verify-fast / --no-verify /
+    # --no-semantic 永不摘。基线取不到 ⇒ 不摘。判据复用 _needed_minus_baseline。
+    _delta_dropped: List[str] = []
+    _delta_base: Dict[str, Any] = {}
+    _fi_d = data.get('fig_index')
+    if (DELTA_ONLY and _pending and (not fast_check)
+            and bool(_PREVIEW or (verify and semantic))
+            and ((True, '', 0) if not AXIS_IDENTITY else
+                 _axis_identity_gate(tree, _fi_d if isinstance(_fi_d, int) else 0,
+                                     data))[0]):
+        _bpar, _bperr = _baseline_params(
+            script, src, encoding, python,
+            _fi_d if isinstance(_fi_d, int) else None, timeout)
+        if _bpar is None:
+            _delta_base['skipped'] = 'baseline_unavailable'
+            warnings.append(_msg.t('wb_delta_no_baseline', err=_bperr or ''))
+        else:
+            _pending, _delta_dropped = _needed_minus_baseline(_pending, data, _bpar)
+            _delta_base['dropped'] = len(_delta_dropped)
+    if _delta_dropped or _delta_base:
+        res['delta_dropped'] = list(_delta_dropped)
+        res['delta'] = dict(_delta_base)
+    # L35（t27）：「未原位应用」这条聚合必须放在**基线摘除之后**，并跳过被摘掉的字段 ——
+    # 被摘掉的含义是"源码本来就是那个值"（T7 的逐字段相等证明），不是"写不了"。
+    # 照旧打出来既误导用户，又把 reason 从 ok 抬成 best_effort（本函数末尾
+    # `BEST_EFFORT if warnings else OK`），于是同一份参数在三档（auto/inplace/block）
+    # 得出不同结论。反向验证：把 _delta_dropped_set 置空 ⇒ 假警告与 best_effort 回来。
+    _delta_dropped_set = set(_delta_dropped)
+    _skip_by_axis: Dict[int, set] = {}
+    for _si, _sf, _sv in skipped:
+        if 'ax%d.%s' % (_si, _sf) in _delta_dropped_set:
+            continue
+        _skip_by_axis.setdefault(_si, set()).add(_sf)
+    for _si in sorted(_skip_by_axis):
+        warnings.append(_msg.t(
+            'wb_inplace_skipped', ax=_si,
+            fields=_msg.t('items_sep').join(sorted(_skip_by_axis[_si]))))
     # FIX(Bug 6)：图级尺寸目标若**无法原位落地**（源码里没有可写的 figsize=），
     # 必须与轴级 pending 同等对待 —— 否则这里会得出 _needs=False ⇒ reason=no_change，
     # 而 apply 的 auto 见到 no_change 就不退块，用户改的尺寸被静默忽略
@@ -8357,82 +8389,82 @@ def writeback(script, data, params_path, verify=True, python=None,
 #     _pv_live_field                                4173
 #     _unlink_probe                                 4303
 #     _pending_vs_live                              4317
-# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4408-4835，2 个顶层函数）
+# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4408-4867，2 个顶层函数）
 #     _figsize_from_source                          4410
 #     _writeback_inplace                            4465
-# §17 调整块：字段需求与「块表达不了」清单（行 4836-5302，15 个顶层函数）
-#     _dup_names_in_fig_assign                      4856
-#     _dup_name_set                                 4881
-#     _drop_dup_var_names                           4889
-#     _grid_size                                    4916
-#     _runtime_axes_count                           4937
-#     _pos_block_target_ok                          4986
-#     _text_axis_name                               5008
-#     _needed_block_fields                          5026
-#     _num_close                                    5117
-#     _val_same                                     5137
-#     _axes_by_index                                5157
-#     _needed_minus_baseline                        5167
-#     _figsize_same_as_baseline                     5195
-#     _baseline_params                              5201
-#     _block_unexpressed_fields                     5234
-# §18 调整块：mappable 引用、作用域与锚点下沉（行 5303-6405，34 个顶层函数）
-#     _mappable_ref                                 5305
-#     _node_scope                                   5373
-#     _direct_assign_linenos                        5387
-#     _rebound_before                               5399
-#     _name_still_bound                             5438
-#     _func_anchor_text                             5474
-#     _walk_own                                     5492
-#     _own_returns                                  5503
-#     _own_output_calls                             5510
-#     _is_method_scope                              5519
-#     _func_call_sites                              5532
-#     _func_return_anchor                           5545
-#     _figsize_source_dynamic                       5630
-#     _assign_names_of                              5646
-#     _assign_target_of                             5657
-#     _unpacked_axis_names                          5665
-#     _inline_cax_of                                5704
-#     _mosaic_keys                                  5722
-#     _grid_squeeze                                 5768
-#     _subscript_verdict                            5778
-#     _grid_element                                 5827
-#     _fig_receiver_names                           5836
-#     _ravel_receiver                               5861
-#     _unpack_axis_names                            5873
-#     _imported_module_names                        5908
-#     _implicit_creator_is_module_call              5921
-#     _axes_binding_entries                         5941
-#     _pos_cond_scope                               6131
-#     _pos_identity_verdict                         6148
-#     _caller_fig_name                              6249
-#     _pos_why_text                                 6305
-#     _call_sig                                     6335
-#     _anchor_positions                             6340
-#     _prune_refused                                6367
-# §19 调整块：pyplot 定位可证与目标表达式表（行 6406-6801，6 个顶层函数）
-#     _gcf_provable                                 6408
-#     _plt_bound_as_plt                             6445
-#     _implicit_gcf_verdict                         6466
-#     _single_figure_attribution                    6535
-#     _numbered_fig_expr                            6582
-#     _block_targets                                6667
-# §20 调整块生成：render_block（行 6802-7001，1 个顶层函数）
-#     render_block                                  6804
-# §21 调整块插入 / 替换（幂等与缩进）（行 7002-7147，7 个顶层函数）
-#     _unclosed_block_lines                         7004
-#     _meta_path                                    7024
-#     _block_spans                                  7030
-#     _existing_span                                7042
-#     _reindent                                     7072
-#     _norm_ts                                      7083
-#     insert_or_replace                             7089
-# §22 验证：无头重跑与一遍式验证（行 7148-7379，4 个顶层函数）
-#     verify_run                                    7150
-#     _verify_script                                7182
-#     _position_axes                                7270
-#     position_write_needed                         7282
-# §23 写回入口：writeback（行 7380-8211，1 个顶层函数）
-#     writeback                                     7382
+# §17 调整块：字段需求与「块表达不了」清单（行 4868-5334，15 个顶层函数）
+#     _dup_names_in_fig_assign                      4888
+#     _dup_name_set                                 4913
+#     _drop_dup_var_names                           4921
+#     _grid_size                                    4948
+#     _runtime_axes_count                           4969
+#     _pos_block_target_ok                          5018
+#     _text_axis_name                               5040
+#     _needed_block_fields                          5058
+#     _num_close                                    5149
+#     _val_same                                     5169
+#     _axes_by_index                                5189
+#     _needed_minus_baseline                        5199
+#     _figsize_same_as_baseline                     5227
+#     _baseline_params                              5233
+#     _block_unexpressed_fields                     5266
+# §18 调整块：mappable 引用、作用域与锚点下沉（行 5335-6437，34 个顶层函数）
+#     _mappable_ref                                 5337
+#     _node_scope                                   5405
+#     _direct_assign_linenos                        5419
+#     _rebound_before                               5431
+#     _name_still_bound                             5470
+#     _func_anchor_text                             5506
+#     _walk_own                                     5524
+#     _own_returns                                  5535
+#     _own_output_calls                             5542
+#     _is_method_scope                              5551
+#     _func_call_sites                              5564
+#     _func_return_anchor                           5577
+#     _figsize_source_dynamic                       5662
+#     _assign_names_of                              5678
+#     _assign_target_of                             5689
+#     _unpacked_axis_names                          5697
+#     _inline_cax_of                                5736
+#     _mosaic_keys                                  5754
+#     _grid_squeeze                                 5800
+#     _subscript_verdict                            5810
+#     _grid_element                                 5859
+#     _fig_receiver_names                           5868
+#     _ravel_receiver                               5893
+#     _unpack_axis_names                            5905
+#     _imported_module_names                        5940
+#     _implicit_creator_is_module_call              5953
+#     _axes_binding_entries                         5973
+#     _pos_cond_scope                               6163
+#     _pos_identity_verdict                         6180
+#     _caller_fig_name                              6281
+#     _pos_why_text                                 6337
+#     _call_sig                                     6367
+#     _anchor_positions                             6372
+#     _prune_refused                                6399
+# §19 调整块：pyplot 定位可证与目标表达式表（行 6438-6833，6 个顶层函数）
+#     _gcf_provable                                 6440
+#     _plt_bound_as_plt                             6477
+#     _implicit_gcf_verdict                         6498
+#     _single_figure_attribution                    6567
+#     _numbered_fig_expr                            6614
+#     _block_targets                                6699
+# §20 调整块生成：render_block（行 6834-7033，1 个顶层函数）
+#     render_block                                  6836
+# §21 调整块插入 / 替换（幂等与缩进）（行 7034-7179，7 个顶层函数）
+#     _unclosed_block_lines                         7036
+#     _meta_path                                    7056
+#     _block_spans                                  7062
+#     _existing_span                                7074
+#     _reindent                                     7104
+#     _norm_ts                                      7115
+#     insert_or_replace                             7121
+# §22 验证：无头重跑与一遍式验证（行 7180-7411，4 个顶层函数）
+#     verify_run                                    7182
+#     _verify_script                                7214
+#     _position_axes                                7302
+#     position_write_needed                         7314
+# §23 写回入口：writeback（行 7412-8243，1 个顶层函数）
+#     writeback                                     7414
 # --- END AUTO NAV ---

@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## 0.1.19
+
+### 这一版用户能感知到的变化
+
+- **只调一根轴的位置 / 一个字号时，不再报"没全写"、也不再给一条假提醒**：`describe` 会给每条 `plot()` 导出它当次运行时的默认线属性（线宽 1.5 / 默认颜色…），原位写不了这类字段 —— 0.1.18 因此把**任何一次**改动都记成"有字段没落地"（`rc=1` / `reason=best_effort` / `pending=["ax0.lines", "ax1.lines"]`），还附一条「未原位应用」。现在写之前先拿**当前脚本自己跑出来的值**比一次：与源码现状相同的字段**不再算没落地**。实测只改一根轴的位置：`rc=0` / `reason=ok` / `pending=[]`。**三条通道给同一结论**：`--style auto` / `inplace` / `block` 在同一夹具、同一改动下都是 `rc=0` / `ok` / `applied=true` / `pending=[]`（差异只在"块行数 / 退块留档"这类**通道差异**上，见 [docs/json-contract.md](docs/json-contract.md)）。
+- **`--style auto` 退块时不再"说自己没验证、其实验证过"**：退到调整块的那一次会继承原位那趟的验证凭据，`--json` 的 `verified` / `layers` / `verify_passes` 如实给出；人读输出也不会再同时出现"正在验证（…）"与"本次没有重跑脚本"这两句自相矛盾的话。
+- **`--json` 里多了"哪些字段因为本来就没变而没写"**：新增 `delta_dropped`（字段清单，如 `["ax0.lines", "ax1.lines"]`）与 `delta`（`{"dropped": N}`；基线取不到时 `{"skipped": "baseline_unavailable"}`；**这一档不算基线**时是 `null`）。这两把钥匙只在"会跑你的脚本"的档位出现（默认档与 `--diff`）；`--verify-fast` / `--no-verify` / `--no-semantic` 不算基线。口径与两种边界（`no_change` 轮 `dropped` 非零可忽略、`[]` 与 `null` 的区别）见 [docs/json-contract.md](docs/json-contract.md)。
+
+### 维护可见（不改变日常用法，但让"报告"和"实际发生了什么"对得上）
+
+- **`pending` 只有一种解释**：**本次最终**没落地。退块前"原位那一趟"的账留在 `inplace_pending`（**留档**，不代表最终结果），两者**禁止相加**。
+- **退块继承验证凭据**：`layers` / `verified` / `verify_mode` / `verify_passes` / `semantic` / `semantic_basis` 从原位那次继承（块自己给了才覆盖），`anchor` 只在块没落块时沿用原位。
+- **基线接进原位通道的门控**：只在**会跑脚本**的档位（默认档 + `--diff`）算基线，且**挂在轴身份闸门上** —— 建轴点与参数轴条数对不上时一个字段都不摘，拒绝照旧保留（fail-closed）。
+- **新增 12 条 P0 断言 + 3 条反向"牙齿"**（`tests/test_writeback.py`，+352 行）：把"三档结论一致""摘掉的字段不得留下假提醒""轴身份闸门没过不许摘"都钉成可跑断言。
+- **判据表本身没变**：`docs/verify.md` 的「作用域 × 建轴方式 → 能不能写」**结论未变**，只在表头标明"0.1.19 起三档结论一致"这一条报告口径。
+- **已知文案问题（0.1.20 修）**：`--verify-fast` 的人读输出仍会打印「正在验证（子进程重跑脚本，最长 300s）」，而这一档其实不重跑（`--json` 侧 `layers.rerun = null` / `verified = null` 是对的）。登记在 `MAINTENANCE.md` §27.13 的 L35。
+- **文档引用面**：默认面 / 维护面均按**符号真身**重锚（默认面 16 条 + 维护面 12 条；`check_doc_refs` 两面 `rc=0`、可疑 0）。
+
+### 数字
+
+- **三档一致（实测，官夹具：只改一根轴的位置）**：`auto` / `inplace` / `block` = `rc=0` / `reason=ok` / `applied=true` / `verified=true` / `pending=[]` / `warnings=0`；`block_lines` = **0 / 0 / 4**（通道差异）。
+- **"本来就没变"的字段被摘掉**：`delta_dropped` = `["ax0.lines", "ax1.lines"]`（2 项）、`delta={"dropped": 2}`；原样回写（不改参数）= `reason=no_change` / `applied=false` / `delta={"dropped": 2}`（此时 `dropped` 无意义，可忽略）。
+- **降级档（无基线，设计如此）**：`--verify-fast` 下同一夹具 `delta=null`、`delta_dropped=[]`、`pending` / `inplace_pending` 仍列出 `ax0.lines` / `ax1.lines`；`--style inplace` 这档是 `rc=1` / `best_effort`（`applied=true`，只是没全写），`auto` 退块落地 `rc=0` / `block_lines=7`。
+- **源码规模（`bytes.count` 口径，落仓时现取）**：`writeback.py` **8470** 行（sha16 `0127b0f611062a4b`）/ `apply.py` **2040** 行（`ac512f069cca6dac`）/ `tests/test_writeback.py` **10832** 行（`25d441fcef224dfd`）。
+- **套件计数**：`SUITES` **34** 条（本版未新增套件，断言加在既有套件里）。
+- **全套件**：发版前两趟读数 **PASS 771 / FAIL 0**（`tests/test_suites.py` 包装器跑法；两趟由 harness / codex-wb 各跑一次）；`pytest -q tests/test_suites.py -k apply` **2 passed**。
+
 ## 0.1.18
 
 ### 这一版用户能感知到的变化
