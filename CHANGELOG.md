@@ -24,6 +24,7 @@
 - **"本来就没变"的字段被摘掉**：`delta_dropped` = `["ax0.lines", "ax1.lines"]`（2 项）、`delta={"dropped": 2}`；原样回写（不改参数）= `reason=no_change` / `applied=false` / `delta={"dropped": 2}`（此时 `dropped` 无意义，可忽略）。
 - **降级档（无基线，设计如此）**：`--verify-fast` 下同一夹具 `delta=null`、`delta_dropped=[]`、`pending` / `inplace_pending` 仍列出 `ax0.lines` / `ax1.lines`；`--style inplace` 这档是 `rc=1` / `best_effort`（`applied=true`，只是没全写），`auto` 退块落地 `rc=0` / `block_lines=7`。
 - **源码规模（`bytes.count` 口径，落仓时现取）**：`writeback.py` **8470** 行（sha16 `0127b0f611062a4b`）/ `apply.py` **2040** 行（`ac512f069cca6dac`）/ `tests/test_writeback.py` **10832** 行（`25d441fcef224dfd`）。
+- **判据表 22 格复跑（同一批夹具，181.7 s）**：**不一致 0**；分布未变（能写 **15** / 拒写 **4** / 实测拒写 **3**）。两处读数随口径变化：`r5` 的逐轴原因 **4 → 2**（"源码本来就是那个值"的两项被基线摘掉）；`r6` / `r7` / `r8` 的 `reason` 由 `best_effort` → **`ok`**（被摘字段不再触发那条聚合提醒）。
 - **套件计数**：`SUITES` **34** 条（本版未新增套件，断言加在既有套件里）。
 - **全套件**：发版前两趟读数 **PASS 771 / FAIL 0**（`tests/test_suites.py` 包装器跑法；两趟由 harness / codex-wb 各跑一次）；`pytest -q tests/test_suites.py -k apply` **2 passed**。
 
