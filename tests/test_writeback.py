@@ -10511,9 +10511,21 @@ _P0_DIRS = []
 
 
 def _p0_env(src):
-    """子进程环境：PYTHONPATH=被测 src（editable 安装下只有它能决定加载哪一份）。"""
-    return dict(os.environ, PYTHONPATH=src, MPLBACKEND='Agg', MPLTWEAK_LANG='zh',
-                PYTHONIOENCODING='utf-8')
+    """子进程环境：PYTHONPATH=被测 src（editable 安装下只有它能决定加载哪一份）。
+
+    **必须"先拷贝、再逐项赋值"**（与 `test_sandbox.py::_pin_child_env`、
+    `test_exotic_axes.py::_env()` 同形）：hygiene 的子进程 env 级联闸门
+    （`tests/test_hygiene.py::test_every_child_process_call_site_is_pinned_or_ledgered`）
+    只认函数体里的**赋值**或字面量 dict，**看不进 `return dict(os.environ, MPLBACKEND='Agg')`**
+    ⇒ 会被判 unresolved 并让 hygiene 红。这个坑 t20（`test_exotic_axes._env()`）踩过一次，
+    t27 的 `_p0_env` 又踩了一次；改回本形之前的两种写法都过不了闸门。
+    """
+    env = dict(os.environ)
+    env['PYTHONPATH'] = src
+    env['MPLBACKEND'] = 'Agg'
+    env['MPLTWEAK_LANG'] = 'zh'
+    env['PYTHONIOENCODING'] = 'utf-8'
+    return env
 
 
 def _p0_cli(args, cwd, src):

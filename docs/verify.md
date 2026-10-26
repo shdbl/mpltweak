@@ -326,9 +326,12 @@ CI 还有一条更省事的静态门禁：`mpltweak check fig1.py --static`（**
 
 ### 先看这张表：**作用域 × 建轴方式 → 能不能写**
 
-> **0.1.19 起，同一夹具的三档 `auto` / `inplace` / `block` 给出相同的 `{rc, reason, applied, pending}`**
+> **0.1.19 起，在"每个要改的字段都写得进去"的夹具上，三档 `auto` / `inplace` / `block` 给出相同的 `{rc, reason, applied, pending}`**
 > （实测：都是 `rc=0` / `reason=ok` / `applied=true` / `pending=[]`）；本表记录的"**能不能写**"结论**未变** ——
 > 0.1.19 改的是**报告口径**（谁被记成没落地、三档怎么说同一件事），不是判据。
+> **边界**：一旦改到"源码里确实没有对应写法"的字段（例：给 `ax.plot()` 改线宽），`inplace` 会如实报
+> `best_effort` + 该字段留在 `pending` + `rc=1`（`applied` 仍为 `true`），`auto` / `block` 退块写进去报 `ok` ——
+> 那是**通道能力差异，不是口径不一致**；实测三档对照见 [json-contract.md](json-contract.md) 的「三条通道」一节。
 
 **这张表是"我这种写法到底能不能写"的唯一出处。** 别的文档（README / [agent.md](agent.md) / [boundaries.md](boundaries.md)）只写一句概括再指向这里——例子会漂，这张表跟着探针走。
 
