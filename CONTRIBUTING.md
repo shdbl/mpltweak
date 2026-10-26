@@ -112,6 +112,23 @@ check, …). The two original ones:
   *other* reason (UTF-8 consumers): emit through `messages.emit_json` (fd-level UTF-8) instead of
   `print()`.
 
+### Pin child-process env as "copy first, then assign item by item"
+
+The hygiene ratchet (`test_every_child_process_call_site_is_pinned_or_ledgered`) resolves `env=` by
+reading **assignments in the function body** (or a literal dict). It **cannot see into**
+`return dict(os.environ, MPLBACKEND='Agg', …)`, so that shape is judged `unresolved` and turns
+hygiene red **even though the backend really is pinned at runtime**. Two suites have hit this already
+(`test_exotic_axes._env()` in t20, `_p0_env()` in t27). The shape that passes:
+
+```python
+env = dict(os.environ)      # copy first
+env['MPLBACKEND'] = 'Agg'   # then assign item by item (this is what the gate reads)
+env['PYTHONPATH'] = src
+return env
+```
+
+See `tests/test_sandbox.py::_pin_child_env` for the canonical version.
+
 ### Every fix needs a negative test (reverse verification)
 
 A fix is only accepted together with a test that would have **failed before it**. The cheap and
