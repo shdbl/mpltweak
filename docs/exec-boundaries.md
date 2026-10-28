@@ -42,7 +42,7 @@
 | 导入路径 | 执行期间脚本所在目录会被插进 `sys.path` —— 插的是**子进程**的，你的进程不受影响 |
 | 全局 rcParams | `describe` / `check` / `apply --write` 的验证都跑在**子进程**里，脚本改过的全局 `rcParams` 不会留到你的进程（库级实测：`collect_isolated` 前后父进程 `font.size` 10.0 → 10.0，`sys.path` / `sys.modules` 也无残留）。只有**开窗**仍是本进程 |
 | 退出码（**子进程**命令：`describe` / `check` / `apply` 验证重跑 / `mcp`） | 脚本自己调 `sys.exit` / `os._exit` **不会**带走命令：执行在子进程里（`collect_isolated` 起子进程 verify.py:1152 # subprocess.run、重跑层 writeback.py:7199 # cmd），工具照样输出结果 |
-| 退出码（**开窗**） | **本进程**跑脚本（`runpy.run_path`，launch.py:885 # runpy.run_path），只 `except SystemExit`（launch.py:886 # SystemExit）⇒ 脚本里的 `sys.exit()` 被吞掉，但 `os._exit()` 会**直接杀掉窗口进程** |
+| 退出码（**开窗**） | **本进程**跑脚本（`runpy.run_path`，launch.py:893 # runpy.run_path），只 `except SystemExit`（launch.py:894 # SystemExit）⇒ 脚本里的 `sys.exit()` 被吞掉，但 `os._exit()` 会**直接杀掉窗口进程** |
 
 **落盘位置（三处，不是"全部落在脚本旁"）**：
 

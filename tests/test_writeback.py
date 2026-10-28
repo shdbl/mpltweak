@@ -10756,11 +10756,12 @@ check('P0④b auto（夹具 B，这一档会真的退块）：退块后凭据仍
 # 降级档：`--no-verify` / `--verify-fast` **允许** verified 为 null（任务书明写豁免），
 # 但豁免的是"没验"，不是"不说" —— 必须如实披露被跳过的那一层：
 #   --no-verify      ⇒ 不许出现「正在验证」，必须有一句「没有重跑」
-#   --verify-fast    ⇒ 必须明说「只做了语法检查」（弱保证披露到位）
-# 注意（口径债，不在本单 inScope）：fast 档目前**同时**打印「正在验证（子进程重跑脚本，最长
-# 300s）」与「快速验证：…**没有重跑脚本**」，前一句在 fast 档是错的（文案层在 apply.py /
-# messages.py，已单独报给船长）。所以这一条只钉"如实披露 + 非 null"，不钉"两句不同时出现"
-# —— 后者由完整验证档（P0④/P0④b/P0④d）严钉，事故本身也只发生在那一档。
+#   --verify-fast    ⇒ 必须明说「只做了语法检查」，且同样**不许**出现「正在验证」
+# 后半个条件在 0.1.19 及以前是**口径债**（fast 档一边打「正在验证（子进程重跑脚本，最长
+# 300s）」、一边打「快速验证：…没有重跑脚本」，前一句是假的）——根因是 apply.py 那句
+# `if not args.no_verify and not args.dry_run and not args.diff` 漏了 `and not args.verify_fast`。
+# 0.1.20 修掉后，两档按**同一个判据**核：人读里"有没有重跑"必须与 `layers.rerun` 说同一件事
+# （fast 档 `layers.rerun` 恒为 null ⇒ 人读就不许出现"正在重跑"）。
 _p0_deg = {}
 for _p0_flag in ('--no-verify', '--verify-fast'):
     _p0_v = _p0_run(_P0_A[0], 'auto', _P0_SRC, extra=[_p0_flag])
@@ -10768,12 +10769,14 @@ for _p0_flag in ('--no-verify', '--verify-fast'):
 _p0_vv_n, _p0_oo_n = _p0_deg['--no-verify']
 _p0_vv_f, _p0_oo_f = _p0_deg['--verify-fast']
 check('P0④c 降级档如实披露：--no-verify ⇒ verified=None、不喊「正在验证」且明说「没有重跑」；'
-      '--verify-fast ⇒ verified=None 且明说「只做了语法检查」（弱保证不许含糊）',
+      '--verify-fast ⇒ verified=None、不喊「正在验证」且明说「只做了语法检查」（弱保证不许含糊）',
       _p0_vv_n is None and '正在验证' not in _p0_oo_n and '没有重跑' in _p0_oo_n
-      and _p0_vv_f is None and '语法检查' in _p0_oo_f,
-      'noverify(verified=%r, 正在验证=%r, 没有重跑=%r) fast(verified=%r, 语法检查=%r)'
+      and _p0_vv_f is None and '语法检查' in _p0_oo_f
+      and '正在验证' not in _p0_oo_f,
+      'noverify(verified=%r, 正在验证=%r, 没有重跑=%r) fast(verified=%r, 语法检查=%r, '
+      '正在验证=%r)'
       % (_p0_vv_n, '正在验证' in _p0_oo_n, '没有重跑' in _p0_oo_n,
-         _p0_vv_f, '语法检查' in _p0_oo_f))
+         _p0_vv_f, '语法检查' in _p0_oo_f, '正在验证' in _p0_oo_f))
 
 # 驱动器（真复刻 L32 的形状，不靠 CLI 自然复现 —— 当前树上这个形状已被 t25 修掉，自然跑不出来）
 _p0_drv_j = _p0_drive(_P0_A[0], _P0_SRC, 'json')

@@ -45,7 +45,7 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak describe <脚本>` | 不开窗，把**当前排版**导出成参数 JSON（agent 的"读"）；`-o/--output 文件` 直接写进文件（最常用）；`--all-figs` 时是嵌套的 `{"figures": [...]}`，**顶层没有 `axes`**（直接喂回 `apply --params` 是 `rc=1 / reason=no_axes`，见「参数文件」）——但**0.1.14 起 `--all-figs` 会顺手按每图写一份 `<stem>.fig<k>.json`**（apply 认的命名），所以"导出全部再逐图落实"不必再逐图 `--fig N` 导一遍 |
 | `mpltweak schema` | 输出参数文件的 JSON Schema，供 agent 校验自己生成的内容 |
 | `mpltweak apply <脚本> --write --json` | 落实回源码，并输出机器可读结果（`--json` 时过程信息全部走 stderr）。**脚本自己带参数**（依赖 `sys.argv`，如 `python fig1.py --data x.npz`）时在 `--` 后透传：`apply <脚本> --write -- --data x.npz`（bug #6，否则重跑验证与基线不一致而误回滚） |
-| `mpltweak revert <脚本> [--write]` | 回退到上次写回之前（默认只预览；回退前也会留存当前版本） |
+| `mpltweak revert <脚本> [--write]` | 回退到**最早一份备份**`.tweak_params/<脚本>.tweak.bak`（该备份**首份优先**：第一次写回时建立、之后不再覆盖 ⇒ 通常回到的是你**第一次**改这张图之前的原件，连回退两次也只回到最初那份）。（默认只预览；回退前也会留存当前版本） |
 | `mpltweak apply <脚本> --diff --json` | **写回前先看差异**（0.1.16，别名 `--preview-diff`，同一个开关）：引擎**照真写回的路跑**，只是把目标换成同目录的**影子副本**（跑完即删），所以内容与真写盘**同源**（含 `--style auto` 退块那次"重读源码"的语义）。`files[].diff` 逐行给出 `{line, type, old, new}`（`type` = `inplace` 原位补参数 / `insert_block` 插入调整块 / `replace` 替换）。这一档 `reason='preview'` / `applied=false` / `rc=0`（与只读预览同档，**不是**"已写回"），**脚本一个字节都不动、不造备份**。**它不重跑脚本**，所以边界是：真写盘时**验证失败**触发的回滚/换锚点重试不会体现在预览里 —— 那一档以真写回为准 |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突**默认就是 error 级问题**（`rule='layout_engine_conflict'`，0.1.14 起；`--strict` 只是兼容开关） |
 | `mpltweak --check-update [--json] [--lang zh\|en]` | 显式联网查 PyPI 最新版（0.1.17）。**默认任何命令都不联网，只有它联网**；只查不升、不写任何文件、默认 5 秒超时（`MPLTWEAK_UPDATE_TIMEOUT` 可调）。**查不到（断网 / 超时 / 被墙 / 载荷坏）也是 `rc=0`** —— 原因看 `--json` 的 `error`（`timeout` / `network` / `http` / `payload`），**别把它当失败去重试**；用法错误才是 `rc=2`（stderr，不产 JSON）。机器可读载荷的五个键见 [json-contract.md](json-contract.md) |
@@ -55,10 +55,10 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | 选项 | 谁认 | 作用 | 给别的子命令会怎样 |
 |---|---|---|---|
 | **`apply --force`** | **只有 `apply`** | 参数比脚本旧（存完参数之后你手改过脚本）时也照样套用；默认**跳过**并给 `reason: stale` | `describe` / `check` / `revert` ⇒ `rc=2`（`unrecognized arguments`） |
-| **`--lang auto\|zh\|en`** | **只有 `apply` / `describe` / `check`** | 界面语言：`auto` = 跟随 `MPLTWEAK_LANG` → locale（默认） | `revert` / `schema` / `doctor` ⇒ `rc=2`；**顶层 `mpltweak <脚本>` 与 `launch` 则是静默忽略**（它们用 `parse_known_args`，多出来的参数**原样进你脚本的 `sys.argv`**）⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`，别在命令行上加 `--lang` |
+| **`--lang auto\|zh\|en`** | **是工具选项**：**前置位**（`mpltweak --lang en <任意命令>`，由 CLI 入口 `_consume_leading_lang` 先摘掉再分派）**与子命令位**（`apply` / `describe` / `check` / `launch` / `--check-update`）都认 | 界面语言：`auto` = 跟随 `MPLTWEAK_LANG` → locale（默认），并**清掉**继承来的 `MPLTWEAK_LANG`。工具认出来的 `--lang` **不会**进你的脚本 `sys.argv`（要传给它请写 `mpltweak x.py -- --lang en`，0.1.15 起的既有规则）；等价写法是环境变量 `MPLTWEAK_LANG` | `revert` / `schema` / `demo` / `mcp` **不认得它**（`rc=2`）—— 用前置位或环境变量即可；`doctor` 在子命令位给 `--lang` 也是 `rc=2`，但会**点名**并告诉你写 `mpltweak --lang en doctor` |
 | **`check --no-tight`** | **只有 `check`** | 忽略脚本里的 `bbox_inches='tight'`，文字越界仍按 `error` 判（0.1.8 的旧口径） | `apply` / `describe` / `revert` ⇒ `rc=2` |
 
-> 实测口径（可重跑）：`mpltweak fig1.py --dry-run --lang en` **打印仍是中文**、`rc=0`；同一个脚本改用 `MPLTWEAK_LANG=en` 再跑则是英文。`mpltweak revert fig1.py --lang en` / `--force`、`mpltweak apply fig1.py --no-tight` 都是 `rc=2`（`unrecognized arguments`），三段都能用 `python -m mpltweak …` 原样复现。
+> 实测口径（可重跑，0.1.20 起）：`mpltweak --lang en fig1.py --dry-run`、`mpltweak launch --lang en fig1.py --dry-run`、`mpltweak fig1.py --dry-run --lang en` **三条都出英文**且 `rc=0`（脚本 `sys.argv` 里都没有 `--lang`）；`mpltweak fig1.py --dry-run -- --lang en` 仍是**中文**，而脚本收到 `--lang en`（这才是"把参数交给脚本"的写法）。`mpltweak revert fig1.py --lang en` / `--force`、`mpltweak apply fig1.py --no-tight`、`mpltweak doctor --lang en` 都是 `rc=2`（后者的 stderr 会点名 `--lang` 并给出 `mpltweak --lang en doctor`）。以上都能用 `python -m mpltweak …` 原样复现；`tests/test_launch.py` §16 逐条钉住（含"不带旗标仍是中文"的对照项）。
 
 ```bash
 mpltweak describe fig1.py --output layout.json    # 读：拿到现在的排版（-o / --output 同一个选项）

@@ -4,16 +4,18 @@ mpltweak —— CLI 入口（库内核 + CLI 外挂）
 
 主推用法（脚本零侵入，脚本里不出现本工具任何痕迹）：
 
+  mpltweak --lang zh|en|auto <命令>            # 切界面语言（放最前面，任何命令都认）
   mpltweak <script.py> [--fig N] [--params X]    # 跑脚本 + 弹交互调图窗，关窗只存参数
   mpltweak apply <script.py>                     # 改动清单（只读）
   mpltweak apply <script.py> --write             # AST 确定性写回（零 LLM）
   mpltweak apply <script.py> --snippet           # 输出可粘贴片段
-  mpltweak revert <script.py> [--write]          # 回退到上次写回之前（默认只预览）
+  mpltweak revert <script.py> [--write]          # 回退到最早一份备份（通常是最初的原件）（默认只预览）
   mpltweak doctor                                # 环境自检（后端/绑定/版本）
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -25,12 +27,13 @@ def _usage(out):
         'mpltweak —— 像在 PPT 里调多图排版一样调 matplotlib（脚本零侵入）\n'
         '\n'
         '用法：\n'
+        '  mpltweak --lang zh|en|auto <命令>              切界面语言（放最前面，任何命令都认）\n'
         '  mpltweak <script.py> [--fig N] [--params X]     开窗调图\n'
         '  mpltweak launch <script.py> [--fig N]           同上（显式子命令）\n'
         '  mpltweak --version                              打印版本号后退出（rc=0）\n'
         '  mpltweak --check-update                         查 PyPI 最新版（显式联网；查不到不算失败）\n'
         '  mpltweak apply <script.py> [--write] [--json]   落实（默认只读预览）\n'
-        '  mpltweak revert <script.py> [--write]           回退到上次写回之前\n'
+        '  mpltweak revert <script.py> [--write]           回退到最早一份备份（通常是最初的原件）\n'
         '  mpltweak demo [--write]                         示例体验（复制示例 + 开窗 + 对比图）\n'
         '  mpltweak describe <script.py> [--lang zh|en]    不开窗导出当前排版\n'
         '  mpltweak check <script.py> [--json]             排版体检（会执行脚本）\n'
@@ -120,8 +123,76 @@ def _leading_top_flags(argv):
     return flags, i
 
 
+def _consume_leading_lang(argv):
+    """把 ``mpltweak`` **最前面那段开关**里的 ``--lang <值>`` 摘掉并生效 → ``(新 argv, rc 或 None)``。
+
+    L36（0.1.20）为什么需要这一步：``--lang`` 过去只由 ``apply`` / ``describe`` / ``check``
+    各自的 argparse 注册，且 ``launch`` 不认识它 —— 于是
+    ① ``mpltweak --lang en fig.py``（开窗）会把 ``--lang en`` 原样塞进用户脚本的 ``sys.argv``：
+       用户以为切了英文、看到的还是中文，**一声不响**；
+    ② ``launch --lang en s.py`` 更糟：``en`` 被当成**脚本路径**，报"找不到脚本: …\\en"。
+
+    现在的分工（一句话）：**``--lang`` 是工具选项**，两种位置都认 ——
+      * ``mpltweak --lang en <任何命令>``（本函数负责，先摘掉再分派 ⇒ 不污染脚本、任何子命令都生效）；
+      * ``launch --lang en s.py`` / ``s.py --lang en``（``launch`` 自己的 argparse 负责，
+        与 ``--json`` / ``--params`` / ``--dry-run`` 同一口径：**认出来的归工具，认不出的才透传**）。
+    要把 ``--lang`` 传给脚本请用 ``--``（``mpltweak s.py -- --lang en``）—— 这条从 0.1.15 起就是既有规则。
+
+    为什么先摘再分派、而不让每个子命令各摘一遍：``apply`` / ``describe`` / ``check`` 拿到的
+    已经是干净的 argv，它们的语言探测会顺着下面的 **MPLTWEAK_LANG** 看到这里的值 ——
+    只改这一个入口，三个子命令同时生效，回归面最小。
+
+    ``auto`` 不算"强制"：摘掉旗标、并**清掉**继承来的 ``MPLTWEAK_LANG``（否则"auto"会被
+    环境变量顶回去，用户看到的还是强制语言）。
+    """
+    from . import messages as _msg
+    # 扫**最前面那段开关**（遇到第一个位置参数或 `--` 就停）。两种写法都认：
+    # `--lang en`（分两个 token）与 `--lang=en`（GNU 等号形式）—— argparse 两种都收，
+    # 前置位只认一种就会出现"换个写法又静默"。
+    kept = []
+    found = None
+    i = 0
+    while i < len(argv) and argv[i] != '--' and argv[i].startswith('-'):
+        tok = argv[i]
+        if tok == '--lang' or tok.startswith('--lang='):
+            if tok == '--lang':
+                if i + 1 >= len(argv):
+                    sys.stderr.write(_msg.t('cli_lang_needs_value') + '\n')
+                    return argv, _msg.EXIT_USAGE
+                raw, step = argv[i + 1], 2
+            else:
+                raw, step = tok.split('=', 1)[1], 1
+            # 大小写按**原样**比：子命令位的 argparse `choices` 是区分大小写的，
+            # 前置位要是自己 `lower()` 就会变成"同一个值、两个位置结论不同"。
+            value = raw.strip()
+            if value not in ('auto', 'zh', 'en'):
+                sys.stderr.write(_msg.t('cli_lang_bad_value', value=raw) + '\n')
+                return argv, _msg.EXIT_USAGE
+            found = value
+            i += step
+            continue
+        kept.append(tok)                        # 其它顶层开关原样留着（--version 等）
+        i += 1
+    if found is None:
+        return argv, None
+    # 后面的同名旗标属于子命令或用户脚本，一个都不碰（只摘掉了前段那一个）
+    if found == 'auto':
+        # 顺序有讲究：`messages.set_lang(None)` 内部会**立刻**调 current_lang() 把结果
+        # 缓存进模块全局，所以必须**先**清掉继承来的 MPLTWEAK_LANG，再 set_lang(None)。
+        # 反了就白清 —— `--lang auto` 会被环境顶回去，用户看到还是强制语言（本项自测抓到）。
+        os.environ.pop('MPLTWEAK_LANG', None)
+        _msg.set_lang(None)
+    else:
+        _msg.set_lang(found)
+        os.environ['MPLTWEAK_LANG'] = found     # 让下游的语言探测也看到
+    return kept + argv[i:], None
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    argv, _lang_rc = _consume_leading_lang(argv)
+    if _lang_rc is not None:
+        return _lang_rc
     if not argv:
         _usage(sys.stderr)
         return 2
@@ -180,11 +251,30 @@ def main(argv=None):
             sys.stderr.write(_msg.t('doctor_no_json') + '\n')
             sys.stderr.write(_msg.t('doctor_usage') + '\n')
             return _msg.EXIT_USAGE
-        _dunknown = [a for a in _dargs if a != '--lang']
+        # L36（0.1.20）：过去这里 `[a for a in _dargs if a != '--lang']` 只滤掉**旗标本身**、
+        # 把它的值留在清单里 ⇒ `mpltweak doctor --lang en` 报的是"无法识别的参数：en"，
+        # 点名点错了对象（用户看到 `en` 会以为自己少写了什么）。现在按**一对**处理。
+        # 注意 `doctor --foo --lang en` 这种混写：既要点名 `--foo`（真正的错），也要解释
+        # `--lang` 该放哪儿 —— 只报后者会把前者盖掉，用户改完 `--lang` 仍然报错，白跑一轮。
+        _dunknown = []
+        _k = 0
+        while _k < len(_dargs):
+            if _dargs[_k] == '--lang':
+                _dunknown.append('--lang')
+                _k += 2 if _k + 1 < len(_dargs) else 1
+                continue
+            _dunknown.append(_dargs[_k])
+            _k += 1
         if _dunknown:
             sys.stderr.write(_msg.t('doctor_usage') + '\n')
-            sys.stderr.write(_msg.t('schema_unknown_args',
-                                    args=' '.join(_dunknown)) + '\n')
+            _lang_seen = [a for a in _dunknown
+                          if a == '--lang' or a.startswith('--lang=')]
+            _others = [a for a in _dunknown if a not in _lang_seen]
+            if _others:
+                sys.stderr.write(_msg.t('schema_unknown_args',
+                                        args=' '.join(_others)) + '\n')
+            if _lang_seen:
+                sys.stderr.write(_msg.t('doctor_lang_rejected') + '\n')
             return _msg.EXIT_USAGE
         from .launch import doctor
         return doctor()

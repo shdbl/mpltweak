@@ -287,6 +287,8 @@ Two channels: **a literal in the source ⇒ edit the constant in place** (no nod
 
 > Want machine-readable output: `--json` gives `files[].diff` (line by line `{line,type,old,new}`), `preview_sha256` (equal to the sha256 of the real written file), `stage` (which step it stopped at), `next_step`, `attribution`. Contract: [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md).
 
+> The interface follows your system locale; set `MPLTWEAK_LANG=zh|en` to force one, or pass `--lang en` — it works both **first** (`mpltweak --lang en fig.py`) and **after the subcommand/script path** (`mpltweak fig.py --lang en`), because it is a tool option (`apply`/`describe`/`check`/`launch` alike). To pass `--lang` to **your own script**, separate it: `mpltweak fig.py -- --lang en`.
+
 > Stuck? See [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md) (dragged and nothing happened / dragged and it snapped back / an error — each entry is "symptom → one-line cause → what to do").
 > Full output samples, the `-v` change list, `--style inplace` / `--style block`, and the parameter field table — [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) and [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md).
 

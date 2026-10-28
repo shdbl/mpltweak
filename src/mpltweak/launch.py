@@ -772,7 +772,15 @@ def main(argv=None):
     ap.add_argument('--json', action='store_true',
                     help=_msg.t_ui('失败时往 stdout 打一条机器可读 JSON'
                          '（成功路径不开窗以外的输出不受影响；要透传给脚本用 --）'))
+    # L36（0.1.20）：`--lang` 必须在这里注册。此前它「只有 apply/describe/check 认」，
+    # 于是 `launch --lang en s.py` 会把 `en` 当成**脚本路径**（报"找不到脚本: …\en"），
+    # `s.py --lang en` 则静默把旗标塞进脚本的 sys.argv。
+    # 口径与 `--json` / `--params` 一致：**认出来的归工具，认不出的才透传**；要给脚本
+    # 传 `--lang` 请用 `--`（`mpltweak s.py -- --lang en`），这条从 0.1.15 起就是既有规则。
+    ap.add_argument('--lang', default=None, choices=('auto', 'zh', 'en'),
+                    help=_msg.t_ui('界面语言：auto=跟随系统（默认），或强制 zh / en'))
     args, passthrough = ap.parse_known_args(argv)
+    _msg.set_lang(args.lang)          # None / 'auto' ⇒ 回到 MPLTWEAK_LANG → locale
 
     def _json_fail(stage, error_code, error, next_step, rc):
         """失败出口（0.1.15 / N3）：`--json` 时把结论打成**一条**可解析 JSON，再返回同一 rc。
@@ -1274,12 +1282,12 @@ if __name__ == '__main__':
 # §6 doctor 结论与 doctor 子命令（行 655-749，2 个顶层函数）
 #     _doctor_verdict                                657
 #     doctor                                         678
-# §7 主流程：main（开窗调图）（行 750-1240，1 个顶层函数）
+# §7 主流程：main（开窗调图）（行 750-1248，1 个顶层函数）
 #     main                                           752
-#         §7.1 开窗前的提示：布局引擎冲突与可重跑预检                   808
-#         §7.2 后端与工作目录：Qt 候选探测、Tk 回退、切 cwd/sys.path   831
-#         §7.3 执行用户脚本：拦 plt.show / matplotlib.use / plt.close   865
-#         §7.4 抓图与后端兜底：把已有图重新挂回 Qt                   915
-#         §7.5 挂控制器：每图一个 Tweak，各写自己的参数文件            1000
-#         §7.6 续调与关窗之后：套回上次参数、落参数、摘要与写回命令           1068
+#         §7.1 开窗前的提示：布局引擎冲突与可重跑预检                   816
+#         §7.2 后端与工作目录：Qt 候选探测、Tk 回退、切 cwd/sys.path   839
+#         §7.3 执行用户脚本：拦 plt.show / matplotlib.use / plt.close   873
+#         §7.4 抓图与后端兜底：把已有图重新挂回 Qt                   923
+#         §7.5 挂控制器：每图一个 Tweak，各写自己的参数文件            1008
+#         §7.6 续调与关窗之后：套回上次参数、落参数、摘要与写回命令           1076
 # --- END AUTO NAV ---

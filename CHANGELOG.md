@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 0.1.20
+
+### 这一版用户能感知到的变化
+
+- **`--lang` 是工具选项，两种位置都认**：前置位 `mpltweak --lang en <任意命令>`（`apply` / `describe` / `check` / `launch` / `--check-update` / `doctor` 全都生效），以及子命令位 `mpltweak apply|describe|check|launch … --lang en`。工具认出来的 `--lang` **不会**进你脚本的 `sys.argv`；要把 `--lang` 交给你**自己的脚本**，用 `--` 分隔：`mpltweak x.py -- --lang en`。`--lang auto` 会清掉继承来的 `MPLTWEAK_LANG`（回到跟随系统）。`mpltweak -h` 的用法里列出了这条前置位写法。`revert` / `schema` / `demo` / `mcp` 不认它（`rc=2`，要切语言用前置位或环境变量）。
+- **`--verify-fast` 的人读输出与它“不跑脚本”的承诺一致**：这一档只做 `ast.parse`，输出的就是“只做了语法检查”那句；同一次运行的 `--json` 里 `layers.rerun` 为 `null`、`verified` 为 `null`。默认档（会子进程重跑）与 `--no-verify` 的输出各自照旧。
+- **`revert` 的用法摘要写清“回到哪一份”**：默认回退用固定名备份 `.tweak_params/<脚本>.tweak.bak`，该备份**首份优先**（第一次写回时建立、之后不再覆盖）⇒ 回到它建立那一刻，通常就是你**第一次**改这张图之前的原件；连回退两次也只回到最初那份。要回到最早一份 pid 副本用 `--first`。`mpltweak --help`（中英两版）、`docs/agent.md` 与 `revert --help` 三处同一口径。
+- **`doctor` 的未知参数点名对的对象**：`doctor --lang en` 说明 `--lang` 该放哪儿（`mpltweak --lang en doctor`）；`doctor --foo --lang en` 把 `--foo` 与 `--lang` **两个都报**，不用改完一个再撞一次。
+- **界面语言的入口写进了 README 中英两版**：`MPLTWEAK_LANG` 与 `--lang` 的两种位置、以及“给脚本传参用 `--`”。
+
+### 数字
+
+- 版本号两处同步：`pyproject.toml` 与 `src/mpltweak/__init__.py` 都是 `0.1.20`。
+- **测试（中英两臂，就是 CI 的语言环境）**：`python -m pytest -q` 各 **119 passed / 5 skipped**（zh 臂 2793.87s，en 臂 2487.80s）。
+- **判据**：`tests/test_launch.py` §16 共 **14 条**钉 `--lang` 的工具属性，每条都带对照（含“不带旗标时仍是中文”，防止两档一起改哑）；`tests/test_writeback.py` 的 P0④c 四合一断言钉住两档降级输出（`--no-verify` 与 `--verify-fast` 都不得出现“正在验证”，各自必须给出对的那句披露）。
+- **文档闸门**：`tools/gen_nav.py --check` rc=0；`tools/check_doc_refs.py` 默认面 **44 条引用 / 可疑 0**、`--with-maintenance` 面 **222 条引用 / 可疑 0**；`tools/doc_cli_options.py` 双向 **0 处**。
+- **产物**：`mpltweak-0.1.20-py3-none-any.whl`（999,361 B）与 `mpltweak-0.1.20.tar.gz`（1,725,160 B）。
+
 ## 0.1.19
 
 ### 这一版用户能感知到的变化

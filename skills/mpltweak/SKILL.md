@@ -112,7 +112,7 @@ mpltweak doctor
 - **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`、**`--json`（0.1.15 起，只覆盖失败出口）** —— 成功路径照旧开窗、不产出 JSON；失败时 stdout 只有一条 JSON（`ok=false` + `error_code` + `stage` + `error` + `next_step`），退出码口径不变。**副作用**：这个开关会吃掉原本要透传给你脚本的 `--json`，要透传请写 `mpltweak launch x.py -- --json`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
-- **`--lang zh|en`（界面语言，默认跟随系统）**：**只有 `apply` / `describe` / `check` 认** —— `revert` / `schema` / `doctor` **不接受**（`rc=2`：`unrecognized arguments`；实测源码里只有三处注册（复核：`grep -n "'--lang'" src/mpltweak/*.py` ⇒ `apply.py` / `describe.py` / `check.py` 各一处；`cli.py` 里那处是过滤、不是注册））。**`launch`（含顶层 `mpltweak <脚本>`）是最坑的一条：它用 `parse_known_args`，`--lang en` 不会报错、也不会切语言，而是被当成"你脚本自己的参数"原样塞进脚本的 `sys.argv`** ⇒ 开窗那条路要切语言请设 `MPLTWEAK_LANG=en`。
+- **`--lang zh|en|auto`（界面语言，默认跟随系统）**：**是工具选项，两种位置都认** —— 前置位（`mpltweak --lang en <脚本>`，由 `cli._consume_leading_lang` 先摘掉再分派）与子命令位（`apply` / `describe` / `check` / `launch` / `--check-update`）。认出来的 `--lang` **不会**进你脚本的 `sys.argv`；要传给脚本请用 `--`（`mpltweak x.py -- --lang en`）。`revert` / `schema` / `demo` / `mcp` 不认（`rc=2`）；`doctor --lang en` 也 `rc=2`，但会**点名**并提示写成 `mpltweak --lang en doctor`。`auto` 会**清掉**继承的 `MPLTWEAK_LANG`。等价写法一律是 `MPLTWEAK_LANG=en`。
 - **`--force` 只有 `apply` 认**（参数比脚本旧时照样套用；`describe` / `check` / `revert` 给了是 `rc=2`）；**`--no-tight` 只有 `check` 认**（按 0.1.8 旧口径严判 `bbox_inches='tight'`；`apply` / `describe` / `revert` 给了是 `rc=2`）。
 
 **`--timeout` 只有 `apply` 认** —— `check` / `describe` / `launch` **都不认**（实测：`mpltweak check <脚本> --timeout 900` ⇒ `unrecognized arguments`、`rc=2`）。**`check` 也不需要它**：实测一份要读 NSIDC + 128 个 MME 文件的重脚本，`check` 只用 **50 秒**左右（远低于 300 秒）⇒ "默认 300 秒不够"这个担心对 `check` 不成立。选项清单以 `mpltweak <子命令> --help` 为准。
@@ -171,7 +171,7 @@ mpltweak doctor
 6. **他认可之后，才 `apply --write`，然后重跑把新图给他看**（这次重跑顺便出图，不用再单独跑一遍）：
    写回前先给一句"接下来我会跑一遍你的脚本做验证（顺手把图也出好），几十秒到几分钟"；
    写回后问是否清理 `.tweak_params/`。
-   他改主意了：`mpltweak revert <脚本.py> --write` 可回退到这次写回之前（先不带 `--write` 看预览，再问他确认）。
+   他改主意了：`mpltweak revert <脚本.py> --write` 会回到**固定名备份 `.tweak.bak` 里的原件**（首份优先 ⇒ 通常是最初那份，**不是"只撤这一步"**；先不带 `--write` 看预览，再问他确认）。
 
 ### B. 你直接排（用户不在场 / 要批量统一）
 
@@ -183,7 +183,7 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 ```
 
 `apply --write` 这步会**重跑脚本验证写回结果**（默认超时 300 秒）—— 动手前先给用户一句"要跑一遍脚本，几十秒到几分钟"。
-要撤销刚才的写回：`mpltweak revert <脚本.py> --write`（先不带 `--write` 预览）。
+要撤销写回：`mpltweak revert <脚本.py> --write`（回到固定名备份里的原件，**不是**只撤最后一步；先不带 `--write` 预览）。
 
 适合：把**一张排好的图当模板**套到其他脚本（改 `script` 字段即可）、批量统一整篇论文的排版。
 

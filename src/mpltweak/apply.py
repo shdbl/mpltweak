@@ -1462,7 +1462,12 @@ def main(argv=None):
                                     'layout_why': _why, 'style': args.style}))
                 continue
         print('-' * 62)
-        if not args.no_verify and not args.dry_run and not args.diff:
+        # L35（0.1.20）：`--verify-fast` **必须**排除在外 —— 这一档 `_kw['verify']`
+        # 是 False（引擎不重跑），过去却照旧打「正在验证（子进程重跑脚本，最长 300s）」
+        # ⇒ 同一次运行里先说"正在重跑"、后说"没有重跑脚本"，自相矛盾，且前一句是假的。
+        # 判据：人读里"有没有重跑"跟 `layers.rerun` 必须说同一件事。
+        if not args.no_verify and not args.verify_fast \
+                and not args.dry_run and not args.diff:
             # 验证是"子进程重跑整个脚本"：读数据的脚本可能要几分钟，而**期间零输出**，
             # 看起来像卡死（t6-M12）。先给一行预期，至少知道它在干什么。
             print(_msg.t('apply_verifying', sec=args.timeout))
@@ -2029,12 +2034,12 @@ if __name__ == '__main__':
 #     _is_rerun_failure                             1080
 #     _print_attribution                            1095
 #     _next_step_cmd                                1113
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1124-1981，1 个顶层函数）
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1124-1986，1 个顶层函数）
 #     main                                          1126
 #         §8.1 入口：`--` 截断、选项解析与 --json 分流           1128
 #         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1230
 #         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1302
 #         §8.4 逐份参数文件：校验与拒写                         1339
-#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1505
-#         §8.6 收尾：mtime 同步与人读 / --json 输出           1878
+#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1510
+#         §8.6 收尾：mtime 同步与人读 / --json 输出           1883
 # --- END AUTO NAV ---

@@ -29,7 +29,7 @@
 
 ## 二、执行边界：哪些命令会跑你的脚本
 
-**它不是一个沙箱**：`describe` / `check` 会**执行**你的脚本（在**子进程**里、默认 Agg 无头，退出码与全局状态留在子进程内）；**开窗**（`mpltweak <脚本>` / `launch`）也在**本进程**里跑一遍脚本（`runpy.run_path`，launch.py:885 # runpy.run_path），用的是**交互后端**（QtAgg 优先、TkAgg 兜底，launch.py:176-191 # _detect_backend）—— 脚本改过的全局 `rcParams` 留在窗口进程里，关窗即结束；`apply` 只做 AST 改写，除非你要求**重跑验证**（`--write` 后默认重跑一次，`--verify-fast` 只做 `ast.parse`）。
+**它不是一个沙箱**：`describe` / `check` 会**执行**你的脚本（在**子进程**里、默认 Agg 无头，退出码与全局状态留在子进程内）；**开窗**（`mpltweak <脚本>` / `launch`）也在**本进程**里跑一遍脚本（`runpy.run_path`，launch.py:893 # runpy.run_path），用的是**交互后端**（QtAgg 优先、TkAgg 兜底，launch.py:176-191 # _detect_backend）—— 脚本改过的全局 `rcParams` 留在窗口进程里，关窗即结束；`apply` 只做 AST 改写，除非你要求**重跑验证**（`--write` 后默认重跑一次，`--verify-fast` 只做 `ast.parse`）。
 
 **同一个脚本会被重复执行**：开窗 1 次、每次 `check` / `describe` 1 次、每次 `apply --write` **至少** 1 次
 （参数里有"原位写不了"的字段、又要退块时是 3 遍，见 [verify.md](verify.md#写回会跑几遍脚本)）——

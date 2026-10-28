@@ -51,7 +51,7 @@ src/mpltweak/
 ├── verify.py       # 语义验证（重跑后逐项比对）
 ├── describe.py     # 导出当前排版（agent 的"读"）
 ├── check.py        # 排版体检（agent 的"查"）
-├── revert.py       # 回退到上次写回之前
+├── revert.py       # 从备份回退（固定名首份优先 ⇒ 通常是最初那份）
 ├── layoutwarn.py   # 纯 AST 布局引擎扫描（check --static 用）
 ├── mcp_server.py   # MCP 适配层（mpltweak mcp）
 ├── messages.py     # 中英文案 + fd 级 UTF-8
