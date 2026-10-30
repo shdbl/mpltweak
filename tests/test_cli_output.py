@@ -929,16 +929,25 @@ def test_pipe_human_output_is_utf8(work, args):
 def test_no_utf8_escape_restores_platform_encoding(work):
     """`MPLTWEAK_NO_UTF8=1` 必须真的退回平台编码（否则开关是装饰品）。
 
-    判据要看**平台**：只在"本机默认编码不是 UTF-8"时才断言"解不开 UTF-8"；
-    在 UTF-8 宿主（CI 的 Linux 腿）上这条没有鉴别力，显式 skip 并说清原因。
+    两个前提都要先验，缺一这条就没鉴别力（或必然假红）：
+      ① 平台默认编码不是 UTF-8 —— 否则"退回平台编码"与默认行为无差别；
+      ② 平台默认编码**装得下中文** —— Windows CI runner 的 ANSI 代码页是 cp1252，
+         `检查` 编不进去 ⇒ 退回平台编码就等于必然失败（实测 py3.12 windows 那格红在这里，
+         报 `assert 2 in (0, 1)`）。那不是产品缺陷：`MPLTWEAK_NO_UTF8` 本来就是"回到旧行为"，
+         而旧行为在装不下中文的宿主上一直如此。
     """
     import locale
-    enc = (locale.getpreferredencoding(False) or '').lower().replace('-', '')
-    if enc.replace('_', '') == 'utf8':
+    enc = locale.getpreferredencoding(False) or ''
+    if enc.lower().replace('-', '').replace('_', '') == 'utf8':
         pytest.skip('本机默认编码已是 UTF-8（%r），"退回平台编码"这条没有鉴别力' % enc)
+    try:
+        '检查'.encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        pytest.skip('平台编码 %r 装不下中文（CI 的 cp1252 就是这种），'
+                    '"退回平台编码"这一档下中文输出必然失败，本测无鉴别力' % enc)
     _write(os.path.join(work, 'clean.py'), _CLEAN_SCRIPT)
     rc, out, err = _run_bytes(work, 'check', 'clean.py', MPLTWEAK_NO_UTF8='1')
-    assert rc in (0, 1)
+    assert rc in (0, 1), (rc, err[:300])
     with pytest.raises(UnicodeDecodeError):
         out.decode('utf-8')
 
