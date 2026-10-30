@@ -48,7 +48,7 @@ mpltweak 把这部分从"猜"变成"写文件"：
 | `mpltweak revert <脚本> [--write]` | 回退到**最早一份备份**`.tweak_params/<脚本>.tweak.bak`（该备份**首份优先**：第一次写回时建立、之后不再覆盖 ⇒ 通常回到的是你**第一次**改这张图之前的原件，连回退两次也只回到最初那份）。（默认只预览；回退前也会留存当前版本） |
 | `mpltweak apply <脚本> --diff --json` | **写回前先看差异**（0.1.16，别名 `--preview-diff`，同一个开关）：引擎**照真写回的路跑**，只是把目标换成同目录的**影子副本**（跑完即删），所以内容与真写盘**同源**（含 `--style auto` 退块那次"重读源码"的语义）。`files[].diff` 逐行给出 `{line, type, old, new}`（`type` = `inplace` 原位补参数 / `insert_block` 插入调整块 / `replace` 替换）。这一档 `reason='preview'` / `applied=false` / `rc=0`（与只读预览同档，**不是**"已写回"），**脚本一个字节都不动、不造备份**。**它不重跑脚本**，所以边界是：真写盘时**验证失败**触发的回滚/换锚点重试不会体现在预览里 —— 那一档以真写回为准 |
 | `mpltweak check <脚本> --json` | 不看图也能检查：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠，**文字按真实渲染尺寸**查（超出画布 = 问题，互相压住 = 提示），另有轴范围不统一提示；布局引擎冲突**默认就是 error 级问题**（`rule='layout_engine_conflict'`，0.1.14 起；`--strict` 只是兼容开关） |
-| `mpltweak --check-update [--json] [--lang zh\|en]` | 显式联网查 PyPI 最新版（0.1.17）。**默认任何命令都不联网，只有它联网**；只查不升、不写任何文件、默认 5 秒超时（`MPLTWEAK_UPDATE_TIMEOUT` 可调）。**查不到（断网 / 超时 / 被墙 / 载荷坏）也是 `rc=0`** —— 原因看 `--json` 的 `error`（`timeout` / `network` / `http` / `payload`），**别把它当失败去重试**；用法错误才是 `rc=2`（stderr，不产 JSON）。机器可读载荷的五个键见 [json-contract.md](json-contract.md) |
+| `mpltweak --check-update [--json] [--lang zh\|en]` | 显式联网查 PyPI 上的最新版（本命令自 0.1.17 起提供）。**默认任何命令都不联网，只有它联网**；只查不升、不写任何文件、默认 5 秒超时（`MPLTWEAK_UPDATE_TIMEOUT` 可调）。**查不到（断网 / 超时 / 被墙 / 载荷坏）也是 `rc=0`** —— 原因看 `--json` 的 `error`（`timeout` / `network` / `http` / `payload`），**别把它当失败去重试**；用法错误才是 `rc=2`（stderr，不产 JSON）。机器可读载荷的五个键见 [json-contract.md](json-contract.md) |
 
 **三个选项各自只属于一个子命令**（`--help` 里都列着，这里再点名一次：它们**不是**全局开关，给错了子命令是 `rc=2`）
 

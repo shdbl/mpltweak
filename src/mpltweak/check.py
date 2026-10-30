@@ -591,6 +591,35 @@ def _tol_arg(v):
     return f
 
 
+def _clean_verdict(problems, warns, text_checked):
+    """把"能不能对用户说干净"收成机器可判的一条（0.1.21，向后兼容地新增）。
+
+    为什么需要：``ok`` 历来只等于"没有 ``problems``"，而**文字压字**（``text_overlap``）、
+    **刻度拥挤**（``tick_labels_crowded``）、**色标压轴**（``colorbar_overlap``）、
+    以及 ``bbox_inches='tight'`` 脚本被降级的**越界文字**，全部落在 ``warnings`` 里。
+    于是 ``ok: true`` + ``problems: []`` **允许**"有压字" —— 只看 ``ok`` 会得出错结论
+    （0.1.20 有 agent 就这样对用户交了差）。
+
+    三个字段的分工（都不改既有语义）：
+      * ``ok``      —— 照旧 = 没有 ``problems``（**契约不变**，别拿它当"干净"）；
+      * ``clean``   —— 没有 problems **且**没有 warnings **且**这次真的量过文字；
+      * ``verdict`` —— 四值：``problems`` / ``warnings`` / ``partial``（没量文字）/ ``clean``。
+    """
+    clean = (not problems) and (not warns) and bool(text_checked)
+    if problems:
+        verdict = 'problems'
+    elif not text_checked:
+        # **`partial` 要排在 `warnings` 前面**：`text_unavailable` 本身就是一条 warning，
+        # 若先判 warnings，agent 会读成"量过了、有压字"，而真相是"根本没量"——
+        # 这两种情况要对用户说的话完全不同（CC 审阅指出的顺序问题）。
+        verdict = 'partial'
+    elif warns:
+        verdict = 'warnings'
+    else:
+        verdict = 'clean'
+    return clean, verdict
+
+
 @_msg.guard_json_main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
@@ -668,6 +697,7 @@ def main(argv=None) -> int:
                           how=_c.get('how')),
         })
 
+    _clean, _verdict = _clean_verdict(problems, warns, text_checked)
     if args.json:
         _msg.emit_json({
             'script': os.path.basename(script),
@@ -681,6 +711,8 @@ def main(argv=None) -> int:
             'text_checked': text_checked,
             'n_texts': n_texts,
             'tight_bbox': tight,
+            'clean': _clean,
+            'verdict': _verdict,
         })
         return _msg.EXIT_PROBLEM if problems else _msg.EXIT_OK
 
@@ -753,6 +785,7 @@ def _run_static(script, args) -> int:
     not_checked = ['alignment', 'size_mismatch', 'uneven_gap', 'font_mismatch',
                    'out_of_canvas', 'text_out_of_canvas', 'text_overlap',
                    'tick_labels_crowded', 'colorbar']
+    _clean, _verdict = _clean_verdict(problems, [], False)
     if args.json:
         _msg.emit_json({
             'script': os.path.basename(script),
@@ -769,6 +802,8 @@ def _run_static(script, args) -> int:
             'checked': ['syntax', 'layout_engine'],
             'not_checked': not_checked,
             'note': _msg.t('static_note'),
+            'clean': _clean,
+            'verdict': _verdict,
             'ast': {'n_add_axes': info['n_add_axes'],
                     'n_subplots': info['n_subplots'],
                     'n_savefig': info['n_savefig'],
@@ -830,9 +865,10 @@ if __name__ == '__main__':
 #     _const_str                                     490
 #     has_tight_bbox                                 495
 #     static_scan                                    537
-# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 581-796，3 个顶层函数）
+# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 581-831，4 个顶层函数）
 #     _tol_arg                                       583
-#     main                                           595
-#         §6.1 A4：--static —— 一行脚本都不执行               624
-#     _run_static                                    717
+#     _clean_verdict                                 594
+#     main                                           624
+#         §6.1 A4：--static —— 一行脚本都不执行               653
+#     _run_static                                    749
 # --- END AUTO NAV ---

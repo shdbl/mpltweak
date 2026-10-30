@@ -864,3 +864,167 @@ def test_edge_label_messages_are_name_only():
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     sys.exit(pytest.main([os.path.abspath(__file__), '-q', '--no-header']))
+
+
+# ===========================================================================
+# §12 输出编码与 `check --json` 的"能不能说干净"（0.1.21）
+#
+# 由来：0.1.20 有 agent 在管道下拿到 `◆` 乱码，却把 ASCII 骨架"补"成了一段通顺中文，
+# 并据此对用户宣布"彻底消除任何压字与重叠"。两件事一起修：①管道/重定向下的人读输出
+# 统一 UTF-8（真终端一个字不动）；②`check --json` 增加 `clean` / `verdict`，因为
+# `ok` 只等于"没有 problems"，而文字压字 / 刻度拥挤 / 色标压轴 / tight 降级的越界文字
+# 全在 `warnings` 里 —— 只看 `ok` 足以得出"没问题"的错结论。
+# ===========================================================================
+
+def _run_bytes(cwd, *args, **over):
+    """跑一次真 CLI，返回**原始字节**（编码类断言必须看字节，不能被 'replace' 掩盖）。
+
+    与 `_run` 的区别：默认**摘掉** PYTHONIOENCODING / PYTHONUTF8 —— 否则"管道下应 UTF-8"
+    这条永远成立，测不出东西。
+    """
+    env = _env(**over)
+    for _k in ('PYTHONIOENCODING', 'PYTHONUTF8'):
+        if _k not in over:
+            env.pop(_k, None)
+    r = subprocess.run([PY, '-m', 'mpltweak.cli', *args], cwd=cwd,
+                       capture_output=True, env=env)
+    return r.returncode, (r.stdout or b''), (r.stderr or b'')
+
+
+_CLEAN_SCRIPT = """\
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.plot([1, 2, 3])
+fig.savefig('a.png')
+"""
+
+# tight 导出时"超出画布的文字"会**降级**成 warn（out_of_canvas / downgraded=tight_bbox）
+_WARN_SCRIPT = """\
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(4, 3))
+ax.plot([1, 2, 3])
+fig.text(1.35, 0.5, 'way outside the figure')
+fig.savefig('b.png', bbox_inches='tight')
+"""
+
+
+@pytest.mark.parametrize('args', [
+    ('doctor',),
+    ('describe', 'clean.py'),
+    ('check', 'clean.py'),
+])
+def test_pipe_human_output_is_utf8(work, args):
+    """管道/重定向下的人读中文必须是合法 UTF-8（0.1.20 及以前是平台编码=GBK）。"""
+    _write(os.path.join(work, 'clean.py'), _CLEAN_SCRIPT)
+    rc, out, err = _run_bytes(work, *args)
+    assert rc in (0, 1), (rc, err[:300])
+    out.decode('utf-8')          # 解不开就红：这条只看编码，不用 'replace'
+    err.decode('utf-8')
+
+
+def test_no_utf8_escape_restores_platform_encoding(work):
+    """`MPLTWEAK_NO_UTF8=1` 必须真的退回平台编码（否则开关是装饰品）。
+
+    判据要看**平台**：只在"本机默认编码不是 UTF-8"时才断言"解不开 UTF-8"；
+    在 UTF-8 宿主（CI 的 Linux 腿）上这条没有鉴别力，显式 skip 并说清原因。
+    """
+    import locale
+    enc = (locale.getpreferredencoding(False) or '').lower().replace('-', '')
+    if enc.replace('_', '') == 'utf8':
+        pytest.skip('本机默认编码已是 UTF-8（%r），"退回平台编码"这条没有鉴别力' % enc)
+    _write(os.path.join(work, 'clean.py'), _CLEAN_SCRIPT)
+    rc, out, err = _run_bytes(work, 'check', 'clean.py', MPLTWEAK_NO_UTF8='1')
+    assert rc in (0, 1)
+    with pytest.raises(UnicodeDecodeError):
+        out.decode('utf-8')
+
+
+def test_maybe_force_utf8_is_scoped(monkeypatch):
+    """策略层口径：`mcp` 永不碰 / `MPLTWEAK_NO_UTF8` 逃生 / 其余一律交给按流实现。
+
+    "哪个流该切"在 `launch._force_utf8_streams` 里按**每个流各自的 isatty** 判断
+    （0.1.21 施工中 CC 审阅指出：拿 stdout 一个判断管两个流，`2>err.txt` 时 stderr
+    仍是 GBK），所以这里只测策略层，流级判断见下一条。
+    """
+    from mpltweak import cli, launch
+
+    calls = []
+    monkeypatch.setattr(launch, '_force_utf8_streams', lambda: calls.append(1))
+    monkeypatch.delenv('MPLTWEAK_NO_UTF8', raising=False)
+
+    cli._maybe_force_utf8('check')
+    assert calls == [1], '普通命令应交给按流实现去判断'
+
+    calls.clear()
+    cli._maybe_force_utf8('mcp')
+    assert calls == [], 'mcp 的 stdout 是 JSON-RPC 协议流，绝不能碰'
+
+    calls.clear()
+    monkeypatch.setenv('MPLTWEAK_NO_UTF8', '1')
+    cli._maybe_force_utf8('apply')
+    assert calls == [], '逃生开关必须有效'
+
+
+def test_force_utf8_streams_is_per_stream(monkeypatch):
+    """**按流**判断：终端流不动、管道流切成 UTF-8（`mpltweak check x.py 2>err.txt` 的形状）。"""
+    from mpltweak import launch
+
+    class _S:
+        def __init__(self, tty):
+            self.encoding = 'gbk'
+            self._tty = tty
+            self.hits = 0
+
+        def isatty(self):
+            return self._tty
+
+        def reconfigure(self, encoding=None):
+            self.hits += 1
+            self.encoding = encoding
+
+    out, err = _S(True), _S(False)
+    monkeypatch.setattr(sys, 'stdout', out)
+    monkeypatch.setattr(sys, 'stderr', err)
+    launch._force_utf8_streams()
+
+    assert out.hits == 0 and out.encoding == 'gbk', '真终端要保住平台编码'
+    assert err.hits == 1 and err.encoding == 'utf-8', '重定向的 stderr 必须切'
+
+
+def test_check_json_clean_and_verdict(work):
+    """`ok` 只说"没有 problems"；能不能说"干净"要看 `clean` / `verdict`（0.1.21 新增）。"""
+    _write(os.path.join(work, 'clean.py'), _CLEAN_SCRIPT)
+    _write(os.path.join(work, 'warn.py'), _WARN_SCRIPT)
+
+    rc, out, err = _run(work, 'check', 'clean.py', '--json')
+    j = json.loads(out)
+    assert rc == 0 and j['ok'] is True and j['problems'] == []
+    assert j['clean'] is True and j['verdict'] == 'clean'
+
+    rc2, out2, err2 = _run(work, 'check', 'warn.py', '--json')
+    j2 = json.loads(out2)
+    assert rc2 == 0, 'warn 不改变退出码（契约不变）'
+    assert j2['ok'] is True, 'ok 仍只等于"没有 problems"，这一条不许改'
+    assert j2['warnings'], '夹具应触发降级后的 out_of_canvas 提示'
+    assert j2['clean'] is False and j2['verdict'] == 'warnings', \
+        '有提示就不许说"干净" —— 这正是 0.1.20 那次误报的形态'
+
+    rc3, out3, err3 = _run(work, 'check', 'clean.py', '--json', '--static')
+    j3 = json.loads(out3)
+    assert j3['text_checked'] is False
+    assert j3['clean'] is False and j3['verdict'] == 'partial', \
+        '没量文字就不许报干净'
+
+
+def test_lang_bad_value_does_not_swallow_version(work):
+    """`--lang` 写错值时有版本旗标仍要出版本号；没有版本旗标仍 rc=2（反向牙齿）。"""
+    rc, out, err = _run(work, '--lang', 'xx', '--version')
+    assert rc == 0 and out.strip().startswith('mpltweak '), (rc, out[:80])
+
+    rc2, out2, err2 = _run(work, '--lang', 'xx', 'clean.py')
+    assert rc2 == 2, '没有版本旗标时，坏值必须仍然 rc=2（别把校验废掉）'
+    assert '--lang' in err2

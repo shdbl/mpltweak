@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## 0.1.21
+
+### 这一版用户能感知到的变化
+
+- **管道/重定向下的人读中文现在都是 UTF-8**：agent 面板、`mpltweak check fig.py > log.txt`、
+  CI 日志里读到的中文是合法 UTF-8。**真终端一个字不变**——cp936 控制台里看中文照旧正常。`--json` 与 `doctor`
+  本来就恒为 UTF-8。给"下游只吃平台编码"的场景留了 `MPLTWEAK_NO_UTF8=1` 回到旧行为；`mcp` 的
+  stdio 是协议流，不参与这项切换。
+- **重跑你的脚本时，子进程的 stdio 也钉成 UTF-8**：`apply --write` 的验证、`describe`/`check` 的
+  采集都用同一种编码 ⇒ 同一条流里不会一半 UTF-8 一半 GBK；写回失败时"脚本自己的报错信息"也能按同一种编码读回来
+  —— 那段正是判断"是谁的问题"的依据。
+- **`check --json` 多两个键：`clean` 与 `verdict`**（向后兼容，既有键一个没改）：
+  `ok` 历来只等于"没有 error 级问题"，而**文字压字、刻度拥挤、色标压到别的轴、`bbox_inches='tight'`
+  脚本被降级的越界文字**都在 `warnings` 里 ⇒ `ok: true` + `problems: []` **允许**"有压字"。
+  要判断"能不能说没问题"现在读一个字段就够：`clean`（没有 problems、没有 warnings、**且这次真的
+  量过文字**），或 `verdict ∈ clean / warnings / problems / partial`（`partial` = 这次没量文字，
+  不许说干净）。
+- **`--version` 不再被 `--lang` 的坏值挡住**：`mpltweak --lang xx --version` 现在照样出版本号
+  （版本号是纯 ASCII，与界面语言无关）；没有版本旗标时坏值仍然 `rc=2`。
+
+### 数字
+
+- 版本号两处同步：`pyproject.toml` 与 `src/mpltweak/__init__.py` 都是 `0.1.21`。
+- **测试**：`tests/test_cli_output.py` 新增 7 条（管道态 UTF-8 / 逃生开关退回平台编码 /
+  `_maybe_force_utf8` 的分流口径 / `clean`+`verdict` 三种形态 / `--version` 不被坏 `--lang` 挡住），
+  该套件 29 → **36 passed**；两臂全量读数见发布记录。
+- **文档闸门**：`tools/gen_nav.py --check` rc=0；`tools/check_doc_refs.py` 两个面各 rc=0
+  （默认面 44 条引用 / 可疑 0）；`tools/doc_cli_options.py` 双向 0 处；`check_doc_refs --self-test`
+  **13/13**。
+- **契约页**：`docs/json-contract.md` 新增 `check --json` 一节，登记 `clean` / `verdict` 与
+  "`ok` 不等于干净"这条语义边界。
+
 ## 0.1.20
 
 ### 这一版用户能感知到的变化

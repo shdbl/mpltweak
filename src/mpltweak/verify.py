@@ -1108,8 +1108,17 @@ def _isolated_timeout() -> float:
 
 
 def _child_env() -> Dict[str, str]:
-    """子进程环境：继承 + 保证"没 pip install -e 的 dev 检出"也能 import 本包。"""
+    """子进程环境：继承 + dev 检出可 import + **stdio 统一 UTF-8**。
+
+    为什么钉 PYTHONIOENCODING（而不是 PYTHONUTF8）：前者只改 stdio 编码，**不动**用户脚本
+    读写文件时的默认编码（``PYTHONUTF8`` 会把 ``open()`` 的默认编码也变成 UTF-8，那是
+    改用户程序行为，不能替用户决定）。
+    为什么必须钉：子进程的 stderr 是**继承**父进程句柄（见 collect_isolated），写回失败时
+    我们还会 ``decode('utf-8','replace')`` 去读它（writeback.py:7202）——子进程按 cp936
+    写、我们按 UTF-8 读，用户脚本的报错中文就会变成替换字符。
+    """
     env = dict(os.environ, MPLBACKEND='Agg')
+    env.setdefault('PYTHONIOENCODING', 'utf-8')     # 尊重用户显式设定（CC 审阅）
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     parts = [p for p in (env.get('PYTHONPATH') or '').split(os.pathsep) if p]
     if root not in parts:
@@ -1601,6 +1610,7 @@ def verify_once(script: str, data: Dict[str, Any], python: Optional[str] = None,
     fig_index = data.get('fig_index')
     idx_arg = str(fig_index) if isinstance(fig_index, int) else '-1'
     env = dict(os.environ, MPLBACKEND='Agg')
+    env.setdefault('PYTHONIOENCODING', 'utf-8')
     cmd = [python, '-m', 'mpltweak.verify', script, out_path, idx_arg, '--onepass']
     if script_args:
         cmd += ['--'] + list(script_args)
@@ -1716,6 +1726,7 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
     fig_index = data.get('fig_index')
     idx_arg = str(fig_index) if isinstance(fig_index, int) else '-1'
     env = dict(os.environ, MPLBACKEND='Agg')
+    env.setdefault('PYTHONIOENCODING', 'utf-8')
     cmd = [python, '-m', 'mpltweak.verify', script, out_path, idx_arg]
     if script_args:
         # `--` 分隔：子进程的 main() 看到它就不再解析后面的参数，原样透传
@@ -1893,7 +1904,7 @@ if __name__ == '__main__':
 # §2 口径：容差表、失败归因四类与错误识别（行 62-274，2 个顶层函数）
 #     _script_static_evidence                        138
 #     classify_verify_failure                        227
-# §3 采集层：把图跑出来并抓状态（行 275-1197，26 个顶层函数）
+# §3 采集层：把图跑出来并抓状态（行 275-1206，26 个顶层函数）
 #     _ax_identity                                   277
 #     _collect_texts                                 312
 #     _line_width                                    415
@@ -1917,19 +1928,19 @@ if __name__ == '__main__':
 #     collect                                       1061
 #     _isolated_timeout                             1098
 #     _child_env                                    1110
-#     collect_isolated                              1121
-#     _unlink                                       1179
-#     _r                                            1186
-# §4 语义层：参数与实测逐项比对（行 1198-1566，5 个顶层函数）
-#     _act                                          1220
-#     _same_line_color                              1228
-#     _legend_expected_loc                          1242
-#     compare                                       1252
-#     _compare_state                                1538
-# §5 重跑层：一遍跑到底与分层验证（行 1567-1758，2 个顶层函数）
-#     verify_once                                   1569
-#     verify_semantic                               1658
-# §6 子进程驱动：把图状态 dump 成 JSON（行 1759-1884，2 个顶层函数）
-#     _int_or_none                                  1766
-#     main                                          1773
+#     collect_isolated                              1130
+#     _unlink                                       1188
+#     _r                                            1195
+# §4 语义层：参数与实测逐项比对（行 1207-1575，5 个顶层函数）
+#     _act                                          1229
+#     _same_line_color                              1237
+#     _legend_expected_loc                          1251
+#     compare                                       1261
+#     _compare_state                                1547
+# §5 重跑层：一遍跑到底与分层验证（行 1576-1769，2 个顶层函数）
+#     verify_once                                   1578
+#     verify_semantic                               1668
+# §6 子进程驱动：把图状态 dump 成 JSON（行 1770-1895，2 个顶层函数）
+#     _int_or_none                                  1777
+#     main                                          1784
 # --- END AUTO NAV ---

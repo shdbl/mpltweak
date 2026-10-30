@@ -66,7 +66,12 @@ from . import messages as _msg                      # noqa: E402
 # ==== §2 基础设施：UTF-8 流、stderr 计数与后端探测 ====
 
 def _force_utf8_streams():
-    """P2-9（t69）：把 stdout/stderr 显式切到 UTF-8（**只给 doctor 用**）。
+    """把 stdout/stderr 显式切到 UTF-8（管道/重定向态）。
+
+    P2-9（t69）起给 ``doctor`` 用；0.1.21 起由 ``cli._maybe_force_utf8`` 在**所有**子命令上
+    按"stdout 不是真终端"统一调用一次 ⇒ check / apply / describe / launch / revert 的人读
+    中文在管道下也是合法 UTF-8（agent 面板、日志、``> x.txt`` 都能读）。``--json`` 本就走
+    fd 级 UTF-8，不受这里影响；``mcp`` 不在此列（stdio 上是 JSON-RPC）。
 
     中文 Windows + PowerShell 管道下 doctor 的中文会乱码（用户实测：即便设了
     ``[Console]::OutputEncoding=UTF8`` 与 ``PYTHONIOENCODING=utf-8``）。doctor 是
@@ -79,6 +84,11 @@ def _force_utf8_streams():
     """
     for _s in (sys.stdout, sys.stderr):
         try:
+            # **按流各自判断**：`mpltweak check x.py 2>err.txt` 里 stdout 是终端、stderr 是
+            # 管道 ⇒ 只该切 stderr。过去拿 stdout 一个判断管两个流，agent 分流采 stderr 时
+            # 拿到的仍是平台编码（独立审阅 CC 实测：stderr 是 GBK 的"找不到"）。
+            if getattr(_s, 'isatty', None) and _s.isatty():
+                continue                      # 真终端：保持平台编码
             if (getattr(_s, 'encoding', '') or '').lower().replace('-', '') \
                     != 'utf8':
                 _s.reconfigure(encoding='utf-8')
@@ -1254,40 +1264,40 @@ if __name__ == '__main__':
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头：外部启动器的目标、用法与退出码（行 2-65，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 基础设施：UTF-8 流、stderr 计数与后端探测（行 66-218，5 个顶层函数）
+# §2 基础设施：UTF-8 流、stderr 计数与后端探测（行 66-228，5 个顶层函数）
 #     _force_utf8_streams                             68
-#     _CountingStderr                                 89
-#     _detect_backend                                176
-#     _backend_tk_hint                               194
-#     _backend_missing_msg                           204
-# §3 一次性提示与戳记：Tk 回退 / 首次开窗 / 可重跑预检 / 需要参数（行 219-449，8 个顶层函数）
-#     _mpltweak_home                                 221
-#     _tk_hint_stamp_path                            232
-#     _emit_backend_hint                             242
-#     _first_open_hint                               286
-#     _first_open_stamp_path                         311
-#     _emit_first_open_hint                          321
-#     _emit_preflight_hint                           376
-#     _emit_needs_args_action                        416
-# §4 参数文件与「关窗后怎么写回」的命令（行 450-499，5 个顶层函数）
-#     _params_path                                   452
-#     _summarize                                     460
-#     _rel_for_shell                                 465
-#     _quote_arg                                     478
-#     _next_step_cmd                                 483
-# §5 收尾清理、摘要与续调：把上次的参数套回图上（行 500-654，3 个顶层函数）
-#     _prune_fig_params                              502
-#     _diff                                          524
-#     _apply_saved                                   546
-# §6 doctor 结论与 doctor 子命令（行 655-749，2 个顶层函数）
-#     _doctor_verdict                                657
-#     doctor                                         678
-# §7 主流程：main（开窗调图）（行 750-1248，1 个顶层函数）
-#     main                                           752
-#         §7.1 开窗前的提示：布局引擎冲突与可重跑预检                   816
-#         §7.2 后端与工作目录：Qt 候选探测、Tk 回退、切 cwd/sys.path   839
-#         §7.3 执行用户脚本：拦 plt.show / matplotlib.use / plt.close   873
-#         §7.4 抓图与后端兜底：把已有图重新挂回 Qt                   923
-#         §7.5 挂控制器：每图一个 Tweak，各写自己的参数文件            1008
-#         §7.6 续调与关窗之后：套回上次参数、落参数、摘要与写回命令           1076
+#     _CountingStderr                                 99
+#     _detect_backend                                186
+#     _backend_tk_hint                               204
+#     _backend_missing_msg                           214
+# §3 一次性提示与戳记：Tk 回退 / 首次开窗 / 可重跑预检 / 需要参数（行 229-459，8 个顶层函数）
+#     _mpltweak_home                                 231
+#     _tk_hint_stamp_path                            242
+#     _emit_backend_hint                             252
+#     _first_open_hint                               296
+#     _first_open_stamp_path                         321
+#     _emit_first_open_hint                          331
+#     _emit_preflight_hint                           386
+#     _emit_needs_args_action                        426
+# §4 参数文件与「关窗后怎么写回」的命令（行 460-509，5 个顶层函数）
+#     _params_path                                   462
+#     _summarize                                     470
+#     _rel_for_shell                                 475
+#     _quote_arg                                     488
+#     _next_step_cmd                                 493
+# §5 收尾清理、摘要与续调：把上次的参数套回图上（行 510-664，3 个顶层函数）
+#     _prune_fig_params                              512
+#     _diff                                          534
+#     _apply_saved                                   556
+# §6 doctor 结论与 doctor 子命令（行 665-759，2 个顶层函数）
+#     _doctor_verdict                                667
+#     doctor                                         688
+# §7 主流程：main（开窗调图）（行 760-1258，1 个顶层函数）
+#     main                                           762
+#         §7.1 开窗前的提示：布局引擎冲突与可重跑预检                   826
+#         §7.2 后端与工作目录：Qt 候选探测、Tk 回退、切 cwd/sys.path   849
+#         §7.3 执行用户脚本：拦 plt.show / matplotlib.use / plt.close   883
+#         §7.4 抓图与后端兜底：把已有图重新挂回 Qt                   933
+#         §7.5 挂控制器：每图一个 Tweak，各写自己的参数文件            1018
+#         §7.6 续调与关窗之后：套回上次参数、落参数、摘要与写回命令           1086
 # --- END AUTO NAV ---

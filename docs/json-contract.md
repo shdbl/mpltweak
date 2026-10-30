@@ -314,3 +314,26 @@ python tests/test_check_update.py       # [4] / [5] 在其中；零联网
 
 改完 `apply.py` / `messages.py` / `writeback.py` / `verify.py` 里任何与本页相关的常量或落键处，
 **上面两条必须仍绿**；红了先看是"实现漂了"还是"契约该升级到大版本"。
+
+## `mpltweak check --json`（0.1.21 起带 `clean` / `verdict`）
+
+`check` 的载荷本来就与 `apply` 那份不同（它不写文件、不产 `diff`），字段是：
+
+| 键 | 含义 |
+|---|---|
+| `script` / `n_axes` / `n_colorbar` / `tol` | 脚本名、轴数（含几个 colorbar 轴）、本次容差 |
+| `problems[]` / `warnings[]` | 逐条 `{rule, level, axes, msg, …}`；`problems` 是 **error 级**，`warnings` 是提示级 |
+| `ok` | **只等于"没有 `problems`"**（0.1.20 及以前就是这个语义，**不变**） |
+| `clean` | **0.1.21 新增**：没有 `problems` **且**没有 `warnings` **且**这次真的量过文字（`text_checked`）。**任何** warning 都会让它为 `false`（含 `text_overlap` / `tick_labels_crowded` / `colorbar_overlap` / tight 降级的 `out_of_canvas` / `font_mismatch` / `limits_mismatch` / `text_unavailable`）—— 这是"保守"，不是"有错" |
+| `verdict` | **0.1.21 新增**：`problems` / `partial` / `warnings` / `clean`。**`partial` 优先于 `warnings`**：文字没量成时 `text_unavailable` 本身就是一条 warning，但真相比"有压字"更接近"根本没量"。`--static` 下只会取 `problems` 或 `partial`（它从不量文字） |
+| `text_checked` / `n_texts` / `tight_bbox` | 有没有按真实渲染尺寸量文字、量了几处、脚本是否用 `bbox_inches='tight'` 导出 |
+| `layout_engine[]` | 布局引擎冲突点（带行号） |
+| `static` / `checked[]` / `not_checked[]` / `note` / `ast` | 只有 `--static` 才有：**没执行脚本**，所以只查语法与布局引擎 |
+
+**为什么 `ok` 不够**：文字压字（`text_overlap`）、刻度拥挤（`tick_labels_crowded`）、
+色标压到别的轴（`colorbar_overlap`）、以及 `bbox_inches='tight'` 脚本被降级的越界文字，
+全部落在 `warnings` 里 ⇒ `ok: true` + `problems: []` **允许**"有压字"。
+要判断"能不能对用户说没问题"，读 `clean`（或 `verdict`），不要拿 `ok` 推。
+
+**向后兼容**：两个键是**新增**，既有的 `ok` / 退出码 / `problems` / `warnings` 语义一字未改；
+只认旧键的调用方什么都不用动。

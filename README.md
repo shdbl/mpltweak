@@ -287,7 +287,7 @@ fig.savefig('fig1.png', dpi=150)
 
 > 想看机器可读结果：`--json` 给 `files[].diff`（逐行 `{line,type,old,new}`）、`preview_sha256`（与真实写盘文件 sha256 一致）、`stage`（卡在哪一步）、`next_step`、`attribution`。契约见 [docs/agent.md](https://github.com/shdbl/mpltweak/blob/main/docs/agent.md)。
 
-> 界面语言跟随系统，要强制就设 `MPLTWEAK_LANG=zh|en`，或者加 `--lang en` —— 放在最前面（`mpltweak --lang en fig.py`）或子命令/脚本之后（`mpltweak fig.py --lang en`）**都认**（它是工具选项，`apply`/`describe`/`check`/`launch` 同理）。要把 `--lang` 传给你**自己的脚本**，请用 `--` 分隔：`mpltweak fig.py -- --lang en`。
+> 界面语言跟随系统，要强制就设 `MPLTWEAK_LANG=zh|en`，或者加 `--lang en` —— 放在最前面（`mpltweak --lang en fig.py`）或子命令/脚本之后（`mpltweak fig.py --lang en`）**都认**（它是工具选项，`apply`/`describe`/`check`/`launch` 同理）。要把 `--lang` 传给你**自己的脚本**，请用 `--` 分隔：`mpltweak fig.py -- --lang en`。（唯一例外：`--version` / `-V` 不受 `--lang` 影响，版本号照出。）
 
 > 卡住了见 [docs/troubleshooting.md](https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md)（拖了没反应 / 拖了弹回去 / 报错怎么办，每条都是「现象 → 一句话原因 → 怎么做」）。
 > 完整输出样张、逐处清单 `-v`、`--style inplace` / `--style block`、参数字段表 —— [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) 与 [docs/params.md](https://github.com/shdbl/mpltweak/blob/main/docs/params.md)。

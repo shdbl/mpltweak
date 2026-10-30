@@ -123,6 +123,55 @@ def _leading_top_flags(argv):
     return flags, i
 
 
+def _first_positional(argv):
+    """`mpltweak` 的**第一个位置参数**（子命令名或脚本路径）；只有开关就返回 `''`。
+
+    给 `_maybe_force_utf8` 判"是不是 `mcp`"用 —— 那个判断必须能在**解析之前**做：
+    0.1.20 事故里，agent 第一脚往往敲的是空参数或写错 `--lang`，而那时的用法/报错文本
+    正是要走 UTF-8 的部分（独立审阅 CC 实测：空 argv 的 usage 2489 B 是 GBK）。
+    """
+    i = 0
+    while i < len(argv):
+        _t = argv[i]
+        if _t == '--':
+            return argv[i + 1] if i + 1 < len(argv) else ''
+        if not _t.startswith('-'):
+            return _t
+        if _t == '--lang':
+            _nx = argv[i + 1] if i + 1 < len(argv) else None
+            i += 2 if (_nx is not None and not _nx.startswith('-')) else 1
+            continue
+        i += 1
+    return ''
+
+
+def _leading_has_version(argv):
+    """`mpltweak` **前段开关**里有没有 `-V` / `--version`（遇到位置参数或 `--` 就停）。
+
+    为什么要它：版本号是纯 ASCII、与界面语言无关，不该因为 `--lang` 写错值而变成 rc=2
+    （MAINTENANCE §36 登记为"明知未修"）。而 `mpltweak x.py --version` 仍是**脚本参数**，
+    不许抢 —— 所以只扫前段。
+
+    **必须吃掉 `--lang` 的值再往下走**：否则 `--lang xx --version` 里的 `xx` 会被当成
+    "第一个位置参数"而让扫描提前停（第一版就栽在这里，冒烟 D1 抓到的）。
+    """
+    i = 0
+    while i < len(argv):
+        _t = argv[i]
+        if _t == '--' or not _t.startswith('-'):
+            return False
+        if _t in ('-V', '--version'):
+            return True
+        if _t == '--lang':
+            _nx = argv[i + 1] if i + 1 < len(argv) else None
+            # 只有"值不像旗标"时才跳过它：`--lang --version` 里的 `--version` 是旗标，
+            # 不是 `--lang` 的值（CC 审阅实测这一格漏网：rc=2 且报"值不认识：--version"）。
+            i += 2 if (_nx is not None and not _nx.startswith('-')) else 1
+            continue
+        i += 1
+    return False
+
+
 def _consume_leading_lang(argv):
     """把 ``mpltweak`` **最前面那段开关**里的 ``--lang <值>`` 摘掉并生效 → ``(新 argv, rc 或 None)``。
 
@@ -156,7 +205,12 @@ def _consume_leading_lang(argv):
         tok = argv[i]
         if tok == '--lang' or tok.startswith('--lang='):
             if tok == '--lang':
-                if i + 1 >= len(argv):
+                _miss = (i + 1 >= len(argv)
+                         or (argv[i + 1].startswith('-') and argv[i + 1] != '-'))
+                if _miss:
+                    if _leading_has_version(argv):
+                        i += 1          # 缺值但有版本旗标 ⇒ 跳过它，让版本号先出
+                        continue
                     sys.stderr.write(_msg.t('cli_lang_needs_value') + '\n')
                     return argv, _msg.EXIT_USAGE
                 raw, step = argv[i + 1], 2
@@ -166,6 +220,9 @@ def _consume_leading_lang(argv):
             # 前置位要是自己 `lower()` 就会变成"同一个值、两个位置结论不同"。
             value = raw.strip()
             if value not in ('auto', 'zh', 'en'):
+                if _leading_has_version(argv):
+                    i += step       # 坏值但有版本旗标 ⇒ 跳过它，让版本号先出
+                    continue
                 sys.stderr.write(_msg.t('cli_lang_bad_value', value=raw) + '\n')
                 return argv, _msg.EXIT_USAGE
             found = value
@@ -173,8 +230,11 @@ def _consume_leading_lang(argv):
             continue
         kept.append(tok)                        # 其它顶层开关原样留着（--version 等）
         i += 1
+    # `kept + argv[i:]` 与入参逐项相同（没有 --lang 时），所以这里可以**一条路返回**：
+    # 走"坏值但有版本旗标 ⇒ 跳过它"那条分支时，跳过的那一对必须从返回里消失
+    # （否则 `--lang xx --version` 会被 launch 的 argparse 再拒一次，rc=2 —— 冒烟 D1 抓到的）。
     if found is None:
-        return argv, None
+        return kept + argv[i:], None
     # 后面的同名旗标属于子命令或用户脚本，一个都不碰（只摘掉了前段那一个）
     if found == 'auto':
         # 顺序有讲究：`messages.set_lang(None)` 内部会**立刻**调 current_lang() 把结果
@@ -188,8 +248,34 @@ def _consume_leading_lang(argv):
     return kept + argv[i:], None
 
 
+def _maybe_force_utf8(cmd):
+    """把人读通道在**管道/重定向**下切到 UTF-8 —— 只切"输出面向程序"的那种场景。
+
+    为什么按 isatty 分流，而不是一律切：``launch._force_utf8_streams`` 的 docstring 已经把
+    道理写了 —— 真控制台上 Python 走 Windows 控制台 API（``WriteConsoleW``），切编码不影响
+    显示；而管道下输出面向的是**程序**（agent 面板 / 日志采集 / ``mpltweak check > x.txt``），
+    此时按平台编码写出的字节（简中 Windows = cp936）会被按 UTF-8 解码的消费者读成
+    ``◆``/``�``。所以：
+
+      * 真终端 ⇒ 一个字不动（cp936 控制台里看中文照旧正常）；
+      * 管道/重定向 ⇒ UTF-8（与 ``doctor`` 既有做法一致，这里只是把它从"只给 doctor"
+        推广成通则）；
+      * ``mcp`` ⇒ **永不**碰：stdio 上跑的是 JSON-RPC 协议，动 stdout 是红线；
+      * ``MPLTWEAK_NO_UTF8=1`` ⇒ 保持旧行为（逃生开关，给"下游只吃平台编码"的老工具链）。
+    """
+    if cmd == 'mcp' or os.environ.get('MPLTWEAK_NO_UTF8'):
+        return
+    # "哪个流该切"由 `launch._force_utf8_streams` **按流各自判断**（tty 的不动）；
+    # 这里只管两件策略性的事：`mcp` 的 stdio 是 JSON-RPC 协议流、以及逃生开关。
+    from .launch import _force_utf8_streams
+    _force_utf8_streams()
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    # **必须在最早期**做：空 argv 的用法文本、`--lang` 缺值/坏值的报错也都是人读中文，
+    # 而它们发生在 `cmd = argv[0]` 之前（CC 审阅实测：那些路径此前仍是 GBK）。
+    _maybe_force_utf8(_first_positional(argv))
     argv, _lang_rc = _consume_leading_lang(argv)
     if _lang_rc is not None:
         return _lang_rc

@@ -7194,6 +7194,9 @@ def verify_run(script, python=None, timeout=300, script_args=None):
     python = python or sys.executable
     env = dict(os.environ)
     env['MPLBACKEND'] = 'Agg'
+    # 与 verify._child_env 同一条口径：下面 err 是按 UTF-8 解的（:7205），子进程若按 cp936
+    # 写，用户脚本的报错中文会变成替换字符 —— 那正是"归因"最需要读清楚的时候。
+    env.setdefault('PYTHONIOENCODING', 'utf-8')
     cwd = os.path.dirname(os.path.abspath(script))
     try:
         cmd = [python, script] + list(script_args or [])
@@ -8460,11 +8463,11 @@ def writeback(script, data, params_path, verify=True, python=None,
 #     _reindent                                     7104
 #     _norm_ts                                      7115
 #     insert_or_replace                             7121
-# §22 验证：无头重跑与一遍式验证（行 7180-7411，4 个顶层函数）
+# §22 验证：无头重跑与一遍式验证（行 7180-7414，4 个顶层函数）
 #     verify_run                                    7182
-#     _verify_script                                7214
-#     _position_axes                                7302
-#     position_write_needed                         7314
-# §23 写回入口：writeback（行 7412-8243，1 个顶层函数）
-#     writeback                                     7414
+#     _verify_script                                7217
+#     _position_axes                                7305
+#     position_write_needed                         7317
+# §23 写回入口：writeback（行 7415-8246，1 个顶层函数）
+#     writeback                                     7417
 # --- END AUTO NAV ---

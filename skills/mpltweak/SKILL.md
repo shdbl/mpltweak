@@ -9,7 +9,8 @@ description: 交互式 matplotlib 排版（脚本零侵入）：像 PPT 一样�
 
 **定位**：只管**位置 / 字号 / 图例 / 样式**，不发明内容。文字、数据、图元仍由用户代码决定。
 
-面向人的完整文档在项目根的 `README.md`（演示 GIF、5 分钟上手、可靠性数字与全部子文档的索引）；键位与手势在 `docs/interaction.md`，参数文件 JSON 规范在 `docs/params.md`。
+本手册对应 **mpltweak ≥ 0.1.21**（`mpltweak --version` 低于它就先按「版本与更新」处理）。
+需要手册没写的细节时**按需读**（不要整篇读）：键位与手势 https://github.com/shdbl/mpltweak/blob/main/docs/interaction.md ｜ 参数文件字段 `mpltweak schema` ｜ `--json` 字段 https://github.com/shdbl/mpltweak/blob/main/docs/json-contract.md ｜ 排障 https://github.com/shdbl/mpltweak/blob/main/docs/troubleshooting.md ｜ 版本变化 https://github.com/shdbl/mpltweak/blob/main/CHANGELOG.md
 
 ## 铁律（违反即失败）
 
@@ -21,24 +22,21 @@ description: 交互式 matplotlib 排版（脚本零侵入）：像 PPT 一样�
 6. `.tweak_params/` 是临时产物；落实完成后问用户是否清理。
 7. **不静默升级用户的包**：`pip install -U mpltweak` 会改他的环境 ⇒ 先说明"会升到哪个版本、可能有什么变化"，**征得同意再执行**。
 8. **不在没确认版本的情况下断言"这是已知问题 / 已经修了"**：先 `mpltweak --version`，再看最新版与 `CHANGELOG.md`（见下一节）。
+9. **引用工具输出必须逐字**：不许把输出"整理成通顺句子"再标成"实时输出"；某一行含乱码（`◆` / `�` / `锟斤拷`）就整行只说"该行乱码"，不得翻译、补全、润色。判排版结论用 `check --json` 的 `clean` / `verdict`，别去解析人读中文。
 
 ## 开工第一步：确认环境（缺了就装，但先问用户）
-
-**还没被接上？** 让用户把这份手册的链接发给你：
-`https://github.com/shdbl/mpltweak/blob/main/skills/mpltweak/SKILL.md`
-（或者把文件内容直接贴给你）—— 你照着本节把环境配好即可。
 
 **先自检**（输出里有一行「开窗后端」）：
 ```bash
 mpltweak doctor
 ```
 > 自检一律用 `mpltweak doctor`。**查版本用 `mpltweak --version`（`-V` 同义，0.1.15 起）**：打印一行 `mpltweak <版本号>`、退出码 0。它只认命令行**第一个**位置参数 —— `mpltweak x.py --version` 仍是老规矩（`--version` 原样透传给你脚本的 `sys.argv`），别指望那样查版本。
-> Windows 上若 `doctor` 的中文在 PowerShell 里显示成乱码：doctor 的输出是**显式 UTF-8**，重定向一下再读即可 —— `mpltweak doctor > doctor.txt` 然后 `Get-Content -Encoding UTF8 doctor.txt`（或先 `chcp 65001`）。
+> **输出编码**（0.1.21 起）：**管道 / 重定向**下所有人读中文都是 **UTF-8**（`doctor` / `check` / `apply` / `describe` / `launch` …），`--json` 与 `doctor` 更是恒 UTF-8 ⇒ 重定向到文件直接 `Get-Content -Encoding UTF8` 读即可；**真终端**里跟随平台编码（cp936 控制台看中文正常）。若下游只吃平台编码：`MPLTWEAK_NO_UTF8=1` 回到旧行为。若**你直接跑 python 脚本**也乱，那与本工具无关（看「常见坑」最后一条）。
 
 **⚠️ `pip install` 之后命令还是"不存在"？** Windows + conda 很常见：包装好了，但 `Scripts` 目录不在 PATH
 （安装时会打一行 `WARNING: The script mpltweak.exe is installed in '…\Scripts' which is not on PATH`）。
 **这不是"没装"，别重装一遍。** 三条等价路子，任选一条：
-1. **全路径调用**：`D:\Miniconda\envs\<你的环境名>\Scripts\mpltweak.exe doctor`（把 `<你的环境名>` 换掉即可）；
+1. **全路径调用**：`<环境根>\Scripts\mpltweak.exe`（目录用 `python -c "import sysconfig;print(sysconfig.get_path('scripts'))"` 取）；
 2. 把 `<环境>\Scripts` **加进 PATH**（改完要**重开终端**才生效）；
 3. **最稳**：`python -m mpltweak doctor` —— 只要 `python` 是本环境的，任何 PATH 配置都对；本文所有 `mpltweak <子命令>` 都能这么换。
 
@@ -57,13 +55,13 @@ mpltweak doctor
 4. **装之前必须得到用户同意**（要下载、占磁盘），不要不吭声就装。
 
 **开窗失败或退化时，用人话转述（不要把诊断码原样丢给用户）**：
-- **开窗 `rc=4`** = 两个图形后端都拿不到（典型：Linux 服务器没装 `python3-tk`）。转述成："这台机器现在没有能画窗口的组件。**只做排版 / 体检 / 写回完全不受影响**；要开窗的话，我可以装 `mpltweak[qt]`（约 150MB），或者让系统装 `python3-tk` —— 你想怎么办？"
+- **开窗 `rc=4`** = 两个图形后端都拿不到（典型：Linux 服务器没装 `python3-tk`）。转述成："这台机器现在没有能画窗口的组件。**只做排版 / 体检 / 写回完全不受影响**；要开窗的话，我可以装一个图形组件（约 150MB），或者让系统装 `python3-tk` —— 你想怎么办？"（包名只出现在**你自己执行**的命令里）
 - **看到 Tk 弱化版提示**（stderr 的人话）= 没装 Qt，自动用了备选方案。转述成："窗口能开，但用的是简化版交互。想要完整体验，我可以装 `mpltweak[qt]`（约 150MB），要装吗？"
 - **禁止**把 `rc=4`、「图形后端」、「Qt 绑定」这类词直接抛给非技术用户 —— 一句话说清"缺什么 / 要不要装 / 不装会怎样"。
 
 ## 先说一句"要等多久"，别静默等待
 
-`describe` / `check` / `apply`（含 `--write`）**都会在独立子进程里重跑用户的脚本**（无头 Agg 后端）；
+`describe` / `check`（不带 `--static`）/ `apply --write` **都会在独立子进程里重跑用户的脚本**（无头 Agg 后端）；**只读预览**（`apply` 不带 `--write`）不执行脚本；
 其中 **`apply --write` 默认 1 遍起**：源码里有可直接改的数字时就是 1 遍（这一遍同时看「能不能跑通」与
 「改的字段有没有真落到目标图上」）；参数里有**「原位写不了」的字段**（`grid` / `spines` / `clim` / `pos` /
 `xscale` 这类，**很常见**）时会**先额外跑 1 遍**判「要不要退块」
@@ -99,7 +97,7 @@ mpltweak doctor
 | `mpltweak revert <脚本.py>` | **预览回退**：打印会改回什么，**一个字节都不动** |
 | `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**备份里的字节**（默认用固定名 `.tweak.bak`；它**首份优先** ⇒ 回到它建立那一刻、通常就是你第一次改这张图之前的原件；**固定名缺失但还有 pid 副本时自动退回最早那份**，`rc=0`、逐字节回到最初，`--json` 用 `fallback: "no_fixed_backup_used_oldest_pid"` 标明；两处都没有才 `rc=2` / `no_backup`）；`--first` 回到**最早**那次写回前（读最早一份 pid 副本） |
 | `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，包装本身不能直接喂回 `apply --params`；但 **0.1.14 起会顺手按每图写好 `<stem>.fig<k>.json`**，那个能喂，见「口径与默认值」）；`-o 文件` **只落盘、不打印 JSON**（stdout 为空，屏幕上只有一句「已写入 …」走 stderr）；`--compact` 紧凑 |
-| `mpltweak check <脚本.py>` | **排版体检**：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠。`--json` 机器可读，退出码 1 = 有问题 |
+| `mpltweak check <脚本.py>` | **排版体检**：对齐 / 等大 / 间距 / 字号 / 越界 / 重叠。`--json` 机器可读，退出码 1 = 有 **error 级**问题。字段：`ok` / `clean` / `verdict` / `problems[]` / `warnings[]` / `n_axes` / `n_colorbar` / `tol` / `text_checked` / `n_texts` / `tight_bbox` / `layout_engine[]`。**`ok` 只等于"没有 problems"**；文字压字 / 刻度拥挤 / 色标压轴 / tight 降级的越界文字都在 **`warnings`** 里 ⇒ **要判"能不能对用户说没问题"读 `clean` / `verdict`**（`partial` = 这次没量文字，不许说干净） |
 | `mpltweak check <脚本.py> --static` | 只做 AST 解析 + 布局引擎冲突扫描，**不执行脚本**（脚本有副作用 / CI 里先查一眼时用；代价是不量真实渲染尺寸，`--static` 通过 ≠ 图没问题） |
 | `mpltweak schema` | 参数文件的 JSON Schema（draft-07），校验你自己生成的参数 |
 | `mpltweak mcp` | 启动 MCP server（stdio），把上面能力暴露给 AI 客户端 |
@@ -112,7 +110,7 @@ mpltweak doctor
 - **`launch`**（含 `mpltweak <脚本>` 这种写法）：`--fig N`、`--params X`、`--force-resume`、`--dry-run`、`--verbose`、`--doctor`、**`--json`（0.1.15 起，只覆盖失败出口）** —— 成功路径照旧开窗、不产出 JSON；失败时 stdout 只有一条 JSON（`ok=false` + `error_code` + `stage` + `error` + `next_step`），退出码口径不变。**副作用**：这个开关会吃掉原本要透传给你脚本的 `--json`，要透传请写 `mpltweak launch x.py -- --json`。
 - **`describe`**：`--fig N`、`--all-figs`、`-o 文件` / `--output 文件`（**把排版直接写进文件，最常用**）、`--compact`。
 - **`check`**：`--fig N`、`--tol 容差`、`--json`、`--no-text`、`--no-tight`、`--static`、`--strict`。
-- **`--lang zh|en|auto`（界面语言，默认跟随系统）**：**是工具选项，两种位置都认** —— 前置位（`mpltweak --lang en <脚本>`，由 `cli._consume_leading_lang` 先摘掉再分派）与子命令位（`apply` / `describe` / `check` / `launch` / `--check-update`）。认出来的 `--lang` **不会**进你脚本的 `sys.argv`；要传给脚本请用 `--`（`mpltweak x.py -- --lang en`）。`revert` / `schema` / `demo` / `mcp` 不认（`rc=2`）；`doctor --lang en` 也 `rc=2`，但会**点名**并提示写成 `mpltweak --lang en doctor`。`auto` 会**清掉**继承的 `MPLTWEAK_LANG`。等价写法一律是 `MPLTWEAK_LANG=en`。
+- **`--lang zh|en|auto`（界面语言，默认跟随系统）**：**是工具选项，两种位置都认** —— 前置位（`mpltweak --lang en <脚本>`，由 `cli._consume_leading_lang` 先摘掉再分派）与子命令位（`apply` / `describe` / `check` / `launch` / `--check-update`）。认出来的 `--lang` **不会**进你脚本的 `sys.argv`；要传给脚本请用 `--`（`mpltweak x.py -- --lang en`）。`revert` / `schema` / `demo` / `mcp` 不认（`rc=2`）；`doctor --lang en` 也 `rc=2`，但会**点名**并提示写成 `mpltweak --lang en doctor`。`auto` 会**清掉**继承的 `MPLTWEAK_LANG`。**例外**：`--version` / `-V` 不受 `--lang` 影响 —— 版本号是纯 ASCII，写错语言值时照样出版本号（`mpltweak --lang xx --version` ⇒ rc=0）。等价写法一律是 `MPLTWEAK_LANG=en`。
 - **`--force` 只有 `apply` 认**（参数比脚本旧时照样套用；`describe` / `check` / `revert` 给了是 `rc=2`）；**`--no-tight` 只有 `check` 认**（按 0.1.8 旧口径严判 `bbox_inches='tight'`；`apply` / `describe` / `revert` 给了是 `rc=2`）。
 
 **`--timeout` 只有 `apply` 认** —— `check` / `describe` / `launch` **都不认**（实测：`mpltweak check <脚本> --timeout 900` ⇒ `unrecognized arguments`、`rc=2`）。**`check` 也不需要它**：实测一份要读 NSIDC + 128 个 MME 文件的重脚本，`check` 只用 **50 秒**左右（远低于 300 秒）⇒ "默认 300 秒不够"这个担心对 `check` 不成立。选项清单以 `mpltweak <子命令> --help` 为准。
@@ -137,7 +135,7 @@ mpltweak doctor
 
 1. **首次使用**：本次会话第一次用 mpltweak 前，先确认版本；如果落后最新版，用一句人话告诉用户，**不阻塞**继续干活。
 2. **用户抱怨不好用**（"不好用 / 没效果 / 改了没用 / 报错"）：先查版本。若用户装的是旧版，说明"这可能是某版已修的问题"，而不是直接下结论。
-3. **文档提到但 CLI 不认**：某个选项 / 行为文档里有、但命令报 `unrecognized arguments` ⇒ 这是版本落后的铁证，先建议升级。
+3. **文档提到但 CLI 不认**：先对照本手册「其他选项」一节看**这个选项是否属于这条子命令**（`--timeout` 只有 `apply` 认、`--force` 只有 `apply`、`--no-tight` 只有 `check`）——放错子命令同样报 `unrecognized arguments`。确认该选项本应属于它却仍报，才是版本落后，再建议升级。
 
 **红线**：
 
@@ -147,10 +145,10 @@ mpltweak doctor
 
 ### 怎么查（都是只读，不改环境）
 
-1. **他现在装的是哪一版**：`mpltweak --version`（`-V` 同义）。这个命令 **0.1.15 才有** —— 如果它报"命令不存在"，本身就是一条信息（说明装的是更早的版本）。
+1. **他现在装的是哪一版**：`mpltweak --version`（`-V` 同义）。判据看**输出**：匹配 `^mpltweak \d+\.\d+\.\d+` 才算新版；报错、或输出不是这一行 ⇒ 按旧版处理。
 2. **最新版是哪一版**：`pip index versions mpltweak`（只读）；没有这条命令的 pip 就看 `https://pypi.org/pypi/mpltweak/json` 的 `info.version`。
-3. **他装的是旧版** ⇒ 先说清"你可能遇到的是**某版已经修掉**的问题"，指向仓库 `CHANGELOG.md` 里那个版本的条目（那里只写用户能感知到什么）；**征得同意后**再升级：`pip install -U mpltweak`（要开窗拖图的用 `pip install -U "mpltweak[qt]"`）。升级后用 `mpltweak --version` 复核一次，再让他重试原来的操作，并明确问一句"现在还复现吗"。
-4. **他已经是最新版** ⇒ 别急着说"那就是 bug"。先回头查已知边界：`apply --diff` 只是**计划预览**（真写回时验证失败仍会回滚）、开了 `constrained_layout` / `tight_layout` 的图**写回轴位置会被默认拦下**、脚本在无头环境跑不通时会回滚、含"原位写不了"的字段时会多跑一遍脚本（看起来像"变慢了"）—— 这些都在 `docs/troubleshooting.md` 与 `docs/boundaries.md` 里。确实与文档不符，再让用户带着**版本号 + `--json` 输出**去提 issue。
+3. **他装的是旧版** ⇒ 先说清"你可能遇到的是**某版已经修掉**的问题"，指向 `https://github.com/shdbl/mpltweak/blob/main/CHANGELOG.md` 里那个版本的条目（那里只写用户能感知到什么）；**征得同意后**再升级：`pip install -U mpltweak`（要开窗拖图的用 `pip install -U "mpltweak[qt]"`）。升级后用 `mpltweak --version` 复核一次，再让他重试原来的操作，并明确问一句"现在还复现吗"。
+4. **他已经是最新版** ⇒ 别急着说"那就是 bug"。先回头查已知边界：`apply --diff` 只是**计划预览**（真写回时验证失败仍会回滚）、开了 `constrained_layout` / `tight_layout` 的图**写回轴位置会被默认拦下**、脚本在无头环境跑不通时会回滚、含"原位写不了"的字段时会多跑一遍脚本（看起来像"变慢了"）—— 这些都在 `docs/troubleshooting.md` 与 `docs/boundaries.md` 里。确实与文档不符，再让用户带着**版本号 + `--json` 输出**去 https://github.com/shdbl/mpltweak/issues 提交。
 
 ## 三种用法，先判断该走哪个
 
@@ -200,38 +198,19 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - 但你可以保证"说改哪就精确改哪"，并且**用 `check` 自查几何问题**（不齐 / 不等大 / 间距不均 / 越界 / 重叠）——
   这些不需要"看到"图，数字就能判断。
 
-## 键位速查（转述给用户；`?` 键能在窗口里打开带图的帮助页）
+## 键位速查（只用于回答用户；完整表在 docs/interaction.md，窗口里按 `?` 也能看带图帮助）
 
-| 组 | 键 | 作用 |
-|---|---|---|
-| 选择 | 拖面板 / 拖边、拖角 | 移动 / 缩放 |
-| 选择 | **Shift**+拖角 · **Alt**+拖角 | 等比缩放 · 中心对称缩放 |
-| 多选 | **Ctrl+点击** · **Shift+点击** · 拖空白 | 加选 / 加选 / 橡皮筋框选（完全框住才选中） |
-| 移动 | **方向键** | **移动选中面板**（PPT 肌肉记忆） |
-| 移动 | **Shift+方向键** | **微调尺寸**（中心不动） |
-| 对齐 | **Ctrl+Shift+L/R/T/B/C/M** | 左 / 右 / 顶 / 底 / 水平居中 / 垂直居中 |
-| 均分 | **Ctrl+Shift+H / V** | 水平 / 垂直等间距（两端不动） |
-| 字号 | 悬停文字后 `+` / `-` | 标题 / 轴标 / 刻度 / 图例 / colorbar 标签（`ax.text('(a)')` 面板标注也能调） |
-| 图例 | 拖图例 | 半透明预览 + 松手吸附到 8 个标准位 |
-| 样式 | `[` `]` · `c` · `C` · `g` · `s` · `x` `y` | 线宽 · 线色 · colormap · 网格 · 边框 · log 轴 |
-| 画布 | **Ctrl+F** · `n` · **空格** · **Ctrl+Q** | 裁白边 · 吸附开关 · 线条模式 · 关全部窗口 |
-| 历史 | **Ctrl+Z** · **Ctrl+Y** 或 **Ctrl+Shift+Z** | 撤销 · 重做（Office 惯例双绑） |
-| 其他 | **Alt+拖拽** | 临时关闭吸附（这一下不对齐） |
-| 逃生 | **Alt+点击** · **Tab** | **穿透**到下一层候选（被压住的对象，如压在极地图上的 colorbar） · **逐个循环**所有可见对象（含点不到的） |
+用户问"怎么拖/怎么缩放/怎么对齐"时**直接转述**这几条就够：拖面板移动、拖边/角缩放、**Shift**+拖角等比、**Alt**+拖角中心对称、**Ctrl+点击**多选、方向键移动面板、**Ctrl+Shift+L/R/T/B/C/M** 对齐、**Ctrl+Shift+H/V** 均分、悬停文字按 `+`/`-` 改字号、拖图例吸附到 8 个标准位、**Ctrl+F** 裁白边、**Ctrl+Z** 撤销。
+**开窗前提醒用户切英文输入法**：中文 IME 打开时 `c/s/g/x/y` 等字母快捷键会被吞掉直接上屏。
 
-**拾取优先级（P0-2 / t71）**：光标下有多个对象时，**后加入者优先、再按面积小者优先** ——
-压在极地图上的 colorbar 先被选中；**边缘缩放把手不许抢走压在上面的小对象**。极地图这类
-`aspect_locked` 轴按**真实绘制形状（圆）**判命中，不是外接矩形。若仍点不到想点的那个，
-用上表的**逃生**两招（`Alt+点击` 穿透 / `Tab` 循环）—— 不允许存在"永远选不中"的对象。
-（真窗口里"点色条真的选中"仍待真窗口实测确认；离屏手势套件已证。）
+**点不到想点的对象**（用户报"选不中"时）：光标下有多个对象时**后加入者优先、再按面积小者优先**（压在极地图上的 colorbar 会先被选中，极地图按真实圆形判命中而不是外接矩形）；仍点不到就用 `Alt+点击` **穿透**到下一层，或 `Tab` **逐个循环**所有可见对象 —— 不存在"永远选不中"的对象。
 
-**空格（线条模式）**：只留边框 + 刻度文字 + 图例，隐藏数据图元。cartopy 全球图实测全量重绘
-494ms → 169ms，排版挪位置时用它，再按一次恢复。
+**空格**＝线条模式：只留边框、刻度文字与图例，隐藏数据图元，重绘明显更快；排版挪位置时按一下，再按一次恢复。
 
 ## 口径与默认值
 
 - **参数文件**：`<脚本目录>/.tweak_params/<脚本名>.json`（隐藏目录集中存放；`--params` 可改）。
-  格式是**公开规范**：顶层 `version` 字段当前是 **4**（即代码里的 `SCHEMA_VERSION`；旧版文件照读），README 有完整字段表。
+  格式是**公开规范**：顶层 `version` 字段当前是 **4**（旧版文件照读）；完整字段表用 `mpltweak schema`。
 - **续调语义**：参数文件 = "待落实状态"。再次开窗会自动套回图上（打印"已套用上次参数 N 项"）；
   落实进代码后它与代码等价，再开窗套用即为无操作。用户想从头调就删掉它。
 - **多图脚本**：默认**每张图都弹窗且都可交互**，用户改哪张记哪张；一次改了多张就各留一份参数
@@ -249,7 +228,7 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   写进 `.tweak_params/` 时连 `--params` 都不用给。也可以老办法逐图 `describe --fig N`。
 - **模式固定为"重图"**（ghost + blit 预览）：所有拖拽 / 框选 / 多选都先预览、松手才落位。
 - **后端**：脚本里写 `matplotlib.use('Agg')` 或 `'TkAgg'` **都不用改**（启动器会拦掉切换）；
-  后端按 **QtAgg → Qt5Agg → Qt6Agg → TkAgg 真建 canvas 逐个探测**。`pip install mpltweak` **不含 Qt**（Qt 是可选 extra `[qt]`）：Windows / macOS 官方 Python 自带 `tkinter`，因此只装核心包也能开窗，用的是 **Tk 后端（交互弱化版）**，并在 **stderr** 打一句人话提示（`MPLTWEAK_NO_HINT=1` 静默、`--dry-run` 不提示）；想要 Qt 体验让用户 `pip install "mpltweak[qt]"`。两个后端都拿不到（典型 Linux 服务器没装 `python3-tk`）→ 开窗 `rc=4`，提示装 `mpltweak[qt]` 或系统包的 `python3-tk`；**纯 CLI（describe / check / apply / mcp）不需要任何图形后端**。当前用的是哪个：`mpltweak doctor` 会打印一行“开窗后端”。
+  后端按 **QtAgg → Qt5Agg → Qt6Agg → TkAgg 真建 canvas 逐个探测**。`pip install mpltweak` **不含 Qt**（Qt 是可选 extra `[qt]`）：Windows / macOS 官方 Python 自带 `tkinter`，因此只装核心包也能开窗，用的是 **Tk 后端（交互弱化版）**，并在 **stderr** 打一句人话提示（`MPLTWEAK_NO_HINT=1` 静默、`--dry-run` 不提示）；想要完整体验：**征得同意后由你**执行 `pip install "mpltweak[qt]"`。两个后端都拿不到（典型 Linux 服务器没装 `python3-tk`）→ 开窗 `rc=4`，提示装 `mpltweak[qt]` 或系统包的 `python3-tk`；**纯 CLI（describe / check / apply / mcp）不需要任何图形后端**。当前用的是哪个：`mpltweak doctor` 会打印一行“开窗后端”。
 
 ## 常见坑
 
@@ -265,6 +244,8 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **原地改不了的情况很正常**：`plt.subplots()` 的网格位置、代码里没写的字号，原位那一趟就是改不了。
   默认的 `--style auto` 会自动改用插入调整块把它们**落地**（栏里同时列出原位为什么没成），通常不用
   手动加参数；只有显式 `--style inplace` 才会因为"写不了"而 `rc=1` 失败（这是故意的，见命令表）。
+
+- **中文变成 `◆` / `�` 时，先分清是谁的输出**：**你自己** `python 脚本.py` 也乱 ⇒ 与工具无关（Windows 上 Python 被管道接走按 **cp936** 编码，而面板按 UTF-8 解；给子进程设 `PYTHONIOENCODING=utf-8` 或 `PYTHONUTF8=1` 即可）。**工具**的输出在管道下**已经是 UTF-8**（0.1.21 起），还乱就用 `--json`（fd 级 UTF-8，任何情况都不该乱）。**不许**把乱码行"翻译"成通顺中文 —— 见铁律第 9 条。
 
 ## 写回失败 / 半成功时怎么读结果
 
@@ -350,7 +331,7 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 产品逻辑全在 pip 包 **mpltweak** 里（`pip install mpltweak` 就够跑 `describe` / `check` / `apply` / `mcp`；**开窗需要一个图形后端，而 Qt 是可选 extra、不在默认依赖里** —— 没装 Qt 时自动退回 Tk 开窗并在 stderr 提示，想要完整体验加 `pip install "mpltweak[qt]"`）。
 本文件只负责"什么时候用、怎么用、别踩什么坑"—— 内核升级不需要动它。
 
-### `doctor` 的选项口径（t91）
+### `doctor` 的选项口径
 
 - `mpltweak doctor` **不接受其它选项，也不接受位置参数**（多余参数 ⇒ **rc=2**，usage 走 stderr）—— 与其它子命令一致，不再静默忽略。
 - **`doctor` 没有 `--json`**：它的输出是给人看的自检结果，不产出机器可读载荷；给了 `--json` ⇒ **rc=2** 且明确说明（**明拒，不静默忽略**）。
