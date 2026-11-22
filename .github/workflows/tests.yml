@@ -20,6 +20,16 @@ jobs:
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12']
         os: [ubuntu-latest, windows-latest]
+        exclude:
+          # ubuntu-latest 已滚到 26.04，而它的 python-versions 清单里没有 3.9
+          # （实测：`The version '3.9' with architecture 'x64' was not found for
+          # Ubuntu 26.04`，失败发生在 setup-python，套件根本没跑）。22.04 的
+          # 清单里还有 3.9，所以只把这条腿钉到 22.04。
+          - os: ubuntu-latest
+            python-version: '3.9'
+        include:
+          - os: ubuntu-22.04
+            python-version: '3.9'
     env:
       # 测试全程无头，只用 Agg。开窗那部分（Qt）不参与 CI ——
       # 源码里 Qt 的 import 都在函数内部，模块顶层不碰 Qt。
