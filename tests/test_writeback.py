@@ -304,7 +304,15 @@ params_edge = {
          'spines': {}, 'lines': []},
     ],
 }
-res5 = writeback.writeback(script5, params_edge, pp5, verify=False)
+# 0.1.22 / F5：本格验的是**渲染层**（colorbar 槽轴的 'function' 不该生成、
+# 普通轴的 log 该生成、from_list cmap 该跳过），所以临时把"无基线档豁免表"清空
+# —— 那几类字段在**无基线档不写**的新语义由 §102 F5 系列单独钉着，别混在一起测。
+_o_unsafe5 = writeback._NO_BASELINE_UNSAFE
+writeback._NO_BASELINE_UNSAFE = ()
+try:
+    res5 = writeback.writeback(script5, params_edge, pp5, verify=False)
+finally:
+    writeback._NO_BASELINE_UNSAFE = _o_unsafe5
 block5 = res5['block'] or ''
 check('colorbar function 刻度不生成', "set_xscale('function')" not in block5, '')
 check('from_list cmap 跳过', "set_cmap('from_list')" not in block5, '')
@@ -2438,8 +2446,13 @@ shutil.rmtree(_d, ignore_errors=True)
 # 55b 块自检的安全网：让渲染器"写不出"某个字段（把安全刻度白名单清空）→
 #     不许报 ok/applied=true/needs_block=false，必须 needs_block=true + pending
 _old_scales = writeback._SAFE_SCALES
+_old_unsafe55 = writeback._NO_BASELINE_UNSAFE
 try:
     writeback._SAFE_SCALES = ()
+    # 0.1.22 / F5：本格只测"**渲染器**写不出时自检必须如实报"，所以在无基线档里
+    # 临时关掉豁免表 —— 否则 xscale 会在进入渲染器之前就被摘掉（那是 §102 F5 的
+    # 语义，不是这一格的对象）。
+    writeback._NO_BASELINE_UNSAFE = ()
     _d, _s, _p = _mk15('t18self', _T18_BASE % "ax.set_title('t')",
                        {'version': 4, 'script': 'fig.py',
                         'axes': [{'index': 0, 'xscale': 'log',
@@ -2458,6 +2471,26 @@ try:
     shutil.rmtree(_d, ignore_errors=True)
 finally:
     writeback._SAFE_SCALES = _old_scales
+    writeback._NO_BASELINE_UNSAFE = _old_unsafe55
+
+# 55b′（0.1.22 / F5 新口径的**正面用例**）：同样"只请求 xscale"，在无基线档里
+#   不写 —— 但必须记进 unjudged + 一句"要写请用默认档"，且 pending 必须为空：
+#   用户并没有"没写成"的请求（"我们主动不写" ≠ "没落地"）。
+_d, _s, _p = _mk15('t18uj', _T18_BASE % "ax.set_title('t')",
+                   {'version': 4, 'script': 'fig.py',
+                    'axes': [{'index': 0, 'xscale': 'log'}]})
+_r55u = writeback.writeback(_s, _params.load(_p), _p, verify=False,
+                            fast_check=True, style='block')
+check('55b′ 无基线档只请求 xscale ⇒ 源码零改动、进 unjudged、pending 为空、'
+      'reason 不因它降级',
+      'set_xscale' not in read(_s)
+      and 'ax0.xscale' in (_r55u.get('unjudged') or [])
+      and not (_r55u.get('pending') or [])
+      and _r55u.get('reason') in ('ok', 'no_change')
+      and any('幂等' in str(_w) for _w in (_r55u.get('warnings') or [])),
+      'reason=%r pending=%r unjudged=%r'
+      % (_r55u.get('reason'), _r55u.get('pending'), _r55u.get('unjudged')))
+shutil.rmtree(_d, ignore_errors=True)
 
 # 55c 语义回比失败的文案：让 verify_semantic 恒返回"不一致"，全候选失败后结论必须是
 #     "目标值在重跑后仍未达标：…"（旧文案"所有锚点写回后 Agg 重跑均失败"会误导）
@@ -7553,23 +7586,33 @@ def _t87_judge(name, src, tamper=None):
     diffs = [k for k in sorted(set(f1) | set(f2))
              if not _t87_close(f1.get(k), f2.get(k))]
     pend = set(r1.get('pending') or [])
+    # 0.1.22 / F5：无基线档里"重复应用不幂等"的字段（grid / 尺度 / 图例 / 锁定轴 pos）
+    # 是**主动不写**、记在 `unjudged` 里的（不是 pending）—— 它们同样算"已披露"：
+    # 用户被告知了"这次没写这一类，要写请用默认档"，§107 要抓的是**静默**差异。
+    uj = set(r1.get('unjudged') or []) | set(r2.get('unjudged') or [])
     nb = bool(r1.get('inplace_needs_block'))
     disclosed, undisclosed, derived = [], [], []
     for k in diffs:
         leaf = k.rsplit('.', 1)[-1]
         pname = _T87_FIELD2PEND.get(leaf, leaf)
         _ax = k.split('.')[1] if k.startswith('fig') else ''
+
+        def _hit(names):
+            return any(p == pname or p.endswith('.' + pname) or pname in p
+                       for p in names)
+
         if (k,) in _T87_DERIVED:
             derived.append(k)
         elif (k,) in _T87_UNDISCLOSED:
             undisclosed.append(k)
-        elif nb or any(p == pname or p.endswith('.' + pname)
-                       or pname in p for p in pend):
+        elif nb or _hit(pend) or _hit(uj):
             disclosed.append(k)
         else:
             undisclosed.append(k)
-    detail = ('差异=%s ｜ 已披露=%s ｜ 未披露=%s ｜ 派生=%s ｜ pending=%s'
-              % (diffs, disclosed, undisclosed, derived, sorted(pend)))
+    detail = ('差异=%s ｜ 已披露=%s ｜ 未披露=%s ｜ 派生=%s ｜ pending=%s ｜ '
+              'unjudged=%s'
+              % (diffs, disclosed, undisclosed, derived, sorted(pend),
+                 sorted(uj)))
     # 判据③+④：未披露的差异**必须在"已知未披露"台账里**（只准缩小）—— 台账外的任何
     # 未披露差异都算红（不许静默少做）；台账内的如实记录并全文打印，待派 src/ 单。
     _ok87j = all((k,) in _T87_UNDISCLOSED for k in undisclosed)
@@ -9292,7 +9335,15 @@ def _s121_run(body, axp, style='block', check_rc=True):
     d, s, p = _mk15('t121', _S121_HEAD + body + _S121_TAIL,
                     {'version': 4, 'script': 'fig.py',
                      'axes': [dict({'index': 0}, **axp)]})
-    r = writeback.writeback(s, _params.load(p), p, style=style, verify=False)
+    # 0.1.22 / F5：本节的每个格子都在**无基线档**（verify=False）里验"块里的 tick
+    # 字号写对了没有"，顺带用一个别的字段当"块非空"的标记。豁免表清空的理由同 §5：
+    # "无基线档不写 grid/尺度/图例"是另一条语义，由 §102 F5 系列单独钉。
+    _o_unsafe121 = writeback._NO_BASELINE_UNSAFE
+    writeback._NO_BASELINE_UNSAFE = ()
+    try:
+        r = writeback.writeback(s, _params.load(p), p, style=style, verify=False)
+    finally:
+        writeback._NO_BASELINE_UNSAFE = _o_unsafe121
     blk = r.get('block') or ''
     rc = (subprocess.run([sys.executable, s], cwd=d, env=_pin_child_env(),
                          capture_output=True).returncode if check_rc else None)
@@ -9463,7 +9514,12 @@ def _s122_probe(src, axs, tail):
     import subprocess                                              # noqa: E402
     d, s, p = _mk15('t122', src,
                     {'version': 4, 'script': 'fig.py', 'axes': axs})
-    r = writeback.writeback(s, _params.load(p), p, style='block', verify=False)
+    # 0.1.22 / F5：本节体检的是**块内写法**能不能真的落到图上（legend 的
+    # loc/anchor/fontsize、colorbar 的几何）⇒ 走**默认档**（重跑 + 语义验证），
+    # 也就是用户真正走的那条路。无基线档（--verify-fast / --no-semantic）里
+    # 图例/尺度/grid **不写**是 0.1.22 的新语义，由 §102 F5 系列单独钉着。
+    r = writeback.writeback(s, _params.load(p), p, style='block',
+                            verify=True, semantic=True)
     _txt = read(s)                 # 先读再开 'w'（开 'w' 会清空文件，读到的就是空的）
     with open(s, 'w', encoding='utf-8', newline='\n') as f:
         f.write(_txt + tail)
@@ -9570,11 +9626,12 @@ _d122, _s122, _p122 = _mk15(
      'axes': [{'index': 0,
                'legend': {'loc': 'upper right', 'anchor': [0.35, 0.15],
                           'fontsize': 12}}]})
+# 0.1.22 / F5：同上 —— 走默认档（用户真正走的那条路）
 _r122a = writeback.writeback(_s122, _params.load(_p122), _p122,
-                             style='block', verify=False)
+                             style='block', verify=True, semantic=True)
 _t122a = read(_s122)
 _r122b = writeback.writeback(_s122, _params.load(_p122), _p122,
-                             style='block', verify=False)
+                             style='block', verify=True, semantic=True)
 check('§122⑩ 幂等：loc + anchor + fontsize 写回后再跑一次 ⇒ applied=False、'
       '块不重复、字节不变',
       _r122a.get('applied') is True and _r122b.get('applied') is False
@@ -10392,16 +10449,39 @@ check('T10③ xscale/yscale 不一致 ⇒ 进 bad（对数↔线性会改变整�
       any('xscale' in b for b in _b10s) and any('yscale' in b for b in _b10s),
       _b10s)
 
-# ---- T10④ F1：参数有、实测缺 ⇒ 显式 unjudged（不静默、也不误判成 bad）----
+# ---- T10④ F1（0.1.22 **收紧**，取代 0.1.18 的"缺键一律 unjudged"口径）----
+#   0.1.18 的旧口径是"采不到≠不一致 ⇒ 全部 unjudged"。F1 的现场证明这个口径有一类
+#   致命后果：`if False: ax.set_xlim(0, 9)`（改动落在死分支）+ 参数要 [0,5] ⇒ 实测
+#   根本没有 xlim（轴还在 autoscale），旧代码把它记成 unjudged ⇒ verified=true，
+#   用户以为范围改好了。现在逐键定语义（唯一出处 `verify._MISSING_KEY_KIND`，
+#   完整理由见 `_team022/engine/report.md` §1）：
+#     * bad            = 缺键**就是**你要的东西没落地（xlim / ylim / grid / legend）；
+#     * not_applicable = 这根轴上没有可作用的对象（cmap / clim：没有 mappable）；
+#     * unjudged       = 采集异常 / 结构性不可判（spines / lines / 字号 / 尺度 / pos）。
 _u10f = []
 _b10f = verify.compare(
     [{'index': 0, 'xlim': [0.0, 5.0], 'cmap': 'viridis', 'clim': [0, 1],
       'spines': {'top': False}}],
     [{'index': 0}], unjudged=_u10f)
-check('T10④ 缺字段显式化：xlim / cmap / clim / spines 全部进 unjudged，'
-      '且**不进** bad（采不到≠不一致）',
-      all(k in ' '.join(_u10f) for k in ('xlim', 'cmap', 'clim', 'spines'))
-      and _b10f == [], 'unjudged=%r bad=%r' % (_u10f, _b10f))
+check('T10④ 缺字段显式化：cmap / clim（不适用）与 spines（不可判）进 unjudged',
+      all(k in ' '.join(_u10f) for k in ('cmap', 'clim', 'spines')),
+      'unjudged=%r' % (_u10f,))
+check('T10④b F1：xlim 实测缺键（轴还在 autoscale）⇒ **bad 且点名 xlim**，'
+      '不再静默放行',
+      any('xlim' in b for b in _b10f)
+      and not any('xlim' in x for x in _u10f)
+      and any('autoscale' in b for b in _b10f),
+      'bad=%r unjudged=%r' % (_b10f, _u10f))
+check('T10④c F1 语义表是**唯一出处**：`_MISSING_KEY_KIND` 里判 bad 的键恰好是'
+      ' xlim / ylim / grid / legend（改表 = 改判定；只改一处会被这一格抓住）',
+      sorted(k for k, v in verify._MISSING_KEY_KIND.items() if v == 'bad')
+      == ['grid', 'legend', 'xlim', 'ylim'],
+      sorted((k, v) for k, v in verify._MISSING_KEY_KIND.items() if v == 'bad'))
+check('T10④d F1：legend 实测缺键（图上没有图例）⇒ bad 且点名 legend'
+      '（过去也只进 unjudged ⇒ "图例没落地"照样 verified=true）',
+      any('legend' in b for b in verify.compare(
+          [{'index': 0, 'legend': {'loc': 'upper left', 'fontsize': 14}}],
+          [{'index': 0}])), '')
 
 # ---- T10⑤ 端到端：真脚本 + 真采集，四类目标都不满足 ⇒ ok=False 且点名 ----
 _T10_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
@@ -10841,6 +10921,293 @@ check('P0⑤t3【有牙·独立性】只回退 L35 的过滤（副本里 set(_de
 
 for _p0_d in _P0_DIRS:
     shutil.rmtree(_p0_d, ignore_errors=True)
+
+# ==== §102（0.1.22）：F5 / F7 / F8 / F3 / `--json` 的 unjudged ==================
+# 这一节是**引擎侧五条**的端到端钉子（判据的完整理由见
+# `_team022/engine/report.md`；F1 的逐键语义表在 T10④ 一族里钉）。
+from mpltweak import messages as _m102                          # noqa: E402
+from mpltweak import check as _chk102                           # noqa: E402
+
+
+def _s102(x):
+    """警告字段可能是 str 也可能是 dict（块/原位两条路混着），统一成可搜索文本。"""
+    return x if isinstance(x, str) else json.dumps(x, ensure_ascii=False)
+
+
+def _w102(res):
+    return ' '.join(_s102(w) for w in (res.get('warnings') or []))
+
+
+def _blk102(path):
+    return '\n'.join(_t7_block_code(read(path)))
+
+
+# ---- F5：**没有基线**的档位不许写"重复应用不幂等"的字段 ----------------------
+#   现场：源码只有 `ax.grid(True, axis='x')` 与 `set_xscale('log', base=2)`，
+#   写回后各多出一处 `ax.grid(True)`（x 向变两向）与 `set_xscale('log')`（base 2→10）。
+_F5_SRC102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'fig, ax = plt.subplots(figsize=(6, 3))\n'
+              'ax.plot([1, 2, 3], [3, 2, 1], label="a")\n'
+              'ax.grid(True, axis="x")\n'
+              'ax.set_xscale("log", base=2)\n'
+              'ax.set_xlim(1, 16)\n'
+              'fig.savefig("o.png")\n')
+_F5_BLK102 = {}
+for _f5tag, _f5flags in (('no_semantic', ['--no-semantic']),
+                         ('verify_fast', ['--verify-fast']),
+                         ('default', [])):
+    _d5, _s5, _p5 = _mk15('f5_' + _f5tag, _F5_SRC102,
+                          {'version': 4, 'script': 'fig.py'})
+    _t7_cli(['describe', _s5, '-o', _p5], _d5)
+    _p5d = json.load(open(_p5, encoding='utf-8'))
+    _p5d['axes'][0]['title_fontsize'] = 14.0        # 用户只改了标题字号
+    with open(_p5, 'w', encoding='utf-8') as _f5f:
+        json.dump(_p5d, _f5f, ensure_ascii=False)
+    _rc5, _o5 = _t7_cli(['apply', _s5, '--params', _p5, '--write',
+                         '--style', 'block', '--json'] + _f5flags, _d5)
+    _j5 = _t7_json(_o5)
+    _txt5 = read(_s5)
+    _blk5 = _blk102(_s5)
+    _F5_BLK102[_f5tag] = _blk5
+    check('F5①（%s）块里**不再**重写 grid / xscale：源码各只剩 1 处、块里 0 处'
+          % _f5tag,
+          _rc5 == 0 and _j5.get('applied') is True
+          and _txt5.count('ax.grid(') == 1
+          and _txt5.count('set_xscale(') == 1
+          and '.grid(' not in _blk5 and 'set_xscale(' not in _blk5,
+          'rc=%r applied=%r grid=%d xscale=%d block=%r'
+          % (_rc5, _j5.get('applied'), _txt5.count('ax.grid('),
+             _txt5.count('set_xscale('), _blk5[:160]))
+    if _f5flags:
+        _pend5 = _j5.get('pending') or []
+        _uj5 = _j5.get('unjudged') or []
+        check('F5②（%s）摘掉的字段进 **unjudged**（= 这次没写/没判），'
+              '**不进 pending**（用户根本没改它们）：pending=[]、reason=ok' % _f5tag,
+              'ax0.grid' in _uj5 and 'ax0.xscale' in _uj5
+              and _pend5 == [] and _j5.get('reason') == 'ok'
+              and ('幂等' in _w102(_j5) or 'idempotent' in _w102(_j5).lower()),
+              'unjudged=%r pending=%r reason=%r' % (_uj5, _pend5,
+                                                    _j5.get('reason')))
+        check('F5②b（%s）人读输出里**不许**出现"调整块表达不了"那句假话'
+              '（块能表达 grid/xscale，是我们主动不写）' % _f5tag,
+              '调整块表达不了' not in _o5 and 'not express' not in _o5,
+              _o5[-200:])
+    else:
+        check('F5③（default）默认档行为不退化：同样的改法也**只**写标题字号、'
+              'pending 为空（差异过滤照旧）',
+              _rc5 == 0 and not (_j5.get('pending') or [])
+              and 'fontsize' in _blk5 and '.grid(' not in _blk5,
+              'pending=%r block=%r' % (_j5.get('pending'), _blk5[:160]))
+_F5_WL102 = ('.grid(', 'set_xscale(', 'set_yscale(', '.legend(')
+_F5_TOK102 = ('.grid(', 'set_xscale(', 'set_yscale(', '.legend(',
+              'set_position(', 'set_xlim(', 'set_ylim(', 'set_fontsize(',
+              'set_linewidth(', 'set_color(', 'set_sizes(', 'set_clim(',
+              'set_cmap(', "spines[", 'tick_params(')
+
+
+def _f5_tokens102(block):
+    return {k for k in _F5_TOK102 if k in block}
+
+
+_F5_TOK = {k: _f5_tokens102(v) for k, v in _F5_BLK102.items()}
+check('F5④ 三档在**白名单五类**上一律不写（grid / xscale / yscale / 图例）：'
+      '块里 0 处',
+      all(not (_f5_tokens102(v) & set(_F5_WL102))
+          for v in _F5_BLK102.values()),
+      _F5_TOK)
+check('F5④b 白名单**之外**只写"值等价"字段：无基线档是默认档的**超集**'
+      '（多写 pos/xlim/lines 这类再写一遍也不改语义的字段），且超集里**不含**'
+      '白名单五类',
+      (_F5_TOK['default'] - set(_F5_WL102)) <= (_F5_TOK['no_semantic']
+                                                - set(_F5_WL102))
+      and (_F5_TOK['default'] - set(_F5_WL102)) <= (_F5_TOK['verify_fast']
+                                                    - set(_F5_WL102))
+      and (_F5_TOK['no_semantic'] - set(_F5_WL102))
+      == (_F5_TOK['verify_fast'] - set(_F5_WL102)),
+      _F5_TOK)
+
+# ---- F7：任意 mappable 都采 clim（普通 imshow(vmin,vmax) 轴）----------------
+_F7_SRC102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'import numpy as np\n'
+              'fig, ax = plt.subplots(figsize=(4, 3))\n'
+              'im = ax.imshow(np.arange(9).reshape(3, 3), cmap="viridis",\n'
+              '               vmin=2, vmax=7)\n'
+              'fig.savefig("o.png")\n')
+_d7, _s7, _p7 = _mk15('f7', _F7_SRC102, {'version': 4, 'script': 'fig.py'})
+_st7, _e7 = verify.collect(_s7, 0)
+_ax7 = (_st7 or {}).get('axes') or [{}]
+check('F7① `imshow(vmin=2, vmax=7)` 轴的采集状态里有 clim（过去恒 None）',
+      _ax7[0].get('clim') is not None
+      and abs(_ax7[0]['clim'][0] - 2.0) < 1e-9
+      and abs(_ax7[0]['clim'][1] - 7.0) < 1e-9, _ax7[0].get('clim'))
+_t7_cli(['describe', _s7, '-o', _p7], _d7)
+_p7d = json.load(open(_p7, encoding='utf-8'))
+check('F7② describe 产物里带 clim（可被 verify 比对）',
+      _p7d['axes'][0].get('clim') is not None, _p7d['axes'][0].get('clim'))
+# 恒等 apply ⇒ no_change：靠新加的 `_clim_literal_equal`（vmin/vmax 字面量证明），
+# 否则块会把"本来就是 2/7"的 clim 重写一遍（值等价、diff 脏）。
+_rc7a, _o7a = _t7_cli(['apply', _s7, '--params', _p7, '--write', '--json'], _d7)
+_j7a = _t7_json(_o7a)
+check('F7③ 恒等 apply（vmin/vmax 就是参数值）⇒ no_change、源码零字节改动',
+      read(_s7) == _F7_SRC102 and _j7a.get('reason') == 'no_change',
+      '%r / %r' % (_j7a.get('reason'), _j7a.get('warnings')))
+# 真改 clim ⇒ 必须落地并 verify=True
+_p7d['axes'][0]['clim'] = [1.0, 3.0]
+with open(_p7, 'w', encoding='utf-8') as _f7f:
+    json.dump(_p7d, _f7f, ensure_ascii=False)
+_rc7b, _o7b = _t7_cli(['apply', _s7, '--params', _p7, '--write',
+                       '--style', 'block', '--json'], _d7)
+_j7b = _t7_json(_o7b)
+check('F7④ 改 clim 后 verified=True 且源码里出现 set_clim(1, 3)',
+      _rc7b == 0 and _j7b.get('verified') is True
+      and re.search(r'set_clim\(\s*1(?:\.0)?\s*,\s*3(?:\.0)?\s*\)', read(_s7))
+      is not None,
+      'rc=%r verified=%r tail=%r'
+      % (_rc7b, _j7b.get('verified'), read(_s7).splitlines()[-4:]))
+# colorbar 轴行为不变（clim 仍取自 colorbar 的 mappable）
+_F7_CB102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+             'import matplotlib.pyplot as plt\n'
+             'import numpy as np\n'
+             'fig, ax = plt.subplots(figsize=(4, 3))\n'
+             'im = ax.imshow(np.arange(9).reshape(3, 3), cmap="viridis")\n'
+             'fig.colorbar(im, ax=ax)\n'
+             'fig.savefig("o.png")\n')
+_d7c, _s7c, _p7c = _mk15('f7cb', _F7_CB102, {'version': 4, 'script': 'fig.py'})
+_st7c, _e7c = verify.collect(_s7c, 0)
+_cb7 = [a for a in (_st7c or {}).get('axes') or [] if a.get('is_colorbar')]
+check('F7⑤ colorbar 轴行为不变：槽轴的 clim 仍等于宿主 mappable 的 (0, 8)',
+      bool(_cb7) and _cb7[0].get('clim') is not None
+      and abs(_cb7[0]['clim'][0]) < 1e-9 and abs(_cb7[0]['clim'][1] - 8.0) < 1e-9,
+      _cb7[0].get('clim') if _cb7 else 'no colorbar axis')
+
+# ---- F8：图级图例（fig.legend）可定位、且明说不可编辑 ------------------------
+_F8_SRC102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'import numpy as np\n'
+              'fig, ax = plt.subplots(figsize=(5, 3))\n'
+              'ax.plot(np.arange(5), label="a")\n'
+              'ax.plot(np.arange(5) * 2, label="b")\n'
+              'fig.legend(loc="upper right")\n'
+              'fig.savefig("o.png")\n')
+_d8, _s8, _p8 = _mk15('f8', _F8_SRC102, {'version': 4, 'script': 'fig.py'})
+_st8, _e8 = verify.collect(_s8, 0)
+_fleg8 = (_st8 or {}).get('fig_legends') or []
+check('F8① fig.legend 的图级图例在采集状态里**可定位**（labels + loc 至少其一）',
+      bool(_fleg8)
+      and isinstance(_fleg8[0].get('labels'), list)
+      and len(_fleg8[0]['labels']) >= 1
+      and (_fleg8[0].get('loc') or _fleg8[0].get('n_handles')),
+      _fleg8)
+_rc8, _o8 = _t7_cli(['describe', _s8, '-o', _p8], _d8)
+_p8txt = open(_p8, encoding='utf-8').read()
+check('F8② params **不新增**图级图例字段（那是 0.2.0 的配额），'
+      '但 describe 的 stderr 明说"（工具）不支持编辑它"',
+      'fig_legends' not in _p8txt and 'fig_legend' not in _p8txt
+      and ('不支持编辑' in _o8 or 'not support editing' in _o8),
+      'params_has=%r out=%r'
+      % ('fig_legend' in _p8txt, _o8[-220:]))
+_rc8c, _o8c = _t7_cli(['check', _s8, '--json'], _d8)
+# check 的 --json **不是** files[] 结构（顶层就是一张图的体检结果）⇒ 自己解
+_i8 = _o8c.find('{\n')
+_j8c = {}
+if _i8 >= 0:
+    try:
+        _j8c, _ = json.JSONDecoder().raw_decode(_o8c[_i8:])
+    except ValueError:
+        _j8c = {}
+check('F8③ check 把"图级图例不可编辑"作为 warning 如实报出（rule='
+      'fig_legend_not_editable），且不假装支持',
+      any(isinstance(w, dict) and w.get('rule') == 'fig_legend_not_editable'
+          for w in (_j8c.get('warnings') or [])),
+      (_j8c.get('warnings') or [])[:2])
+
+# ---- `--json` 的 files[].unjudged：恒为字符串数组，且**不**推翻 verified ------
+#   `unjudged` 与 `pending` 是**两本账**（船长 0.1.22 明确）：
+#     * pending   = 该写但没写成（F5 白名单字段 / 锁定轴 pos / 块表达不了的字段）；
+#     * unjudged  = 参数请求了、但实测侧**没有可比的量**（结构性不可判，如 loc='best'）。
+#   这里用 `legend.loc='best'`（matplotlib 到 draw 时才现算）造一个真实的不可判项。
+_LEG_UJ_SRC102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+                  'import matplotlib.pyplot as plt\n'
+                  'import numpy as np\n'
+                  'fig, ax = plt.subplots(figsize=(5, 3))\n'
+                  'ax.plot(np.arange(5), label="a")\n'
+                  'ax.legend(loc="upper left", fontsize=10)\n'
+                  'fig.savefig("o.png")\n')
+_d9, _s9, _p9 = _mk15('uj', _LEG_UJ_SRC102, {'version': 4, 'script': 'fig.py'})
+_t7_cli(['describe', _s9, '-o', _p9], _d9)
+_p9d = json.load(open(_p9, encoding='utf-8'))
+_p9d['axes'][0]['legend'] = {'loc': 'best', 'fontsize': 10}
+_p9d['axes'][0]['title_fontsize'] = 13.0        # 让这条路上真有东西要写
+with open(_p9, 'w', encoding='utf-8') as _f9f:
+    json.dump(_p9d, _f9f, ensure_ascii=False)
+_rc9, _o9 = _t7_cli(['apply', _s9, '--params', _p9, '--write',
+                     '--style', 'block', '--json'], _d9)
+_j9 = _t7_json(_o9)
+_uj9 = _j9.get('unjudged')
+check('unjudged① `files[].unjudged` **恒为字符串数组**，且能点名"判不了"的字段'
+      '（legend loc=''best'' ⇒ ax0.legend.loc）',
+      isinstance(_uj9, list) and all(isinstance(_x, str) for _x in _uj9)
+      and 'ax0.legend.loc' in _uj9, 'unjudged=%r' % (_uj9,))
+check('unjudged② 结构性不可判**不推翻** verified（既有的"可比字段全部一致"口径不变）',
+      _j9.get('verified') is True, 'verified=%r w=%r'
+      % (_j9.get('verified'), _w102(_j9)[:160]))
+_d9b, _s9b, _p9b = _mk15('uj2', _F5_SRC102, {'version': 4, 'script': 'fig.py'})
+_t7_cli(['describe', _s9b, '-o', _p9b], _d9b)
+_rc9b, _o9b = _t7_cli(['apply', _s9b, '--params', _p9b, '--write', '--json'], _d9b)
+_j9b = _t7_json(_o9b)
+check('unjudged③ 没有不可判字段时该键仍在、且为空数组（键集只加不减）',
+      _j9b.get('unjudged') == [], _j9b.get('unjudged'))
+
+# ---- F3：锁定轴（aspect 锁定）的 pos —— 三通道同一句话 + 进 pending ----------
+_F3_SRC102 = ('import matplotlib\nmatplotlib.use("Agg")\n'
+              'import matplotlib.pyplot as plt\n'
+              'import numpy as np\n'
+              'fig = plt.figure(figsize=(6, 4))\n'
+              'ax = fig.add_axes([0.10, 0.10, 0.65, 0.80])\n'
+              'ax.imshow(np.arange(12).reshape(3, 4))\n'
+              'fig.savefig("o.png")\n')
+_F3_HINT102 = _m102.t('wb_aspect_locked_pos')
+_d3, _s3, _p3 = _mk15('f3', _F3_SRC102, {'version': 4, 'script': 'fig.py'})
+_st3, _e3 = verify.collect(_s3, 0)
+_p3d = _describe._to_params(_st3, _s3)
+check('F3① 前置：imshow 轴确实是 aspect_locked',
+      bool((_p3d['axes'] or [{}])[0].get('aspect_locked')), _p3d['axes'][0])
+# ① 恒等 apply（原位）：参数与实测一致 ⇒ no_change，但**必须**看见那句话
+with open(_p3, 'w', encoding='utf-8') as _f3f:
+    json.dump(_p3d, _f3f, ensure_ascii=False)
+_rc3a, _o3a = _t7_cli(['apply', _s3, '--params', _p3, '--write',
+                       '--style', 'inplace', '--json'], _d3)
+_j3a = _t7_json(_o3a)
+check('F3② 恒等 apply（原位）⇒ no_change、零字节改动，但"为什么没动位置"那句话在',
+      _j3a.get('reason') == 'no_change' and read(_s3) == _F3_SRC102
+      and _F3_HINT102 and _F3_HINT102 in _w102(_j3a),
+      '%r / %r' % (_j3a.get('reason'), _w102(_j3a)[:200]))
+# ② 原位通道：拖动 pos ⇒ pending 有 ax0.pos、源码不变、同一句话
+_p3d['axes'][0]['pos'] = [0.20, 0.20, 0.55, 0.70]
+with open(_p3, 'w', encoding='utf-8') as _f3f:
+    json.dump(_p3d, _f3f, ensure_ascii=False)
+_rc3b, _o3b = _t7_cli(['apply', _s3, '--params', _p3, '--write',
+                       '--style', 'inplace', '--json'], _d3)
+_j3b = _t7_json(_o3b)
+check('F3③ 原位通道：锁定轴 pos **进 pending**（ax0.pos）、源码不变、rc=1、'
+      '同一句话在 warnings 里',
+      'ax0.pos' in (_j3b.get('pending') or []) and _rc3b == 1
+      and _F3_HINT102 in _w102(_j3b), 'pending=%r rc=%r'
+      % (_j3b.get('pending'), _rc3b))
+check('F3④ 原位通道：**不存在** verified=true 而 pos 没落地',
+      not (_j3b.get('verified') is True and _j3b.get('applied') is True),
+      'verified=%r applied=%r' % (_j3b.get('verified'), _j3b.get('applied')))
+# ③ 块通道：同一份参数 ⇒ 块里不写 set_position、pending 仍有 ax0.pos、同一句话
+_rc3c, _o3c = _t7_cli(['apply', _s3, '--params', _p3, '--write',
+                       '--style', 'block', '--json'], _d3)
+_j3c = _t7_json(_o3c)
+check('F3⑤ 块通道：`set_position` **不进块**、pending 含 ax0.pos、同一句话在 warnings',
+      'set_position' not in _blk102(_s3)
+      and 'ax0.pos' in (_j3c.get('pending') or [])
+      and _F3_HINT102 in _w102(_j3c),
+      'pending=%r block=%r' % (_j3c.get('pending'), _blk102(_s3)[:160]))
 
 print('FAILED: %d' % fail if fail else 'ALL PASS')
 

@@ -331,19 +331,24 @@ Two rules come with it:
    `test_corpus_invariants`) or in `EXTRA_EXEMPT` inside `tools/ci_suite_coverage.py` (CI side).
    `EXTRA_EXEMPT` is **empty today**: the one suite that used to need it, `test_cli_output` (a
    pytest-function-style suite whose self-check entry is `python -m pytest -q tests/test_cli_output.py`),
-   now runs on the 3.12 legs — so removing it from the workflow turns the checker red instead of
-   passing silently. Both tables demand a one-line *why*; never register an exemption just to make
-   the checker green.
+   is now registered in `SUITES` (0.1.22) and runs on the 3.12 legs through the plain `pytest -q` —
+   the explicit per-file step it used to need was removed in the same release. Removing it from
+   `SUITES` turns the checker red instead of passing silently. Both tables demand a one-line *why*;
+   never register an exemption just to make the checker green.
 
-**Still a known gap (kept as a TODO, not hidden): the check is "at least one leg", not "every leg".**
-The plain-script loop still runs only the seven legacy suites on every leg, so everything added
-after 0.1.9 is exercised on 3.12 only — **except** the nine suites the 3.9 smoke picks up and the
-one suite the 3.10 legs now carry (`test_shapes`, for the matplotlib-3.10 axis — see *Why the
-mid-legs stay short* above). Closing that completely means adding those suites to the loop or
-dropping the 3.12-only guard — a release-pipeline change that multiplies CI time, so it is recorded
-here rather than changed silently. `python tools/ci_suite_coverage.py -v` prints the histogram;
-today (0.1.18) it reads "8 legs: 7 / 4 legs: 10 / 2 legs: 13" — the 3.9 legs carry 16 suites, the
-3.10 legs carry 8, the 3.11 legs 7, and the 3.12 legs all 30.
+**The PR legs still check "at least one leg", but since 0.1.22 there is a leg that runs everything:
+`.github/workflows/nightly.yml`.** The plain-script loop still runs the seven legacy suites on every
+PR leg, so everything added after 0.1.9 is exercised on 3.12 only — **except** the nine suites the
+3.9 smoke picks up and the one suite the 3.10 legs carry (`test_shapes`, for the matplotlib-3.10
+axis — see *Why the mid-legs stay short* above). Rather than multiply PR time, 0.1.22 added a
+scheduled full run: **37 suites** (`tests/` has 39, minus the 2 `SUITES_EXCLUDED`) **× 4 legs**
+(ubuntu/windows × 3.9/3.12), once a day at 03:17 UTC plus `workflow_dispatch`, with no `-k` filter —
+it is the same `pytest -q` path the 3.12 PR leg uses, not a second hand-maintained list. That closes
+the old "no leg ever ran everything" gap for interpreter/matplotlib-version drift, without changing
+PR feedback time at all. `python tools/ci_suite_coverage.py -v` prints the histogram; today (0.1.22)
+it reads "8 legs: 7 / 4 legs: 10 / 2 legs: 20" — the 3.12 legs carry all 37, the 3.9 legs 16, the
+3.10 legs 8, the 3.11 legs 7, and `python tools/ci_suite_coverage.py --ci
+.github/workflows/nightly.yml` reports rc=0 with 4 legs × 37 suites.
 
 **Pin the interface language in your suite.** `messages.detect_lang()` resolves
 `--lang > MPLTWEAK_LANG > locale > LANG > en`, so the *same* assertion on Chinese prose

@@ -827,8 +827,40 @@ def _cb_orientation(ax):
 
 
 def _clim_of(ax):
-    """读取 colorbar mappable 的 clim，失败返回 None。"""
-    _, mappable = _cb_mappable(ax)
+    """读取该轴 mappable 的 clim，失败返回 None。
+
+    colorbar 轴仍走 `_cb_mappable`（**口径一个字不动**）。
+
+    F7（0.1.22）：普通数据轴（`imshow(vmin=…, vmax=…)` / `contourf` / `pcolormesh`）
+    也要采 —— 过去只读 colorbar 轴的 mappable，于是这类轴的 state 里 clim 恒 None，
+    而块生成对**任意** mappable 都会写 `im.set_clim(...)` ⇒ "写了但永远验不到"。
+    取数顺序：images（imshow 系）优先，再 collections（contour 系）—— 与
+    `verify._artist_state` 采 cmap 的顺序相反是有意的：imshow 轴的 images 才是
+    用户眼里的那层色标数据，contour 轴通常只有 collections。
+    """
+    cb, mappable = _cb_mappable(ax)
+    if mappable is None or not hasattr(mappable, 'get_clim'):
+        mappable = None
+        for _pool in ('images', 'collections'):
+            try:
+                _items = list(getattr(ax, _pool, None) or [])
+            except (AttributeError, TypeError):
+                _items = []
+            for _artist in _items:
+                if not hasattr(_artist, 'get_clim'):
+                    continue
+                # 没有绑定数组的 artist（空 pcolormesh / 占位 image）clim 无意义
+                _arr = getattr(_artist, 'get_array', None)
+                if callable(_arr):
+                    try:
+                        if _arr() is None:
+                            continue
+                    except (TypeError, ValueError):
+                        pass
+                mappable = _artist
+                break
+            if mappable is not None:
+                break
     if mappable is None or not hasattr(mappable, 'get_clim'):
         return None
     try:
@@ -4427,7 +4459,7 @@ def gaitu(fig, export_path=None, heavy=None, quiet=False,
 #     _on_help_closed                                638
 #     _show_help_fig                                 644
 #     _close_help_fig                                684
-# §5 读取侧：图例 / 标题 / colorbar / 线条（行 695-951，13 个顶层函数）
+# §5 读取侧：图例 / 标题 / colorbar / 线条（行 695-983，13 个顶层函数）
 #     _loc_name                                      697
 #     _aspect_locked                                 704
 #     _legend_props                                  715
@@ -4436,53 +4468,53 @@ def gaitu(fig, export_path=None, heavy=None, quiet=False,
 #     _cb_mappable                                   811
 #     _cb_orientation                                820
 #     _clim_of                                       829
-#     _set_cb_clim                                   843
-#     _hit_cb_endpoint                               858
-#     _is_line_artist                                883
-#     _single_color                                  905
-#     _line_at                                       924
-# §6 画布几何与坐标框数学（行 952-1101，10 个顶层函数）
-#     _bbox                                          954
-#     _canvas_geometry                               974
-#     _cell_of                                       997
-#     _fixed_lim                                    1013
-#     _set_bbox                                     1029
-#     _same_box                                     1033
-#     _nearest                                      1040
-#     _best_snap                                    1052
-#     _resize_anchored                              1067
-#     _snap_box                                     1083
-# §7 命中检测与 PPT 式缩放（行 1102-1452，7 个顶层函数）
-#     _body_contains                                1104
-#     _pick_candidates                              1128
-#     _pick_at                                      1149
-#     _hit_handle                                   1157
-#     _resize_frac                                  1213
-#     _snap_resize                                  1290
-#     _resize_box                                   1388
-# §8 Tweak 交互改图控制器（行 1453-4385，1 个顶层函数）
-#     Tweak                                         1455
-#         §8.1 开窗与事件接线                              1458
-#         §8.2 窗口尺寸与屏幕适配                            1805
-#         §8.3 重图基础：ghost 与 blit                    2000
-#         §8.4 图例：命中、重建与循环                          2183
-#         §8.5 字号：悬停目标与调整                           2263
-#         §8.6 快照与还原                                2307
-#         §8.7 多选：对齐与均分                             2510
-#         §8.8 适配画布到内容（Ctrl+F）                      2581
-#         §8.9 吸附开关 / 浮层入口 / 状态栏                    2703
-#         §8.10 撤销栈：压栈、合并、幽灵步                       2807
-#         §8.11 多选视觉：蓝框与橡皮筋                         2899
-#         §8.12 图例 8 位候选：预览与吸附                      2987
-#         §8.13 尺寸提示与鼠标按下分派                         3105
-#         §8.14 拖动自愈（sticky drag，t101）              3291
-#         §8.15 鼠标移动：拖拽 / 缩放 / 吸附                   3324
-#         §8.16 鼠标释放：落位与收尾                          3563
-#         §8.17 命中表与文本字号                            3660
-#         §8.18 线条模式与方向键微调                          3849
-#         §8.19 线条 / 色标 / 网格 / 边框 / 比例尺             3984
-#         §8.20 键位总表 _on_key                        4173
-#         §8.21 导出参数 JSON                           4272
-# §9 入口：gaitu（行 4386-4400，1 个顶层函数）
-#     gaitu                                         4388
+#     _set_cb_clim                                   875
+#     _hit_cb_endpoint                               890
+#     _is_line_artist                                915
+#     _single_color                                  937
+#     _line_at                                       956
+# §6 画布几何与坐标框数学（行 984-1133，10 个顶层函数）
+#     _bbox                                          986
+#     _canvas_geometry                              1006
+#     _cell_of                                      1029
+#     _fixed_lim                                    1045
+#     _set_bbox                                     1061
+#     _same_box                                     1065
+#     _nearest                                      1072
+#     _best_snap                                    1084
+#     _resize_anchored                              1099
+#     _snap_box                                     1115
+# §7 命中检测与 PPT 式缩放（行 1134-1484，7 个顶层函数）
+#     _body_contains                                1136
+#     _pick_candidates                              1160
+#     _pick_at                                      1181
+#     _hit_handle                                   1189
+#     _resize_frac                                  1245
+#     _snap_resize                                  1322
+#     _resize_box                                   1420
+# §8 Tweak 交互改图控制器（行 1485-4417，1 个顶层函数）
+#     Tweak                                         1487
+#         §8.1 开窗与事件接线                              1490
+#         §8.2 窗口尺寸与屏幕适配                            1837
+#         §8.3 重图基础：ghost 与 blit                    2032
+#         §8.4 图例：命中、重建与循环                          2215
+#         §8.5 字号：悬停目标与调整                           2295
+#         §8.6 快照与还原                                2339
+#         §8.7 多选：对齐与均分                             2542
+#         §8.8 适配画布到内容（Ctrl+F）                      2613
+#         §8.9 吸附开关 / 浮层入口 / 状态栏                    2735
+#         §8.10 撤销栈：压栈、合并、幽灵步                       2839
+#         §8.11 多选视觉：蓝框与橡皮筋                         2931
+#         §8.12 图例 8 位候选：预览与吸附                      3019
+#         §8.13 尺寸提示与鼠标按下分派                         3137
+#         §8.14 拖动自愈（sticky drag，t101）              3323
+#         §8.15 鼠标移动：拖拽 / 缩放 / 吸附                   3356
+#         §8.16 鼠标释放：落位与收尾                          3595
+#         §8.17 命中表与文本字号                            3692
+#         §8.18 线条模式与方向键微调                          3881
+#         §8.19 线条 / 色标 / 网格 / 边框 / 比例尺             4016
+#         §8.20 键位总表 _on_key                        4205
+#         §8.21 导出参数 JSON                           4304
+# §9 入口：gaitu（行 4418-4432，1 个顶层函数）
+#     gaitu                                         4420
 # --- END AUTO NAV ---

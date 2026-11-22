@@ -1674,6 +1674,21 @@ MESSAGES = {
         'en': ' (axes identity: this figure\'s axis-creation points do not match the '
               'parameter count, so it is left untouched / fail-closed)',
     },
+    # 0.1.22 / F8：图级图例（fig.legend）现在**能定位**（采集状态里有 labels/loc），
+    # 但**不接管**：参数模型里没有它（新增 fig_legend 字段是 0.2.0 的事）。
+    # 这一句给 describe / check 共用 —— 明说"不可编辑"，不假装支持。
+    'fig_legend_not_editable': {
+        'zh': '这张图有 %(n)s 个**图级图例**（`fig.legend(...)`，不属于任何子图）：'
+              '本工具只把它**记进状态**（labels / loc 可读），**不支持编辑**它的位置、'
+              '字号或条目（写回只覆盖子图图例 `ax.legend()`）。要调它请直接改源码，'
+              '或把它改成 `ax.legend(...)`。',
+        'en': 'this figure has %(n)s **figure-level legend(s)** (`fig.legend(...)`, not '
+              'owned by any axes): mpltweak only **records** it in the state '
+              '(labels / loc are readable) and does **not** support editing its '
+              'position, font size or entries (write-back covers axes legends, '
+              '`ax.legend()`, only). Edit the source directly, or switch it to '
+              '`ax.legend(...)`.',
+    },
     'wb_t8_axis_gate_note': {
         'zh': '这张图的**建轴点**与参数里的轴条数对不上（本次按 fail-closed 不改源码）：'
               '静态数出 %(n_src)s 个建轴点、参数里有 %(n_par)s 根轴（差在第 %(line)s 行'
@@ -1700,6 +1715,24 @@ MESSAGES = {
               'writes every field whose equality cannot be proven (writing too much '
               'rather than too little). For a clean diff, make the script run headless '
               '(Agg) first, then run apply again.',
+    },
+    # 0.1.22 / F5：没有基线（--verify-fast / --no-verify / --no-semantic 三档都不跑脚本）
+    # 时，有一类字段**重复应用不幂等** —— 它们不能像别的字段那样"宁可多写"：
+    # 多写一次就改语义（grid 变两向、xscale 丢 base、图例重建丢 ncol/title）。
+    # 所以这几类**不写**，进 pending，并给一句"要写就用默认档"的出路。
+    'wb_delta_no_baseline_idempotent': {
+        'zh': '本次是 %(mode)s 档（不重跑脚本 → 没有基线可比），而下面这些字段'
+              '**重复应用不幂等**（写一遍就可能改掉你原来的语义），所以这次**没有写**'
+              '它们：%(fields)s。它们记在 unjudged 里（"这次没写/没判"，不是"没落地"）。'
+              '要写这一类字段（grid / 轴尺度 / 图例 / 锁定轴的位置），请用默认档重跑'
+              '一次 apply（重跑 + 语义验证）。',
+        'en': 'this run used %(mode)s (no script re-run, so no baseline to compare '
+              'against), and the following fields are **not idempotent when re-applied** '
+              '(writing them once can change the meaning you already had), so they were '
+              '**not written**: %(fields)s. They are reported in unjudged ("not written / '
+              'not judged this time", not "failed to land"). To write these kinds of '
+              'fields (grid / axis scale / legend / locked-axis position), re-run apply '
+              'in the default mode (re-run + semantic verification).',
     },
     'wb_block_colorbar': {
         'zh': '# colorbar 轴：先解除自动定位/盒比，否则重绘会重置位置与宽度',
@@ -2929,7 +2962,7 @@ UI_ZH_TO_EN.update({
 #     detect_lang                                    109
 #     set_lang                                       140
 #     current_lang                                   148
-# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 155-2051，0 个顶层函数）
+# §4 对外消息表 MESSAGES（每键 zh/en 成对；键数现算，不写死）（行 155-2084，0 个顶层函数）
 #     （本分区没有顶层函数）
 #         §4.1 apply 写回结果                            163
 #         §4.2 失败归因（0.1.10）：脚本跑不起来 vs 工具改坏了          265
@@ -2952,32 +2985,32 @@ UI_ZH_TO_EN.update({
 #         §4.19 apply 人读输出（B4 / t33）                1047
 #         §4.20 落地提示与"验了哪几层"（T15 / T23）             1251
 #         §4.21 writeback 生成的文案（B4 + 原 t9）          1302
-#         §4.22 params 校验文案（t55）                    1723
-#         §4.23 参数文件自身损坏（t56）                       1888
-#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1900
-#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1966
-#         §4.26 显式联网查 PyPI（--check-update / 0.1.17）  1986
-# §5 取词：t / code / t_en（行 2052-2091，3 个顶层函数）
-#     t                                             2054
-#     code                                          2070
-#     t_en                                          2075
-# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 2092-2443，7 个顶层函数）
-#     _finite                                       2094
-#     emit_json                                     2113
-#     reason_kind                                   2302
-#     is_known_reason                               2312
-#     shell_path                                    2349
-#     fail_json                                     2358
-#     guard_json_main                               2387
-# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2444-2640，1 个顶层函数）
-#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2469
-#     t_wb                                          2628
-# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2641-2822，0 个顶层函数）
+#         §4.22 params 校验文案（t55）                    1756
+#         §4.23 参数文件自身损坏（t56）                       1921
+#         §4.24 `mpltweak demo`（0.1.17 头号功能）：一条命令体验调图  1933
+#         §4.25 「函数里建图」拒写的**照着改**指导（S9 / 0.1.17）    1999
+#         §4.26 显式联网查 PyPI（--check-update / 0.1.17）  2019
+# §5 取词：t / code / t_en（行 2085-2124，3 个顶层函数）
+#     t                                             2087
+#     code                                          2103
+#     t_en                                          2108
+# §6 JSON 通道：emit_json / fail_json / guard_json_main（行 2125-2476，7 个顶层函数）
+#     _finite                                       2127
+#     emit_json                                     2146
+#     reason_kind                                   2335
+#     is_known_reason                               2345
+#     shell_path                                    2382
+#     fail_json                                     2391
+#     guard_json_main                               2420
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2477-2673，1 个顶层函数）
+#         §7.1 A2 原位「补一个参数」的三条拒改说明                  2502
+#     t_wb                                          2661
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2674-2855，0 个顶层函数）
 #     （本分区没有顶层函数）
-#         §8.1 doctor 的列标签与括注                       2662
-#         §8.2 launch 的运行时人读输出                      2688
-#         §8.3 describe：写盘那一行                       2758
-#         §8.4 toolbox：启动横幅那 2 行                    2760
-# §9 查表函数 t_ui 与运行期追加的两块 update（行 2823-2917，1 个顶层函数）
-#     t_ui                                          2825
+#         §8.1 doctor 的列标签与括注                       2695
+#         §8.2 launch 的运行时人读输出                      2721
+#         §8.3 describe：写盘那一行                       2791
+#         §8.4 toolbox：启动横幅那 2 行                    2793
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2856-2950，1 个顶层函数）
+#     t_ui                                          2858
 # --- END AUTO NAV ---

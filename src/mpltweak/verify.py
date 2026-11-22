@@ -482,8 +482,8 @@ def _lines_state(ax) -> Optional[List[Dict[str, Any]]]:
     return out
 
 
-def _legend_state(ax) -> Optional[Dict[str, Any]]:
-    """图例的**实际内容**（取不到给 None）。
+def _legend_item(leg) -> Dict[str, Any]:
+    """一个 legend 对象 → 可定位/可比的状态字典（`_legend_state` 与图级图例共用）。
 
     给的是"用户在图上看到的那些条目"：``labels``（文字）+ ``n_handles``（句柄数）
     + 能取到就带 ``fontsize`` / ``loc``。
@@ -492,15 +492,6 @@ def _legend_state(ax) -> Optional[Dict[str, Any]]:
     GUI 侧的 ``anchor`` 是"用户拖到哪"的会话状态，verify 这里根本无从得知，
     硬填 bbox_to_anchor 会把它变成另一个含义（宁缺勿假）。
     """
-    get_legend = getattr(ax, 'get_legend', None)
-    if get_legend is None:
-        return None
-    try:
-        leg = get_legend()
-    except (AttributeError, ValueError, TypeError):
-        return None
-    if leg is None:
-        return None
     out: Dict[str, Any] = {}
     labels: List[str] = []
     try:
@@ -537,6 +528,47 @@ def _legend_state(ax) -> Optional[Dict[str, Any]]:
         out['loc'] = _LEGEND_LOC_NAMES[loc]
     elif isinstance(loc, str):
         out['loc'] = loc
+    return out
+
+
+def _legend_state(ax) -> Optional[Dict[str, Any]]:
+    """轴级图例的**实际内容**（取不到给 None）。口径见 `_legend_item`。"""
+    get_legend = getattr(ax, 'get_legend', None)
+    if get_legend is None:
+        return None
+    try:
+        leg = get_legend()
+    except (AttributeError, ValueError, TypeError):
+        return None
+    if leg is None:
+        return None
+    return _legend_item(leg)
+
+
+def _fig_legends_state(fig) -> List[Dict[str, Any]]:
+    """**图级图例**（`fig.legend(...)`）的可定位状态（0.1.22 / F8）。
+
+    现场（t19 F8）：`_state` 每个轴只读 `ax.get_legend()`，而 `fig.legend()` 的图例
+    存在 `fig.legends` 里 —— 于是采集到的状态里**完全不存在**这个图例：开窗看不到、
+    写回写不了、验证也判不了（一张"图例凭空消失"的图却报 verified=true）。
+
+    0.1.22 只做到"**能定位**"（labels 或 loc 至少其一），**不做编辑**：
+    写回/参数仍只覆盖轴级图例（新增 `fig_legend` 参数是 0.2.0 的事），
+    describe/check 会明说"图级图例不可编辑"。这样"图上有几个图例"至少不再失踪。
+    """
+    try:
+        legs = list(getattr(fig, 'legends', None) or [])
+    except (AttributeError, TypeError, ValueError):
+        return []
+    out: List[Dict[str, Any]] = []
+    for leg in legs:
+        if leg is None:
+            continue
+        try:
+            item = _legend_item(leg)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        out.append(item)
     return out
 
 
@@ -657,6 +689,11 @@ def _state(fig, with_text: bool = False) -> Dict[str, Any]:
     except Exception:                            # noqa: BLE001
         inch = None
     out = {'figsize_px': px, 'figsize_in': inch, 'axes': axes}
+    # 0.1.22 / F8：图级图例（fig.legend）—— 只在**真有**的时候加键（没有图级图例的
+    # 脚本，状态结构一个字节不变；参数文件也不搬它，见 describe._to_params）。
+    _figleg = _fig_legends_state(fig)
+    if _figleg:
+        out['fig_legends'] = _figleg
     if with_text:
         # 注意顺序：上面的位置/字号是 **draw 之前** 采的（与 describe 口径一致），
         # 文字盒则必须在 draw 之后 —— 所以补在最后，不改动已有字段。
@@ -1258,6 +1295,41 @@ def _legend_expected_loc(exp):
     return loc
 
 
+# ==== 0.1.22 / F1：参数键 → 实测缺该键时的语义（三档：bad / unjudged / not_applicable）====
+#
+# 现场：`compare()` 碰到"参数里请求了、实测状态里没有这个键"时过去一律 `continue`
+# （或一律进 unjudged）⇒ `if False: ax.set_xlim(0, 9)` 这种"改动落在死分支"的情形
+# 仍然报 verified=true。判据必须逐键定：**缺键 = 你要的东西没落地**的键才算 bad，
+# 结构性不可判（anchor / best loc / 锁定轴 pos）只记 unjudged、不推翻 verified。
+#
+# 这张表是**判据的唯一出处**（xlim/ylim/legend 走 `_missing_is_bad`，cmap/clim 走
+# `_missing_is_unjudged`），不是文档 —— 改表就等于改判定。完整理由见报告 §1。
+_MISSING_KEY_KIND = {
+    'xlim': 'bad',             # 缺 = 轴还在 autoscale = 你请求的范围没落地
+    'ylim': 'bad',
+    'grid': 'bad',             # 网格线恒可采；读不到 = 不能声称"网格开着"（既有口径）
+    'legend': 'bad',           # 请求了图例属性、图上却没有图例 = 图例没落地
+    'cmap': 'not_applicable',  # 轴上没有 mappable = 没有可作用的对象
+    'clim': 'not_applicable',
+    'anchor': 'unjudged',      # GUI 会话态，采集侧不采（结构性不可判）
+    'spines': 'unjudged',      # 采集异常（四条 spine 恒可采）
+    'lines': 'unjudged',       # 条数/身份对不上，判不了
+    'title_fontsize': 'unjudged',
+    'label_fontsize': 'unjudged',
+    'label_fontsize_y': 'unjudged',
+    'tick_fontsize': 'unjudged',
+    'tick_fontsize_y': 'unjudged',
+    'xscale': 'unjudged',
+    'yscale': 'unjudged',
+    'pos': 'unjudged',
+}
+
+
+def _missing_is_bad(key):
+    """实测缺这个键是否**就是**不一致（F1 的表 `_MISSING_KEY_KIND` 的唯一出口之一）。"""
+    return _MISSING_KEY_KIND.get(key) == 'bad'
+
+
 def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             pos_tol: float = POS_TOL,
             fields_by_axis: Optional[Dict[int, set]] = None,
@@ -1269,6 +1341,10 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
 
     fields_by_axis：{轴序号: {字段名, ...}} 时，每轴只比对列出的字段（原位写回
     模式下"没被原位改写的项"不比对，避免因刻意跳过而误判失败）。
+
+    "实测缺这个键"怎么判，逐键看 `_MISSING_KEY_KIND`（F1）：
+      * `bad`            → 进返回值（= 你要的东西没落地）；
+      * `unjudged` / `not_applicable` → 进 `unjudged` 出参（不可判，不推翻 verified）。
     """
     bad: List[str] = []
     for e in expected or []:
@@ -1280,13 +1356,24 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
         fields = (fields_by_axis or {}).get(i)
         ep, ap = e.get('pos'), a.get('pos')
         # aspect 锁定的轴（imshow / cartopy 地图）位置由长宽比约束决定：draw 时
-        # matplotlib 的 apply_aspect 会重调位置，比"设进去的位置"必然对不上，
-        # 所以这类轴只比字号/grid/spines/clim，不比位置。
+        # matplotlib 的 apply_aspect 会重调位置，比"设进去的位置"必然对不上。
+        # 0.1.22 / F3：过去这里**整段跳过** —— 而写回侧（块路径的 `_needed_block_fields`
+        # 之外）对锁定轴的 pos 是"敢写/敢提示"的 ⇒ "写回敢写、验证不敢判"。
+        # 现在：两侧都有值且确实不同 ⇒ **bad**（你要的位置没落地，绝不 verified=true）；
+        # 实测缺 pos ⇒ unjudged（采集异常，判不了）。
         locked = (bool(e.get('aspect_locked'))
                   or a.get('aspect') not in (None, 'auto'))
         if fields is None or 'pos' in fields:
-            if not locked and ep and ap and any(abs(x - y) > pos_tol for x, y in zip(ep, ap)):
-                bad.append('ax%d 位置 %s≠%s' % (i, _r(ep), _r(ap)))
+            if ep and ap:
+                if any(abs(x - y) > pos_tol for x, y in zip(ep, ap)):
+                    if locked:
+                        bad.append(
+                            'ax%d 位置 %s≠%s（长宽比锁定轴：写回不会写它的 pos，'
+                            '你要的位置没有落地）' % (i, _r(ep), _r(ap)))
+                    else:
+                        bad.append('ax%d 位置 %s≠%s' % (i, _r(ep), _r(ap)))
+            elif ep and not ap and unjudged is not None:
+                unjudged.append('ax%d.pos' % i)
         # T75b：字号按 **x/y 各自独立** 比对 —— `tick_fontsize` 是 x 刻度、
         # `tick_fontsize_y` 是 y 刻度；参数里带了哪个就比哪个。
         for key in ('title_fontsize', 'tick_fontsize', 'tick_fontsize_y'):
@@ -1429,7 +1516,14 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             if isinstance(eleg, dict) and eleg:
                 aleg = _act(a, 'legend')
                 if not isinstance(aleg, dict) or not aleg:
-                    if unjudged is not None:
+                    # F1（0.1.22）：参数请求了图例（loc/fontsize），实测这根轴上
+                    # **没有图例** ⇒ 你要的图例没落地（`ax.legend()` 在有 labeled
+                    # artist 时会建出来；建不出的脚本自身会抛错，走重跑层）。
+                    # 逐键语义见 `_MISSING_KEY_KIND`：legend 是 bad。
+                    if _missing_is_bad('legend'):
+                        bad.append('ax%d legend 实测缺这个键（图上没有图例）'
+                                   '→ 你请求的图例没有落地' % i)
+                    elif unjudged is not None:
                         unjudged.append('ax%d.legend' % i)
                 else:
                     _efs, _afs = eleg.get('fontsize'), aleg.get('fontsize')
@@ -1501,9 +1595,13 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             if not (isinstance(ex, (list, tuple)) and len(ex) == 2):
                 continue
             if not (isinstance(ac2, (list, tuple)) and len(ac2) == 2):
-                # F1：参数要这个范围、实测没采到（例如 autoscale 还开着 / 取值失败）
-                # ⇒ 显式记"没判"。**不许静默 continue**：那正是"没比却说通过"。
-                if unjudged is not None:
+                # F1（0.1.22）：参数要这个范围、实测没有该键 = 轴还在 autoscale
+                # ⇒ **你要的范围没落地**（死分支 / 块没写 / 被 autoscale 盖掉）。
+                # 逐键语义见 `_MISSING_KEY_KIND`：xlim/ylim 是 bad，不许静默 continue。
+                if _missing_is_bad(key):
+                    bad.append('ax%d %s 实测缺这个键（轴还在 autoscale）'
+                               '→ 你请求的范围没有落地' % (i, key))
+                elif unjudged is not None:
                     unjudged.append('ax%d.%s' % (i, key))
                 continue
             _span = abs(float(ex[1]) - float(ex[0])) or 1.0
@@ -1546,15 +1644,21 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
 
 def _compare_state(data: Dict[str, Any], actual: Dict[str, Any],
                    fields_by_axis: Optional[Dict[int, set]] = None,
-                   figsize_edited: bool = False) -> Tuple[List[str], str]:
+                   figsize_edited: bool = False,
+                   unjudged: Optional[List[str]] = None
+                   ) -> Tuple[List[str], str]:
     """参数与实测状态逐字段比对 → ``(不一致明细, 未判定字段文案)``。
 
     ``verify_semantic``（回退两遍路径）与 ``verify_once``（单遍路径）**共用这一个**
     函数 —— 判据不可能分叉，也就不会出现"单遍比两遍更松"这种事。
+
+    ``unjudged``（0.1.22）：**出参**。调用方给一个 list 进来，这里把"已请求但
+    判不了/不适用"的字段名（`ax0.legend.anchor` 这类）放进去 —— `apply --json`
+    的 `files[].unjudged` 就是它（恒为字符串数组）。默认 None = 旧行为不变。
     """
-    unjudged: List[str] = []
+    _uj_list: List[str] = [] if unjudged is None else unjudged
     bad = compare(data.get('axes') or [], actual.get('axes') or [],
-                  fields_by_axis=fields_by_axis, unjudged=unjudged)
+                  fields_by_axis=fields_by_axis, unjudged=_uj_list)
     # figsize 也必须比对：它同样会被写回，而"改到另一张图"恰恰在这条线上最容易
     # 静默通过（块路径的 edit_figsize 曾不传 fig_index，见 t1-A / t6-M1）。
     # 只在这次确实原位改了 figsize 时才比 —— 否则参数里的目标值本来就与当前
@@ -1567,9 +1671,9 @@ def _compare_state(data: Dict[str, Any], actual: Dict[str, Any],
     # T75b：已请求但**判不了**的字段必须如实列出来（不许"没比却说通过"）。
     # 注意 ok 仍然只由 bad 决定：判不了 ≠ 判失败。
     _uj = ''
-    if unjudged:
+    if _uj_list:
         _uj = '未判定字段（已请求但比不了）: %s' % ', '.join(
-            sorted(set(unjudged))[:8])
+            sorted(set(_uj_list))[:8])
     return bad, _uj
 
 
@@ -1579,7 +1683,8 @@ def verify_once(script: str, data: Dict[str, Any], python: Optional[str] = None,
                 timeout: float = 300, fields_by_axis: Optional[Dict[int, set]] = None,
                 figsize_edited: bool = False,
                 script_args: Optional[List[str]] = None,
-                out_path: Optional[str] = None) -> Dict[str, Any]:
+                out_path: Optional[str] = None,
+                unjudged: Optional[List[str]] = None) -> Dict[str, Any]:
     """t39：**一遍跑到底** —— 一次子进程同时回答"脚本还跑得通吗"与"改动真生效了吗"。
 
     与 ``verify_semantic``（跑一遍只为拿状态）的区别是：这里把**脚本自身的成败**
@@ -1659,10 +1764,13 @@ def verify_once(script: str, data: Dict[str, Any], python: Optional[str] = None,
     ok, detail = verify_semantic(script, data, python, timeout,
                                  fields_by_axis=fields_by_axis,
                                  figsize_edited=figsize_edited,
-                                 actual=actual, snapshot=snapshot)
+                                 actual=actual, snapshot=snapshot,
+                                 unjudged=unjudged)
     return {'status': 'ok', 'verified': ok, 'detail': detail or '',
             'stderr': stderr[-2000:], 'rc': r.returncode,
-            'basis': envelope.get('basis') or 'live', 'fallback_reason': ''}
+            'basis': envelope.get('basis') or 'live', 'fallback_reason': '',
+            # 0.1.22：已请求但判不了的字段（`apply --json` 的 files[].unjudged 来源）
+            'unjudged': list(unjudged or [])}
 
 
 def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = None,
@@ -1672,7 +1780,8 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
                     figsize_edited: bool = False,
                     script_args: Optional[List[str]] = None,
                     actual: Optional[Dict[str, Any]] = None,
-                    snapshot: Optional[Dict[str, Any]] = None
+                    snapshot: Optional[Dict[str, Any]] = None,
+                    unjudged: Optional[List[str]] = None
                     ) -> Tuple[Optional[bool], str]:
     """子进程重跑脚本 → dump 目标图状态 → 与参数比对。
 
@@ -1691,14 +1800,20 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
     命令行在 ``--`` 之后追加这些参数（``verify.py main`` 把 ``--`` 之后的内容
     原样交给用户脚本），依赖 ``sys.argv`` 的脚本（``python fig.py --data x.npz``）
     重跑时才能拿到与基线一致的参数，否则行为不一致 → 误回滚 + 误归因。
+
+    ``unjudged``（0.1.22）：**出参**（默认 None = 旧行为不变）。"参数请求了、但实际
+    值取不到/比不了"的字段名会追加进去（见 `_MISSING_KEY_KIND`），供
+    ``apply --json`` 的 ``files[].unjudged`` 如实交代"verified 到底覆盖了哪些字段"。
     """
     if actual is not None:
         bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
-                                  figsize_edited=figsize_edited)
+                                  figsize_edited=figsize_edited,
+                                  unjudged=unjudged)
         if snapshot is not None:
             _sbad, _ = _compare_state(data, snapshot,
                                       fields_by_axis=fields_by_axis,
-                                      figsize_edited=figsize_edited)
+                                      figsize_edited=figsize_edited,
+                                      unjudged=unjudged)
             # 标注来源，别让人误读成"脚本跑完后的状态不对"
             bad += ['磁盘上那张图（最后一次 savefig）%s' % x for x in _sbad]
         if bad:
@@ -1756,7 +1871,7 @@ def verify_semantic(script: str, data: Dict[str, Any], python: Optional[str] = N
         _unlink(out_path)
     # 判据与单遍路径（verify_once）**共用同一个** _compare_state —— 两条路不可能分叉。
     bad, _uj = _compare_state(data, actual, fields_by_axis=fields_by_axis,
-                              figsize_edited=figsize_edited)
+                              figsize_edited=figsize_edited, unjudged=unjudged)
     if bad:
         _bj = '; '.join(bad[:4])
         if len(bad) > 4:
@@ -1904,43 +2019,46 @@ if __name__ == '__main__':
 # §2 口径：容差表、失败归因四类与错误识别（行 62-274，2 个顶层函数）
 #     _script_static_evidence                        138
 #     classify_verify_failure                        227
-# §3 采集层：把图跑出来并抓状态（行 275-1206，26 个顶层函数）
+# §3 采集层：把图跑出来并抓状态（行 275-1243，28 个顶层函数）
 #     _ax_identity                                   277
 #     _collect_texts                                 312
 #     _line_width                                    415
 #     _line_color                                    429
 #     _lines_state                                   469
-#     _legend_state                                  485
-#     _artist_state                                  543
-#     _state                                         575
-#     _fd_to_stderr                                  679
-#     _fd_restore                                    695
-#     _snapshot_process_state                        723
-#     _restore_process_state                         730
-#     _FigureRegistry                                778
-#     _Session                                       813
-#     _capture_figures                               824
-#     _collect_session                               866
-#     _exec_script                                   913
-#     _states_of_all_figs                            960
-#     _state_of_one_fig                              979
-#     collect_all                                   1033
-#     collect                                       1061
-#     _isolated_timeout                             1098
-#     _child_env                                    1110
-#     collect_isolated                              1130
-#     _unlink                                       1188
-#     _r                                            1195
-# §4 语义层：参数与实测逐项比对（行 1207-1575，5 个顶层函数）
-#     _act                                          1229
-#     _same_line_color                              1237
-#     _legend_expected_loc                          1251
-#     compare                                       1261
-#     _compare_state                                1547
-# §5 重跑层：一遍跑到底与分层验证（行 1576-1769，2 个顶层函数）
-#     verify_once                                   1578
-#     verify_semantic                               1668
-# §6 子进程驱动：把图状态 dump 成 JSON（行 1770-1895，2 个顶层函数）
-#     _int_or_none                                  1777
-#     main                                          1784
+#     _legend_item                                   485
+#     _legend_state                                  534
+#     _fig_legends_state                             548
+#     _artist_state                                  575
+#     _state                                         607
+#     _fd_to_stderr                                  716
+#     _fd_restore                                    732
+#     _snapshot_process_state                        760
+#     _restore_process_state                         767
+#     _FigureRegistry                                815
+#     _Session                                       850
+#     _capture_figures                               861
+#     _collect_session                               903
+#     _exec_script                                   950
+#     _states_of_all_figs                            997
+#     _state_of_one_fig                             1016
+#     collect_all                                   1070
+#     collect                                       1098
+#     _isolated_timeout                             1135
+#     _child_env                                    1147
+#     collect_isolated                              1167
+#     _unlink                                       1225
+#     _r                                            1232
+# §4 语义层：参数与实测逐项比对（行 1244-1679，6 个顶层函数）
+#     _act                                          1266
+#     _same_line_color                              1274
+#     _legend_expected_loc                          1288
+#     _missing_is_bad                               1328
+#     compare                                       1333
+#     _compare_state                                1645
+# §5 重跑层：一遍跑到底与分层验证（行 1680-1884，2 个顶层函数）
+#     verify_once                                   1682
+#     verify_semantic                               1776
+# §6 子进程驱动：把图状态 dump 成 JSON（行 1885-2010，2 个顶层函数）
+#     _int_or_none                                  1892
+#     main                                          1899
 # --- END AUTO NAV ---

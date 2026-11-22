@@ -53,8 +53,9 @@
 | `inplace_changes` | array | 原位那一趟真正改到的字段 |
 | `needs_block` | bool | **这次 apply 之后**是否仍有字段没落地（退过块且都落地了就是 `false`） |
 | `inplace_needs_block` | bool | 原位那一趟是否因为写不了而退块 |
-| `pending` | array | **本次最终**还没落地的字段令牌清单（唯一口径）。`auto` 退块时它是**退块之后**剩下的账；判"这次写完没"看它，**别把 `inplace_pending` 加进来** |
+| `pending` | array | **本次最终**还没落地的字段令牌清单（唯一口径）。`auto` 退块时它是**退块之后**剩下的账；判"这次写完没"看它，**别把 `inplace_pending` 加进来**。**锁定轴（长宽比锁定）的 `pos` 也如实记在这里**：写回不写它，`warnings` 里同时有一句说明 |
 | `inplace_pending` | array | **退块之前、原位那一趟**写不了的字段清单（**留档**，不代表最终结果）：`auto` 退块时用它看"为什么退块"；`--style inplace` 单跑时它通常是 `[]`，账在 `pending` 里。**两者禁止相加** |
+| `unjudged` | array（**恒在**，字符串数组） | 参数里**请求了、但这次没判/没写**的字段令牌，如 `["ax0.legend.anchor"]`。**恒为字符串数组**（空也是 `[]`，与 `delta_dropped` 一样**永远不是 `null`**）；它**不推翻 `verified`**（见下一节「[`verified` 与 `unjudged` 的边界](#verified-与-unjudged-的边界)」）。判"写没写"仍看 `applied` / `pending` |
 | `refused_hint` | string or null | 拒写时的**照着改**指导（0.1.17 起）。**0.1.18 起触发面变了**：只对"引擎能点名"的拒写生成（建轴点与参数条数对不上、载体名不是恰好一次模块层调用…）；`fig.axes[i]` / `plt.gca()` / 函数里建图**已不再必然拒写**（判据表见 [verify.md](verify.md)） |
 | `anchor` | string or null | 块的插入位置标记（如 `before`） |
 | `attempts` | array | 块落点尝试记录，每项 `{anchor, line, ok, semantic}` |
@@ -62,7 +63,7 @@
 | `err` | string or null | 失败原因文本（给人读；机器分支用 `reason` / `attribution`） |
 | `external_modified` | bool | 验证期间脚本被**外部**改过（已回滚、未写回）；正常路径恒 `false` |
 | `backup` | string or null | 备份文件路径；`--diff` 预览时**恒 `null`**（预览不复制备份，不给指向不存在文件的路径） |
-| `verified` | bool or null | 重跑验证结论。**默认档（`auto` / `inplace` / `block`，全验证）真正写过时不是 `null`** —— 退块那一次也继承原位那趟的结论；`null` 只出现在：`--no-verify` / `--verify-fast` / `--no-semantic`、`no_change` 与 `preview` 这类**没写盘就早退**的路径、以及 `refused`。要判"这次写没写"别用它，看 `applied` |
+| `verified` | bool or null | 重跑验证结论。**默认档（`auto` / `inplace` / `block`，全验证）真正写过时不是 `null`** —— 退块那一次也继承原位那趟的结论；`null` 只出现在：`--no-verify` / `--verify-fast`（这两档不重跑 ⇒ 没有结论）、`no_change` 与 `preview` 这类**没写盘就早退**的路径、以及 `refused`。**`--no-semantic` 不在其中**：它仍然重跑并逐字段比对（只是不额外求语义等价），所以照样给 `true` / `false`。要判"这次写没写"别用它，看 `applied` |
 | `verify_mode` | string or null | `fast`（快速档）或 `null`（其余） |
 | `verify_passes` | int | 写回后为验证跑了几遍：`1` = 默认单遍，`2` = 单遍取不到目标图状态已回退两遍，`0` = 这次没为验证跑脚本 |
 | `semantic_basis` | string | 语义判定的依据：`live+savefig` / `live` / `''`（空串 = 这次没有语义判定依据） |
@@ -80,6 +81,42 @@
 | `dry_run` | bool | **不在上面的显式键集里**：它由 `--dry-run` 通过"额外平铺"塞进**每条** `files[]` |
 | `delta_dropped` | array（**恒在**） | 因为"**源码本来就是那个值**"而没有写进去的字段令牌（如 `["ax0.lines", "ax1.lines"]`）。`[]` 有两种含义——这一档没算基线，或算了但一个都没摘；**要区分请看 `delta`** |
 | `delta` | object or null | `{"dropped": N}` = 算了基线、摘掉 N 个字段（与 `delta_dropped` 长度一致）；`{"skipped": "baseline_unavailable"}` = 想算但基线取不到（脚本跑不通 / 超时，退回老口径）；**`null` = 这一档压根不算基线** |
+
+## `verified` 与 `unjudged` 的边界
+
+`verified: true` 的含义只有一句：**比得了的字段都一致**。它**不等于**"参数里每个请求字段都判过"。
+两件事必须分开读：
+
+* **可判、且判为不一致** ⇒ `verified: false`，`detail` 点名该字段。典型：参数要了 `xlim` / `ylim`
+  但实测那根轴还在 autoscale（请求的范围没落地）；参数要了图例属性但图上没有图例；
+  锁定轴（`aspect=equal` / `imshow` / 地图轴）两侧都有位置且确实不同（写回不写它的 `pos`，
+  你要的位置没落地）。**这一档不许对用户说"已验证 / 已经确认"。**
+* **不可判** ⇒ 只进 `files[].unjudged`，**不推翻 `verified`**。`unjudged` 是"参数请求了、
+  但这次没判/没写"的字段名清单，恒为字符串数组。
+
+结构性不可判的类别（判据的唯一出处是 `verify.py` 的 `_MISSING_KEY_KIND` 与 `compare()`）：
+
+| 类别 | 为什么判不了 |
+|---|---|
+| `legend.anchor` | `anchor` 是用户在窗口里拖到哪的**会话状态**，采集侧不采；静态状态里没有可比的值 |
+| `legend.loc == 'best'` | matplotlib 到 **draw 时**才决定实际位置，采集值与"设进去的值"无法同一口径比 |
+| 锁定轴的 `pos`（采集缺失） | 位置由长宽比在 draw 时现算；**实测缺这一项**时无法判（两侧都有值时**会判**，不同 ⇒ `verified: false`） |
+| 没有 mappable 时的 `cmap` / `clim` | 这根轴上没有可作用的对象（结构性不适用）；写回侧也写不进去，另行进 `pending` |
+| 采集异常类：`spines` / `lines` / 字号 / `xscale` / `yscale` / `pos` 缺键 | 这些字段恒可采；缺只可能是采集异常，无法区分"没采到"与"不一样" |
+
+此外，**无基线档**（`--verify-fast` / `--no-verify` / `--no-semantic`）**不写进调整块**的那几类字段
+（见下面「[无基线档不写"重复应用不幂等"的字段](#无基线档不写重复应用不幂等的字段)"）也记在
+`unjudged` 里 —— 那是"这一档没判/没写"，不是"没落地"。
+
+**agent 该怎么用**：
+
+1. 判**落盘**：`applied`（+ `changes` / 写回后文件 sha256）。`unjudged` 不回答这件事。
+2. 判**验证覆盖**：`verified` 只回答"比得了的都一致"；`unjudged` 非空就如实告诉用户
+   "这些字段这次没判"，**不要**把 `verified: true` 说成"每个字段都验证过了"。
+3. `verified: false` ⇒ 明确的不一致，**不许**说"已验证 / 已经确认"；`verified: null` ⇒ 这次没验证，
+   同样不许说成通过。
+
+`unjudged` 是**新增**键：既有键（含 `verified`）的语义一字未改，只认旧键的调用方什么都不用动。
 
 ## 值域表
 
@@ -157,6 +194,31 @@
 
 > 已知**文案**问题（0.1.20 修）：`--verify-fast` 的人读输出会同时打印「正在验证（…）」与「本次没有重跑脚本」。
 > 后半句是事实（fast 档确实不重跑），前半句是文案错。`--json` 侧口径不受影响：`layers.rerun = null`、`verified = null`。
+
+### 无基线档不写"重复应用不幂等"的字段
+
+**无基线档**（`--verify-fast` / `--no-verify` / `--no-semantic`）不重跑脚本，也就证明不了
+"某个字段与源码现值相等"。下面五类字段**重复应用不幂等**（块里的写法多写一次就可能改掉原有语义），
+所以在三档里**块路径一律不写它们**：
+
+* `grid`：采集侧只有一个布尔，块里只能写 `ax.grid(True)` = **两向**，源码里的 `axis='x'` 会丢；
+* `xscale` / `yscale`：块里只能写尺度名（`set_xscale('log')`），`base` / `subs` 不在参数模型里，
+  会被重置成默认 —— 刻度与坐标都会变；
+* `legend`：块里是 `ax.legend(...)` **整条重建**，参数里没建模的 `ncol` / `title` / `frameon`
+  会被重置成默认；
+* **锁定轴**（`aspect=equal` / `imshow` / 地图轴）的 `pos`：位置由长宽比在 draw 时现算，
+  写 `set_position` 不生效。
+
+**边界**：源码里本来就有**可原位改写的字面量**时（典型：`ax.grid(True, axis='x')` 的布尔），
+原位路径仍会改 —— 那种改写保留原语义、是幂等的；块里写不出这个语义，所以块路径一律不写。
+
+它们**不进 `pending`**（那不是"你要的东西没落地"，而是"这一档不写"），而是进
+`files[].unjudged`；`reason` 仍可为 `ok`，`warnings` 里有一句说明。白名单的唯一出处是
+`writeback.py:5432 # _NO_BASELINE_UNSAFE`。
+
+**出路**：要写这几类字段（`grid` / 轴尺度 / 图例 / 锁定轴的位置），请**用默认档重跑**
+一次 `apply --write`（会重跑脚本 + 语义验证）；`--diff` 预览在影子副本上算基线，
+不受这条限制。
 
 ### `delta` / `delta_dropped`：哪些字段"本来就没变"所以没写
 

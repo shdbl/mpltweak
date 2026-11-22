@@ -1,0 +1,79 @@
+name: Nightly full suite
+
+# 为什么需要这一条（0.1.22）
+# --------------------------
+# `tests.yml` 的覆盖是**按分配**的：老七套在 8 条腿（ubuntu/windows × 3.9~3.12）上跑，
+# 其余套件只靠 3.12 腿那一次 `pytest -q` 捎带，3.9 腿只有一条"秒级冒烟"的 -k 名单。
+# 于是 CONTRIBUTING 里有一条诚实的 known gap："每个套件至少被一条腿覆盖，但**没有**任何一条腿
+# 跑过全量"。后果是"只在 3.10/3.11 的解释器或某个 matplotlib 版本上才红"的那类问题，
+# 要等到有人本地撞上才知道（0.1.18 的元组解包 bug、0.1.16 的 GBK 假红都是这个形状）。
+#
+# 这条 nightly 就是那个补位的腿：**每天一次全量 `pytest -q`**，2 个 OS × 2 个解释器
+# （3.9 = 最低支持版本，3.12 = 最新），跑的就是 `tests/test_suites.py` 的 SUITES 全表 +
+# `test_hygiene.py` 的工程卫生棘轮 —— 与 PR 腿的 pytest 路径同一套实现，不是另写一份名单。
+#
+# 刻意**不做**的三件事（各有理由，别顺手加回来）：
+#   * 不装 PyQt5：GUI 离屏冒烟在没有 Qt 的环境里会**显式 skip 并打印原因**
+#     （tests/test_gui_smoke.py 文件头），它不是 nightly 要买的判据（Qt 与解释器版本无关），
+#     装了只会给 4 条腿各加 ~100 MB 下载；GUI 的闸门留在 3.12 PR 腿（那里有 `import PyQt5` 断言）。
+#   * 不跑 `test_real_window` / `test_corpus_invariants`：它们本就不在 SUITES 里
+#     （真开窗会抢焦点；语料级要仓库外的 corpus + 分钟级真跑），nightly 不改变这条口径。
+#   * 不加 `-k` 过滤：nightly 的价值就在"没有名单"，一加过滤就又回到 PR 腿的形状了。
+#
+# 时长预期：与 3.12 PR 腿那次 `pytest -q` 同量级（约 25~35 分钟/腿，视 runner 而定），
+# 4 条腿并行。它只在 schedule/dispatch 时烧钱，PR 反馈路径一秒都没变。
+
+on:
+  schedule:
+    # 每天 03:17 UTC（= 北京时间 11:17）—— 错开整点，避开 GitHub 的高峰排队。
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  full:
+    name: full py${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Windows 上的 run 步骤统一用 Git Bash（与 tests.yml 同一口径：set -e / heredoc 都能跑）。
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+        os: [ubuntu-latest, windows-latest]
+    env:
+      # 全程无头：只用 Agg（源码里 Qt 的 import 都在函数内部，模块顶层不碰 Qt）。
+      MPLBACKEND: Agg
+      # Windows runner 的默认 stdout 是 cp1252，编不了中文测试名 —— 钉 UTF-8。
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # 测试真正依赖的只有 matplotlib / numpy（--no-deps 装本项目：PyQt5 不是测试依赖）。
+          python -m pip install matplotlib numpy
+          # mcp 要求 Python >= 3.10；3.9 上跳过它，test_mcp 会自行 skip。
+          if [ "${{ matrix.python-version }}" != "3.9" ]; then
+            python -m pip install "mcp>=1.0"
+          fi
+          python -m pip install -e . --no-deps
+
+      - name: Install pytest (3.9 leg installs its own)
+        # 3.9 腿的基础安装只装 matplotlib/numpy（与 tests.yml 的 3.9 腿同一形状）——
+        # pytest 在这里补上。3.12 腿一并装 hypothesis（三个 property 套件的依赖；
+        # 缺了它们只会打印 SKIP，property 就永远不在 CI 里跑，见 tests/_hypothesis_shim.py）。
+        run: |
+          python -m pip install "pytest>=7.0"
+          if [ "${{ matrix.python-version }}" == "3.12" ]; then
+            python -m pip install "hypothesis>=6.0"
+          fi
+
+      - name: Full test suite (pytest -q, no -k filter)
+        run: python -m pytest -q

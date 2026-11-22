@@ -160,6 +160,19 @@ def main(argv=None) -> int:
     for _line in layoutwarn.messages_for(_layout):
         sys.stderr.write(_line + '\n')
 
+    # 0.1.22 / F8：图级图例（fig.legend）**能定位、但不支持编辑** —— 必须明说，
+    # 不许假装支持。参数文件里**不放** fig_legend 字段（那是 0.2.0 的配额），
+    # 所以人话只走 stderr（stdout 是纯 JSON，一个字节都不能掺）。
+    _n_figleg = 0
+    # 注意用**采集状态**（state / states）而不是 params：`_to_params` 是白名单，
+    # 图级图例**不在**参数模型里（新增字段是 0.2.0 的事），只在状态里可定位。
+    _st_list = (states or []) if args.all_figs else [state]
+    for _st in _st_list:
+        _n_figleg += len((_st or {}).get('fig_legends') or [])
+    if _n_figleg:
+        sys.stderr.write('[describe] %s\n'
+                         % _msg.t('fig_legend_not_editable', n=_n_figleg))
+
     sys.stdout = _real_stdout
     text = json.dumps(payload, ensure_ascii=False,
                       indent=None if args.compact else 2)

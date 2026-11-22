@@ -174,7 +174,19 @@ SUITES = [
     ('test_exotic_axes', {}),
     # --- 0.1.18 挂入：回滚字节级：revert / 自动回滚后必须 sha256 逐字节复原（LF/CRLF/BOM 三形态） ---
     ('test_revert_bytes', {}),
-    # --- 0.1.18 挂入：t19 九条发现的失败优先回归：当前 xfail，修好一条摘一条；禁止手搭 actual 结构 ---
+    # --- 0.1.22 挂入：**CLI 输出归属**（stdout = 数据/报告，stderr = 人读错误）—— 37 条，
+    #     纯子进程、零窗口、零 GUI 对象，约 85 秒。过去它只能靠 `.github/workflows/tests.yml`
+    #     里一条显式 pytest 路径跑（`python_files` 只收 test_suites.py / test_hygiene.py
+    #     ⇒ 裸 pytest 收不到它；t3 的覆盖检查照出来的真缺口）。0.1.22 给它补了 `__main__`
+    #     （只多打一行 `ALL PASS` / `FAILED: N 项`），于是能正式入册 ⇒ 3.12 腿的 pytest
+    #     经本文件捎带它，workflow 里那条重复 step 已删（覆盖仍由 ci_suite_coverage 盯着）。
+    #     见 tests/test_cli_output.py 文件头 ---
+    ('test_cli_output', {}),
+    # --- 0.1.18 挂入 / 0.1.22 收敛：t19 九条发现的回归网 —— 禁止手搭 actual 结构。
+    #     0.1.22 起：8 条已修（F1/F2/F3/F5/F6/F7/F8/F9）⇒ 硬断言（回退就红）；
+    #     只剩 F4（图例整条重建）仍未修 ⇒ `xfail(strict=True)`（修好后 XPASS 在 pytest 里
+    #     **直接判红**）；脚本档同口径（期望 xfail 的通过了 ⇒ XPASS ⇒ rc=1）。约 35 秒。
+    #     见 tests/test_xreview_regressions.py ---
     ('test_xreview_regressions', {}),
     # --- 0.1.18 挂入：语料身份级回归：抽样真跑并验「写对没」（三栏 ok/refused/WRONG，WRONG 必须 0）；默认 skip，需 MPLTWEAK_CORPUS_WORK 指向语料根 ---
     ('test_corpus_identity', {}),

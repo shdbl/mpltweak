@@ -927,6 +927,12 @@ def _emit_json(script, results, stdout_ref, ok=None, error=None, extra=None,
              'inplace_needs_block': bool(r.get('inplace_needs_block')),
              'pending': r.get('pending') or [],
              'inplace_pending': r.get('inplace_pending') or [],
+             # 0.1.22：**结构性不可判**的字段（契约：恒为字符串数组，空也是 []）。
+             # 与 `pending`（"该写没写成"）是两本账：这里记的是"参数请求了、但
+             # 实测取不到口径"的项 —— 图例 anchor / loc='best' / 锁定轴的 pos 采集缺失 /
+             # 没有 mappable 时的 cmap·clim。它们**不推翻 `verified`**（verified 的语义
+             # 仍是"可比字段全部一致"，一字不改），但要让消费方知道验证覆盖到哪为止。
+             'unjudged': [str(_x) for _x in (r.get('unjudged') or [])],
              # T7（t25）摘掉的字段必须**机器可读**：`delta_dropped` 是字段名清单，
              # `delta` 是计数/原因（{'dropped': n} 或 {'skipped': 'baseline_unavailable'}）。
              # 引擎（writeback）早就返回它们了，是这里的键集没透传（t25 复核发现的）。
@@ -2012,7 +2018,7 @@ if __name__ == '__main__':
 #     _success_tail                                  446
 # §5 参数文件收集与失败错误码（行 467-504，1 个顶层函数）
 #     _all_params_files                              469
-# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-1017，16 个顶层函数）
+# §6 `--json` 机器可读输出（每条失败出口都带稳定码）（行 505-1023，16 个顶层函数）
 #     _failure_code                                  542
 #     _failure_stage                                 569
 #     _failure_next_step                             588
@@ -2029,17 +2035,17 @@ if __name__ == '__main__':
 #     _finalize_next_step                            852
 #     _print_finalize_attribution                    860
 #     _emit_json                                     872
-# §7 验证失败归因与下一步（attribution / next_step）（行 1018-1123，4 个顶层函数）
-#     _classify_verify_failure                      1046
-#     _is_rerun_failure                             1080
-#     _print_attribution                            1095
-#     _next_step_cmd                                1113
-# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1124-1986，1 个顶层函数）
-#     main                                          1126
-#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1128
-#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1230
-#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1302
-#         §8.4 逐份参数文件：校验与拒写                         1339
-#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1510
-#         §8.6 收尾：mtime 同步与人读 / --json 输出           1883
+# §7 验证失败归因与下一步（attribution / next_step）（行 1024-1129，4 个顶层函数）
+#     _classify_verify_failure                      1052
+#     _is_rerun_failure                             1086
+#     _print_attribution                            1101
+#     _next_step_cmd                                1119
+# §8 主流程：main（预备 → 逐份写回 → 输出）（行 1130-1992，1 个顶层函数）
+#     main                                          1132
+#         §8.1 入口：`--` 截断、选项解析与 --json 分流           1134
+#         §8.2 前置检查：脚本/参数文件、布局引擎冲突、可重跑预检            1236
+#         §8.3 批次基准与备份透传（T36 / T23；口径同 writeback §12 备份）  1308
+#         §8.4 逐份参数文件：校验与拒写                         1345
+#         §8.5 写回：串行锁、style 与 auto 回退（口径同 writeback §13 并发锁）  1516
+#         §8.6 收尾：mtime 同步与人读 / --json 输出           1889
 # --- END AUTO NAV ---

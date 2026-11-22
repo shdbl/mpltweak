@@ -23,6 +23,7 @@ description: 交互式 matplotlib 排版（脚本零侵入）：像 PPT 一样�
 7. **不静默升级用户的包**：`pip install -U mpltweak` 会改他的环境 ⇒ 先说明"会升到哪个版本、可能有什么变化"，**征得同意再执行**。
 8. **不在没确认版本的情况下断言"这是已知问题 / 已经修了"**：先 `mpltweak --version`，再看最新版与 `CHANGELOG.md`（见下一节）。
 9. **引用工具输出必须逐字**：不许把输出"整理成通顺句子"再标成"实时输出"；某一行含乱码（`◆` / `�` / `锟斤拷`）就整行只说"该行乱码"，不得翻译、补全、润色。判排版结论用 `check --json` 的 `clean` / `verdict`，别去解析人读中文。
+10. **不许把没验证过的说成已验证**：`verified: false` = 可判且判为**不一致**，绝不能说"已验证 / 已经确认"；`verified: null` = 这次没验证；`unjudged` 非空 = 这些字段这次没判（要如实点名，不许略过）。判"写没写"看 `applied` / `pending`，不要拿 `verified` / `unjudged` 代替。
 
 ## 开工第一步：确认环境（缺了就装，但先问用户）
 
@@ -93,7 +94,7 @@ mpltweak doctor
 | `mpltweak apply <脚本.py>`（默认 `--style auto`） | 每张图各自决定：代码里有数字就原位改，改不了（如 `plt.subplots` 网格位置）自动改用插入调整块 |
 | `mpltweak apply <脚本.py> --style inplace` | 强制只用原位改数字；**写不了的字段会让命令明确失败**（`rc=1`，JSON 的 `pending` 列出字段），不会静默“保持原样” |
 | `mpltweak apply <脚本.py> --snippet` | 输出可粘贴片段（你要手动按用户风格落实时用） |
-| `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr） |
+| `mpltweak apply <脚本.py> --json` | 机器可读结果（过程信息走 stderr）。`files[]` 里先看 `reason` / `applied` / `verified` / `pending` / `unjudged` |
 | `mpltweak revert <脚本.py>` | **预览回退**：打印会改回什么，**一个字节都不动** |
 | `mpltweak revert <脚本.py> --write` | **真回退**：把脚本恢复到**备份里的字节**（默认用固定名 `.tweak.bak`；它**首份优先** ⇒ 回到它建立那一刻、通常就是你第一次改这张图之前的原件；**固定名缺失但还有 pid 副本时自动退回最早那份**，`rc=0`、逐字节回到最初，`--json` 用 `fallback: "no_fixed_backup_used_oldest_pid"` 标明；两处都没有才 `rc=2` / `no_backup`）；`--first` 回到**最早**那次写回前（读最早一份 pid 副本） |
 | `mpltweak describe <脚本.py>` | **不开窗**导出当前排版（参数 JSON）。`--all-figs` 导全部（**嵌套**的 `{"figures": [...]}`，包装本身不能直接喂回 `apply --params`；但 **0.1.14 起会顺手按每图写好 `<stem>.fig<k>.json`**，那个能喂，见「口径与默认值」）；`-o 文件` **只落盘、不打印 JSON**（stdout 为空，屏幕上只有一句「已写入 …」走 stderr）；`--compact` 紧凑 |
@@ -271,6 +272,14 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
 - **`layers = {syntax, rerun, semantic}`**：三层各自"跑没跑"。`true` = 跑了，`null` / 缺键 = **没跑**。
   **只有 `semantic: true` 才算"布局真的落到目标图上"**；`verified: null` 表示**语义层没跑**（取不到图
   状态，或你加了 `--verify-fast`）——**不要当成通过**；`verified: false` 才是明确的失败。
+- **`unjudged`**（逐文件，**恒为字符串数组**，空也是 `[]`、**永远不是 `null`**）：参数里请求了、
+  但**这次没判/没写**的字段。来源有两类：① 结构性不可判 —— 图例 `anchor` / `loc='best'` /
+  锁定轴 pos 采集缺失 / 没有 mappable 时的 `cmap`·`clim`；② 无基线档（`--verify-fast` /
+  `--no-verify` / `--no-semantic`）**不写进调整块**的 `grid` / `xscale` / `yscale` / `legend` /
+  锁定轴 `pos`（要写这几类请用默认档重跑）。它**不推翻 `verified`**：`verified: true` 仍只表示"比得了的字段
+  都一致"，**不等于**"每个请求字段都判过"。**`verified: false` 时不许对用户说"已验证 / 已经确认"**；
+  `verified: null` = 这次没验证；`unjudged` 非空就如实说"这些字段这次没判"。判"写没写"看
+  `applied` / `pending`，别拿 `unjudged` 反推。
 - **`verify_passes` / `semantic_basis`**：两个键**恒有**（别再从 `warnings` 的文本里猜）——
   `verify_passes` = 这次为验证在**写回后的脚本**上跑了几遍：**1** = 默认单遍 / **2** = 单遍取不到目标图
   状态、已回退到两遍 / **0** = 这次没有为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 /

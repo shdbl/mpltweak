@@ -86,23 +86,27 @@ JSON、又可能被重定向成提示语，调用方就得靠"猜这次有没有
 `audit_018/promo/t16_probe2.log` —— **本地记录，未随仓库发布**，可重跑入口 `python tests/test_agent_api.py`）。`--verify-fast` 的定位是"慢脚本的快速语法档"（见「慢脚本」一节），
 不是 agent 的默认档。
 
-**读 `--json` 先看这五个字段**（`files[]` 每一条里都有）：`rc`（顶层退出码）/ `reason` / `applied` / `verified` / `pending`。
+**读 `--json` 先看这六个字段**（`files[]` 每一条里都有）：`rc`（顶层退出码）/ `reason` / `applied` / `verified` / `pending` / `unjudged`。
 
 | 字段 | 回答什么 | 怎么读才不踩坑 |
 |---|---|---|
 | `rc` | 这一次命令算不算成功 | `0` = 成功；`1` = 写回没（全）落地或验证失败；`2` = 参数/用法错；`4` = 需要参数 |
 | `reason` | **结论是哪一档** | `ok`（该写的都写了）/ `best_effort`（能写、没全写）/ `refused`（拒写，源码零改动）/ `fail`（写了又回滚）/ `no_change`（本来就不一样都不用改） |
 | `applied` | **磁盘到底动没动** | `false` = 一个字节没改（**这时别把 `reason=best_effort` 读成"改了一点"**） |
-| `verified` | 重跑验证过没有 | 默认档**真正写过**时不是 `null`；`null` = 没跑（`--no-verify` / `--verify-fast`，或 `no_change` / `preview` 这种没写盘的早退） |
-| `pending` | **本次最终**还剩什么没落地 | 空数组 = 都落地了；非空 = 这几项没写（`inplace_pending` 是退块前那一趟的留档，**不要相加**） |
+| `verified` | 重跑验证的结论 | `true` 只等于"**比得了的字段都一致**"，**不等于**"每个请求字段都判过"；`false` = 可判**且判为不一致**；`null` = 没跑（`--no-verify` / `--verify-fast`，或 `no_change` / `preview` 这种没写盘的早退）。**`false` 时不许对用户说"已验证 / 已经确认"** |
+| `pending` | **本次最终**还剩什么没落地 | 空数组 = 都落地了；非空 = 这几项没写（`inplace_pending` 是退块前那一趟的留档，**不要相加**）。锁定轴（长宽比锁定）的 `pos` 也记在这里 |
+| `unjudged` | 哪些请求字段**这次没判/没写** | 恒为字符串数组（空也是 `[]`，**永远不是 `null`**）。非空不是失败：它只说明"验证覆盖不到这里" —— 图例 `anchor` / `loc='best'` / 锁定轴 pos 采集缺失 / 没有 mappable 时的 `cmap`·`clim`，以及无基线档不写进调整块的 `grid` / `xscale` / `yscale` / `legend` / 锁定轴 `pos`。**对用户如实说"这些字段这次没判"**，别把它读成"都验证过了" |
+
+**怎么向用户汇报验证结论（按这三档说，别混）**：`verified: false` ⇒ "验证发现不一致"，**不许**说"已验证 / 已经确认"；`verified: null` ⇒ "这次没验证"；`unjudged` 非空 ⇒ "这些字段这次没判"（点名字段）。只有 `verified: true` **且** `unjudged: []` 时，才能说"请求的字段都验证过"。判"写没写"看 `applied`，不要拿 `verified` / `unjudged` 代替。
 
 **不要只看 `ok`**：`ok` 只说"整批算不算成功"，它**不回答"改了没有"**。要回答那个，看 `applied` + `changes`（块路径落地时 `changes` 可能是 `[]`，此时以 `applied: true` 与写回后文件 sha256 变了为准）。
 
-**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。下面几个键的口径容易读错，逐个写清（0.1.14 起 `style` 也在此列）：
+**`--json` 给机器读**：`files[]` 里的 `style` / `applied` / `changes` / `needs_block` / `pending` / `unjudged` 判读这次落没落地；`schema` 子命令输出参数文件的 JSON Schema，供 agent 校验自己生成的内容。下面几个键的口径容易读错，逐个写清（0.1.14 起 `style` 也在此列）：
 
 * `files[].style`（**恒存在，永不为 `null`**）：这次**请求的通道**（`auto` / `inplace` / `block`）。走过写回时它被**实际采用的通道**覆盖 —— `auto` 退块就是 `block`（同时 `auto_fallback=true`、`inplace_reason` 说为什么没原位落地）；只读预览（`reason=preview`）与早退条目（`bad_params` / `stale` / `layout_conflict` 等）填的是**请求值**，`auto` = 逐图待定。**别把 `style` 单独当"落没落地"**：那件事只看 `reason` 与 `applied`（早退条目也带请求的 `style`，但它一个字节都没写）。
 * `files[].verify_passes`（**恒存在**，int）：**1** = 默认单遍；**2** = 单遍取不到目标图状态、已回退两遍；**0** = 这次**没有**为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 / 没有可写字段）—— **`0` 不是失败**，它只表示"这一档没为验证重跑脚本"。它**只数主验证的遍数**：参数里有"原位写不了"的字段时先额外跑的那一遍**不计入**（所以 `verify_passes=1` ≠ 整条命令只跑了 1 遍脚本）。要判断"这次为什么回退"，看 `verify_passes=2` 再读同一条目的 `warnings`。
 * `files[].semantic_basis`（**恒存在**，str）：`live+savefig` = 图对象状态 + 磁盘那张图的追加判据；`live` = 只有图对象状态；**空串** = 这次没有语义判定依据（没跑 / 回退后如实记"没验到"）。
+* `files[].unjudged`（**恒存在**，**字符串数组**）：参数里请求了、但**这次没判/没写**的字段令牌（如 `["ax0.legend.anchor"]`）。契约：**恒为字符串数组**（空也是 `[]`，**永远不是 `null`**），与 `delta_dropped` 同款；它**不推翻 `verified`**（`verified: true` 仍只表示"比得了的字段都一致"），判"写没写"仍看 `applied` / `pending`。两种来源：① **结构性不可判**（图例 `anchor`、`loc='best'`、锁定轴 pos 采集缺失、没有 mappable 时的 `cmap`·`clim`、以及采集异常缺键）；② **无基线档**（`--verify-fast` / `--no-verify` / `--no-semantic`）**不写进调整块**的五类（`grid` / `xscale` / `yscale` / `legend` / 锁定轴 `pos`）—— 后者要写请用默认档重跑。完整边界见 [json-contract.md 的「`verified` 与 `unjudged` 的边界」](json-contract.md#verified-与-unjudged-的边界)。
 * `files[].layout_conflicts`（**恒存在**，数组）：脚本里**开着的布局引擎冲突点**（`constrained_layout` / `figure.autolayout`），每项一句人话并带脚本行号。**空数组 = 这份脚本没开引擎**，位置的写回不会被覆盖。非空要看同一条目的 `reason` 分流：`reason='layout_conflict'` ⇒ 这次要写轴位置、被默认拦下（`applied=false`、**这一份**没写盘、`rc=1`）；`reason` 是 `ok` / `best_effort` / `refused` / `fail` ⇒ 冲突**没挡这次**（只动了非几何字段、或你给了 `--force`、或走的是拒写 / 回滚那条路），冲突仍在。**它只说明"脚本开着引擎"，不说明"这次写不写位置"**。
 * `files[].diff`（**恒存在**，数组；只有 `--diff` 时非空）：写回前预览的**行级差异**，每项 `{line, type, old, new}`。`line` 是**新文件**里的行号（1 基）；`old` 是原行（插入时 `null`）、`new` 是改后行（删除时 `null`）。`type` 三档：`inplace` = 一对一换行（原位补参数 / 改数字）、`insert_block` = 新增行落在自动生成的调整块里、`replace` = 其余（已有块被整体替换 / 行数变了）。**用它就能在落盘前复现"改完是什么样"**：把每项按 `line` 重放到原文即可（`old` 必须与原文同位置的整行一致，对不上就是口径错）。同组的三个键：`preview_sha256`（**影子副本最终内容**的严格字节指纹 —— 它就是真写盘后文件的 sha256，唯一例外是调整块说明行里的"生成于 <时间>"：预览与真写回是两次运行，跨了分钟就只差这几个字符）、`preview_sha256_norm`（把"生成于 <时间>"抹成 `<ts>` 之后再算，**跨分钟也稳定**，"预览 == 真写盘"的确定性对拍用它）、`preview_bytes`（将要写出的字节数）。**边界说清**：`--diff` **不重跑你的脚本**，所以"验证失败 → 自动回滚 / 换锚点重试"这类**由验证结果驱动**的分支不在预览里；那种情况下以真写回为准。
 * `files[].layout_why`（**判定依据**，稳定英文枚举，不进文案）：这条参数到底会不会改到轴位置 —— `no_pos` = 参数里没有位置类字段，不可能写位置；`proved_equal` = 静态证得出源码现值已等于目标位置，写了也是空改；`live_equal` = 重跑实测参数里的位置与现状一致，不用写；`live_differs` = 重跑实测确实不同，**这次真要写位置**（冲突下会被拒）；`unjudged` = 判不了（没开验证、脚本重跑不了、解析失败）⇒ 保守按"可能要写"处理。判据只有一处：`writeback.position_write_needed`（返回 `(True|False|None, why)`）。
@@ -180,7 +184,7 @@ stderr**（失败与回滚、拒写与「未写回」、参数文件坏、外部
 自证入口：`python -m pytest -q tests/test_cli_output.py`（本仓库的同类断言也在
 `python tests/test_agent_api.py` 的 §24）。
 
-**mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
+**mpltweak 本身不含任何 AI 模型**：它只提供命令和判断，`ok` / `reason` / `changes` / `pending` / `unjudged` 就是给 AI 读的结构化结果 —— 判断"到底改对了没有"靠三层验证 + 出错回滚 + `revert`，**不靠 AI 自己说"我改好了"**。
 
 > **读排版前先看布局引擎冲突**：`describe` 的产物带 `layout_engine` 字段（脚本里 `constrained_layout` / `figure.autolayout` 的冲突点，带行号），MCP 的 `describe_layout` / `check_layout` 同样带。**非空就先 `mpltweak check <脚本> --static` 看一眼再动位置** —— 这些引擎会在每次绘制时重算轴位置，你排好的布局会被它覆盖。这是 0.1.9 实机调图会话踩出来的：人类开窗有终端提示，agent 通道却没有，白调一轮。
 >

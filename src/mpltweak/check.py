@@ -480,6 +480,15 @@ def analyze_state(state, tol=DEFAULT_TOL, with_text=True, tight=False):
     撑大画布，超出 figure 框的文字不会被裁掉，所以文字越界要降级为提示。
     """
     problems, warns = analyze(state.get('axes') or [], tol)
+    # 0.1.22 / F8：图级图例（fig.legend）现在能被采集到 —— check 必须**明说它不可编辑**
+    # （过去它连"存在"都看不见，于是"图上有个图例"这件事在体检报告里完全失踪）。
+    # 只报 warn：它不是排版事故，是**能力边界**；`--strict` 语义与既有 rule 一字不动。
+    _figleg = state.get('fig_legends') or []
+    if _figleg:
+        warns.append({'rule': 'fig_legend_not_editable', 'level': 'warn',
+                      'axes': [],
+                      'msg': _msg.t('fig_legend_not_editable', n=len(_figleg)),
+                      'n_fig_legends': len(_figleg)})
     if with_text:
         tp, tw = analyze_texts(state, tight=tight)
         problems += tp
@@ -860,15 +869,15 @@ if __name__ == '__main__':
 #     analyze_texts                                  349
 #         §4.1 超出画布（tight 脚本里降级为提示）                  390
 #         §4.2 互相压住（warn）                            418
-# §5 共同入口、tight 探测与静态扫描（A4）（行 474-580，4 个顶层函数）
+# §5 共同入口、tight 探测与静态扫描（A4）（行 474-589，4 个顶层函数）
 #     analyze_state                                  476
-#     _const_str                                     490
-#     has_tight_bbox                                 495
-#     static_scan                                    537
-# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 581-831，4 个顶层函数）
-#     _tol_arg                                       583
-#     _clean_verdict                                 594
-#     main                                           624
-#         §6.1 A4：--static —— 一行脚本都不执行               653
-#     _run_static                                    749
+#     _const_str                                     499
+#     has_tight_bbox                                 504
+#     static_scan                                    546
+# §6 CLI：main、--tol 校验与 --static 的 _run_static（行 590-840，4 个顶层函数）
+#     _tol_arg                                       592
+#     _clean_verdict                                 603
+#     main                                           633
+#         §6.1 A4：--static —— 一行脚本都不执行               662
+#     _run_static                                    758
 # --- END AUTO NAV ---

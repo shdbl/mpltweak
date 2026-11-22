@@ -28,8 +28,11 @@ stdout、stderr 变空。改回来即 14 条全绿。
 
 调用方式
 --------
-`python -m pytest -q tests/test_cli_output.py`（本文件是 pytest 函数式；`__main__`
-下也能当脚本跑，输出与退出码同 pytest 结论）。
+`python -m pytest -q tests/test_cli_output.py`（本文件是 pytest 函数式）。
+0.1.22 起也**当脚本跑**（`python tests/test_cli_output.py`）—— 为的是能进
+`tests/test_suites.py` 的 `SUITES`（3.12 腿的 `pytest -q` 届时会捎带它，workflow 里那条
+显式路径就不必单独存在）。脚本档输出只比 pytest 多**一行**结论：通过 ⇒ `ALL PASS`，
+失败 ⇒ `FAILED: N 项`（包装器按这两行判）。
 """
 import json
 import os
@@ -861,9 +864,36 @@ def test_edge_label_messages_are_name_only():
 
 # ----------------------------------------------------------------------
 # 脚本入口：`python tests/test_cli_output.py` 等价于跑一遍本文件（pytest 驱动）
+#
+# ⚠ 本文件在 0.1.21 被追加过一段 §12（在那之后还有用例定义），所以**脚本入口在文件中间**，
+# 不是文件尾：在文件尾再写一个 `if __name__ == '__main__':` 会永远跑不到（这里的
+# `sys.exit` 先执行）。0.1.22 把结论行补在这里 —— 之前只有 `sys.exit(pytest.main(...))`，
+# 退出码对、但**没有 `ALL PASS`**，因此 `tests/test_suites.py` 的包装器收不了它，
+# 只能靠 `.github/workflows/tests.yml` 里一条显式 pytest 路径跑（t3 覆盖检查照出来的缺口）。
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
-    sys.exit(pytest.main([os.path.abspath(__file__), '-q', '--no-header']))
+    class _FailCounter(object):
+        """数"挂掉的用例"（按 nodeid 去重：setup/call/teardown 三次报告只算一条）。"""
+
+        def __init__(self):
+            self.ids = set()
+
+        def pytest_runtest_logreport(self, report):
+            if report.failed:
+                self.ids.add(report.nodeid)
+
+    _failed = _FailCounter()
+    _rc = pytest.main([os.path.abspath(__file__), '-q', '--no-header',
+                       '-p', 'no:cacheprovider'], plugins=[_failed])
+    # 结论行写 `sys.__stdout__`：进程内跑完 pytest 后 `sys.stdout` 可能还挂着捕获包装
+    # （实测：写 `sys.stdout` 时 rc=0 却一行 `ALL PASS` 都没留下）。
+    _out = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
+    if _rc == 0:
+        _out.write('ALL PASS\n')
+    else:
+        _out.write('FAILED: %d 项\n' % max(len(_failed.ids), 1))
+    _out.flush()
+    sys.exit(_rc)
 
 
 # ===========================================================================

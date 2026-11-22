@@ -1,5 +1,74 @@
 # CHANGELOG
 
+## 0.1.22
+
+### 这一版用户能感知到的变化
+
+- **不重跑脚本的档位不再"顺手重写"会改语义的字段**（F5，数据损坏级）：`--no-semantic` /
+  `--verify-fast` / `--no-verify` 这类**不重跑你的脚本**的档，过去只改一个标题字号，也会在块里
+  补写 `ax.grid(True)`（只开了 x 向的网格变成两向）与 `ax.set_xscale('log')`（base 从 2 变 10，
+  刻度 0.5..16 变 0.1..1000），而这两件事验证都判不出来。现在"重复应用不幂等"的四类字段
+  ——`grid` / 轴尺度 / 图例重建 / 锁定轴位置——在这些档位**一律不写**，改为记进新的 `unjudged`
+  并附一句"要写请用默认档重跑"。默认档行为不变：仍然只写你真正改动的那个字段。
+- **"请求了但没落地"现在会被点出来，不再静默算通过**（F1）：参数里请求了 `xlim`，而图上
+  根本没有这个范围（例如那次改动落在了 `if False:` 这类死分支里）——过去的 `compare()` 遇到
+  "实测缺这个键"就直接跳过，于是 `rc=0`、`verified=true`。现在逐键定语义：`xlim` / `ylim` /
+  `grid` / `legend` 缺键**就是不一致**（`verified=false` 并点名）；`cmap` / `clim` 在没有可作用
+  的对象时记"不适用"；其余结构性不可判的（`legend.anchor`、`loc='best'`、字号、轴尺度、位置）
+  记 `unjudged`，如实说明"这次没判"。
+- **`--json` 多一个 `unjudged`（恒为字符串数组）**：`verified=true` 的含义被明确为"**能比的都
+  比过了**"，不等于"每个请求字段都判过"。`pending` 只放"真请求了、真没写成"的字段——两本账。
+  见 [docs/json-contract.md](docs/json-contract.md)。
+- **锁定轴的位置不再"敢写、不敢判"**（F3）：`imshow` / 地图轴的位置由长宽比在 draw 时现算，
+  写 `set_position` 不会生效。过去原位 / 块 / 恒等三条通道说法不一、验证整段跳过。现在三条
+  通道给**同一句话**（"想自由摆位置先把长宽比放开"），该字段进 `pending`，且**不会**再出现
+  "位置没落地却 `verified=true`"。
+- **`imshow(vmin=, vmax=)` 的色域现在采得到**（F7）：过去只从 colorbar 的 mappable 取 `clim`，
+  普通 imshow 轴恒为 `None`（既没法比、也没法写）。现在任意 mappable 都采；并且"本来就是这个
+  值"时判等价、不再多写一行（恒等 apply 仍是 `no_change`）。
+- **`fig.legend(...)` 不再"凭空消失"**（F8）：图级图例过去完全不在采集状态里——开窗看不到、
+  写回写不了、验证也判不了。现在能定位（labels + loc），但**明确说明不支持编辑**：`describe`
+  的 stderr 与 `check` 的 warning 都会直说。新增参数留到 0.2.0，`describe` 导出的 params
+  **一个字段没多**。
+- **`check` 对含 `fig.legend` 的脚本现在会报 warning**（`verdict=warnings`、`clean=false`）：
+  这是上一条的对外可见面——读到它不代表你的图有问题，而是"这个图例工具改不了"。
+- **回归网不再"假绿"**：`tests/test_xreview_regressions.py` 里 F2 / F6 / F9 其实早已修好，只是
+  标记没翻（`strict=False` 不会让 XPASS 变红，所以 `6 xfailed / 3 xpassed` 读起来像"9 条全没
+  修"）。现在这三条翻成硬断言，其余 6 条开 `strict=True`：任何"该红不红"会直接把 pytest 与
+  脚本入口判红（`XPASS |` + `rc=1`）。
+- **CI 多一条"真的跑全量"的腿**：新增 `.github/workflows/nightly.yml`——**37 个套件 × 4 条腿**
+  （ubuntu/windows × 3.9/3.12），每天 03:17 UTC + 手动可触发，**无 `-k` 过滤**。过去的口径是
+  "每个套件至少被一条腿覆盖，但没有任何一条腿跑过全量"，于是"只在某个解释器 / matplotlib
+  版本上才红"的问题要等用户撞上才知道（0.1.18 的元组解包、0.1.16 的 GBK 假红都是这个形状）。
+  PR 反馈时间一秒没变。
+- **`test_cli_output` 正式进册**：它过去靠 3.12 腿一条显式 pytest step 捎带（因为它文件中间
+  那个 `__main__` 只打退出码、不打 `ALL PASS`，进不了 `SUITES`）。现在包装器口径补齐、注册进
+  `SUITES`，那条重复 step 删掉——它和别的套件走同一个入口。
+
+### 数字
+
+- 版本号两处同步：`pyproject.toml` 与 `src/mpltweak/__init__.py` 都是 `0.1.22`。
+- **测试（中英两臂，离屏）**：`python -m pytest -q` 各 **120 passed / 0 failed / 5 skipped**
+  （zh 29:26 / en 29:38），跑前跑后树身一致。
+- **回归网**：`tests/test_xreview_regressions.py` = **8 passed, 1 xfailed**（唯一 xfail = F4，
+  `strict=True`，理由写死）；脚本入口 `9 条 | PASS 8 | XFAIL 1 | XPASS 0 | FAIL 0` + `ALL PASS`。
+- **判据**：`tests/test_writeback.py` 新增 §102（F5①–④b / F7①–⑤ / F8①–③ / unjudged①–③ /
+  F3①–⑤），并把 T10④ 收紧成 T10④b/c/d（F1 的逐键语义表是唯一出处）；每条都有副本里的反向
+  牙齿（`_team022/engine/teeth/` 与 `_team022/tests-ci/reverse/`）。
+- **文档闸门**：`gen_nav --check` rc=0；`check_doc_refs.py` 默认面 **46 条 / 可疑 0**、
+  `--with-maintenance` 面 **206 条 / 可疑 0**、`--self-test` **13/13**；`doc_cli_options` 双向
+  0 处；`test_docs` ALL PASS；`test_notation_discipline` ALL PASS。
+- **本机环境说明**（不是产品变更）：长侠 env 的 `PyQt5/Qt5/lib/fonts` 目录缺失，离屏
+  （`QT_QPA_PLATFORM=offscreen`）跑 GUI 套件时 Qt 会往 stderr 打 `QFontDatabase: Cannot find
+  font directory …`；建出该目录后全量即绿。CI 的 Linux 腿不受影响（有 fontconfig）。
+
+### 本版**不做**（避免误解）
+
+- **F4 仍未修**：块里重建 `ax.legend(loc, bbox, fontsize)` 会把 `ncol` / `title` / `frameon`
+  重置。根因是 params v4 根本不携带这几个键，块生成器无从保留——要 0.2.0 的 params v5 才能
+  真修。本版只保证"跟图例无关的字段不会把它冲掉"和"图例不可写时如实说"。
+- **GUI 三件**（缩放/平移、组合、右键数值面板）不在本版，排到 0.1.24。
+
 ## 0.1.21
 
 ### 这一版用户能感知到的变化
