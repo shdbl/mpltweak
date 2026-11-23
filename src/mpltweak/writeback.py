@@ -929,6 +929,115 @@ def _subplots_single_axes(call) -> bool:
     return vals[0] * vals[1] == 1
 
 
+def _slice_text(sl):
+    """下标表达式的**归一化源文本**（丢掉位置/格式差异，只回答"是不是同一段"）。
+
+    0.1.23 / B：变量下标 `axes[i, j]` 静态认不出是**哪一根**轴，只能靠"两处写的是不是
+    同一个表达式"去重 —— `axes[i, j]` 与 `axes[i,  j]` 归一后相同（同一根），
+    `axes[i, j]` 与 `axes[k, l]` 不同（绝不许并成同一根）。
+    """
+    try:
+        return ast.dump(sl, annotate_fields=False, include_attributes=False)
+    except TypeError:                        # 老 Python 不认这两个关键字
+        return ast.dump(sl)
+
+
+# 变量下标轴的**合成序号**基线：负数，永远不会与真实轴序号（0 起）相撞。
+# 它只用来让 `axis_var_index` 记住"这几处不是同一根轴"，**不是**轴身份；
+# `_axis_expr_index` 见到负数一律当"认不出"（→ 那批字段拒写 + 警告 + pending）。
+_UNKNOWN_AXIS_BASE = -1000000
+
+
+def _unknown_axis_index(text, cache):
+    """变量下标 → 合成序号（按归一化源文本去重：同一段文本同一个号）。"""
+    if text not in cache:
+        cache[text] = _UNKNOWN_AXIS_BASE - len(cache)
+    return cache[text]
+
+
+def _axis_subscript_index(sl, grid):
+    """`axes[<sl>]` → 运行期轴序号（0 起）；读不出返回 None（**不猜**）。
+
+    * 单下标常量 `axes[1]`：保持 0.1.22 及以前的旧口径（就是 1）。
+    * 元组下标常量 `axes[0, 1]`（0.1.23 / B）：要求网格是**二维**（`nrows>1 且 ncols>1`）
+      才是合法写法 —— 一维网格（subplots 会 squeeze）上写两个下标在运行期直接
+      TypeError，所以那种情况一律 None，绝不硬算。扁平序号 = `row * ncols + col`，
+      与 `plt.subplots` 的创建顺序一致（轴按行优先建出，见 `_grid_element` 同序）。
+    * 变量下标 `axes[i, j]` / 网格形状读不出 / 越界 ⇒ None（交给调用方走"认不出"的路）。
+    """
+    if isinstance(sl, ast.Constant) and isinstance(sl.value, int) \
+            and not isinstance(sl.value, bool):
+        return sl.value
+    if not (isinstance(sl, ast.Tuple) and len(sl.elts) == 2):
+        return None
+    vals = []
+    for e in sl.elts:
+        if not (isinstance(e, ast.Constant) and isinstance(e.value, int)
+                and not isinstance(e.value, bool)):
+            return None
+        vals.append(e.value)
+    if not grid:
+        return None
+    nrows, ncols = grid
+    if nrows <= 1 or ncols <= 1:
+        return None                          # 一维（squeeze 过）：两个下标运行期就报错
+    r, c = vals
+    if not (0 <= r < nrows and 0 <= c < ncols):
+        return None
+    return r * ncols + c
+
+
+def _axis_seq_grids(tree):
+    """轴**序列**变量名 → ``(nrows, ncols)``（网格读不出时值记 None，**不猜**）。
+
+    只收 subplots 的两种赋值形态：
+      ``fig, axes = plt.subplots(2, 2)``   → {'axes': (2, 2)}
+      ``axs = fig.subplots(2, 2)``         → {'axs': (2, 2)}
+    1×1（`fig, ax = plt.subplots()`）不是序列 —— 那个名字就是**单条轴**本体，
+    与 `_subplots_single_axes` 同一判据（审计 E13）。单名字形态只认**接收者调用**
+    （`fig.subplots(...)` 的值才是数组；`axes = plt.subplots(...)` 的值是 (fig, axes) 元组）。
+    """
+    out: Dict[str, Any] = {}
+    assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
+    assigns.sort(key=lambda n: (n.lineno, n.col_offset))
+    for node in assigns:
+        v = node.value
+        if not (isinstance(v, ast.Call)
+                and getattr(v.func, 'attr', None) == 'subplots'):
+            continue
+        if _subplots_single_axes(v):
+            continue
+        grid = _grid_size(v)
+        for t in node.targets:
+            if isinstance(t, ast.Name):
+                if isinstance(v.func, ast.Attribute):
+                    out.setdefault(t.id, grid)          # axs = fig.subplots(2, 2)
+            elif isinstance(t, (ast.Tuple, ast.List)) and len(t.elts) >= 2:
+                first, second = t.elts[0], t.elts[1]
+                if not isinstance(second, ast.Name):
+                    continue
+                if not (isinstance(first, ast.Name)
+                        and (first.id.lower().startswith('fig') or first.id == 'f')):
+                    continue
+                out.setdefault(second.id, grid)         # fig, axes = plt.subplots(...)
+    return out
+
+
+def _axis_expr_index(expr, idx_map, seq_grids):
+    """把一个「轴表达式」解析成轴序号：``ax`` / ``axes[1]`` / ``axes[0, 0]`` / ``axs[0]``。
+
+    认不出（不是轴名 / 下标读不出 / 名字只落到"变量下标的合成序号"）⇒ ``None``。
+    **绝不返回合成序号**（负数）：那不是真实轴身份，拿去配 mappable 就会改错面板。
+    """
+    if isinstance(expr, ast.Name):
+        i = (idx_map or {}).get(expr.id)
+        return i if isinstance(i, int) and i >= 0 else None
+    if (isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name)
+            and seq_grids and expr.value.id in seq_grids):
+        return _axis_subscript_index(expr.slice, seq_grids[expr.value.id])
+    return None
+
+
 def axis_var_index(tree):
     """解析「轴变量名 → 轴序号(0-based)」。覆盖常见形态（按赋值顺序扫）：
 
@@ -936,7 +1045,18 @@ def axis_var_index(tree):
       fig, axes = plt.subplots(1, 2, ...)  → axes 记为"轴序列名"
       ax1, ax2 = axes / axes.flat / axes.ravel() / axes.flatten()  → ax1→0, ax2→1
       ax2 = axes[1]                        → ax2 → 1
+      ax = axes[0, 1]                      → ax → 1（二维网格，r*ncols+c）
+      ax = axes[i, j]                      → 合成序号（负数；"认不出是哪一根"的占位）
       ax = fig.add_subplot(...) / fig.add_axes([...]) / plt.subplot(...) → 按创建序
+
+    ★ 0.1.23 / B（L25）：第③支过去只认**单下标常量** ``axes[1]``，2-D 写法 ``axes[0, 0]``
+    （slice 是 ``ast.Tuple``）一律漏掉 ⇒ ``mappable_by_axis`` 拿不到逐轴映射 ⇒ 块生成
+    回落到 ``sorted(mappables)[0]``：多 ``imshow`` 时 ax0/ax1 都拿到 ``im0``，**真改一根
+    cmap 会改到另一根面板上**（recon §5 的 T7 夹具现场）。现在：常量元组下标按网格
+    ``r*ncols+c`` 折算成真实序号；变量下标 ``axes[i, j]`` 认不出是哪一根，按**归一化源
+    文本**去重后给一个**负数合成序号**（不同的变量下标绝不被并成一根，也绝不冒充真实
+    轴序号 —— 消费方 ``_axis_expr_index`` 见到负数就当"认不出"）。网格形状读不出时
+    一律不猜（返回 None 路，即不记映射）。
 
     ★ t52（2026-10-14，**已支持调用形式**）：``axes.ravel()`` / ``axes.flatten()`` 这两种
     **调用**写法过去认不出来（分支②只匹配属性 ``ast.Attribute``；``.flat`` 是属性、
@@ -952,7 +1072,8 @@ def axis_var_index(tree):
     ``im0`` 变 ``im1``、``reason`` 由 ``best_effort`` 变 ``ok``，写后真值 ax0=viridis /
     ax1=plasma ✓ 各就各位。
     """
-    seq_names = set()
+    seq_grids = _axis_seq_grids(tree)
+    seq_names = set(seq_grids)
     out: Dict[str, int] = {}
     assigns = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)]
     assigns.sort(key=lambda n: (n.lineno, n.col_offset))
@@ -972,8 +1093,11 @@ def axis_var_index(tree):
             continue
         for elts in _elts(node):
             if len(elts) == 1 and isinstance(elts[0], ast.Name):
-                if getattr(v.func, 'attr', None) == 'subplots':
-                    out.setdefault(elts[0].id, 0)          # ax = plt.subplots()（罕见）
+                # `ax = plt.subplots()`（1×1）的第二个返回值就是那条轴；
+                # `axs = fig.subplots(2, 2)` 这类**多轴**单名字形态是轴**序列**（已在
+                # `_axis_seq_grids` 里登记），不能再把它当成第 0 条轴（0.1.23 / B）。
+                if getattr(v.func, 'attr', None) == 'subplots' and _subplots_single_axes(v):
+                    out.setdefault(elts[0].id, 0)
                 continue
             if len(elts) < 2:
                 continue
@@ -987,8 +1111,7 @@ def axis_var_index(tree):
                         # `fig, ax = plt.subplots()`：第二个目标就是那个唯一的 Axes
                         # 本体，不是轴序列（审计 E13，见 _subplots_single_axes）。
                         out.setdefault(second.id, 0)
-                    else:
-                        seq_names.add(second.id)           # fig, axes = subplots(...)
+                    # 多轴：`_axis_seq_grids` 已把 second.id 登记成序列名（同一判据）
                 elif isinstance(second, (ast.Tuple, ast.List)):
                     for k, e in enumerate(second.elts):    # fig, (ax1, ax2) = ...
                         if isinstance(e, ast.Name):
@@ -1015,15 +1138,20 @@ def axis_var_index(tree):
             for k, e in enumerate(elts):
                 if isinstance(e, ast.Name):
                     out.setdefault(e.id, k)
-    # ③ 下标取轴：ax2 = axes[1]
+    # ③ 下标取轴：ax2 = axes[1] / ax = axes[0, 1] / ax = axes[i, j]（0.1.23 / B）
+    _unknown: Dict[str, int] = {}
     for node in assigns:
         v = node.value
-        if (isinstance(v, ast.Subscript) and isinstance(v.value, ast.Name)
-                and v.value.id in seq_names and node.targets
-                and isinstance(v.slice, ast.Constant)
-                and isinstance(v.slice.value, int)):
-            for nm in _iter_assign_names(node.targets[0]):
-                out.setdefault(nm, v.slice.value)
+        if not (isinstance(v, ast.Subscript) and isinstance(v.value, ast.Name)
+                and v.value.id in seq_names and node.targets):
+            continue
+        _k = _axis_subscript_index(v.slice, seq_grids.get(v.value.id))
+        if _k is None:
+            # 变量下标/形状读不出：给合成序号（同文本同号、不同文本不同号），
+            # 只用来**不把不同的轴并成一根**；它不是轴身份（消费方按负数当认不出）。
+            _k = _unknown_axis_index(_slice_text(v.slice), _unknown)
+        for nm in _iter_assign_names(node.targets[0]):
+            out.setdefault(nm, _k)
     # ④ 逐个创建：ax = fig.add_subplot(...) / add_axes([...]) / plt.subplot(...)
     made = 0
     for node in assigns:
@@ -1039,31 +1167,86 @@ def axis_var_index(tree):
 
 
 def mappable_by_axis(tree):
-    """解析「轴序号 → 该轴 mappable 的变量名」（B3：多 mappable 精确配对）。
+    """解析「轴序号 → 该轴 mappable 的变量名」（B3 / L25：多 mappable 精确配对）。
 
     两条信号，后者（显式 colorbar）优先级更高：
-      cs = ax1.contourf(...)     → 用接收者 ax1 查 axis_var_index
-      fig.colorbar(cs, ax=ax1)   → 同时点名 mappable 与父轴，最强信号
+      cs = ax1.contourf(...)      → 用接收者 ax1 查 axis_var_index
+      fig.colorbar(cs, ax=ax1)    → 同时点名 mappable 与父轴，最强信号
+
+    0.1.23 / B：接收者不再只认 ``ast.Name`` —— ``im = axes[0, 1].imshow(...)``（经下标
+    取出的轴）也算，判据走 ``_axis_expr_index``（与 `axis_var_index` 第③支**同一份**折算，
+    常量元组下标按网格 ``r*ncols+c`` 折成真实序号）。认不出是哪一根的（变量下标 /
+    网格形状读不出）**不记映射**：宁可让调用方走"拒写 + 警告 + pending"，也绝不在这里
+    按字母序猜一根（L25 的配错就发生在那一猜上）。
     """
     idx_map = axis_var_index(tree)
+    seq_grids = _axis_seq_grids(tree)
     out: Dict[int, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
             call = node.value
             recv = call.func.value if isinstance(call.func, ast.Attribute) else None
-            if (getattr(call.func, 'attr', None) in MAPPABLE_FACTORIES
-                    and isinstance(recv, ast.Name) and recv.id in idx_map
-                    and node.targets):
-                names = list(_iter_assign_names(node.targets[0]))
-                if names:
-                    out.setdefault(idx_map[recv.id], names[0])
+            if getattr(call.func, 'attr', None) in MAPPABLE_FACTORIES \
+                    and node.targets:
+                _i = _axis_expr_index(recv, idx_map, seq_grids)
+                if _i is not None:
+                    names = list(_iter_assign_names(node.targets[0]))
+                    if names:
+                        out.setdefault(_i, names[0])
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == 'colorbar' and node.args
                 and isinstance(node.args[0], ast.Name)):
             for kw in node.keywords:
-                if (kw.arg == 'ax' and isinstance(kw.value, ast.Name)
-                        and kw.value.id in idx_map):
-                    out[idx_map[kw.value.id]] = node.args[0].id
+                if kw.arg != 'ax':
+                    continue
+                _i = _axis_expr_index(kw.value, idx_map, seq_grids)
+                if _i is not None:
+                    out[_i] = node.args[0].id
+    return out
+
+
+# 各类 mappable 工厂的返回值**落在轴的哪个容器**里：匿名 mappable（没有赋值、拿不到
+# 变量名）时，块只能靠结构定位，而"哪个容器"必须按工厂判 —— 过去的 `collections[0]`
+# 一刀切对 `imshow` 是**必炸**（AxesImage 在 `ax.images`，`ax.collections` 为空 ⇒
+# 运行期 IndexError ⇒ 写回被回滚；0.1.23 / M6）。不在表里的工厂（如 `bar` 返回的是
+# BarContainer，不是标量 mappable）一律"家族未知"，交给调用方拒写。
+_MAPPABLE_FAMILY = {
+    'imshow': 'images',
+    'contour': 'collections',
+    'contourf': 'collections',
+    'pcolormesh': 'collections',
+    'pcolor': 'collections',
+    'scatter': 'collections',
+    'tripcolor': 'collections',
+    'quiver': 'collections',
+    'streamplot': 'collections',
+}
+
+
+def anonymous_mappable_by_axis(tree):
+    """解析「轴序号 → 该轴上**匿名** mappable 的容器名」（0.1.23 / M6）。
+
+    "匿名" = 画出来但没接变量名（``ax.imshow(...)`` / ``axes[0, 0].contourf(...)``）⇒
+    `find_mappable_names` 里没有它，块只能结构定位。返回 ``{轴序号: 'images'|'collections'}``；
+    同一根轴出现**多个家族**（或家族未知，如 `bar`）时值记 ``None`` —— 读不出该用哪一个，
+    调用方据此拒写（**不猜**）。
+    """
+    idx_map = axis_var_index(tree)
+    seq_grids = _axis_seq_grids(tree)
+    fams: Dict[int, set] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in MAPPABLE_FACTORIES:
+            continue
+        _i = _axis_expr_index(node.func.value, idx_map, seq_grids)
+        if _i is None:
+            continue
+        fams.setdefault(_i, set()).add(_MAPPABLE_FAMILY.get(node.func.attr) or '?')
+    out: Dict[int, Any] = {}
+    for _i, _s in fams.items():
+        out[_i] = next(iter(_s)) if len(_s) == 1 and '?' not in _s else None
     return out
 
 
@@ -5415,7 +5598,7 @@ def _figsize_same_as_baseline(data, base):
 # `set_xscale('log', base=2)`，写回后多出 `ax.grid(True)`（x 向变两向）与
 # `set_xscale('log')`（base 2→10，刻度 0.5..16 变 0.1..1000）。
 #
-# 为什么这五类**不能**像别的字段那样"宁可多写"——多写一次就不是同一个图了：
+# 为什么这几类**不能**像别的字段那样"宁可多写"——多写一次就不是同一个图了：
 #   * `grid`：采集侧只记一个布尔（"有没有任何网格线可见"），块里只能写
 #     `ax.grid(True)` = **两向**。源码的 `axis='x'` 被丢掉 ⇒ 重复应用把 x 向变两向。
 #   * `xscale` / `yscale`：采集侧只记尺度名（`log`），块里只能写
@@ -5423,13 +5606,18 @@ def _figsize_same_as_baseline(data, base):
 #     `base=2` 重置成默认 10（刻度/坐标全变）。
 #   * `legend`：块里是 `ax.legend(loc=..., fontsize=...)`，**整条重建**图例 ⇒ 参数里
 #     没建模的 ncol / title / frameon / 边框…… 全被重置成默认（F4 的同一个根因）。
+#   * `clim`（0.1.23 / M5，MAINTENANCE §38.5 的债）：F7 之后 `imshow` 的 clim 采得到
+#     （= **当时**的自适应色域），而无基线档分不清"用户改过"与"这本来就是数据范围" ⇒
+#     块里 `im.set_clim(0, 8)` 会把自动色域**钉成常量**：此后改了数据、色域不再自适应
+#     （与 `set_linewidth(1.5)` 那种"把当前值写死"同族，但后果是色标范围错）。
+#     默认档不受影响：基线一比就知道 clim 没被要求改，块里根本不写（差异过滤）。
 #   * 锁定轴的 `pos`（`aspect_locked` 或 `aspect≠auto`）：位置由长宽比现算，
 #     `set_position` 不生效 / draw 时被改回 ⇒ 写了也不落地，只会让人以为改过了（F3）。
-# 其它字段（pos/字号/spines/lines/clim/cmap/xlim/ylim/tick_params…）块里的写法都是
+# 其它字段（pos/字号/spines/lines/cmap/xlim/ylim/tick_params…）块里的写法都是
 # **值等价**的：再写一遍同样的值不改变图（幂等）⇒ 不在本白名单里。
-# 唯一代价：这几类里"用户真的改了"的字段，在无基线档也写不了（进 pending + 一句
+# 唯一代价：这几类里"用户真的改了"的字段，在无基线档也写不了（进 unjudged + 一句
 # "用默认档重跑"的出路）—— 数据安全优先于省一次重跑。
-_NO_BASELINE_UNSAFE = ('grid', 'xscale', 'yscale', 'legend')
+_NO_BASELINE_UNSAFE = ('grid', 'xscale', 'yscale', 'legend', 'clim')
 
 
 def _axis_aspect_locked(a):
@@ -5580,16 +5768,27 @@ def _block_unexpressed_fields(block, data, fig_var, needed=None, targets=None):
 # ==== §18 调整块：mappable 引用、作用域与锚点下沉 ====
 
 def _mappable_ref(ax_expr, axis_item, is_cb, mappables, cb_args, mappable_map=None,
-                  multi_fig=False):
+                  multi_fig=False, anonymous_map=None):
     """返回 (mappable 引用表达式 | None, warning | None)。
 
     优先级：
       ① colorbar 轴 → ``ax._colorbar.mappable`` 结构导航（不依赖变量名、不依赖 draw）
       ② **本轴精确配对**（B3：``cs = ax1.contourf(...)`` 的接收者 /
-         ``fig.colorbar(cs, ax=ax1)`` 的显式父轴）
-      ③ 全局 mappable 变量（**仅单图脚本**；多图时全局集合可能混着别的图的变量，
-         拿它兜底会把别的图的 mappable 打上 set_clim/set_cmap → 跨图污染）
-      ④ ``collections[0]`` 兜底（结构上就是本轴的，不会跨图）+ 警告
+         ``fig.colorbar(cs, ax=ax1)`` 的显式父轴；接收者可以是 ``axes[0, 1]``）
+      ③ 全局 mappable 变量（**仅单图脚本**，且全文件**只有一个** mappable 时才敢用；
+         多图时全局集合可能混着别的图的变量 ⇒ 跨图污染）
+      ④ 匿名 mappable 的**结构导航**：本轴上"没接变量名"的绘制调用能证出家族时，
+         用 ``ax.images[0]`` / ``ax.collections[0]``（**按工厂选容器**，见
+         `_MAPPABLE_FAMILY`）+ 警告
+      ⑤ 认不出 ⇒ ``(None, 警告)``：调用方**拒写这批字段**（警告 + pending）。
+
+    0.1.23 / B（L25）与 M6 的两条硬口径，都在 ③④⑤ 这几步：
+      * **兜底不许猜**：过去多 mappable 时按字母序取 ``sorted(mappables)[0]``，一句
+        "已用 X，请人工确认其它轴"就写了 —— 两根 ``imshow`` 的图上，ax1 的 cmap 会
+        落到 ax0 的 mappable 上（改错面板）。现在多 mappable 且本轴映射未知 ⇒ ⑤ 拒写。
+      * **不许裸 IndexError**：过去匿名 mappable 一律写 ``ax.collections[0]``，而
+        ``imshow`` 的 mappable 在 ``ax.images`` 里（``collections`` 为空）⇒ 写回的脚本
+        重跑必炸、只剩回滚。现在按工厂选容器（④）；家族证不出 ⇒ ⑤ 拒写。
     """
     if is_cb:
         # colorbar 轴：走 ax._colorbar.mappable（colorbar 创建时即设置，不依赖首次
@@ -5598,15 +5797,86 @@ def _mappable_ref(ax_expr, axis_item, is_cb, mappables, cb_args, mappable_map=No
     i = axis_item.get('index')
     if mappable_map and isinstance(i, int) and i in mappable_map:
         return mappable_map[i], None
-    if not multi_fig and mappables:
-        nm = sorted(mappables)[0]
+    if mappables:
+        if len(mappables) == 1 and not multi_fig:
+            return sorted(mappables)[0], None
         if len(mappables) > 1:
-            return nm, (_msg.t_wb('ax%s 存在多个 mappable 变量(%s)，已用 %s，请人工确认其它轴')
-                        % (i, ','.join(sorted(mappables)), nm))
-        return nm, None
-    return ('%s.collections[0]' % ax_expr,
-            _msg.t_wb('ax%s 的 mappable 未在赋值中解析到，用 %s.collections[0] 兜底，请人工确认')
-            % (i, ax_expr))
+            return None, (_msg.t_wb('ax%s 上有多个 mappable 变量(%s)，但认不出哪一根属于这根轴 —— 本次不写它的 clim/cmap，请人工确认')
+                          % (i, ','.join(sorted(mappables))))
+        # 只剩"多图 + 全局唯一 mappable"：可能是别的图的，不敢用（旧口径也不兜）
+    _fam = (anonymous_map or {}).get(i) if isinstance(i, int) else None
+    if _fam in ('images', 'collections'):
+        _ref = '%s.%s[0]' % (ax_expr, _fam)
+        return _ref, (_msg.t_wb('ax%s 的 mappable 没有变量名，改用结构定位 %s（请人工确认）')
+                      % (i, _ref))
+    return None, (_msg.t_wb('ax%s 的 mappable 认不出来（没有变量名，也证不出它的 images/collections 属于这根轴）—— 本次不写它的 clim/cmap，请人工确认')
+                  % i)
+
+
+# ---- F4/C（0.1.23）：块里 `ax.legend(...)` 是**整条重建**
+#
+# 现场（t19 F4）：源码 `ax.legend(ncol=2, title='组别', frameon=False, fontsize=9)`，用户在
+# GUI 里只把 loc/fontsize 改了 ⇒ 块写 `ax.legend(loc='upper right', fontsize=11)` ——
+# matplotlib 的 `legend()` 每次都**新建** Legend 对象，ncol / title / frameon 回到默认值
+# ⇒ 图上两列传成一列、标题与无边框全丢；而验证层只采 labels/n_handles/fontsize/loc，
+# 根本判不出来（"写了但既没人看见、也没人判"）。
+#
+# params v5 才会把这三项建模（0.2.0 配额，见 MAINTENANCE M3）；0.1.23 只做到**不装作
+# 没这回事**：块写法一个字不改（设计稿 C 的硬约束），但 `warnings` 里明说，并把
+# `axN.legend.ncol|title|frameon` 记进 `unjudged`（"这次没判/没写"）。它与 F5 同类口径
+# （主动不写 + 记 unjudged），所以**不**把 reason 抬成 best_effort。
+_LEGEND_DEFAULTS = (('ncol', 1), ('title', None), ('frameon', True))
+_LEGEND_UNKNOWN = object()
+
+
+def _static_const(node):
+    """静态能读出的常量值（``None`` 也读得出）；变量/表达式 → ``_LEGEND_UNKNOWN``。"""
+    if isinstance(node, ast.Constant):
+        return node.value
+    return _LEGEND_UNKNOWN
+
+
+def _legend_rebuild_risks(tree, axis_indices):
+    """"块要整条重建这些轴的图例" ⇒ 源码图例里哪些**没建模**的属性会被重置（F4/C）。
+
+    返回 ``{轴序号: [属性名, …]}``（属性名 ∈ ``ncol`` / ``title`` / ``frameon``，与
+    `unjudged` 的键 ``axN.legend.<属性>`` 同一份命名）。判据只看**源码里实际写的**
+    ``<轴>.legend(...)`` 关键字：
+      * 字面量：与 matplotlib 默认比（ncol=1 / title=None / frameon=True），不同才算；
+      * 变量 / 表达式：读不出值 ⇒ 当"可能不同"（重建照样把它丢回默认值）；
+      * ``**kw`` 展开：更读不出 ⇒ 三项全算。
+    认不出接收者的图例调用（``plt.legend(...)`` / ``fig.legend(...)``、或经变量下标取出的
+    轴）不在此列 —— 那是"这一行属于哪根轴"本身判不出，宁可不点名，见报告"没做到什么"。
+    """
+    if not axis_indices:
+        return {}
+    idx_map = axis_var_index(tree)
+    seq_grids = _axis_seq_grids(tree)
+    want = set(axis_indices)
+    defaults = dict(_LEGEND_DEFAULTS)
+    out: Dict[int, List[str]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == 'legend'):
+            continue
+        i = _axis_expr_index(node.func.value, idx_map, seq_grids)
+        if i is None or i not in want:
+            continue
+        risky = out.setdefault(i, [])
+        for kw in node.keywords:
+            if kw.arg is None:                       # `**kw`：三项都可能藏在里面
+                for _k, _d in _LEGEND_DEFAULTS:
+                    if _k not in risky:
+                        risky.append(_k)
+                continue
+            key = 'ncol' if kw.arg in ('ncol', 'ncols') else kw.arg
+            if key not in defaults:
+                continue
+            val = _static_const(kw.value)
+            if val is _LEGEND_UNKNOWN or val != defaults[key]:
+                if key not in risky:
+                    risky.append(key)
+    return {k: v for k, v in out.items() if v}
 
 
 # --------------------------------------------------------------------------
@@ -7081,8 +7351,15 @@ def _block_targets(tree, data, fig_index, positions, needed, fig_var=None,
 def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
                  mappable_map=None, tag=None, multi_fig=False, needed=None,
                  targets=None, fig_target=None, figsize_runtime=False,
-                 fig_implicit=False, fig_posident=False, posident_n=None):
+                 fig_implicit=False, fig_posident=False, posident_n=None,
+                 anonymous_map=None, info=None):
     """从参数数据生成纯 matplotlib 调整块文本。返回 (text, warnings)。
+
+    ``info``（0.1.23）：可选的出参 dict，本函数往里记**块自己知道、调用方要用**的两件事
+    （不改返回值 = 既有调用方一行都不用动）：
+      * ``unexpressed``：本轴 mappable 认不出 ⇒ 这批字段**拒写**（调用方转 pending）；
+      * ``legend_axes``：块里**真的写了** ``ax.legend(...)`` 的轴序号（F4/C 的判据：
+        只有整条重建了图例，才谈得上"ncol/title/frameon 会被重置"）。
 
     ``needed``（T35）：``{轴序号: {字段}}`` —— **只有这些字段才写进块**。
     为 None 时保持老行为（把参数里所有非空字段都写出来）。为什么要它：
@@ -7233,13 +7510,22 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
         if (a.get('clim') is not None and _want(i, 'clim')) \
                 or (a.get('cmap') and _want(i, 'cmap')):
             mref, warn = _mappable_ref(ax, a, is_cb, mappables, cb_args,
-                                       mappable_map, multi_fig)
+                                       mappable_map, multi_fig, anonymous_map)
             if warn:
                 warnings.append(warn)
-            if a.get('clim') is not None and mref and _want(i, 'clim'):
+            if mref is None:
+                # 0.1.23 / B + M6：认不出 mappable ⇒ **一个字节都不写**（不猜、也不写
+                # "匿名 collections[0]"那种重跑必炸的表达式）。字段名交给调用方进
+                # pending + 那句"这些字段块表达不了"的人话（`_mark_unexpressed`）。
+                if info is not None:
+                    for _f in ('clim', 'cmap'):
+                        if a.get(_f) is not None and _want(i, _f):
+                            info.setdefault('unexpressed', []).append(
+                                'ax%d.%s' % (i, _f))
+            elif a.get('clim') is not None and _want(i, 'clim'):
                 out.append('%s.set_clim(%s, %s)'
                            % (mref, _num(a['clim'][0]), _num(a['clim'][1])))
-            if a.get('cmap') and mref and _want(i, 'cmap'):
+            if mref and a.get('cmap') and _want(i, 'cmap'):
                 if _is_registered_cmap(a['cmap']):
                     out.append('%s.set_cmap(%r)' % (mref, a['cmap']))
                 else:
@@ -7256,12 +7542,20 @@ def render_block(data, fig_var, mappables, cb_args, figsize_in=None,
             # 在 matplotlib 里本来就是可以并存的独立关键字）。
             _kw = ('bbox_to_anchor=(%s, %s)' % (_num(anchor[0]), _num(anchor[1]))
                    if anchor else '')
+            _wrote = False
             if loc and _kw:
                 out.append('%s.legend(loc=%r, %s%s)' % (ax, loc, _kw, fs))
+                _wrote = True
             elif loc:
                 out.append('%s.legend(loc=%r%s)' % (ax, loc, fs))
+                _wrote = True
             elif _kw:
                 out.append('%s.legend(%s%s)' % (ax, _kw, fs))
+                _wrote = True
+            if _wrote and info is not None:
+                # F4/C：这一行是**整条重建**图例 —— 调用方据此判"源码里没建模的属性
+                # （ncol/title/frameon）会不会被重置"（判据见 `_legend_rebuild_risks`）。
+                info.setdefault('legend_axes', []).append(i)
     out.append(BLOCK_END)
     _txt = '\n'.join(out) + '\n'
     for _ln in _txt.splitlines():
@@ -8114,6 +8408,7 @@ def writeback(script, data, params_path, verify=True, python=None,
     # 动态配置"。判据只看**结构**（是不是字面量），不另算一遍尺寸。
     _fs_runtime = bool(figsize_in_block) and _figsize_source_dynamic(
         tree, _fig_idx_b if isinstance(_fig_idx_b, int) else 0)
+    _binfo: Dict[str, object] = {}
     block, warnings = render_block(data, fig_var, mappables, cb_args,
                                    figsize_in_block, mappable_map, tag,
                                    multi_fig=(n_fig > 1), needed=_needed_b,
@@ -8121,7 +8416,21 @@ def writeback(script, data, params_path, verify=True, python=None,
                                    figsize_runtime=_fs_runtime,
                                    fig_implicit=bool(_tinfo.get('implicit')),
                                    fig_posident=bool(_tinfo.get('pos_fig')),
-                                   posident_n=len(_axis_items(data)))
+                                   posident_n=len(_axis_items(data)),
+                                   anonymous_map=anonymous_mappable_by_axis(tree),
+                                   info=_binfo)
+    # ---- F4/C（0.1.23）：块重建图例 ⇒ 源码里没建模的属性会被重置，只警告 + 记 unjudged ----
+    # 判据：**块里真的写了** `ax.legend(...)` 的轴（`render_block` 出的 `legend_axes`），
+    # 再回源码看这行图例带了哪些"参数模型没有"的关键字（`_legend_rebuild_risks`）。
+    # 与 F5 同口径：这次**没判/没写**这些属性 ⇒ 进 `unjudged` + 说明性警告；块写法不动。
+    for _lgi, _props in sorted(
+            _legend_rebuild_risks(tree, _binfo.get('legend_axes') or []).items()):
+        _uj.extend('ax%d.legend.%s' % (_lgi, _p) for _p in _props
+                   if 'ax%d.legend.%s' % (_lgi, _p) not in _uj)
+        _info_warnings.append(
+            _msg.t_wb('块里会整条重建 %s.legend(...)：源码图例的 %s 与 matplotlib 默认不同，重建后会回到默认值 —— 本次不判这些属性（要保留请手工改源码）')
+            % (_targets.get(_lgi) or 'ax%d' % _lgi,
+               _msg.t('items_sep').join(_props)))
     warnings = pre_warnings + warnings
     # 0.1.22 / F5：说明性警告（"本档位不写这几类字段"）照样打印给人看，但下面算
     # `reason` 时会把它们从"没全写"的依据里剔掉 —— 它们不代表有字段没落地。
@@ -8135,6 +8444,12 @@ def writeback(script, data, params_path, verify=True, python=None,
     _unexpressed = _block_unexpressed_fields(block, data, fig_var,
                                              needed=_needed_b,
                                              targets=_targets)
+    # 0.1.23 / B + M6：mappable 认不出的轴，块里**一个字节都没写**
+    # （`render_block` 把这些字段记在 `info['unexpressed']`）⇒ 与 T18 自检同一条账：
+    # 进 pending + 那句"这些字段块表达不了、本次没能落地"的人话。
+    for _mref_field in (_binfo.get('unexpressed') or []):
+        if _mref_field not in _unexpressed:
+            _unexpressed = list(_unexpressed) + [_mref_field]
     # 0.1.22：两本账合流到 **pending**（= "请求了、但没写成"）：
     #   ① `_refused`：块里连对象名都证不出 → fail-closed 不写；
     #   ② `_locked_pending`（F3）：锁定轴的 pos —— 写了也不生效。
@@ -8607,194 +8922,202 @@ def writeback(script, data, params_path, verify=True, python=None,
 #     _figsize_skip_note                             784
 #     _with_fs_note                                  803
 #     _figsize_inconsistent                          818
-# §5 脚本结构：figure / 轴 / 循环与变量映射（行 855-1176，8 个顶层函数）
+# §5 脚本结构：figure / 轴 / 循环与变量映射（行 855-1359，14 个顶层函数）
 #     count_figures                                  857
 #     find_mappable_names                            880
 #     _subplots_single_axes                          900
-#     axis_var_index                                 932
-#     mappable_by_axis                              1041
-#     _comprehension_scope                          1088
-#     find_enclosing_loop                           1107
-#     loop_guard                                    1125
-# §6 figsize 原位替换与「已经是对的」静态证明（行 1177-1493，13 个顶层函数）
-#     _line_starts                                  1179
-#     _offset                                       1187
-#     _seq_lit_nums                                 1204
-#     _num_close                                    1220
-#     _fmt_figsize                                  1229
-#     _fig_call_node                                1241
-#     _call_assign_name                             1260
-#     _fig_aliases                                  1278
-#     _later_size_override                          1297
-#     _fig_call_count                               1358
-#     _rebound_between                              1365
-#     figsize_already_ok                            1385
-#     edit_figsize                                  1448
-# §7 调用定位（找 set_title / tick_params 等）（行 1494-1666，5 个顶层函数）
-#     _dead_spans                                   1496
-#     _in_dead_span                                 1534
-#     _find_call                                    1540
-#     _find_tick_call_for_axis                      1569
-#     _find_tick_axis_call                          1621
-# §8 缺参补全（A2）：给已有的调用补参数（行 1667-1999，13 个顶层函数）
-#     _find_calls                                   1694
-#     _call_carries                                 1717
-#     _call_has_dstar                               1722
-#     _gap_why                                      1727
-#     _owning_body                                  1733
-#     _gap_pick_last                                1754
-#     _text_fontsize_calls                          1770
-#     _gap_specs                                    1804
-#     _gap_specs_grid                               1824
-#     _gap_specs_text                               1852
-#     _gap_specs_pyplot                             1888
-#     _gap_specs_tick                               1914
-#     _gap_append_point                             1964
-# §9 图区间与建轴枚举（行 2000-2302，8 个顶层函数）
-#     _is_axes_on_existing_figure                   2002
-#     _fig_span                                     2015
-#     _figure_axes_for_index                        2048
-#     _spine_bad_names                              2118
-#     _axis_fig_spine                               2125
-#     _assign_name_of_call                          2240
-#     _line_in_cond                                 2259
-#     _axis_identity_gate                           2268
-# §10 原位写回：apply_inplace（行 2303-2992，1 个顶层函数）
-#     apply_inplace                                 2305
-# §11 「已经是这个值」的静态证明（行 2993-3731，21 个顶层函数）
-#     _is_rcparams_receiver                         3009
-#     _is_style_receiver                            3017
-#     _style_or_rc_write                            3023
-#     _kw_font_conflict                             3057
-#     _font_size_from_dictlike                      3076
-#     _default_proof_blocked                        3087
-#     _bool_literal_eq                              3151
-#     _first_str_literal                            3162
-#     _default_pt                                   3169
-#     _use_matplotlib_default                       3185
-#     _cmap_literal_equal                           3231
-#     _legend_literal_equal                         3258
-#     _tick_axis_side                               3283
-#     _tick_fontsize_literal_equal                  3302
-#     _on_this_axis                                 3355
-#     _clim_literal_equal                           3368
-#     _proved_equal                                 3447
-#     _pyplot_text_equal                            3543
-#     _pyplot_tick_equal                            3564
-#     _pos_literal_equal                            3587
-#     _seq4_nums                                    3723
-# §12 备份（固定名 / pid 副本 / 裁剪）（行 3732-3870，6 个顶层函数）
-#     _backup_dir                                   3734
-#     _backup_path                                  3745
-#     _backup_path_legacy                           3764
-#     _prune_backups                                3774
-#     _long_path                                    3812
-#     _make_backup                                  3835
-# §13 并发锁与原子写（行 3871-4177，10 个顶层函数）
-#     _pid_alive                                    3873
-#     _lock_holder                                  3904
-#     script_lock                                   3913
-#     preview_shadow_path                           3975
-#     preview_begin                                 3986
-#     preview_end                                   3992
-#     preview_fingerprint                           3999
-#     preview_diff                                  4016
-#     _atomic_write                                 4071
-#     _rollback_note                                4116
-# §14 外部改动检测（落盘前的指纹校验）（行 4178-4245，5 个顶层函数）
-#     _sha256_text                                  4180
-#     _disk_fingerprint                             4187
-#     _external_result                              4200
-#     _check_external_edit                          4221
-#     _guard_external_edit                          4236
-# §15 语义比对：参数值 vs 实测值（行 4246-4572，8 个顶层函数）
-#     _scale_literal                                4248
-#     _bare_field                                   4269
-#     _pending_fields                               4275
-#     _legend_differs                               4296
-#     _lines_differ                                 4317
-#     _pv_live_field                                4338
-#     _unlink_probe                                 4468
-#     _pending_vs_live                              4482
-# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4573-5044，2 个顶层函数）
-#     _figsize_from_source                          4575
-#     _writeback_inplace                            4630
-# §17 调整块：字段需求与「块表达不了」清单（行 5045-5579，18 个顶层函数）
-#     _dup_names_in_fig_assign                      5065
-#     _dup_name_set                                 5090
-#     _drop_dup_var_names                           5098
-#     _grid_size                                    5125
-#     _runtime_axes_count                           5146
-#     _pos_block_target_ok                          5195
-#     _text_axis_name                               5217
-#     _needed_block_fields                          5235
-#     _num_close                                    5326
-#     _val_same                                     5346
-#     _axes_by_index                                5366
-#     _needed_minus_baseline                        5376
-#     _figsize_same_as_baseline                     5404
-#     _axis_aspect_locked                           5435
-#     _strip_nonidempotent                          5441
-#     _no_baseline_mode                             5467
-#     _baseline_params                              5478
-#     _block_unexpressed_fields                     5511
-# §18 调整块：mappable 引用、作用域与锚点下沉（行 5580-6682，34 个顶层函数）
-#     _mappable_ref                                 5582
-#     _node_scope                                   5650
-#     _direct_assign_linenos                        5664
-#     _rebound_before                               5676
-#     _name_still_bound                             5715
-#     _func_anchor_text                             5751
-#     _walk_own                                     5769
-#     _own_returns                                  5780
-#     _own_output_calls                             5787
-#     _is_method_scope                              5796
-#     _func_call_sites                              5809
-#     _func_return_anchor                           5822
-#     _figsize_source_dynamic                       5907
-#     _assign_names_of                              5923
-#     _assign_target_of                             5934
-#     _unpacked_axis_names                          5942
-#     _inline_cax_of                                5981
-#     _mosaic_keys                                  5999
-#     _grid_squeeze                                 6045
-#     _subscript_verdict                            6055
-#     _grid_element                                 6104
-#     _fig_receiver_names                           6113
-#     _ravel_receiver                               6138
-#     _unpack_axis_names                            6150
-#     _imported_module_names                        6185
-#     _implicit_creator_is_module_call              6198
-#     _axes_binding_entries                         6218
-#     _pos_cond_scope                               6408
-#     _pos_identity_verdict                         6425
-#     _caller_fig_name                              6526
-#     _pos_why_text                                 6582
-#     _call_sig                                     6612
-#     _anchor_positions                             6617
-#     _prune_refused                                6644
-# §19 调整块：pyplot 定位可证与目标表达式表（行 6683-7078，6 个顶层函数）
-#     _gcf_provable                                 6685
-#     _plt_bound_as_plt                             6722
-#     _implicit_gcf_verdict                         6743
-#     _single_figure_attribution                    6812
-#     _numbered_fig_expr                            6859
-#     _block_targets                                6944
-# §20 调整块生成：render_block（行 7079-7278，1 个顶层函数）
-#     render_block                                  7081
-# §21 调整块插入 / 替换（幂等与缩进）（行 7279-7424，7 个顶层函数）
-#     _unclosed_block_lines                         7281
-#     _meta_path                                    7301
-#     _block_spans                                  7307
-#     _existing_span                                7319
-#     _reindent                                     7349
-#     _norm_ts                                      7360
-#     insert_or_replace                             7366
-# §22 验证：无头重跑与一遍式验证（行 7425-7659，4 个顶层函数）
-#     verify_run                                    7427
-#     _verify_script                                7462
-#     _position_axes                                7550
-#     position_write_needed                         7562
-# §23 写回入口：writeback（行 7660-8566，1 个顶层函数）
-#     writeback                                     7662
+#     _slice_text                                    932
+#     _unknown_axis_index                            951
+#     _axis_subscript_index                          958
+#     _axis_seq_grids                                990
+#     _axis_expr_index                              1026
+#     axis_var_index                                1041
+#     mappable_by_axis                              1169
+#     anonymous_mappable_by_axis                    1226
+#     _comprehension_scope                          1271
+#     find_enclosing_loop                           1290
+#     loop_guard                                    1308
+# §6 figsize 原位替换与「已经是对的」静态证明（行 1360-1676，13 个顶层函数）
+#     _line_starts                                  1362
+#     _offset                                       1370
+#     _seq_lit_nums                                 1387
+#     _num_close                                    1403
+#     _fmt_figsize                                  1412
+#     _fig_call_node                                1424
+#     _call_assign_name                             1443
+#     _fig_aliases                                  1461
+#     _later_size_override                          1480
+#     _fig_call_count                               1541
+#     _rebound_between                              1548
+#     figsize_already_ok                            1568
+#     edit_figsize                                  1631
+# §7 调用定位（找 set_title / tick_params 等）（行 1677-1849，5 个顶层函数）
+#     _dead_spans                                   1679
+#     _in_dead_span                                 1717
+#     _find_call                                    1723
+#     _find_tick_call_for_axis                      1752
+#     _find_tick_axis_call                          1804
+# §8 缺参补全（A2）：给已有的调用补参数（行 1850-2182，13 个顶层函数）
+#     _find_calls                                   1877
+#     _call_carries                                 1900
+#     _call_has_dstar                               1905
+#     _gap_why                                      1910
+#     _owning_body                                  1916
+#     _gap_pick_last                                1937
+#     _text_fontsize_calls                          1953
+#     _gap_specs                                    1987
+#     _gap_specs_grid                               2007
+#     _gap_specs_text                               2035
+#     _gap_specs_pyplot                             2071
+#     _gap_specs_tick                               2097
+#     _gap_append_point                             2147
+# §9 图区间与建轴枚举（行 2183-2485，8 个顶层函数）
+#     _is_axes_on_existing_figure                   2185
+#     _fig_span                                     2198
+#     _figure_axes_for_index                        2231
+#     _spine_bad_names                              2301
+#     _axis_fig_spine                               2308
+#     _assign_name_of_call                          2423
+#     _line_in_cond                                 2442
+#     _axis_identity_gate                           2451
+# §10 原位写回：apply_inplace（行 2486-3175，1 个顶层函数）
+#     apply_inplace                                 2488
+# §11 「已经是这个值」的静态证明（行 3176-3914，21 个顶层函数）
+#     _is_rcparams_receiver                         3192
+#     _is_style_receiver                            3200
+#     _style_or_rc_write                            3206
+#     _kw_font_conflict                             3240
+#     _font_size_from_dictlike                      3259
+#     _default_proof_blocked                        3270
+#     _bool_literal_eq                              3334
+#     _first_str_literal                            3345
+#     _default_pt                                   3352
+#     _use_matplotlib_default                       3368
+#     _cmap_literal_equal                           3414
+#     _legend_literal_equal                         3441
+#     _tick_axis_side                               3466
+#     _tick_fontsize_literal_equal                  3485
+#     _on_this_axis                                 3538
+#     _clim_literal_equal                           3551
+#     _proved_equal                                 3630
+#     _pyplot_text_equal                            3726
+#     _pyplot_tick_equal                            3747
+#     _pos_literal_equal                            3770
+#     _seq4_nums                                    3906
+# §12 备份（固定名 / pid 副本 / 裁剪）（行 3915-4053，6 个顶层函数）
+#     _backup_dir                                   3917
+#     _backup_path                                  3928
+#     _backup_path_legacy                           3947
+#     _prune_backups                                3957
+#     _long_path                                    3995
+#     _make_backup                                  4018
+# §13 并发锁与原子写（行 4054-4360，10 个顶层函数）
+#     _pid_alive                                    4056
+#     _lock_holder                                  4087
+#     script_lock                                   4096
+#     preview_shadow_path                           4158
+#     preview_begin                                 4169
+#     preview_end                                   4175
+#     preview_fingerprint                           4182
+#     preview_diff                                  4199
+#     _atomic_write                                 4254
+#     _rollback_note                                4299
+# §14 外部改动检测（落盘前的指纹校验）（行 4361-4428，5 个顶层函数）
+#     _sha256_text                                  4363
+#     _disk_fingerprint                             4370
+#     _external_result                              4383
+#     _check_external_edit                          4404
+#     _guard_external_edit                          4419
+# §15 语义比对：参数值 vs 实测值（行 4429-4755，8 个顶层函数）
+#     _scale_literal                                4431
+#     _bare_field                                   4452
+#     _pending_fields                               4458
+#     _legend_differs                               4479
+#     _lines_differ                                 4500
+#     _pv_live_field                                4521
+#     _unlink_probe                                 4651
+#     _pending_vs_live                              4665
+# §16 原位写回主流程（改数字 → 备份 → 写盘 → 验证）（行 4756-5227，2 个顶层函数）
+#     _figsize_from_source                          4758
+#     _writeback_inplace                            4813
+# §17 调整块：字段需求与「块表达不了」清单（行 5228-5767，18 个顶层函数）
+#     _dup_names_in_fig_assign                      5248
+#     _dup_name_set                                 5273
+#     _drop_dup_var_names                           5281
+#     _grid_size                                    5308
+#     _runtime_axes_count                           5329
+#     _pos_block_target_ok                          5378
+#     _text_axis_name                               5400
+#     _needed_block_fields                          5418
+#     _num_close                                    5509
+#     _val_same                                     5529
+#     _axes_by_index                                5549
+#     _needed_minus_baseline                        5559
+#     _figsize_same_as_baseline                     5587
+#     _axis_aspect_locked                           5623
+#     _strip_nonidempotent                          5629
+#     _no_baseline_mode                             5655
+#     _baseline_params                              5666
+#     _block_unexpressed_fields                     5699
+# §18 调整块：mappable 引用、作用域与锚点下沉（行 5768-6952，36 个顶层函数）
+#     _mappable_ref                                 5770
+#     _static_const                                 5832
+#     _legend_rebuild_risks                         5839
+#     _node_scope                                   5920
+#     _direct_assign_linenos                        5934
+#     _rebound_before                               5946
+#     _name_still_bound                             5985
+#     _func_anchor_text                             6021
+#     _walk_own                                     6039
+#     _own_returns                                  6050
+#     _own_output_calls                             6057
+#     _is_method_scope                              6066
+#     _func_call_sites                              6079
+#     _func_return_anchor                           6092
+#     _figsize_source_dynamic                       6177
+#     _assign_names_of                              6193
+#     _assign_target_of                             6204
+#     _unpacked_axis_names                          6212
+#     _inline_cax_of                                6251
+#     _mosaic_keys                                  6269
+#     _grid_squeeze                                 6315
+#     _subscript_verdict                            6325
+#     _grid_element                                 6374
+#     _fig_receiver_names                           6383
+#     _ravel_receiver                               6408
+#     _unpack_axis_names                            6420
+#     _imported_module_names                        6455
+#     _implicit_creator_is_module_call              6468
+#     _axes_binding_entries                         6488
+#     _pos_cond_scope                               6678
+#     _pos_identity_verdict                         6695
+#     _caller_fig_name                              6796
+#     _pos_why_text                                 6852
+#     _call_sig                                     6882
+#     _anchor_positions                             6887
+#     _prune_refused                                6914
+# §19 调整块：pyplot 定位可证与目标表达式表（行 6953-7348，6 个顶层函数）
+#     _gcf_provable                                 6955
+#     _plt_bound_as_plt                             6992
+#     _implicit_gcf_verdict                         7013
+#     _single_figure_attribution                    7082
+#     _numbered_fig_expr                            7129
+#     _block_targets                                7214
+# §20 调整块生成：render_block（行 7349-7572，1 个顶层函数）
+#     render_block                                  7351
+# §21 调整块插入 / 替换（幂等与缩进）（行 7573-7718，7 个顶层函数）
+#     _unclosed_block_lines                         7575
+#     _meta_path                                    7595
+#     _block_spans                                  7601
+#     _existing_span                                7613
+#     _reindent                                     7643
+#     _norm_ts                                      7654
+#     insert_or_replace                             7660
+# §22 验证：无头重跑与一遍式验证（行 7719-7953，4 个顶层函数）
+#     verify_run                                    7721
+#     _verify_script                                7756
+#     _position_axes                                7844
+#     position_write_needed                         7856
+# §23 写回入口：writeback（行 7954-8881，1 个顶层函数）
+#     writeback                                     7956
 # --- END AUTO NAV ---

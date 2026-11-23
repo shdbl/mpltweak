@@ -85,6 +85,29 @@ def check(name, cond, detail=''):
         fail += 1
 
 
+# ======================================================================
+# 0.1.23 分诊结论：9 条既有断言逐条判「夹具该改 / 真漏」（只读分诊，报告见
+# `_team023/tests-ci/triage.md`；这里给代码侧留一份同样的账，免得以后有人
+# "顺手把夹具改了"却不知道它为什么不能改）
+#
+# 口径 = design v2 §2.1：**params 侧没有 `cell` ⇒ 走 index 兜底候选**。
+#   1) §1 五条（159/164/165/167/169）—— **原样通过，夹具一个字不改**。PARAMS 故意
+#      不写 `cell`（它代表"手搭参数 / 老参数文件"）⇒ 新口径下走 index 兜底，配对与
+#      0.1.22 完全一致。它们是 B-1「index 兜底档」**唯一的端到端守门牙**：实现若把
+#      "参数侧缺 cell" 误判成"身份对不上"，这 5 条会集体变红 —— 那时是报警器。
+#   2) T7③ 10124（其判据 `_bad7c` 在 10113-10123）—— **真漏**：以实测侧驱动 + 缺配
+#      `continue`，缺轴 / 轴数漂移 / index=None / 多出轴全部静默判绿；而"按 index"在
+#      合法换序时给的是假红。已按"期望侧驱动 + (cell,is_colorbar) 配对 + 双向双射 +
+#      未配即红"重写（独立实现，**不 import `verify._align_axes`**：共用一把尺子会自证）。
+#   3) T7③ 10127（画布尺寸落到源码）—— 原样通过（源码文本判据，与身份无关）。
+#   4) T7④ 10136（原样回写 ⇒ no_change / 逐字节不变）—— 原样通过；T7 夹具里
+#      ax0/ax1 同 cell、cb0/cb1 同 cell ⇒ 它实际是 v2 §2.1 规则②「同 cell 组大小
+#      相等 ⇒ 组内按序」的守门牙，**不许当"老口径遗留"删掉**。
+#   5) T7⑤ 10155（标题字号只写那两根）—— 原样通过（靠 reason=ok 兜底）；它只数行数、
+#      不验接收者，而那两根同 cell ⇒ 写反也绿（§7 B-2 已声明不可测，不假装能测）。
+# =====================================================================
+
+
 SCRIPT = '''# 测试脚本
 import matplotlib
 matplotlib.use('Agg')
@@ -212,30 +235,60 @@ check('块标记仍各 1 个',
                            src2.count(writeback.BLOCK_END)))
 
 # ---- 3. 安全网：写回后运行失败 → 回滚 ----
+# 0.1.23 换引爆方式：旧写法靠「纯折线图 + clim ⇒ 写回走 ax.collections[0] ⇒ 运行期
+# IndexError」，而 M6 之后产品**不再**写那个 clim（认不出 mappable 就明确警告）⇒
+# "必炸"不成立了，但"写回把脚本改炸 ⇒ 回滚"这条能力**不能丢**。所以引爆器改成
+# **与产品无关**的：脚本自己"第二次运行必炸"（第一次追加 runs.txt 成功、第二次抛）。
+# 触发条件全在测试脚本里 —— 产品哪怕以后把 clim 写得更正确，这条用例也不会失效。
 d3, script3, pp3 = setup()
-# 造一个"写回后必炸"的脚本：纯折线图无 mappable → clim 写回走 collections[0] 兜底
-# → 运行期 collections 为空 IndexError → 验证失败 → 自动回滚
+# 引爆器（0.1.23 重写）：过去靠"clim 写回后 Agg 重跑必炸"造失败，那要靠产品自身踩雷，
+# 谁修好了它这条用例就变"假红"。现在改成**与产品无关**的失败：脚本自己第二次运行就抛。
+# 计数器**锚在 __file__ 上**，不跟 cwd —— mpltweak 跑用户脚本时会换 cwd（至少有一次在
+# `.tweak_params` 里跑），用相对路径 `open("runs.txt")` 会把"第几次"拆成两个文件、
+# 计数随跑序漂（engine 实测同一夹具会得到 1 行 / 3 行两种读数）。
+_SRC3 = ('import os\n'
+         'import matplotlib\n'
+         'matplotlib.use("Agg")\n'
+         'import matplotlib.pyplot as plt\n'
+         '_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runs.txt")\n'
+         'try:\n'
+         '    _n = len(open(_p).read().splitlines())\n'
+         'except OSError:\n'
+         '    _n = 0\n'
+         'open(_p, "a").write("run\\n")\n'
+         'if _n >= 1:\n'
+         '    raise RuntimeError("boom: 第二次运行必炸（测试夹具，与 mpltweak 无关）")\n'
+         'fig, ax = plt.subplots(figsize=(5, 3))\n'
+         'ax.plot([1, 2, 3])\n'
+         'fig.savefig("o.png")\n')
 with open(script3, 'w', encoding='utf-8') as f:
-    f.write('import matplotlib\nmatplotlib.use("Agg")\n'
-            'import matplotlib.pyplot as plt\n'
-            'fig, ax = plt.subplots(figsize=(5, 3))\n'
-            'ax.plot([1, 2, 3])\n'
-            'fig.savefig("o.png")\n')
+    f.write(_SRC3)
 params_bad = {
     'version': 4, 'script': 'target.py', 'figsize_px': None, 'figsize_in': None,
     'axes': [
-        {'index': 0, 'aspect_locked': False,
-         'title_fontsize': None, 'label_fontsize': None, 'tick_fontsize': None,
-         'is_colorbar': False, 'clim': [0.0, 15.0], 'cmap': 'plasma',
+        {'index': 0, 'pos': [0.20, 0.20, 0.55, 0.70], 'aspect_locked': False,
+         'title_fontsize': 14.0, 'label_fontsize': None, 'tick_fontsize': None,
+         'is_colorbar': False, 'clim': None, 'cmap': None,
          'xscale': 'linear', 'yscale': 'linear', 'grid': False,
          'spines': {}, 'lines': []},
     ],
 }
 before = read(script3)
 res3 = writeback.writeback(script3, params_bad, pp3, verify=True)
-check('坏参数写回 reason=FAIL', res3['reason'] == 'fail', res3['reason'])
+check('坏参数写回 reason=FAIL（写回后的重跑验证炸了）',
+      res3['reason'] == 'fail', '%r / %r' % (res3['reason'], res3.get('err')))
 check('验证失败已标记', res3['verified'] is False)
 check('已回滚到原内容', read(script3) == before, '')
+check('失败原因就是**测试脚本自己**抛的那句（不是产品 bug，也不是别的崩法）',
+      'RuntimeError' in (res3.get('err') or '')
+      and 'boom: 第二次运行必炸' in (res3.get('err') or ''),
+      (res3.get('err') or '')[-300:])
+_runs3 = os.path.join(d3, 'runs.txt')
+_n3 = (len(open(_runs3, encoding='utf-8').read().splitlines())
+       if os.path.exists(_runs3) else 0)
+check('引爆确实发生在**重跑**（第一次跑成功、第二次才抛；runs.txt ≥ 2 行，且 err 里'
+      '带的就是测试脚本自己那句 RuntimeError）',
+      _n3 >= 2, 'runs=%d exists=%r' % (_n3, os.path.exists(_runs3)))
 
 # ---- 4a. 纯 pyplot 流 → plt.gcf() 兜底（真实老代码的主力形态），且写回后真能跑 ----
 d4, script4, pp4 = setup()
@@ -1398,8 +1451,14 @@ _par36['axes'][0]['cell'] = [1, 3, 0, 0]
 _par36['axes'][0]['title_fontsize'] = 12.0
 _act36 = [{'index': 0, 'cell': [1, 4, 0, 0], 'title_fontsize': 12.0}]
 _bad36 = verify.compare(_par36['axes'], _act36)
-check('cell 身份不一致 → 比对失败且信息里点名"轴序变了"',
-      any('网格身份' in b and '轴序变了' in b for b in _bad36),
+# 0.1.23（A / 按身份对齐）：**判据没变（仍是 bad），只有文案换了一句** —— 旧实现逐对
+# 比较 cell 值 ⇒「网格身份 [1,3,0,0]≠[1,4,0,0]（轴序变了…）」；新实现**先按身份配对**，
+# 期望 [1,3,0,0] 在实测里找不到同网格位置的轴 ⇒「重跑后没有同一网格位置的轴」。
+# 两者都点名「网格身份对不上」（这个词被别的用例按词匹配，必须保留）。
+# 分诊判定：**夹具该改**（不是真漏 —— 新文案同样是 bad，没有漏判）。
+check('cell 身份不一致 → 比对失败且信息里点名"重跑后没有同一网格位置的轴"',
+      any('网格身份对不上' in b and '重跑后没有同一网格位置的轴' in b
+          for b in _bad36),
       str(_bad36))
 _act36b = [{'index': 0, 'cell': [1, 3, 0, 0], 'title_fontsize': 12.0}]
 check('cell 一致 → 不报（否则会误伤正常写回）',
@@ -1481,6 +1540,170 @@ check('实测侧没这个字段（旧参数/采集失败）→ 不判，保持�
 check('cell 不同 → 判失败（此前已有）',
       any('网格身份' in b for b in verify.compare(
           _c38, [{'index': 0, 'cell': [1, 2, 0, 1], 'title_fontsize': 12.0}])))
+
+# ======================================================================
+# T14（0.1.23 / A「按身份对齐」）：验证层不再按 index 硬比
+#
+# 判据本体在 `verify._align_axes`（`IDENTITY_ALIGN=True` 默认启用；False = 回到
+# 0.1.22 的按 index，专门留给反向牙）。本节的五条正向夹具对应 design v2 §6.1：
+#   ① 顺序反但 cell 一致 ⇒ 通过；② 混合（grid + 手写轴）⇒ 通过；
+#   ③ 删掉一个子图 ⇒ **bad**（不是 unjudged）；④ twinx（同 cell 两轴、组大小相等）
+#   ⇒ 组内按序、不报身份错；⑤ 嵌套同形 grid（两根都是 [1,1,0,0]）⇒ 组内按序。
+#
+# 每一条都配一条**反向牙**：要么关掉 `IDENTITY_ALIGN` 必红（①/②/④/⑤ 这类
+# "按 index 会误报"的现场），要么把夹具改成"身份真的对不上"必红（③/⑤ 的结构性
+# 反例）。牙的作用不是再测一遍产品，而是证明**这条正向断言不是恒真**。
+# ======================================================================
+_T14A = [0.10, 0.10, 0.40, 0.40]
+_T14B = [0.55, 0.10, 0.40, 0.40]
+_T14C = [0.10, 0.55, 0.40, 0.40]
+
+
+def _t14_legacy(expected, actual, **kw):
+    """把尺子换回 0.1.22 的按 index（只给反向牙用；跑完必复原）。"""
+    old = verify.IDENTITY_ALIGN
+    verify.IDENTITY_ALIGN = False
+    try:
+        return verify.compare(expected, actual, **kw)
+    finally:
+        verify.IDENTITY_ALIGN = old
+
+
+# ---- T14① 顺序相反、但 cell 一致 ⇒ 通过（这是 t14 那轮撤回的直接原因）----
+_T14_1E = [{'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0},
+           {'index': 1, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0}]
+_T14_1A = [{'index': 1, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0},
+           {'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0}]
+check('T14① 运行期顺序与参数相反、但 cell 一致 ⇒ 通过（bad 为空，不按 index 硬比）',
+      verify.compare(_T14_1E, _T14_1A) == [],
+      str(verify.compare(_T14_1E, _T14_1A)))
+_b14_1 = _t14_legacy(_T14_1E, _T14_1A)
+check('T14①【有牙】关掉 IDENTITY_ALIGN（= 0.1.22 按 index）⇒ 同一夹具必红，'
+      '且点名"落在…身上"（证明换过尺子）',
+      bool(_b14_1) and any('落在' in b for b in _b14_1), str(_b14_1))
+
+# ---- T14② 混合（grid + 手写轴）⇒ 通过 ----
+# 三根：ax0 = grid [1,2,0,0]、ax1 = `fig.add_axes` 手写轴（cell=None）、ax2 = grid
+# [1,2,0,1]。实测顺序整体重排成 [gridB, 手写, gridA]：两根 grid 按 cell 配上，
+# 手写轴按"同格位 + 同 is_colorbar"配对（`_align_axes` 的 None 分支）⇒ 全配上。
+_T14_2E = [{'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0},
+           {'index': 1, 'cell': None, 'pos': _T14C, 'title_fontsize': 14.0},
+           {'index': 2, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0}]
+_T14_2A = [{'index': 2, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0},
+           {'index': 1, 'cell': None, 'pos': _T14C, 'title_fontsize': 14.0},
+           {'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0}]
+check('T14② 混合（grid + 手写轴）+ 顺序重排 ⇒ 通过（手写轴不被当成"身份对不上"）',
+      verify.compare(_T14_2E, _T14_2A) == [],
+      str(verify.compare(_T14_2E, _T14_2A)))
+_b14_2 = _t14_legacy(_T14_2E, _T14_2A)
+check('T14②【有牙】关掉 IDENTITY_ALIGN ⇒ 混合夹具必红（两根 grid 的值互换了位置）',
+      bool(_b14_2) and any('落在' in b for b in _b14_2), str(_b14_2))
+
+# B-1（params 侧缺 `cell` 键 = 手搭参数/老文件）⇒ index 兜底，与新口径等价：
+# 这个场景**两种尺子都必须绿**（它是 §1 五条断言的机制），所以牙不能靠开关，
+# 只能靠"把实测值换成别的"证明断言不恒真。
+_T14_2BE = [{'index': 0, 'pos': _T14A, 'title_fontsize': 12.0},
+            {'index': 1, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0}]
+_T14_2BA = [{'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0},
+            {'index': 1, 'cell': [1, 2, 0, 1], 'pos': _T14B, 'title_fontsize': 13.0}]
+check('T14②b 期望侧缺 cell 键（手搭参数 / B-1）⇒ index 兜底，通过；'
+      '旧口径下同样通过（这条钉的是兜底档，不许"两边都没身份"才兜底）',
+      verify.compare(_T14_2BE, _T14_2BA) == []
+      and _t14_legacy(_T14_2BE, _T14_2BA) == [],
+      '%r | legacy=%r' % (verify.compare(_T14_2BE, _T14_2BA),
+                          _t14_legacy(_T14_2BE, _T14_2BA)))
+_b14_2b = verify.compare(_T14_2BE, [
+    {'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14B, 'title_fontsize': 12.0},
+    {'index': 1, 'cell': [1, 2, 0, 1], 'pos': _T14A, 'title_fontsize': 13.0}])
+check('T14②b【有牙】手搭参数下把两根的 pos 对调 ⇒ 必红（兜底档也在真比，不是放行）',
+      bool(_b14_2b), str(_b14_2b))
+
+# ---- T14③ 删掉一个子图 ⇒ bad（按 v2 §2.3：不是 unjudged、更不是"通过"）----
+_T14_3A = [{'index': 0, 'cell': [1, 2, 0, 0], 'pos': _T14A, 'title_fontsize': 12.0}]
+_b14_3 = verify.compare(_T14_1E, _T14_3A)
+check('T14③ 删掉一个子图（ax1 没有同一网格位置的轴）⇒ bad，且点名"网格身份对不上"',
+      any('网格身份对不上' in b and 'ax1' in b for b in _b14_3), str(_b14_3))
+_uj14_3 = []
+_b14_3b = verify.compare(_T14_1E, _T14_3A,
+                         fields_by_axis={0: set(), 1: set()}, unjudged=_uj14_3)
+check('T14③ 但该轴**没有任何待验证字段**（fields_by_axis 显式空集）⇒ 不判 bad，'
+      '只记 unjudged=ax1.identity（§2.3 唯一允许的 unjudged 身份情形）',
+      _b14_3b == [] and 'ax1.identity' in _uj14_3,
+      'bad=%r unjudged=%r' % (_b14_3b, _uj14_3))
+check('T14③【有牙】旧口径下同一夹具走的是另一条分支（「ax1 在目标图里不存在」）',
+      any('不存在' in b for b in _t14_legacy(_T14_1E, _T14_3A)),
+      str(_t14_legacy(_T14_1E, _T14_3A)))
+
+# ---- T14④ twinx：同 cell 两轴、两侧组大小相等 ⇒ 组内按序配对，不报身份错 ----
+_T14_4E = [{'index': 0, 'cell': [1, 1, 0, 0], 'pos': _T14A, 'ylim': [0.0, 10.0]},
+           {'index': 1, 'cell': [1, 1, 0, 0], 'pos': _T14A, 'ylim': [0.0, 100.0]}]
+_T14_4A = [{'index': 0, 'cell': [1, 1, 0, 0], 'pos': _T14A, 'ylim': [0.0, 10.0]},
+           {'index': 1, 'cell': [1, 1, 0, 0], 'pos': _T14A, 'ylim': [0.0, 100.0]}]
+_b14_4 = verify.compare(_T14_4E, _T14_4A)
+check('T14④ twinx（同 cell 两轴、组大小相等）⇒ 组内按序配对，不报身份错/不报"身份不唯一"',
+      _b14_4 == [] and not [b for b in _b14_4
+                            if '身份' in b or '网格身份' in b or '落在' in b],
+      str(_b14_4))
+_b14_4b = verify.compare(_T14_4E, _T14_4A + [
+    {'index': 2, 'cell': [1, 1, 0, 0], 'pos': _T14A, 'ylim': [0.0, 5.0]}])
+check('T14④【有牙】同 cell 组两侧**大小不等**（实测多一根）⇒ 必须判"身份不唯一/冲突"'
+      '（若把"组内按序"规则删掉，正常的 twinx 也会掉进这一档 ⇒ 这条牙两头都咬）',
+      any('身份不唯一' in b for b in _b14_4b), str(_b14_4b))
+
+# ---- T14⑤ 嵌套同形 grid（两个 subgridspec(1,1) 都是 [1,1,0,0]）⇒ 组内按序 ----
+# §7 B-2 的边界：这两根**在身份上不可区分**（同 cell），组内纯置换检测不出 ——
+# 这里只断言"不误报身份错"，不假装能测置换。
+_T14_5E = [{'index': 0, 'cell': [1, 1, 0, 0], 'pos': [0.05, 0.05, 0.40, 0.90],
+            'title_fontsize': 12.0},
+           {'index': 1, 'cell': [1, 1, 0, 0], 'pos': [0.55, 0.05, 0.40, 0.90],
+            'title_fontsize': 13.0}]
+check('T14⑤ 嵌套同形 grid（两根都是 [1,1,0,0]）⇒ 组内按序配对，通过',
+      verify.compare(_T14_5E, list(_T14_5E)) == [],
+      str(verify.compare(_T14_5E, list(_T14_5E))))
+_b14_5 = verify.compare(_T14_5E, [
+    dict(_T14_5E[0]),
+    dict(_T14_5E[1], cell=[2, 2, 0, 0])])
+check('T14⑤【有牙·组冲突】同 cell 组里有一根的身份真的变了 ⇒ 组大小不等 ⇒ '
+      '判"身份不唯一/冲突"（不猜、也不悄悄按序配）',
+      any('身份不唯一' in b for b in _b14_5), str(_b14_5))
+_b14_5b = verify.compare(
+    [{'index': 0, 'cell': [1, 1, 0, 0], 'pos': [0.05, 0.05, 0.40, 0.90]}],
+    [{'index': 0, 'cell': [2, 2, 0, 0], 'pos': [0.05, 0.05, 0.40, 0.90]}])
+check('T14⑤【有牙·真不同网格】单轴夹具里 cell 由 [1,1,0,0] 变成 [2,2,0,0] ⇒ '
+      '判"网格身份对不上"（证明"同 cell"不是把不同网格糊在一起）',
+      any('网格身份对不上' in b for b in _b14_5b), str(_b14_5b))
+
+# ---- t8 的两颗牙（design §6.3）：诊断化之后必须**只看主比较已判错的字段**，
+#      且容差与主比较同一口径 ----------------------------------------------------
+# (a) 相对容差：`[0, 100000]` vs `[0.01, 100000.01]` 落在 CLIM_REL_TOL(1%) 之内
+#     ⇒ 主比较判"相等" ⇒ t8 不许再按绝对 POS_TOL(2e-3) 把它当错位报出来。
+#     反转条件（牙）：旧实现用绝对容差 + 独立搜索 ⇒ 实测值恰好等于**另一根轴**的
+#     期望值时就会误报"落在 ax1 身上"（下面第二根轴就是为这个准备的）。
+_T8E = [{'index': 0, 'xlim': [0.0, 100000.0]},
+        {'index': 1, 'xlim': [0.01, 100000.01]}]
+_T8A = [{'index': 0, 'xlim': [0.01, 100000.01]},
+        {'index': 1, 'xlim': [0.01, 100000.01]}]
+_b8a = verify.compare(_T8E, _T8A)
+check('t8(a) 大范围 + 1% 相对容差 ⇒ 不报错位、也不进 bad（主比较已判相等）',
+      _b8a == [], str(_b8a))
+_b8a_old = _t14_legacy(_T8E, _T8A)
+check('t8(a)【有牙】旧口径（绝对容差 + 按 index 独立判）⇒ 同一夹具误报"落在 ax1 身上"',
+      any('落在' in b for b in _b8a_old), str(_b8a_old))
+
+# (b) `fields_by_axis` 显式空集 = 这一轴一个字段都不比 ⇒ t8 一条都不许报。
+#     旧实现完全不看 fields_by_axis（recon 实测：全给空集仍独自报两条错位）⇒ 牙即
+#     "关掉开关后同样的空集必须报出「落在」"。
+_uj8b = []
+_b8b = verify.compare(_T14_1E, _T14_1A, fields_by_axis={0: set(), 1: set()},
+                      unjudged=_uj8b)
+check('t8(b) fields_by_axis={0:set(),1:set()} ⇒ t8 一条都不报（bad 全空）',
+      _b8b == [] and not [b for b in _b8b if '落在' in b],
+      'bad=%r unjudged=%r' % (_b8b, _uj8b))
+_b8b_old = _t14_legacy(_T14_1E, _T14_1A,
+                       fields_by_axis={0: set(), 1: set()})
+check('t8(b)【有牙】旧口径不看 fields_by_axis ⇒ 同一空集仍报"落在…身上"（≥1 条）',
+      bool([b for b in _b8b_old if '落在' in b]), str(_b8b_old))
+
 
 # ======================================================================
 # 0.1.9 修复的反向验证用例（§40–§46）
@@ -6017,6 +6240,11 @@ check('95③【有牙】把判据改回只认 `ast.Attribute`（t52 之前）→
       and _map95o.get('g') == 0 and _map95o.get('h') == 1, _map95o)
 
 # ④ 块目标回归：按轴 clim/cmap 必须落到各自的 mappable（不再全落 im0）
+# 0.1.23 / M5 改写（旧写法跑 `verify=False`，而 M5 之后无基线档**不写 clim**了）：
+#   ① **映射回归**走默认档（verify=True，有基线）——两根轴各写各的 clim/cmap；
+#   ② **另加**一条：无基线档（verify=False）下 clim 进 `_NO_BASELINE_UNSAFE`，
+#      块里一个字都不写，且如实进 `unjudged`（`ax0.clim`/`ax1.clim`）——防
+#      "把 imshow 的自适应色域钉成常量"（数据变了色域不再自适应）。
 _S95B = ('import matplotlib\nmatplotlib.use("Agg")\n'
          'import matplotlib.pyplot as plt\n'
          'import numpy as np\n\n'
@@ -6039,16 +6267,226 @@ with open(_s95, 'w', encoding='utf-8', newline='\n') as _f:
 _p95 = os.path.join(_d95, '.tweak_params', 'fig.json')
 with open(_p95, 'w', encoding='utf-8') as _f:
     json.dump(_PAR95B, _f, ensure_ascii=False)
-writeback.writeback(_s95, dict(_PAR95B), _p95, verify=False, style='block')
+_res95 = writeback.writeback(_s95, dict(_PAR95B), _p95, verify=True, style='block')
 with open(_s95, encoding='utf-8') as _f:
     _blk95 = _f.read()[len(_S95B):]
-check('95④ 块目标回归（`axs.ravel()` + 按轴 clim/cmap）：`im0.set_clim(0.2, 0.8)` 与 '
-      '`im1.set_clim(0.1, 0.9)` / `im1.set_cmap(\'plasma\')` 各就各位，'
-      '且**不再**出现把 ax1 的值写到 im0 上（`im0.set_clim(0.1, 0.9)`）',
-      'im0.set_clim(0.2, 0.8)' in _blk95 and 'im1.set_clim(0.1, 0.9)' in _blk95
+check('95④ 块目标回归（默认档 / 有基线；`axs.ravel()` + 按轴 clim/cmap）：'
+      '`im0.set_clim(0.2, 0.8)` 与 `im1.set_clim(0.1, 0.9)` / '
+      '`im1.set_cmap(\'plasma\')` 各就各位，且**不再**把 ax1 的值写到 im0 上',
+      _res95.get('reason') == 'ok'
+      and 'im0.set_clim(0.2, 0.8)' in _blk95 and 'im1.set_clim(0.1, 0.9)' in _blk95
       and "im1.set_cmap('plasma')" in _blk95
       and 'im0.set_clim(0.1, 0.9)' not in _blk95,
-      [l.strip() for l in _blk95.splitlines() if 'set_clim' in l or 'set_cmap' in l])
+      'reason=%r %r' % (_res95.get('reason'),
+                        [ln.strip() for ln in _blk95.splitlines()
+                         if 'set_clim' in ln or 'set_cmap' in ln]))
+# ② 无基线档：clim 主动不写（进 unjudged），cmap 照写；不许"写了再算 ok"。
+_d95b = os.path.join(_TMPROOT, 'case_t95_clim_nobase')
+shutil.rmtree(_d95b, ignore_errors=True)
+os.makedirs(os.path.join(_d95b, '.tweak_params'), exist_ok=True)
+_s95b = os.path.join(_d95b, 'fig.py')
+with open(_s95b, 'w', encoding='utf-8', newline='\n') as _f:
+    _f.write(_S95B)
+_p95b = os.path.join(_d95b, '.tweak_params', 'fig.json')
+with open(_p95b, 'w', encoding='utf-8') as _f:
+    json.dump(_PAR95B, _f, ensure_ascii=False)
+_res95b = writeback.writeback(_s95b, dict(_PAR95B), _p95b, verify=False,
+                              fast_check=True, style='block')
+with open(_s95b, encoding='utf-8') as _f:
+    _blk95b = _f.read()[len(_S95B):]
+check('95④′【M5 有牙】无基线档 ⇒ 块里不写任何 `set_clim`（不把 imshow 的自适应色域'
+      '钉成常量），且 `ax0.clim`/`ax1.clim` 如实进 unjudged、cmap 照写',
+      'set_clim' not in _blk95b
+      and "im1.set_cmap('plasma')" in _blk95b
+      and {'ax0.clim', 'ax1.clim'} <= set(_res95b.get('unjudged') or [])
+      and any('幂等' in str(_w) or '基线' in str(_w)
+              for _w in (_res95b.get('warnings') or [])),
+      'unjudged=%r %r' % (_res95b.get('unjudged'),
+                          [ln.strip() for ln in _blk95b.splitlines()
+                           if 'set_clim' in ln or 'set_cmap' in ln]))
+
+# =====================================================================
+# §95⑤–⑦ 0.1.23：L25（B / 多 imshow 配错 mappable）+ M6（匿名 mappable 裸
+# IndexError）+ F4（C / 块重建图例会丢 ncol·title·frameon，只警告不修）。
+#
+# 三者都在"块里拿什么对象去写"这一层，所以放一起。牙的取向各不相同：
+#   * B：两根轴各 imshow 不同数据 ⇒ 块必须**各写各的**（旧实现两根都拿 im0）；
+#   * M6：匿名 mappable ⇒ 结构定位 `ax.images[0]`（旧实现一律 `ax.collections[0]`
+#     ⇒ imshow 的图重跑必炸）；家族证不出 ⇒ 拒写 + 警告，**不许裸 IndexError**；
+#   * F4：块写法**一个字不改**（设计稿 C 的硬约束），只保证"别装作没这回事"：
+#     warnings 明说 + `axN.legend.ncol|title|frameon` 进 unjudged。
+# =====================================================================
+_L25_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+            'import matplotlib.pyplot as plt\n'
+            'import numpy as np\n'
+            'fig, axes = plt.subplots(2, 2)\n'
+            'g = np.arange(12).reshape(3, 4)\n'
+            'im0 = axes[0, 0].imshow(g)\n'
+            'im1 = axes[0, 1].imshow(g.T, cmap="magma")\n'
+            'axes[1, 0].plot([1, 2, 3])\n'
+            'axes[1, 1].plot([3, 2, 1])\n'
+            'fig.savefig("out.png")\n')
+
+
+def _bc_par(n=4, **over):
+    """最小可用的整轴参数（每根轴都要在，否则参数校验会判 bad_params）。"""
+    axes = [{'index': i} for i in range(n)]
+    for key, extra in over.items():
+        axes[int(key[1:])].update(extra)
+    return {'version': 4, 'script': 'fig.py', 'fig_index': 0, 'n_figs': 1,
+            'axes': axes}
+
+
+def _bc_case(tag, src, par, **kw):
+    """跑一次块写回 → ``(结果, 块文本)``。只在 .tmp 里造夹具，不碰仓库。"""
+    d = os.path.join(_TMPROOT, 'case_%s' % tag)
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(os.path.join(d, '.tweak_params'), exist_ok=True)
+    s = os.path.join(d, 'fig.py')
+    with open(s, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(src)
+    p = os.path.join(d, '.tweak_params', 'fig.json')
+    with open(p, 'w', encoding='utf-8') as f:
+        json.dump(par, f, ensure_ascii=False)
+    res = writeback.writeback(s, dict(par), p, **kw)
+    return res, read(s)[len(src):]
+
+
+# ---- L25（B）：2-D 下标 `axes[0, 0].imshow(...)` 的接收者必须认得出 ----
+_l25_tree = _ast.parse(_L25_SRC)
+check('L25① `axes[0, 0].imshow(...)` 的接收者认得出来：mappable_by_axis = '
+      '{0: im0, 1: im1}（旧实现只认 ast.Name ⇒ 空表 ⇒ 两根都拿 im0）',
+      writeback.mappable_by_axis(_l25_tree) == {0: 'im0', 1: 'im1'},
+      writeback.mappable_by_axis(_l25_tree))
+# 【有牙】多 mappable 且本轴映射未知 ⇒ **拒写**（旧实现 sorted()[0] 盲配 im0）。
+_l25_ref, _l25_warn = writeback._mappable_ref(
+    'ax1', {'index': 1}, False, {'im0', 'im1'}, set())
+check('L25②【有牙】多 mappable + 认不出属于哪根 ⇒ `_mappable_ref` 返回 None + '
+      '警告（**不许按字母序撞一个**；旧实现会返回 im0 并写错面板）',
+      _l25_ref is None and '认不出哪一根' in (_l25_warn or ''), str(_l25_warn))
+_l25_r0, _l25_b0 = _bc_case('l25_ax0', _L25_SRC, _bc_par(a0={'cmap': 'plasma'}),
+                            verify=False, style='block')
+check("L25③ 只改 ax0 的 cmap ⇒ 块里只有 `im0.set_cmap('plasma')`（不动 im1）",
+      "im0.set_cmap('plasma')" in _l25_b0
+      and 'im1.set_cmap' not in _l25_b0,
+      [ln.strip() for ln in _l25_b0.splitlines() if 'set_cmap' in ln])
+_l25_r1, _l25_b1 = _bc_case('l25_ax1', _L25_SRC, _bc_par(a1={'cmap': 'viridis'}),
+                            verify=False, style='block')
+check("L25④【有牙】只改 ax1 的 cmap ⇒ 块里只有 `im1.set_cmap('viridis')`"
+      '（旧实现会写成 `im0.…` —— 改错面板；这条是本单 B 的核心反转）',
+      "im1.set_cmap('viridis')" in _l25_b1
+      and 'im0.set_cmap' not in _l25_b1,
+      [ln.strip() for ln in _l25_b1.splitlines() if 'set_cmap' in ln])
+# 变量下标（`axes[r, c]`）⇒ 真认不出是哪根轴 ⇒ fail-closed：一个字节都不写。
+# 注意 `axis_var_index` 对这种写法给的是**负数合成序号**（不是轴号），别按轴号写断言。
+_L25_VAR_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+                'import matplotlib.pyplot as plt\n'
+                'import numpy as np\n'
+                'fig, axes = plt.subplots(2, 2)\n'
+                'g = np.arange(12).reshape(3, 4)\n'
+                'for r in range(2):\n'
+                '    for c in range(2):\n'
+                '        axes[r, c].imshow(g)\n'
+                'fig.savefig("out.png")\n')
+_l25v_res, _l25v_blk = _bc_case('l25_varsub', _L25_VAR_SRC,
+                                _bc_par(a0={'cmap': 'plasma'}),
+                                verify=False, style='block')
+check('L25⑤ 变量下标（`axes[r, c]`）⇒ 认不出是哪根轴 ⇒ 块里 0 处 set_cmap、'
+      'warnings 明说认不出来、pending 含 ax0.cmap、reason=best_effort'
+      '（fail-closed：不猜、也不崩）',
+      'set_cmap' not in _l25v_blk
+      and any('认不出' in str(_w) for _w in (_l25v_res.get('warnings') or []))
+      and 'ax0.cmap' in (_l25v_res.get('pending') or [])
+      and _l25v_res.get('reason') == 'best_effort',
+      'pending=%r reason=%r' % (_l25v_res.get('pending'),
+                                _l25v_res.get('reason')))
+
+# ---- M6：匿名 mappable（没接变量名）不许裸 IndexError ----
+_m6_ref, _m6_warn = writeback._mappable_ref('ax0', {'index': 0}, False,
+                                            set(), set())
+check('M6①【有牙】匿名 mappable + 家族证不出 ⇒ 返回 None + 警告（旧实现一律 '
+      '`ax.collections[0]` ⇒ imshow 的图上重跑必炸 IndexError）',
+      _m6_ref is None and '认不出来' in (_m6_warn or ''), str(_m6_warn))
+_m6_ref2, _m6_warn2 = writeback._mappable_ref(
+    'ax0', {'index': 0}, False, set(), set(), anonymous_map={0: 'images'})
+check('M6② 家族证得出（imshow ⇒ images）⇒ 结构定位 `ax0.images[0]` + 警告',
+      _m6_ref2 == 'ax0.images[0]' and '结构定位' in (_m6_warn2 or ''),
+      '%r / %r' % (_m6_ref2, _m6_warn2))
+_M6_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+           'import matplotlib.pyplot as plt\n'
+           'import numpy as np\n'
+           'fig, axes = plt.subplots(1, 2)\n'
+           'g = np.arange(12).reshape(3, 4)\n'
+           'axes[0].imshow(g)\n'
+           'axes[1].plot([1, 2, 3])\n'
+           'fig.savefig("out.png")\n')
+_m6_res, _m6_blk = _bc_case('m6', _M6_SRC, _bc_par(2, a0={'cmap': 'plasma'}),
+                            verify=False, style='block')
+check('M6③ 匿名 imshow 的端到端：块里是 `axes[0].images[0].set_cmap(...)`'
+      '（images 容器，不是 collections），且**没有抛异常**、附一句人工确认',
+      "axes[0].images[0].set_cmap('plasma')" in _m6_blk
+      and any('结构定位' in str(_w) for _w in (_m6_res.get('warnings') or [])),
+      [ln.strip() for ln in _m6_blk.splitlines() if 'set_cmap' in ln])
+# 根本没有 mappable（纯折线图）却硬塞 clim ⇒ 拒写，而不是去 `images[0]` 上撞 IndexError。
+# 必须走**默认档**（无基线档会把 clim 先剥掉进 unjudged，根本到不了 mappable 这一步）。
+_M6_NONE_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+                'import matplotlib.pyplot as plt\n'
+                'fig, axes = plt.subplots(1, 2)\n'
+                'axes[0].plot([1, 2, 3])\n'
+                'axes[1].plot([3, 2, 1])\n'
+                'fig.savefig("out.png")\n')
+_m6n_res, _m6n_blk = _bc_case('m6_none', _M6_NONE_SRC,
+                              _bc_par(2, a0={'clim': [1, 3]}),
+                              verify=True, style='block')
+check('M6④【有牙】纯折线图却硬塞 clim ⇒ 拒写（源码 0 处 set_clim）'
+      '、pending 含 ax0.clim、reason=best_effort，且**不回滚**（verified=True —— '
+      '这是"写不了"不是"写坏了"）',
+      'set_clim' not in _m6n_blk
+      and 'ax0.clim' in (_m6n_res.get('pending') or [])
+      and _m6n_res.get('reason') == 'best_effort'
+      and _m6n_res.get('verified') is True,
+      'pending=%r reason=%r verified=%r' %
+      (_m6n_res.get('pending'), _m6n_res.get('reason'),
+       _m6n_res.get('verified')))
+
+# ---- F4（C）：块整条重建图例 ⇒ 源码里没建模的属性会被重置（只警告 + unjudged）----
+_F4_SRC = ('import matplotlib\nmatplotlib.use("Agg")\n'
+           'import matplotlib.pyplot as plt\n'
+           'fig, ax = plt.subplots(figsize=(5, 3))\n'
+           'ax.plot([1, 2, 3], label="s")\n'
+           'ax.legend(ncol=2, title="group", frameon=False, loc="upper left")\n'
+           'fig.savefig("out.png")\n')
+_F4_SRC_PLAIN = _F4_SRC.replace(
+    'ax.legend(ncol=2, title="group", frameon=False, loc="upper left")',
+    'ax.legend(loc="upper left")')
+check('F4① 静态判据：`ax.legend(ncol=2, title=..., frameon=False)` ⇒ 三项都要点名',
+      writeback._legend_rebuild_risks(_ast.parse(_F4_SRC), [0])
+      == {0: ['ncol', 'title', 'frameon']},
+      writeback._legend_rebuild_risks(_ast.parse(_F4_SRC), [0]))
+check('F4①【有牙·负例】默认图例（只给 loc）⇒ 一个风险都不报（不许天天喊狼来了）',
+      writeback._legend_rebuild_risks(_ast.parse(_F4_SRC_PLAIN), [0]) == {},
+      writeback._legend_rebuild_risks(_ast.parse(_F4_SRC_PLAIN), [0]))
+_f4_par = _bc_par(1, a0={'legend': {'loc': 'upper right', 'fontsize': 11}})
+_f4_res, _f4_blk = _bc_case('f4', _F4_SRC, _f4_par, verify=True, style='block')
+check('F4② 块路径（ncol=2 的源码）：块写法**照旧**只写 loc/fontsize，但 warnings 明说'
+      '"整条重建"，且 unjudged 命中 ax0.legend.ncol/title/frameon',
+      "ax.legend(loc='upper right', fontsize=11)" in _f4_blk
+      and any('整条重建' in str(_w) for _w in (_f4_res.get('warnings') or []))
+      and {'ax0.legend.ncol', 'ax0.legend.title',
+           'ax0.legend.frameon'} <= set(_f4_res.get('unjudged') or []),
+      'unjudged=%r warn=%r' % (_f4_res.get('unjudged'),
+                               _f4_res.get('warnings')))
+check('F4② 且**不**因此把 reason 抬成 best_effort（与 F5 同口径：主动不写 ≠ 没落地）',
+      _f4_res.get('reason') == 'ok', _f4_res.get('reason'))
+_f4b_res, _f4b_blk = _bc_case('f4_plain', _F4_SRC_PLAIN, _f4_par,
+                              verify=True, style='block')
+check('F4③【有牙·负例】默认图例 ⇒ 同一条块路径上**没有**"整条重建"警告、'
+      'unjudged 里也没有 legend.* 项',
+      not [w for w in (_f4b_res.get('warnings') or []) if '整条重建' in str(w)]
+      and not [u for u in (_f4b_res.get('unjudged') or [])
+               if '.legend.' in str(u)],
+      'unjudged=%r warn=%r' % (_f4b_res.get('unjudged'),
+                               _f4b_res.get('warnings')))
 
 # =====================================================================
 # §96 t51：`count_figures` 把 `fig.subplots(...)` 算一张图 → 形状 A 误报"2 处图"
@@ -10101,28 +10539,88 @@ _s7c2 = os.path.join(_d7c, 'fig2.py')
 with open(_s7c2, 'w', encoding='utf-8', newline='\n') as f:
     f.write(_T7_PANELS.replace('figsize=(10, 7)', 'figsize=(13, 9)'))
 _p7c2 = os.path.join(_d7c, 'p2.json')
-_rc, _o = _t7_cli(['describe', _s7c2, '-o', _p7c2], _d7c)
+_rc7c_base, _o = _t7_cli(['describe', _s7c2, '-o', _p7c2], _d7c)
 _data7c = json.load(open(_p7c2, encoding='utf-8'))
 _data7c['script'] = 'fig.py'          # 参数里的 script 要指向真目标（越界判据）
 json.dump(_data7c, open(_p7c, 'w', encoding='utf-8'), ensure_ascii=False)
 _rc7c, _o7c = _t7_cli(['apply', _s7c, '--params', _p7c, '--write', '--json'], _d7c)
 _f7c = _t7_json(_o7c)
 _p7c3 = os.path.join(_d7c, 'p3.json')
-_rc, _o = _t7_cli(['describe', _s7c, '-o', _p7c3], _d7c)
+_rc7c_fin, _o = _t7_cli(['describe', _s7c, '-o', _p7c3], _d7c)
 _data7c3 = json.load(open(_p7c3, encoding='utf-8'))
+check('T7③ 前置：两次 describe 都成功（基线取不到时下面的"逐轴终态"判据没有自证）',
+      _rc7c_base == 0 and _rc7c_fin == 0,
+      'base_rc=%r final_rc=%r' % (_rc7c_base, _rc7c_fin))
+
+
+def _t7c_pair(expected, actual):
+    """T7③ 的**独立**身份配对（故意不复用 `verify._align_axes`：测试与产品共用一把
+    尺子，产品配错时测试会一起错，等于没有交叉验证）。
+
+    口径照 design v2 §2.1，实现自己写：
+      * 期望侧**缺 `cell` 键**（手搭参数 / 老文件）⇒ 按 index 兜底（B-1）；
+      * 两侧都有 `cell` ⇒ `(cell, is_colorbar)` 全等才候选；同 cell 组两侧**大小相等** ⇒
+        组内按序（twinx / 嵌套同形 grid）；**大小不等 ⇒ 记 problem**，不许悄悄跳过；
+      * **双向双射**：期望侧每根必须配上、实测侧每根必须被消费；少一根 / 多一根都算 problem。
+    返回 `(pairs, problems)`；`problems` 非空 ⇒ 这条断言必须红。
+    """
+    expected, actual = list(expected or []), list(actual or [])
+    pairs, problems, used = [], [], set()
+
+    def _key(a):
+        cell = a.get('cell')
+        return (tuple(cell) if isinstance(cell, list) else cell,
+                bool(a.get('is_colorbar')))
+
+    pending = []
+    for e in expected:
+        if 'cell' in e:
+            pending.append(e)
+            continue
+        i = e.get('index')                     # B-1：期望侧没身份 ⇒ index 兜底
+        if isinstance(i, int) and 0 <= i < len(actual) and i not in used:
+            pairs.append((e, actual[i]))
+            used.add(i)
+        else:
+            problems.append('ax%s 的期望条目没有 cell，且 index 在实测侧没有对应位置'
+                            % (e.get('index'),))
+    groups = {}
+    for e in pending:
+        groups.setdefault(_key(e), ([], []))[0].append(e)
+    for ap, a in enumerate(actual):
+        if ap not in used:
+            groups.setdefault(_key(a), ([], []))[1].append((ap, a))
+    for key, (es, aps) in groups.items():
+        if not es:
+            problems.append('实测多出 %d 根轴（cell=%r is_colorbar=%s）在参数里没有对应'
+                            % (len(aps), key[0], key[1]))
+            continue
+        if len(es) != len(aps):
+            problems.append('cell=%r is_colorbar=%s：期望 %d 根、实测 %d 根（身份组大小不等）'
+                            % (key[0], key[1], len(es), len(aps)))
+            continue
+        for e, (ap, a) in zip(es, aps):
+            pairs.append((e, a))
+            used.add(ap)
+    return pairs, problems
+
+
 _bad7c = []
-_b7 = {a.get('index'): a for a in _data7c['axes']}
-for _a in _data7c3['axes']:
-    _want = _b7.get(_a.get('index'))
-    if not _want:
-        continue
+_pairs7c, _prob7c = _t7c_pair(_data7c['axes'], _data7c3['axes'])
+_bad7c.extend(_prob7c)
+for _want, _got in _pairs7c:
     for _f in ('pos', 'xlim', 'ylim', 'clim'):
         if _want.get(_f) is not None and not writeback._val_same(
-                _want.get(_f), _a.get(_f)):
-            _bad7c.append('ax%s.%s %r≠%r' % (_a.get('index'), _f,
-                                             _a.get(_f), _want.get(_f)))
+                _want.get(_f), _got.get(_f)):
+            _bad7c.append('ax%s.%s %r≠%r' % (_want.get('index'), _f,
+                                             _got.get(_f), _want.get(_f)))
+# 判据：双向双射配上的每一对都逐字段相等 + apply 没回滚 + 两次 describe 都成功。
+# 旧写法（按 index 建字典、以实测侧驱动、缺配 continue）会把"缺轴 / 轴数漂移 /
+# index=None / 多出一根"全部静默判绿 —— 那是分诊里认定的**真漏**。
+# 注意：这里**不要求** reason=='ok' —— figsize 一改布局全变，T7 的两根 colorbar 会
+# 留下 pending，如实报 best_effort 才是对的（老口径也是 best_effort，见 0.1.22）。
 check('T7③ 改 figsize（连带布局全变）⇒ 终态逐轴 pos/xlim/ylim/clim 全达成，不漏写',
-      _rc7c == 0 and not _bad7c,
+      _rc7c == 0 and _f7c.get('reason') != 'fail' and not _bad7c,
       'rc=%s reason=%r 不一致=%r' % (_rc7c, _f7c.get('reason'), _bad7c[:3]))
 check('T7③ 画布尺寸也真的落到源码里（set_size_inches / figsize 字面量其一）',
       'set_size_inches(13' in read(_s7c) or 'figsize=(13, 9)' in read(_s7c)

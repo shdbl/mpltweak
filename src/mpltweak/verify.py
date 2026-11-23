@@ -55,7 +55,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from . import messages as _msg
 
@@ -71,6 +71,7 @@ LW_TOL = 1e-3         # 线宽容差（磅）：0.5 与 2.5 必须分清，1e-3 
 # 就是靠它红），不是产品开关。xscale/yscale 不设开关：把对数轴改成线性属于
 # "整张图含义变了"，没有"先关掉"的正当场景。
 COMPARE_ARTIST = True
+IDENTITY_ALIGN = True  # False restores index pairing for reverse verification.
 
 TEXT_BOX_LIMIT = 600  # 文字盒条数上限（超多刻度的图别把状态 JSON 撑爆）
 
@@ -1330,6 +1331,113 @@ def _missing_is_bad(key):
     return _MISSING_KEY_KIND.get(key) == 'bad'
 
 
+class _Alignment(NamedTuple):
+    map_e2a: Dict[int, int]
+    unpaired: List[int]
+    ambiguous: List[int]
+    fallback: List[int]
+
+
+def _align_axes(expected, actual) -> _Alignment:
+    """Build all candidates before resolving connected conflicts; never mutate inputs.
+
+    Keys are expected indices, values are actual list positions. Missing cell
+    data uses the legacy index candidate. Expected None also has no grid
+    identity (the params loader supplies it for old files). Actual None is an
+    explicit non-grid axis and must never satisfy an expected grid identity.
+    Equal grid groups (including twins) retain their order within each list.
+    """
+    candidates = {}
+    fallback_edges = set()
+    by_index = {}
+    duplicates = set()
+    for ep, e in enumerate(expected or []):
+        i = e.get('index')
+        if not isinstance(i, int) or i < 0:
+            continue
+        if i in by_index:
+            duplicates.add(i)
+        by_index[i] = ep
+        edges = candidates.setdefault(i, set())
+        for ap, a in enumerate(actual or []):
+            legacy = 'cell' not in e or e['cell'] is None or 'cell' not in a
+            if legacy:
+                match = ap == i
+            elif a['cell'] is None:
+                match = False
+            else:
+                match = (e['cell'] == a['cell']
+                         and bool(e.get('is_colorbar')) == bool(a.get('is_colorbar')))
+            if match:
+                edges.add(ap)
+                if legacy:
+                    fallback_edges.add((i, ap))
+    reverse = {}
+    for i, edges in candidates.items():
+        for ap in edges:
+            reverse.setdefault(ap, set()).add(i)
+    mapping, ambiguous = {}, set()
+    seen = set()
+    for start in candidates:
+        if start in seen or not candidates[start]:
+            continue
+        es, aps, todo = set(), set(), [start]
+        while todo:
+            i = todo.pop()
+            if i in es:
+                continue
+            es.add(i)
+            for ap in candidates[i]:
+                aps.add(ap)
+                todo.extend(reverse[ap] - es)
+        seen.update(es)
+        ordered = sorted(es, key=by_index.__getitem__)
+        positions = sorted(aps)
+        # A singleton is mutual and unique because this is a full component.
+        unique = len(es) == len(aps) == 1
+        # Only complete, homogeneous grid groups may use within-group order.
+        grid_group = (len(es) == len(aps)
+                      and all(candidates[i] == aps for i in es)
+                      and all((i, ap) not in fallback_edges for i in es for ap in aps))
+        if not es.intersection(duplicates) and (unique or grid_group):
+            mapping.update(zip(ordered, positions))
+        else:
+            ambiguous.update(es)
+    ambiguous.update(duplicates)
+    for i in ambiguous:
+        mapping.pop(i, None)
+    return _Alignment(mapping,
+                      [i for i in candidates if i not in mapping and i not in ambiguous],
+                      [i for i in candidates if i in ambiguous],
+                      [i for i, ap in mapping.items() if (i, ap) in fallback_edges])
+
+
+def _axis_has_verifiable_fields(e, fields):
+    """Whether identity failure would prevent any requested comparison."""
+    for key in ('pos', 'title_fontsize', 'label_fontsize', 'label_fontsize_y',
+                'tick_fontsize', 'tick_fontsize_y', 'grid', 'spines', 'cmap',
+                'clim', 'xscale', 'yscale', 'xlim', 'ylim', 'lines', 'legend'):
+        if fields is not None and key not in fields:
+            continue
+        value = e.get(key, e.get('_' + key))
+        if value is None or (isinstance(value, (list, dict)) and not value):
+            continue
+        if key in ('lines', 'legend') and not COMPARE_ARTIST:
+            continue
+        if key == 'legend' and isinstance(value, dict):
+            if value.get('fontsize') is None and _legend_expected_loc(value) is None:
+                continue  # anchor / best loc alone cannot be verified.
+        return True
+    return False
+
+
+def _numeric_field_matches(key, expected, actual, pos_tol):
+    """The numeric tolerance shared by primary comparison and diagnostics."""
+    tol = pos_tol if key == 'pos' else CLIM_REL_TOL * (
+        abs(float(expected[1]) - float(expected[0])) or 1.0)
+    return all(abs(float(x) - float(y)) <= tol for x, y in zip(expected, actual))
+
+
 def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
             pos_tol: float = POS_TOL,
             fields_by_axis: Optional[Dict[int, set]] = None,
@@ -1347,13 +1455,39 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
       * `unjudged` / `not_applicable` → 进 `unjudged` 出参（不可判，不推翻 verified）。
     """
     bad: List[str] = []
+    # Resolve identity once, then use the same mapping for every consumer.
+    if IDENTITY_ALIGN:
+        alignment = _align_axes(expected, actual)
+        map_e2a = alignment.map_e2a
+    else:
+        alignment = _Alignment({}, [], [], [])
+        map_e2a = {e['index']: e['index'] for e in expected or []
+                   if isinstance(e.get('index'), int)
+                   and 0 <= e['index'] < len(actual or [])}
+    mismatched_numeric = set()
     for e in expected or []:
         i = e.get('index')
-        if not isinstance(i, int) or i >= len(actual or []):
-            bad.append('ax%s 在目标图里不存在' % (i,))
-            continue
-        a = actual[i]
         fields = (fields_by_axis or {}).get(i)
+        if i not in map_e2a:
+            if IDENTITY_ALIGN:
+                if not _axis_has_verifiable_fields(e, fields):
+                    if unjudged is not None:
+                        unjudged.append('ax%s.identity' % i)
+                elif i in alignment.ambiguous:
+                    bad.append('ax%d 的身份不唯一或与其它轴冲突，这次没法确认你的改动落在哪根上' % i)
+                elif (isinstance(i, int) and 0 <= i < len(actual or [])
+                      and isinstance(e.get('cell'), list)
+                      and 'cell' in actual[i] and actual[i]['cell'] is None):
+                    bad.append('ax%d 的网格身份对不上：期望 %s，实测该轴不是网格轴'
+                               '（轴序/结构变了：块按下标寻址会改错面板）'
+                               % (i, _r(e['cell'])))
+                else:
+                    bad.append('ax%s 的网格身份对不上：期望 %s，重跑后没有同一网格位置的轴'
+                               % (i, e.get('cell')))
+            else:
+                bad.append('ax%s 在目标图里不存在' % (i,))
+            continue
+        a = actual[map_e2a[i]]
         ep, ap = e.get('pos'), a.get('pos')
         # aspect 锁定的轴（imshow / cartopy 地图）位置由长宽比约束决定：draw 时
         # matplotlib 的 apply_aspect 会重调位置，比"设进去的位置"必然对不上。
@@ -1365,7 +1499,8 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                   or a.get('aspect') not in (None, 'auto'))
         if fields is None or 'pos' in fields:
             if ep and ap:
-                if any(abs(x - y) > pos_tol for x, y in zip(ep, ap)):
+                if not _numeric_field_matches('pos', ep, ap, pos_tol):
+                    mismatched_numeric.add((i, 'pos'))
                     if locked:
                         bad.append(
                             'ax%d 位置 %s≠%s（长宽比锁定轴：写回不会写它的 pos，'
@@ -1450,9 +1585,8 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                 # colorbar 轴给值，见 T10 报告"F7 的处置"）⇒ 显式"没判"，不静默放行。
                 unjudged.append('ax%d.clim' % i)
             if ec and ac:
-                span = abs(float(ec[1]) - float(ec[0])) or 1.0
-                if (abs(float(ec[0]) - float(ac[0])) > CLIM_REL_TOL * span
-                        or abs(float(ec[1]) - float(ac[1])) > CLIM_REL_TOL * span):
+                if not _numeric_field_matches('clim', ec, ac, pos_tol):
+                    mismatched_numeric.add((i, 'clim'))
                     bad.append('ax%d clim %s≠%s' % (i, _r(ec), _r(ac)))
         # ---- T10：lines 逐条比对（linewidth / color / linestyle / alpha）----
         # 采集侧 `_lines_state` 给的是 `[{index, linewidth, color}]`（color 归一成
@@ -1577,7 +1711,7 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
         # 变量名独立（_ecell/_acell）：上面 clim 分支已经用过 `ec`，串了就会拿 clim
         # 当网格身份比（补丁里真犯过这个错，§1 全绿变全红）。
         _ecell, _acell = e.get('cell'), a.get('cell')
-        if isinstance(_ecell, list) and 'cell' in a:
+        if not IDENTITY_ALIGN and isinstance(_ecell, list) and 'cell' in a:
             if _acell is None:
                 # 期望是网格轴、实测这条轴不再是网格轴（被手工 add_axes 顶掉了）——
                 # 轴身份已经变了，必须判失败（独立审阅 C1：原先这种情况被默默放行）。
@@ -1604,38 +1738,38 @@ def compare(expected: List[Dict[str, Any]], actual: List[Dict[str, Any]],
                 elif unjudged is not None:
                     unjudged.append('ax%d.%s' % (i, key))
                 continue
-            _span = abs(float(ex[1]) - float(ex[0])) or 1.0
-            if (abs(float(ex[0]) - float(ac2[0])) > CLIM_REL_TOL * _span
-                    or abs(float(ex[1]) - float(ac2[1])) > CLIM_REL_TOL * _span):
+            if not _numeric_field_matches(key, ex, ac2, pos_tol):
+                mismatched_numeric.add((i, key))
                 bad.append('ax%d %s %s≠%s' % (i, key, _r(ex), _r(ac2)))
-    # T8（0.1.18）：**轴身份错位**的指名道姓 —— 上面那些 "ax3 位置 X≠Y" 只说值不对，
-    # 说不出"值跑到隔壁那根去了"。而错位正是最严重的一类（评审现场：ax3 拿到 ax2 的
-    # 矩形与经纬度范围，rc=0 静默）。判据：实测第 k 根的值**恰好等于参数里第 j 根**
-    # （j≠k）的期望值 ⇒ 这是错位，不是"值没落地"，照实点名。
-    # 只查**可比的数值族**（pos / xlim / ylim / clim），且只在两边都取得到时判。
+    # T8 is supplementary: only diagnose fields already rejected above, using
+    # the same mapping, field selection and numeric tolerance. The reverse
+    # switch retains the old independent index check and absolute tolerance.
     _exps = [(x.get('index'), x) for x in (expected or [])
              if isinstance(x.get('index'), int)]
     for _k, _e in _exps:
-        if not isinstance(_k, int) or _k >= len(actual or []):
+        if _k not in map_e2a:
             continue
-        _a = actual[_k] or {}
+        _a = actual[map_e2a[_k]] or {}
         for _f in ('pos', 'xlim', 'ylim', 'clim'):
+            if IDENTITY_ALIGN and (_k, _f) not in mismatched_numeric:
+                continue  # Diagnostic only: primary comparison must fail first.
             _ev = _e.get(_f)
             _av = _a.get(_f)
             if not (isinstance(_ev, (list, tuple)) and len(_ev) == len(_av or ())
                     and isinstance(_av, (list, tuple))):
                 continue
-            if all(abs(float(x) - float(y)) <= POS_TOL
-                   for x, y in zip(_ev, _av)):
-                continue                      # 自己就是对的
+            if not IDENTITY_ALIGN and all(abs(float(x) - float(y)) <= POS_TOL
+                                          for x, y in zip(_ev, _av)):
+                continue
             for _j, _ej in _exps:
                 if _j == _k:
                     continue
                 _w = _ej.get(_f)
                 if not (isinstance(_w, (list, tuple)) and len(_w) == len(_av)):
                     continue
-                if all(abs(float(x) - float(y)) <= POS_TOL
-                       for x, y in zip(_w, _av)):
+                if (_numeric_field_matches(_f, _w, _av, pos_tol) if IDENTITY_ALIGN
+                        else all(abs(float(x) - float(y)) <= POS_TOL
+                                 for x, y in zip(_w, _av))):
                     bad.append('ax%d 的 %s 落在 ax%d 身上（轴身份错位：'
                                '写回把值写给了另一根轴）' % (_k, _f, _j))
                     break
@@ -2016,49 +2150,53 @@ if __name__ == '__main__':
 # 缩进一级的 §N.M 是**类内/函数内小节**（挂在包含它的顶层定义或它的大号分区下）。
 # §1 文件头：三层验证与判定口径（行 2-61，0 个顶层函数）
 #     （本分区没有顶层函数）
-# §2 口径：容差表、失败归因四类与错误识别（行 62-274，2 个顶层函数）
-#     _script_static_evidence                        138
-#     classify_verify_failure                        227
-# §3 采集层：把图跑出来并抓状态（行 275-1243，28 个顶层函数）
-#     _ax_identity                                   277
-#     _collect_texts                                 312
-#     _line_width                                    415
-#     _line_color                                    429
-#     _lines_state                                   469
-#     _legend_item                                   485
-#     _legend_state                                  534
-#     _fig_legends_state                             548
-#     _artist_state                                  575
-#     _state                                         607
-#     _fd_to_stderr                                  716
-#     _fd_restore                                    732
-#     _snapshot_process_state                        760
-#     _restore_process_state                         767
-#     _FigureRegistry                                815
-#     _Session                                       850
-#     _capture_figures                               861
-#     _collect_session                               903
-#     _exec_script                                   950
-#     _states_of_all_figs                            997
-#     _state_of_one_fig                             1016
-#     collect_all                                   1070
-#     collect                                       1098
-#     _isolated_timeout                             1135
-#     _child_env                                    1147
-#     collect_isolated                              1167
-#     _unlink                                       1225
-#     _r                                            1232
-# §4 语义层：参数与实测逐项比对（行 1244-1679，6 个顶层函数）
-#     _act                                          1266
-#     _same_line_color                              1274
-#     _legend_expected_loc                          1288
-#     _missing_is_bad                               1328
-#     compare                                       1333
-#     _compare_state                                1645
-# §5 重跑层：一遍跑到底与分层验证（行 1680-1884，2 个顶层函数）
-#     verify_once                                   1682
-#     verify_semantic                               1776
-# §6 子进程驱动：把图状态 dump 成 JSON（行 1885-2010，2 个顶层函数）
-#     _int_or_none                                  1892
-#     main                                          1899
+# §2 口径：容差表、失败归因四类与错误识别（行 62-275，2 个顶层函数）
+#     _script_static_evidence                        139
+#     classify_verify_failure                        228
+# §3 采集层：把图跑出来并抓状态（行 276-1244，28 个顶层函数）
+#     _ax_identity                                   278
+#     _collect_texts                                 313
+#     _line_width                                    416
+#     _line_color                                    430
+#     _lines_state                                   470
+#     _legend_item                                   486
+#     _legend_state                                  535
+#     _fig_legends_state                             549
+#     _artist_state                                  576
+#     _state                                         608
+#     _fd_to_stderr                                  717
+#     _fd_restore                                    733
+#     _snapshot_process_state                        761
+#     _restore_process_state                         768
+#     _FigureRegistry                                816
+#     _Session                                       851
+#     _capture_figures                               862
+#     _collect_session                               904
+#     _exec_script                                   951
+#     _states_of_all_figs                            998
+#     _state_of_one_fig                             1017
+#     collect_all                                   1071
+#     collect                                       1099
+#     _isolated_timeout                             1136
+#     _child_env                                    1148
+#     collect_isolated                              1168
+#     _unlink                                       1226
+#     _r                                            1233
+# §4 语义层：参数与实测逐项比对（行 1245-1813，10 个顶层函数）
+#     _act                                          1267
+#     _same_line_color                              1275
+#     _legend_expected_loc                          1289
+#     _missing_is_bad                               1329
+#     _Alignment                                    1334
+#     _align_axes                                   1341
+#     _axis_has_verifiable_fields                   1415
+#     _numeric_field_matches                        1434
+#     compare                                       1441
+#     _compare_state                                1779
+# §5 重跑层：一遍跑到底与分层验证（行 1814-2018，2 个顶层函数）
+#     verify_once                                   1816
+#     verify_semantic                               1910
+# §6 子进程驱动：把图状态 dump 成 JSON（行 2019-2144，2 个顶层函数）
+#     _int_or_none                                  2026
+#     main                                          2033
 # --- END AUTO NAV ---

@@ -45,10 +45,20 @@ pyproject 读不成 / 遇到本工具不认识的构造（此时**不给结论**
 
 用法::
 
-    python tools/ci_suite_coverage.py              # 查真仓库
+    python tools/ci_suite_coverage.py              # 查真仓库（默认 tests.yml + nightly.yml）
     python tools/ci_suite_coverage.py -v           # 附带打印每条腿的套件名
+    python tools/ci_suite_coverage.py --ci .github/workflows/nightly.yml   # 只查一条工作流
+    python tools/ci_suite_coverage.py --ci A --ci B  # 查多条（**每条都要各自覆盖完整**）
     python tools/ci_suite_coverage.py --ci -       # 从 stdin 读工作流（反向探测用，不落盘）
     python tools/ci_suite_coverage.py --extra-suite test_zz   # 假装 tests/ 多了这个套件
+
+**为什么默认把 nightly 也算进来（0.1.23 / M1）**：0.1.22 的覆盖模型只看 `tests.yml`
+（8 条腿），而 `nightly.yml` 是**另一套 4 条腿**、每天跑一次**全量**（无 `-k`）。
+只盯 `tests.yml` 会漏掉两件事：① 有人给 nightly 加 `-k` 过滤 —— nightly 的全部价值
+就是"没有名单"（它的文件头写着"刻意不加 -k"），加了就退回 PR 腿的形状，而
+`tests.yml` 自己覆盖完整 ⇒ **并集口径下永远不红**；② nightly 的矩阵/步骤被改坏，
+没人知道它其实没跑全。所以本工具对**每条工作流各自要求覆盖完整**（`--ci` 给多条时
+逐条判；默认 tests.yml + nightly.yml，输出 8+4=12 条腿），rc=0 只有全部通过才给。
 
 **接进 CI 的方式：进 `tests/test_hygiene.py`，不新增 workflow step。** 理由：本检查纯静态、
 毫秒级，搭 3.12 腿已有的 `pytest -q` 班车即可，CI 时长零增长（3.9 腿装 pytest 只是为了那条
@@ -854,50 +864,58 @@ def analyze(wf, facts):
     return legs, per_leg
 
 
-def run(root, ci_path, tests_dir=None, extra_suites=(), verbose=False, out=None):
+def _load_workflow(ci_path):
+    """→ ``(显示名, 文本)``；``-`` 表示从 stdin 读（反向探测，不落盘）。"""
+    if ci_path == '-':
+        return '<stdin>', sys.stdin.read()
+    if not os.path.exists(ci_path):
+        raise Unsupported('找不到工作流文件：%s' % ci_path)
+    with io.open(ci_path, encoding='utf-8-sig') as fh:
+        return ci_path, fh.read()
+
+
+def run(root, ci_paths, tests_dir=None, extra_suites=(), verbose=False, out=None):
+    """查**每一条**工作流的覆盖；rc=0 要求每条都覆盖完整（见文件头的 M1 说明）。"""
     out = out or sys.stdout
     facts = Facts(root, tests_dir)
-    if ci_path == '-':
-        text = sys.stdin.read()
-        shown = '<stdin>'
-    else:
-        shown = ci_path
-        if not os.path.exists(ci_path):
-            raise Unsupported('找不到工作流文件：%s' % ci_path)
-        with io.open(ci_path, encoding='utf-8-sig') as fh:
-            text = fh.read()
-    wf = parse_yaml(text)
-    legs, per_leg = analyze(wf, facts)
-    assigned = set()
-    for label in per_leg:
-        assigned |= per_leg[label]
+    if isinstance(ci_paths, str):
+        ci_paths = [ci_paths]
+    if '-' in ci_paths and len(ci_paths) > 1:
+        raise Unsupported('--ci - 只能单独使用（stdin 只有一份）')
+    loaded = []
+    for path in ci_paths:
+        shown, text = _load_workflow(path)
+        wf = parse_yaml(text)
+        legs, per_leg = analyze(wf, facts)
+        loaded.append((shown, legs, per_leg))
     universe = facts.on_disk(extra_suites)
-    unassigned = sorted(universe - assigned)
-    covered_exempt = [s for s in unassigned
-                      if s in facts.exempt or s in EXTRA_EXEMPT]
-    missing = [s for s in unassigned if s not in covered_exempt]
 
     out.write('== CI 套件覆盖检查（MAINTENANCE 25.9）==\n')
-    out.write('工作流: %s\n' % shown)
-    out.write('腿（矩阵单元）: %d 条\n' % len(legs))
-    for label, _leg in legs:
-        if verbose:
+    out.write('工作流: %d 个（%s）\n' % (
+        len(loaded),
+        ' + '.join('%s %d 条腿' % (os.path.basename(shown), len(legs))
+                   for shown, legs, _per_leg in loaded)))
+    out.write('腿（矩阵单元）: %d 条\n' % sum(len(legs) for _, legs, _ in loaded))
+    for shown, legs, per_leg in loaded:
+        for label, _leg in legs:
             names = sorted(per_leg.get(label, ()))
-            out.write('  %-32s %2d 个: %s\n'
-                      % (label, len(names), ' '.join(names) or '-'))
-        else:
-            out.write('  %-32s %2d 个套件\n' % (label, len(per_leg.get(label, ()))))
+            head = '  %s · %s' % (os.path.basename(shown), label)
+            if verbose:
+                out.write('%-58s %2d 个: %s\n'
+                          % (head, len(names), ' '.join(names) or '-'))
+            else:
+                out.write('%-58s %2d 个套件\n' % (head, len(names)))
     for warning in facts.warnings:
         out.write('注意: %s\n' % warning)
     out.write('tests/ 下的套件: %d\n' % len(universe))
-    out.write('已分配（至少落一条腿）: %d\n' % len(universe & assigned))
-    # "至少一条腿"是本项的判据；下面的分布**只报不判** —— 只在 1 条腿上的套件正是
-    # §25.9 说的"某些版本上根本不跑"，关掉它要改发布链路（每条腿都跑 = CI 时间乘上去），
-    # 那不是这条检查该拦的事，但值得每次都看见。
+    # 覆盖腿数分布：跨**全部工作流**的腿统计（"8+4 条腿里落在几条上"）。只报不判 ——
+    # 只在 1 条腿上的套件正是 §25.9 说的"某些版本上根本不跑"，关掉它要改发布链路。
     counts = {}
-    for name in sorted(universe & assigned):
-        legs_hit = sum(1 for label in per_leg if name in per_leg[label])
-        counts.setdefault(legs_hit, []).append(name)
+    for name in sorted(universe):
+        legs_hit = sum(1 for _shown, _legs, per_leg in loaded
+                       for label in per_leg if name in per_leg[label])
+        if legs_hit:
+            counts.setdefault(legs_hit, []).append(name)
     if counts:
         out.write('覆盖腿数分布: %s\n'
                   % ' / '.join('%d 条腿 %d 个' % (n, len(counts[n]))
@@ -905,22 +923,34 @@ def run(root, ci_path, tests_dir=None, extra_suites=(), verbose=False, out=None)
         if verbose and 1 in counts:
             out.write('  只在 1 条腿上（版本缺口，见 CONTRIBUTING 的已知缺口）: %s\n'
                       % ' '.join(sorted(counts[1])))
-    exempt_names = [s for s in sorted(universe)
-                    if s not in assigned
-                    and (s in facts.exempt or s in EXTRA_EXEMPT)]
-    if exempt_names:
-        out.write('登记豁免: %d（每条都带理由，见下）\n' % len(exempt_names))
+
+    rc = 0
+    for shown, _legs, per_leg in loaded:
+        base = shown if shown == '<stdin>' else os.path.basename(shown)
+        assigned = set()
+        for label in per_leg:
+            assigned |= per_leg[label]
+        unassigned = sorted(universe - assigned)
+        exempt_names = [s for s in unassigned
+                        if s in facts.exempt or s in EXTRA_EXEMPT]
+        missing = [s for s in unassigned if s not in exempt_names]
+        out.write('%s: 已分配 %d / %d，缺 %d，豁免 %d\n'
+                  % (base, len(universe & assigned), len(universe),
+                     len(missing), len(exempt_names)))
         for name in exempt_names:
             reason = facts.exempt.get(name) or EXTRA_EXEMPT[name]
             where = 'SUITES_EXCLUDED' if name in facts.exempt else 'EXTRA_EXEMPT'
             out.write('  - %s [%s]: %s\n' % (name, where, reason))
-    if not missing:
-        out.write('OK: 每个套件至少落在一条腿的名单里\n')
+        if missing:
+            rc = 1
+            out.write('FAIL[%s]: %d 个套件没有被这条工作流的任何一条腿分配到：\n'
+                      % (base, len(missing)))
+            for name in missing:
+                out.write('  - %s（tests/%s.py 在，但这条工作流里没有腿点到它）\n'
+                          % (name, name))
+    if rc == 0:
+        out.write('OK: 每个套件至少落在一条腿的名单里（每条工作流各自覆盖完整）\n')
         return 0
-    out.write('FAIL: %d 个套件没有被任何一条腿分配到：\n' % len(missing))
-    for name in missing:
-        out.write('  - %s（tests/%s.py 在，但工作流里没有任何一条腿的名单点到它）\n'
-                  % (name, name))
     out.write('怎么办：加进 tests/test_suites.py 的 SUITES（3.12 腿的 pytest 会跑），'
               '或加进工作流某条腿的套件列表；\n'
               '        确认确实不该在 CI 上跑，就在 SUITES_EXCLUDED（套件侧）或 '
@@ -928,15 +958,27 @@ def run(root, ci_path, tests_dir=None, extra_suites=(), verbose=False, out=None)
     return 1
 
 
+def _default_workflows(root):
+    """默认要查的工作流：`tests.yml` + `nightly.yml`（存在才加；M1）。"""
+    names = ['tests.yml', 'nightly.yml']
+    out = []
+    for name in names:
+        path = os.path.join(root, '.github', 'workflows', name)
+        if os.path.exists(path):
+            out.append(path)
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description='CI 套件覆盖检查（MAINTENANCE 25.9）：每个 tests/test_*.py '
-                    '至少落在一条腿（工作流矩阵单元）的名单里。')
+                    '至少落在一条腿（工作流矩阵单元）的名单里；给多条工作流时'
+                    '**每条各自**都要覆盖完整（默认 tests.yml + nightly.yml）。')
     ap.add_argument('--root', default=None,
                     help='仓库根（默认 tools/ 的上一级）')
-    ap.add_argument('--ci', default=None,
-                    help='工作流文件（默认 <root>/.github/workflows/tests.yml；'
-                         '给 - 表示从 stdin 读，反向探测用）')
+    ap.add_argument('--ci', action='append', default=None,
+                    help='工作流文件；可重复给多次（默认 <root>/.github/workflows/'
+                         'tests.yml + nightly.yml；给 - 表示从 stdin 读，反向探测用）')
     ap.add_argument('--tests-dir', default=None,
                     help='套件目录（默认 <root>/tests）')
     ap.add_argument('--extra-suite', action='append', default=[], metavar='NAME',
@@ -947,11 +989,12 @@ def main(argv=None):
     args = ap.parse_args(argv)              # 用法错时 argparse 自己返回 2
     root = (os.path.abspath(args.root) if args.root
             else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ci_path = args.ci if args.ci is not None else os.path.join(
-        root, '.github', 'workflows', 'tests.yml')
+    ci_paths = (list(args.ci) if args.ci
+                else _default_workflows(root) or [
+                    os.path.join(root, '.github', 'workflows', 'tests.yml')])
     tests_dir = os.path.abspath(args.tests_dir) if args.tests_dir else None
     try:
-        return run(root, ci_path, tests_dir, args.extra_suite, args.verbose)
+        return run(root, ci_paths, tests_dir, args.extra_suite, args.verbose)
     except (YamlError, Unsupported) as exc:
         sys.stdout.write('NG(rc=2) 没法给出结论: %s\n' % exc)
         return 2

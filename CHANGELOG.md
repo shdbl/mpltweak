@@ -1,5 +1,50 @@
 # CHANGELOG
 
+## 0.1.23
+
+### 这一版用户能感知到的变化
+
+- **验证不再按"第几根轴"认人，改按"在网格的哪个格位"认人**（L23 / A）：过去参数里的 `ax0` 与
+  跑出来的第 0 根轴直接配对。脚本里一换顺序（`GridSpec` 先建右边的、`subplots` 后又 `add_subplot`
+  补一根），配到的其实是另一根轴 —— 于是"验证通过"有可能是在验错对象。现在两侧各自记网格身份
+  （`[行数, 列数, 起点行, 起点列]`），**同格位才配对**；**配不上、或一个格位对上多根轴且数量不等
+  时判失败**（`verified=false` 并点名），不再静默跳过。实测：运行期顺序与 `describe` 相反的脚本，
+  旧版报"ax0 的网格身份 [1,2,0,0]≠[1,2,0,1]"失败，新版正确通过；删掉一根子图时新版如实失败。
+- **0.1.21 及更早导出的参数文件（没有网格身份）自动退回按序号**：老参数不会被一刀切判失败。
+- **同一个格位有多根轴（twinx 双 y 轴）不误报**：两侧数量相同则组内按序配对。
+- **多根 `imshow` 的色标写对面板**（L25 / B）：过去 `sorted(mappables)[0]` 取第一根轴上的对象，
+  改 `ax1` 的 `cmap`/`clim` 也会写到 `im0` 上（图上"改错面板"）。现在逐轴取自己的 mappable；
+  认不出是哪一根时**拒写** + 警告 + `pending`，不猜。
+- **图例整条重建会丢 `ncol`/`title`/`frameon` 时，现在会明说**（F4 / C）：不静默改写；这三项进
+  `unjudged` 并警告"整条重建会回到默认值"。实测重跑后确实丢（`ncol` 回到 1、`title` 变空、
+  `frameon` 回 True）。**真修仍需 0.2.0 的 params v5**。
+- **不重跑脚本的档位不再写 `set_clim`**（M5）：`--no-semantic` / `--verify-fast` / `--no-verify`
+  里改色域等于把"自动色域"钉死；现在不写、记 `unjudged`，默认档照旧。
+- **匿名 `imshow` 不再 `IndexError`**（M6）：改用 `ax.images[0]`（没有就 fail-closed），
+  不再 `ax.collections[0]`。
+- **README 中英双版润色**：中文 12,692 → 9,863 字（−22.3%），英文 −25%；链接、代码块、数字
+  逐项核对零丢失（`docs/` 引用 46 条可疑 0）。
+
+### 读数（发版前实测，两臂 = 工作树 vs `885473f`）
+
+- **语料 124 份四臂**：① 默认档少写 / 多写 **0 / 0**；无基线档少写 **50 条 / 23 份**
+  （`clim` 40 条 = M5、`cmap` 10 条 = B 拒写，全部有 `pending`/警告账）、多写 **22 条 / 3 份**
+  （2 份旧版失败新版写成、1 份容器纠正）；② `verified` 由 `true` 变 `false` **0**；③ 误伤 **0**。
+- **`--json` 键集**：apply 顶层、`files[0]`（39 键）、check 三层 `added` / `removed` / `type_diff`
+  全空。
+- **回归网**：`test_xreview_regressions` = PASS 8 / XFAIL 1（F4，按设计）/ FAIL 0。
+- `test_writeback` **837 PASS / 0 FAIL**；`test_hygiene` **86 passed / 5 skipped**。
+- **文档门禁**：`check_doc_refs` 默认面 46 条 / 可疑 0、`--with-maintenance` 203 条 / 可疑 0；
+  `test_docs` ALL PASS；`doc_cli_options` 双向 0；`gen_nav --check` rc=0。
+- **两臂全量**（zh / en，串行）：zh **121 passed / 0 failed / 5 skipped（35:20）**；en **121 passed / 0 failed / 5 skipped（31:40）**，两臂 rc=0，跑前跑后树身指纹一致（files=128 / bytes=7,751,063 / newlines=102,317，`guard_tree_stable --wrap`）
+
+### 本版**不做**（避免误解）
+
+- **F4 的真修**：params v5 才有 `ncol`/`title`/`frameon` 的位置，归 0.2.0。本版只做到"检测到就如实警告"。
+- **跨脚本参数身份（B-3）**：参数文件只记脚本**文件名**、没有路径与内容哈希；现在靠 apply 的
+  "脚本比参数新就拒"兜底，真修归 v5（维护台账 M8）。
+- **GUI 三件**：继续搁置（见 `MAINTENANCE.md` §38.2）。
+
 ## 0.1.22
 
 ### 这一版用户能感知到的变化

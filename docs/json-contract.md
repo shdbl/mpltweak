@@ -55,7 +55,7 @@
 | `inplace_needs_block` | bool | 原位那一趟是否因为写不了而退块 |
 | `pending` | array | **本次最终**还没落地的字段令牌清单（唯一口径）。`auto` 退块时它是**退块之后**剩下的账；判"这次写完没"看它，**别把 `inplace_pending` 加进来**。**锁定轴（长宽比锁定）的 `pos` 也如实记在这里**：写回不写它，`warnings` 里同时有一句说明 |
 | `inplace_pending` | array | **退块之前、原位那一趟**写不了的字段清单（**留档**，不代表最终结果）：`auto` 退块时用它看"为什么退块"；`--style inplace` 单跑时它通常是 `[]`，账在 `pending` 里。**两者禁止相加** |
-| `unjudged` | array（**恒在**，字符串数组） | 参数里**请求了、但这次没判/没写**的字段令牌，如 `["ax0.legend.anchor"]`。**恒为字符串数组**（空也是 `[]`，与 `delta_dropped` 一样**永远不是 `null`**）；它**不推翻 `verified`**（见下一节「[`verified` 与 `unjudged` 的边界](#verified-与-unjudged-的边界)」）。判"写没写"仍看 `applied` / `pending` |
+| `unjudged` | array（**恒在**，字符串数组） | 参数里**请求了、但这次没判/没写**的字段令牌，如 `["ax0.legend.anchor"]`。**恒为字符串数组**（空也是 `[]`，与 `delta_dropped` 一样**永远不是 `null`**）；它**不推翻 `verified`**（见下一节「[`verified` 与 `unjudged` 的边界](#verified-与-unjudged-的边界)」）。判"写没写"仍看 `applied` / `pending`。0.1.23 起还会出现身份类 `axN.identity`（该轴没有待验证字段、身份又配不上/有歧义）与重建图例会丢的 `axN.legend.ncol` / `title` / `frameon` |
 | `refused_hint` | string or null | 拒写时的**照着改**指导（0.1.17 起）。**0.1.18 起触发面变了**：只对"引擎能点名"的拒写生成（建轴点与参数条数对不上、载体名不是恰好一次模块层调用…）；`fig.axes[i]` / `plt.gca()` / 函数里建图**已不再必然拒写**（判据表见 [verify.md](verify.md)） |
 | `anchor` | string or null | 块的插入位置标记（如 `before`） |
 | `attempts` | array | 块落点尝试记录，每项 `{anchor, line, ok, semantic}` |
@@ -103,6 +103,16 @@
 | 锁定轴的 `pos`（采集缺失） | 位置由长宽比在 draw 时现算；**实测缺这一项**时无法判（两侧都有值时**会判**，不同 ⇒ `verified: false`） |
 | 没有 mappable 时的 `cmap` / `clim` | 这根轴上没有可作用的对象（结构性不适用）；写回侧也写不进去，另行进 `pending` |
 | 采集异常类：`spines` / `lines` / 字号 / `xscale` / `yscale` / `pos` 缺键 | 这些字段恒可采；缺只可能是采集异常，无法区分"没采到"与"不一样" |
+| `axN.identity`（身份类，0.1.23） | 这根轴这次**没有待验证字段**（`fields_by_axis` 显式空集 / 字段全属上表那种不可判性质），而它的网格身份又**配不上**（没有同一格位的轴）或**有歧义**（同 cell 多根、组大小不等、互选冲突）⇒ 身份没参与判定。**同一情形下只要该轴请求了任一可判字段，就不是 `unjudged` 而是 bad**（见下面「身份类」） |
+
+**身份类（0.1.23）**：`axN.identity` 是"这根轴这次**没参与身份判定**"的记号，只在上面那种"没有任何待验证字段"时出现。**一旦这根轴请求了任一可判字段，同一情形就落到 bad，本次不得 `verified: true`**：
+
+* 请求了字段、轴**配对不上**（重跑后没有同一网格位置的轴，或那根轴已不再是网格轴）⇒ **`verified: false`**；
+* 请求了字段、轴**身份有歧义**（同 cell 多根但两侧组大小不等，或互选冲突解不开）⇒ **`verified: false`**。
+
+换句话说：**`verified: true` 的前提是"参数里每个请求了字段的轴都对上了号"**。`axN.identity` 只说明"这根轴没有请求字段、没参与这次对齐"，**不是**"它配对成功了"。判据细节与已知边界 B-1~B-4 见 [verify.md 的「按身份对齐」](verify.md#按身份对齐0123验证按轴是谁比不按第几根比)。
+
+**`verified` 与 `pending` 是两本账（0.1.23 / M7）**：`verified: true` 只回答"**比得了的字段**都一致"；`pending` 回答"**你请求了、但这次没写成**的字段"。两者**同时出现不矛盾** —— 典型：原位路径把 `pos` 写进源码并通过语义验证（`verified: true`），而 `lines` 在源码里没有可改的写法、如实留在 `pending`（`reason: best_effort`）。判"改没改"看 `applied` / `changes`，判"哪些没落地"看 `pending` / `inplace_pending`：**不要**因为 `pending` 非空就说"验证失败"，也**不要**因为 `verified: true` 就说"每个请求字段都落地了"。
 
 此外，**无基线档**（`--verify-fast` / `--no-verify` / `--no-semantic`）**不写进调整块**的那几类字段
 （见下面「[无基线档不写"重复应用不幂等"的字段](#无基线档不写重复应用不幂等的字段)"）也记在
@@ -214,7 +224,7 @@
 
 它们**不进 `pending`**（那不是"你要的东西没落地"，而是"这一档不写"），而是进
 `files[].unjudged`；`reason` 仍可为 `ok`，`warnings` 里有一句说明。白名单的唯一出处是
-`writeback.py:5432 # _NO_BASELINE_UNSAFE`。
+`writeback.py:5620 # _NO_BASELINE_UNSAFE`。
 
 **出路**：要写这几类字段（`grid` / 轴尺度 / 图例 / 锁定轴的位置），请**用默认档重跑**
 一次 `apply --write`（会重跑脚本 + 语义验证）；`--diff` 预览在影子副本上算基线，

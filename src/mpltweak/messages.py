@@ -2655,6 +2655,21 @@ WB_ZH_TO_EN = {
         'conversion that is off by a factor, and writing it back would permanently '
         'resize the canvas. Re-export with `mpltweak describe <script>`, or fix '
         'figsize_in by hand.',
+    # ==== 0.1.23：L25（多 mappable 配错）/ M6（匿名 mappable）/ F4（图例重建丢属性） ====
+    'ax%s 上有多个 mappable 变量(%s)，但认不出哪一根属于这根轴 —— 本次不写它的 clim/cmap，请人工确认':
+        'ax%s has several mappable variables (%s) but none can be tied to this axes - '
+        'its clim/cmap is not written this time; please confirm by hand',
+    'ax%s 的 mappable 认不出来（没有变量名，也证不出它的 images/collections 属于这根轴）—— 本次不写它的 clim/cmap，请人工确认':
+        'the mappable of ax%s cannot be identified (no variable name, and its '
+        'images/collections cannot be proven to belong to this axes) - its clim/cmap '
+        'is not written this time; please confirm by hand',
+    'ax%s 的 mappable 没有变量名，改用结构定位 %s（请人工确认）':
+        'the mappable of ax%s has no variable name; using the structural handle %s '
+        'instead (please confirm by hand)',
+    '块里会整条重建 %s.legend(...)：源码图例的 %s 与 matplotlib 默认不同，重建后会回到默认值 —— 本次不判这些属性（要保留请手工改源码）':
+        'the block rebuilds %s.legend(...) as a whole: %s of the source legend '
+        'differ(s) from the matplotlib default and will be reset - these properties '
+        'are not judged this time (edit the source by hand to keep them)',
 }
 
 
@@ -3002,15 +3017,15 @@ UI_ZH_TO_EN.update({
 #     shell_path                                    2382
 #     fail_json                                     2391
 #     guard_json_main                               2420
-# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2477-2673，1 个顶层函数）
+# §7 写回 zh→en 对照表 WB_ZH_TO_EN（t63）（行 2477-2688，1 个顶层函数）
 #         §7.1 A2 原位「补一个参数」的三条拒改说明                  2502
-#     t_wb                                          2661
-# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2674-2855，0 个顶层函数）
+#     t_wb                                          2676
+# §8 UI zh→en 对照表 UI_ZH_TO_EN（t64）（行 2689-2870，0 个顶层函数）
 #     （本分区没有顶层函数）
-#         §8.1 doctor 的列标签与括注                       2695
-#         §8.2 launch 的运行时人读输出                      2721
-#         §8.3 describe：写盘那一行                       2791
-#         §8.4 toolbox：启动横幅那 2 行                    2793
-# §9 查表函数 t_ui 与运行期追加的两块 update（行 2856-2950，1 个顶层函数）
-#     t_ui                                          2858
+#         §8.1 doctor 的列标签与括注                       2710
+#         §8.2 launch 的运行时人读输出                      2736
+#         §8.3 describe：写盘那一行                       2806
+#         §8.4 toolbox：启动横幅那 2 行                    2808
+# §9 查表函数 t_ui 与运行期追加的两块 update（行 2871-2965，1 个顶层函数）
+#     t_ui                                          2873
 # --- END AUTO NAV ---

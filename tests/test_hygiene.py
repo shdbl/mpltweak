@@ -1560,12 +1560,15 @@ def test_every_suite_is_assigned_to_a_ci_leg():
     都跑，其余套件只靠 3.12 腿的 `pytest -q` 捎带。于是"新加一个套件、忘了分配"能一路绿
     到发布：`test_launch` 就曾在 3.9/3.10/3.11 上从没跑过。
 
-    除了 rc=0，还钉了三件事：
-      ① **覆盖钉**：矩阵必须还是 8 条腿（矩阵被重排就要来改这个数）—— 防"一条腿都没解析
-         出来、判据空转却绿着"；
+    0.1.23 / M1：工具默认同时查 **`tests.yml`（8 条腿）+ `nightly.yml`（4 条腿）= 12 条**，
+    并且**每条工作流各自都要覆盖完整**（见下一条用例的牙：nightly 被加 `-k` 必红）。
+
+    除了 rc=0，还钉了这几件事：
+      ① **覆盖钉**：矩阵必须还是 8+4 条腿（矩阵被重排就要来改这个数）—— 防"一条腿都没
+         解析出来、判据空转却绿着"；两条工作流各自的名字都要出现（不许悄悄漏查 nightly）；
       ② **牙齿 A**：`--extra-suite` 假装 tests/ 多了一个没人分配的套件 ⇒ 必须 rc=1 并点名它；
-      ③ **牙齿 B**：把工作流里 3.12 腿的 pytest 步骤整段拿掉（从 **stdin** 喂进去，不落盘）
-         ⇒ 必须 rc=1 并点名 `test_launch`（只在 3.12 腿跑过的那个）。
+      ③ **牙齿 B**：把 tests.yml 里 3.12 腿的 pytest 步骤整段拿掉（从 **stdin** 喂进去，
+         不落盘）⇒ 必须 rc=1 并点名 `test_launch`（只在 3.12 腿跑过的那个）。
     豁免口径（`SUITES_EXCLUDED` / 工具的 `EXTRA_EXEMPT`）都带理由，且每次运行都打印出来。
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1576,8 +1579,15 @@ def test_every_suite_is_assigned_to_a_ci_leg():
         % (rc, out[-4000:]))
     assert 'OK: 每个套件至少落在一条腿的名单里' in out, (
         '覆盖检查 rc=0 但没打出 OK 结论（判据可能空转了）\n' + out[-3000:])
-    assert '腿（矩阵单元）: 8 条' in out, (
-        '矩阵腿数不是 8 了（矩阵被重排？还是解析器漏读？）：\n' + out[-3000:])
+    assert '腿（矩阵单元）: 12 条' in out, (
+        '矩阵腿数不是 8+4=12 了（矩阵被重排？还是 nightly 没被默认查？）：\n'
+        + out[-3000:])
+    assert 'tests.yml 8 条腿' in out and 'nightly.yml 4 条腿' in out, (
+        '默认运行必须**两条工作流都查**（8+4）；漏了哪一条都说明 M1 没生效：\n'
+        + out[-3000:])
+    assert 'tests.yml: 已分配' in out and 'nightly.yml: 已分配' in out, (
+        '每条工作流各自都要给出覆盖结论（M1：并集口径会放过"nightly 被加 -k"）：\n'
+        + out[-3000:])
 
     # 牙齿 A：新增一个没人分配的套件 ⇒ 必红并点名
     rc_a, out_a = _run_ci_coverage(root, extra=['--extra-suite', 'test_zz_unassigned'])
@@ -1602,6 +1612,44 @@ def test_every_suite_is_assigned_to_a_ci_leg():
     assert 'test_launch' in out_b, (
         '红了但没点名 test_launch（§25.9 点名的那个只在 3.12 腿跑过的套件）：\n'
         + out_b[-3000:])
+
+
+def test_nightly_alone_covers_every_suite_and_a_k_filter_turns_it_red():
+    """M1（0.1.23）：nightly 必须**自己**覆盖全部套件；给它加 `-k` 必须当场变红。
+
+    为什么单独一条：nightly 的全部价值是"每天一次全量、没有名单"（`nightly.yml` 文件头
+    写着"刻意不加 -k"）。0.1.22 的覆盖模型只看 `tests.yml`，于是"有人给 nightly 加
+    `-k`"这件事在**并集口径下永远不红**（tests.yml 自己覆盖完整）；本用例把它钉成
+    逐工作流的判据：nightly 单独跑 rc=0、4 条腿、点名 37 个套件；把
+    `python -m pytest -q` 改成 `pytest -q -k test_boundaries` ⇒ rc=1 且点名缺的套件。
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    nightly = os.path.join(root, '.github', 'workflows', 'nightly.yml')
+    assert os.path.isfile(nightly), (
+        'M1 的前提是 nightly.yml 存在；它被删了就得连着这条用例一起重写')
+
+    rc, out = _run_ci_coverage(root, extra=['--ci', nightly])
+    assert rc == 0, (
+        'nightly 单独跑覆盖检查不绿（rc=%d）—— 它本该是全量腿\n%s'
+        % (rc, out[-4000:]))
+    assert '腿（矩阵单元）: 4 条' in out, (
+        'nightly 的矩阵腿数不是 4 了（矩阵被重排？）：\n' + out[-3000:])
+    assert '已分配 37 / 39' in out, (
+        'nightly 的 4 条腿没有覆盖到 37 个套件（全量的承诺破了）：\n' + out[-3000:])
+
+    text = _read_test_file(nightly)
+    narrowed = text.replace('python -m pytest -q',
+                            'python -m pytest -q -k test_boundaries')
+    assert narrowed != text, (
+        'nightly.yml 里没有 `python -m pytest -q` 这条裸 pytest 了 —— 牙齿要跟着重写'
+        '（它正是"全量、无 -k"的那一步）')
+    rc_k, out_k = _run_ci_coverage(root, extra=['--ci', '-'], stdin_text=narrowed)
+    assert rc_k == 1, (
+        '给 nightly 的裸 pytest 加上 `-k` 之后覆盖检查仍是 rc=%d'
+        '（nightly 就不再是全量腿，却没人发现）\n%s' % (rc_k, out_k[-3000:]))
+    assert 'FAIL[<stdin>]' in out_k and 'test_launch' in out_k, (
+        '红了但没有以"这条工作流自身不完整"的形式点名缺的套件：\n' + out_k[-3000:])
+
 
 
 # =====================================================================

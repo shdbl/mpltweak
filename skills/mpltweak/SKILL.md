@@ -24,6 +24,7 @@ description: 交互式 matplotlib 排版（脚本零侵入）：像 PPT 一样�
 8. **不在没确认版本的情况下断言"这是已知问题 / 已经修了"**：先 `mpltweak --version`，再看最新版与 `CHANGELOG.md`（见下一节）。
 9. **引用工具输出必须逐字**：不许把输出"整理成通顺句子"再标成"实时输出"；某一行含乱码（`◆` / `�` / `锟斤拷`）就整行只说"该行乱码"，不得翻译、补全、润色。判排版结论用 `check --json` 的 `clean` / `verdict`，别去解析人读中文。
 10. **不许把没验证过的说成已验证**：`verified: false` = 可判且判为**不一致**，绝不能说"已验证 / 已经确认"；`verified: null` = 这次没验证；`unjudged` 非空 = 这些字段这次没判（要如实点名，不许略过）。判"写没写"看 `applied` / `pending`，不要拿 `verified` / `unjudged` 代替。
+11. **看到 `unjudged` / 身份提示要重新确认，不要当成通过**：`axN.identity`（0.1.23）= 这根轴这次**没参与身份判定**（它没有待验证字段）；`warnings` 里出现"轴身份对不上 / 重建图例会丢 `ncol`·`title`·`frameon`"这类提示时，先核对轴序与结构（加过 colorbar？删过子图？用了 `twinx`？图例是 `ax.legend` 还是 `plt.legend`？），确认改动落在**你要的那根轴**上，再向用户汇报。**不许**把 `axN.identity` 读成"这根轴验证过了"。
 
 ## 开工第一步：确认环境（缺了就装，但先问用户）
 
@@ -274,12 +275,15 @@ mpltweak apply <脚本.py> --write              # 写：落回源码并自检
   状态，或你加了 `--verify-fast`）——**不要当成通过**；`verified: false` 才是明确的失败。
 - **`unjudged`**（逐文件，**恒为字符串数组**，空也是 `[]`、**永远不是 `null`**）：参数里请求了、
   但**这次没判/没写**的字段。来源有两类：① 结构性不可判 —— 图例 `anchor` / `loc='best'` /
-  锁定轴 pos 采集缺失 / 没有 mappable 时的 `cmap`·`clim`；② 无基线档（`--verify-fast` /
+  锁定轴 pos 采集缺失 / 没有 mappable 时的 `cmap`·`clim`；0.1.23 起还有**身份类 `axN.identity`**
+  （这根轴没有待验证字段、身份又配不上或有歧义）与**重建图例会丢的 `axN.legend.ncol` / `title` /
+  `frameon`**（只警告，块写法本版不变）；② 无基线档（`--verify-fast` /
   `--no-verify` / `--no-semantic`）**不写进调整块**的 `grid` / `xscale` / `yscale` / `legend` /
   锁定轴 `pos`（要写这几类请用默认档重跑）。它**不推翻 `verified`**：`verified: true` 仍只表示"比得了的字段
   都一致"，**不等于**"每个请求字段都判过"。**`verified: false` 时不许对用户说"已验证 / 已经确认"**；
   `verified: null` = 这次没验证；`unjudged` 非空就如实说"这些字段这次没判"。判"写没写"看
-  `applied` / `pending`，别拿 `unjudged` 反推。
+  `applied` / `pending`，别拿 `unjudged` 反推。身份类的判据与已知边界见
+  [docs/verify.md](https://github.com/shdbl/mpltweak/blob/main/docs/verify.md) 的「按身份对齐」一节。
 - **`verify_passes` / `semantic_basis`**：两个键**恒有**（别再从 `warnings` 的文本里猜）——
   `verify_passes` = 这次为验证在**写回后的脚本**上跑了几遍：**1** = 默认单遍 / **2** = 单遍取不到目标图
   状态、已回退到两遍 / **0** = 这次没有为验证重跑脚本（`--no-verify` / `--verify-fast` / 预览 /
